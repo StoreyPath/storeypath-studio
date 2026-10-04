@@ -14,7 +14,11 @@ const SOURCES = ["sp-buildings", "sp-floors", "sp-spaces", "sp-openings"];
 const EMPTY = { type: "FeatureCollection", features: [] };
 
 const DEFAULTS = {
-  basemap: true, // OpenStreetMap tiles under the buildings
+  // Map under the buildings: true for OpenStreetMap tiles (needs the internet),
+  // a tile URL template ("https://tiles.example/{z}/{x}/{y}.png") for your own
+  // tile server, or false for none (offline).
+  basemap: true,
+  showHidden: false, // show spaces and doors marked hidden or ignored in Studio
   labels: true, // room names and numbers on the current floor
   labelMinZoom: 18.6,
   roomHeight: 2.4, // meters, how tall enclosed rooms are drawn on a single floor
@@ -96,28 +100,50 @@ export class StoreyPathViewer extends EventTarget {
     await this.#ready;
     this.#pkg = pkg;
     this.#selected = null;
+    // Buildings not placed on the map yet sit around 0°N 0°E: a street map there
+    // would only show sea.
+    const placements = Object.values(pkg.manifest.placements || {});
+    if (placements.length && placements.every((p) => p.placed === false)) this.setBasemap(false);
 
-    const floorInfo = new Map(pkg.floors.map((f) => [f.id, f.properties]));
-    const styled = (features, extra) => ({
-      type: "FeatureCollection",
-      features: features
-        .filter((f) => f.geometry)
-        .map((f) => ({ ...f, properties: { ...f.properties, _id: f.id, ...extra(f) } })),
-    });
-    this.#map.getSource("sp-buildings").setData(styled(pkg.buildings, () => ({})));
-    this.#map.getSource("sp-floors").setData(styled(pkg.floors, (f) => ({ _elev: f.properties.elevation })));
-    this.#map.getSource("sp-openings").setData(styled(pkg.openings, () => ({})));
-    this.#map.getSource("sp-spaces").setData(
-      styled(pkg.spaces, (s) => {
-        const floor = floorInfo.get(s.properties.floor_id);
-        return { _elev: floor.elevation, _fh: floor.height, _building: floor.building_id };
-      }),
-    );
+    this.#setData();
 
     this.setBuilding(pkg.buildings[0]?.id, { fit: false });
     this.fitTo(pkg.buildings, { duration: 0 });
     this.#emit("load", { package: pkg });
     return pkg;
+  }
+
+  /** Show or leave out spaces and doors marked hidden or ignored. */
+  setShowHidden(on) {
+    this.#options.showHidden = Boolean(on);
+    if (!this.#pkg) return;
+    this.#setData();
+    this.#renderLabels();
+  }
+
+  #shown(feature) {
+    return this.#options.showHidden || !(feature.properties.hidden || feature.properties.ignored);
+  }
+
+  #setData() {
+    const pkg = this.#pkg;
+    const floorInfo = new Map(pkg.floors.map((f) => [f.id, f.properties]));
+    const styled = (features, extra, keep = () => true) => ({
+      type: "FeatureCollection",
+      features: features
+        .filter((f) => f.geometry && keep(f))
+        .map((f) => ({ ...f, properties: { ...f.properties, _id: f.id, ...extra(f) } })),
+    });
+    const shown = (f) => this.#shown(f);
+    this.#map.getSource("sp-buildings").setData(styled(pkg.buildings, () => ({})));
+    this.#map.getSource("sp-floors").setData(styled(pkg.floors, (f) => ({ _elev: f.properties.elevation })));
+    this.#map.getSource("sp-openings").setData(styled(pkg.openings, () => ({}), shown));
+    this.#map.getSource("sp-spaces").setData(
+      styled(pkg.spaces, (s) => {
+        const floor = floorInfo.get(s.properties.floor_id);
+        return { _elev: floor.elevation, _fh: floor.height, _building: floor.building_id };
+      }, shown),
+    );
   }
 
   /** Show a building; its ground floor unless `floor` is given. */
@@ -201,7 +227,11 @@ export class StoreyPathViewer extends EventTarget {
   }
 
   setBasemap(visible) {
-    this.#ready.then(() => this.#map.setLayoutProperty("sp-basemap", "visibility", visible ? "visible" : "none"));
+    this.#ready.then(() => {
+      if (this.#map.getLayer("sp-basemap")) {
+        this.#map.setLayoutProperty("sp-basemap", "visibility", visible ? "visible" : "none");
+      }
+    });
   }
 
   destroy() {
@@ -308,6 +338,7 @@ export class StoreyPathViewer extends EventTarget {
     this.#markers = [];
     if (!this.#options.labels || this.#mode === "stack" || !this.#pkg) return;
     for (const s of this.#pkg.spacesOn(this.#floor)) {
+      if (!this.#shown(s)) continue;
       const { name, number, display_point } = s.properties;
       if (!name && !number) continue;
       const el = document.createElement("div");
@@ -325,26 +356,24 @@ export class StoreyPathViewer extends EventTarget {
 }
 
 function baseStyle({ basemap, background }) {
-  return {
-    version: 8,
-    sources: {
-      osm: {
-        type: "raster",
-        tileSize: 256,
-        maxzoom: 19,
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        attribution: "© OpenStreetMap contributors",
-      },
-    },
-    layers: [
-      { id: "sp-background", type: "background", paint: { "background-color": background } },
-      {
-        id: "sp-basemap",
-        type: "raster",
-        source: "osm",
-        layout: { visibility: basemap ? "visible" : "none" },
-        paint: { "raster-opacity": 0.55, "raster-saturation": -0.6 },
-      },
-    ],
-  };
+  const layers = [{ id: "sp-background", type: "background", paint: { "background-color": background } }];
+  const style = { version: 8, sources: {}, layers };
+  if (basemap) {
+    // No source at all when there is no basemap: an offline page requests nothing.
+    const own = typeof basemap === "string";
+    style.sources.basemap = {
+      type: "raster",
+      tileSize: 256,
+      maxzoom: 19,
+      tiles: [own ? basemap : "https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      attribution: own ? "" : "© OpenStreetMap contributors",
+    };
+    layers.push({
+      id: "sp-basemap",
+      type: "raster",
+      source: "basemap",
+      paint: { "raster-opacity": 0.55, "raster-saturation": -0.6 },
+    });
+  }
+  return style;
 }

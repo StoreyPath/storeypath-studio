@@ -16,11 +16,22 @@ export const TYPE_COLORS = {
   utility: "#a3a3ab",
   shaft: "#86868e",
   open_area: "#a8d4f7",
+  bedroom: "#8fb3e8",
+  living_room: "#f0b67f",
+  dining_room: "#e6c27a",
+  bathroom: "#7fc6d6",
+  dressing_room: "#c9b2d9",
+  laundry: "#9cc9b4",
+  prayer_room: "#d4b8e0",
+  parking: "#c4c4bc",
+  balcony: "#b7d9a8",
+  terrace: "#cfe3b0",
+  open_to_below: "#f4f4f2",
   unspecified: "#ff4d6d",
 };
 
-// Circulation areas are drawn as floor, not as raised blocks.
-export const FLAT_TYPES = ["corridor", "lobby", "open_area"];
+// Circulation and open-air areas are drawn as floor, not as raised blocks.
+export const FLAT_TYPES = ["corridor", "lobby", "open_area", "parking", "balcony", "terrace", "open_to_below"];
 
 export function typeLabel(type) {
   return type === "unspecified" ? "needs review" : type.replaceAll("_", " ");

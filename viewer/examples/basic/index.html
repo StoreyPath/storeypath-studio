@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StoreyPath Viewer</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="../../vendor/maplibre-gl.css">
   <link rel="stylesheet" href="../../src/viewer.css">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
     {
       "imports": {
-        "maplibre-gl": "https://esm.sh/maplibre-gl@4.7.1",
-        "jszip": "https://esm.sh/jszip@3.10.1"
+        "maplibre-gl": "../../vendor/maplibre-gl.mjs",
+        "jszip": "../../vendor/jszip.mjs"
       }
     }
   </script>
@@ -59,6 +59,7 @@
     <button id="mode" type="button">Show all floors</button>
     <button id="pitch" type="button">2D</button>
     <label><input type="checkbox" id="basemap" checked> Street map</label>
+    <label title="Spaces marked hidden or ignored in Studio"><input type="checkbox" id="show-hidden"> Hidden and ignored</label>
   </div>
 
   <div id="drop" hidden>Drop the package to open it</div>

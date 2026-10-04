@@ -4,7 +4,10 @@
 import { StoreyPathViewer, TYPE_COLORS, typeLabel } from "../../src/index.js";
 
 const $ = (id) => document.getElementById(id);
-const viewer = new StoreyPathViewer("#map");
+// ?basemap=0 for no street map (offline), or a tile URL template for your own tiles.
+const basemapParam = new URLSearchParams(location.search).get("basemap");
+const basemap = basemapParam === null ? true : ["0", "off", "false", ""].includes(basemapParam) ? false : basemapParam;
+const viewer = new StoreyPathViewer("#map", { basemap });
 
 async function open(source) {
   try {
@@ -167,6 +170,8 @@ $("pitch").onclick = () => {
   $("pitch").textContent = flat ? "2D" : "3D";
 };
 $("basemap").onchange = (e) => viewer.setBasemap(e.target.checked);
+$("show-hidden").onchange = (e) => viewer.setShowHidden(e.target.checked);
+if (!basemap) $("basemap").closest("label").hidden = true;
 
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; $("drop").hidden = false; });

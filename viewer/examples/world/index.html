@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StoreyPath 3D</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../../vendor/three/three.module.js",
+        "three/addons/": "../../vendor/three/addons/",
+        "jszip": "../../vendor/jszip.mjs"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main id="world"></main>
+
+  <header id="top" class="glass">
+    <div class="brand">
+      <strong id="project-name">StoreyPath 3D</strong>
+      <span id="project-meta" class="muted">Open an exported <code>.storeypath</code> package</span>
+    </div>
+    <select id="building" hidden aria-label="Building"></select>
+    <label class="button" id="open-button">
+      Open…
+      <input type="file" id="file" accept=".storeypath,.zip" hidden>
+    </label>
+  </header>
+
+  <nav id="floors" class="glass" hidden aria-label="Floors"></nav>
+
+  <div id="controls" class="glass" hidden>
+    <div class="segmented" role="group" aria-label="View">
+      <button type="button" data-mode="dollhouse" class="active" title="Orbit around the building (O)">Dollhouse</button>
+      <button type="button" data-mode="walk" title="Walk through it (F)">Walk</button>
+    </div>
+    <label title="See-through walls, rooms tinted by type (X)"><input type="checkbox" id="xray"> X-ray</label>
+    <label title="Walls cut low, as on a plan (C)"><input type="checkbox" id="cutaway"> Cutaway</label>
+    <label><input type="checkbox" id="labels" checked> Labels</label>
+    <label title="Spaces marked hidden or ignored in Studio"><input type="checkbox" id="show-hidden"> Hidden</label>
+    <label class="explode" title="Lift the floors apart">Explode
+      <input type="range" id="explode" min="0" max="8" step="0.5" value="0">
+    </label>
+  </div>
+
+  <section id="details" class="glass" hidden></section>
+
+  <section id="hud" class="glass" hidden>
+    <div id="room-name">Outside</div>
+    <div id="room-meta" class="muted"></div>
+    <div id="room-hint"></div>
+  </section>
+
+  <canvas id="minimap" class="glass" width="220" height="220" hidden></canvas>
+  <div id="crosshair" hidden></div>
+
+  <div id="enter" hidden>
+    <div class="card glass">
+      <h2>Walk through</h2>
+      <p class="muted">Click to look around with the mouse.</p>
+      <ul class="keys">
+        <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li>
+        <li><kbd>Shift</kbd> run</li>
+        <li><kbd>E</kbd> / <kbd>Q</kbd> up / down at stairs and lifts</li>
+        <li><kbd>M</kbd> map · <kbd>X</kbd> x-ray</li>
+        <li><kbd>Esc</kbd> free the mouse · <kbd>O</kbd> back to the dollhouse</li>
+      </ul>
+      <button type="button" id="enter-button" class="primary">Start walking</button>
+    </div>
+  </div>
+
+  <div id="drop" hidden>Drop the package to open it</div>
+  <div id="loading" hidden>Building the world…</div>
+  <div id="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
