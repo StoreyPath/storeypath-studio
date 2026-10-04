@@ -1,0 +1,40 @@
+# layer name	expected role
+A-WALL	wall
+A-WALL-FULL	wall
+jun wall	wall
+WALLS	wall
+جدران	wall
+MUR	wall
+WAND	wall
+A-DOOR	door
+jundoor	door
+DOOR	door
+DOORS	door
+أبواب	door
+PORTE	door
+A-GLAZ	window
+WIN	window
+WINDOWS	window
+نوافذ	window
+FENETRE	window
+A-COLS	column
+S-COLS	column
+COLUMNS	column
+A-AREA-IDEN	room_name
+ROOM NAMES	room_name
+A_ROOM_NAME	room_name
+A-AREA	room_outline
+A-FLOR-STRS	stairs
+STAIR	stairs
+I-FURN	furniture
+FURNITURE	furniture
+SANITARY	fixtures
+A-ANNO-DIMS	dimension
+DIM	dimension
+AX	grid
+GRID	grid
+A-ANNO-TEXT	annotation
+TEXT	annotation
+HATCH	hatch
+DEFPOINTS	other
+0	other

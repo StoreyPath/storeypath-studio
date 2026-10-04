@@ -51,9 +51,16 @@ class Placement(BaseModel):
 
 
 class SourceDrawing(BaseModel):
+    """Where a floor's plan comes from. One file may hold several floors side by
+    side: ``region`` picks this floor's plan out of it, and ``offset`` moves it onto
+    the other floors. Both are in drawing units."""
+
     path: str  # relative to the workspace file when possible
-    profile: str = "ncs"
+    profile: str = "auto"  # "auto": read from what is drawn; or a built-in name or YAML path
     units: str | None = None  # override the drawing's own unit setting
+    region: tuple[float, float, float, float] | None = None  # x0, y0, x1, y1
+    offset: tuple[float, float] | None = None  # subtracted from every drawing point
+    view: str | None = None  # title of the plan in the drawing, for people
     sha256: str | None = None  # of the file last converted
 
 
@@ -66,6 +73,11 @@ class Floor(BaseModel):
     source: SourceDrawing | None = None
     outline: dict[str, Any] | None = None  # GeoJSON geometry, local meters
     converted_at: datetime | None = None
+    method: str | None = None  # how the last conversion found spaces: outlines or walls
+    warnings: list[str] = Field(default_factory=list)  # from the last conversion
+    layers: list[str] = Field(default_factory=list)  # what each layer was read as (auto profile)
+    walls: dict[str, Any] | None = None  # the walls as drawn, with door and window gaps (local meters)
+    wall_thickness: float | None = None  # meters, typical
 
 
 class Building(BaseModel):
@@ -94,17 +106,34 @@ class ObjectRecord(BaseModel):
     number: str | None = None
     geometry: dict[str, Any]  # GeoJSON geometry, local meters
     connects: list[str] = Field(default_factory=list)  # openings: the spaces they join
+    span: list[list[float]] | None = None  # openings: jamb to jamb, local meters
+    width: float | None = None  # openings: meters
+    issues: list[str] = Field(default_factory=list)  # found on conversion, for review
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)
     retired_at: datetime | None = None
 
 
 class Override(BaseModel):
-    """A correction made during review. Survives every re-conversion."""
+    """A correction made during review. Survives every re-conversion. One with no
+    values set records that a person checked the object and accepted it."""
 
     type: SpaceType | None = None
     name: str | None = None
     number: str | None = None
+    # Kept with its ID either way. Hidden: real, but not shown unless asked for (a
+    # shaft, a plant room). Ignored: not worth anything (a sliver, a pocket); leave it out.
+    hidden: bool | None = None
+    ignored: bool | None = None
+
+
+class Reading(BaseModel):
+    """What a text in a drawing was read as: a room name of a type, or not a room
+    name (``type`` None). Kept so that converting again gives the same answer."""
+
+    type: SpaceType | None = None  # None: not a room name
+    source: Literal["rules", "model", "person"] = "model"
+    rooms_only: bool = False  # asked knowing the text labels a room
 
 
 class ExportRecord(BaseModel):
@@ -127,6 +156,7 @@ class Workspace(BaseModel):
     locations: list[Location] = Field(default_factory=list)
     objects: dict[str, ObjectRecord] = Field(default_factory=dict)
     overrides: dict[str, Override] = Field(default_factory=dict)
+    readings: dict[str, Reading] = Field(default_factory=dict)  # text → what it means
     exports: list[ExportRecord] = Field(default_factory=list)
 
     # ---- files -------------------------------------------------------------
@@ -260,11 +290,30 @@ class Workspace(BaseModel):
         ]
 
     def effective(self, record: ObjectRecord) -> dict[str, Any]:
-        """Type, name and number after applying the user's corrections."""
+        """Type, name and number after applying the user's corrections. A name or
+        number corrected to "" removes it."""
         o = self.overrides.get(record.id)
         return {
             "type": (o.type if o and o.type else record.type),
-            "name": (o.name if o and o.name is not None else record.name),
-            "number": (o.number if o and o.number is not None else record.number),
+            "name": ((o.name or None) if o and o.name is not None else record.name),
+            "number": ((o.number or None) if o and o.number is not None else record.number),
             "corrected": o is not None,
+            "hidden": bool(o and o.hidden),
+            "ignored": bool(o and o.ignored),
         }
+
+    def review_reasons(self, record: ObjectRecord) -> list[str]:
+        """Why a space needs a person to look at it; empty when it does not. Once
+        corrected or accepted, only a missing type keeps it on the list; hidden and
+        ignored spaces are off it."""
+        if record.kind != "space" or record.status != "active":
+            return []
+        eff = self.effective(record)
+        if eff["hidden"] or eff["ignored"]:
+            return []
+        reasons = ["no type"] if eff["type"] == "unspecified" else []
+        if not eff["corrected"]:
+            if not eff["name"] and not eff["number"]:
+                reasons.append("no name or number")
+            reasons.extend(record.issues)
+        return reasons

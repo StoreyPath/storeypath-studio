@@ -15,6 +15,17 @@ uv run storeypath demo demo/                  # sample drawings → workspace �
 uv run storeypath view demo/demo.storeypath   # open it in the viewer
 ```
 
+## In the browser
+
+```sh
+storeypath serve --data projects/ --open
+```
+
+runs StoreyPath Studio as a web application (this is what the container runs):
+create projects, drop in drawings, choose which plans are which floors, then
+align, convert, review, place on the map and export — with progress for every
+step. Everything is computed on this machine.
+
 ## Workflow
 
 A **workspace** (`*.spproj`) is the working file of one project. It keeps the
@@ -26,24 +37,120 @@ with the same IDs.
 storeypath new acme.spproj --name "Acme Headquarters"           # generates the project code
 storeypath add-location acme.spproj RUH --name "Riyadh campus"  # → K7Q2XM-RUH
 storeypath add-building acme.spproj K7Q2XM-RUH HQ --name "Headquarters"
-storeypath place acme.spproj K7Q2XM-RUH-HQ --lat 24.7136 --lon 46.6753 --x 125000 --y 48000 --units mm --bearing 20
+storeypath place acme.spproj K7Q2XM-RUH-HQ --lat 24.7136 --lon 46.6753 --x 125000 --y 48000 --units mm --bearing 20  # optional
 storeypath add-floor acme.spproj K7Q2XM-RUH-HQ plans/level-0.dxf --ordinal 0
 storeypath add-floor acme.spproj K7Q2XM-RUH-HQ plans/level-1.dwg --ordinal 1
 
 storeypath convert acme.spproj                       # read drawings; keeps existing IDs
-storeypath list acme.spproj --review                 # what needs a human look
-storeypath fix acme.spproj K7Q2XM-RUH-HQ-F01-0014 --type office --name "Quiet room"
+storeypath review acme.spproj                        # check and correct, in the browser
 storeypath export acme.spproj -o acme.storeypath     # writes and validates the package
 storeypath validate acme.storeypath
 ```
 
-Corrections made with `fix` are kept in the workspace and re-applied on every
+`storeypath review` opens the review editor: each floor drawn over its original
+drawing, with the spaces that need a look listed first: no type, no name or
+number, the labels of several rooms in one space (a doorway without a door
+block, or a missing wall), or a space open to the outside. Click a space to
+correct its type, name or number, accept it as it is, **ignore** it (not worth
+anything: a sliver, a pocket) or **hide** it (real, but not shown unless asked
+for: a shaft). Hidden and ignored spaces keep their IDs, are marked as such in the
+package, and appear again with *Hidden and ignored* in the editor and the viewer. Every change is saved
+to the workspace file immediately, and *Re-read drawing* converts a revised
+drawing without leaving the page.
+
+The same is possible from the command line:
+
+```sh
+storeypath list acme.spproj --review                 # what needs a look, and why
+storeypath fix acme.spproj K7Q2XM-RUH-HQ-F01-0014 --type office --name "Quiet room"
+storeypath fix acme.spproj K7Q2XM-RUH-HQ-F01-0021    # accept as it is
+storeypath fix acme.spproj K7Q2XM-RUH-HQ-F01-0022 --name ""   # drop a wrong name
+```
+
+Placing buildings on the map (`place`) is optional: an unplaced building is
+exported, and shown in 3D, with its true shape and size around 0°N 0°E, marked
+`placed: false` in the package.
+
+Corrections are kept in the workspace and re-applied on every
 conversion. When a revised drawing is converted, each space is matched to its
 previous version by room number and by overlap: matches keep their ID, removed
 spaces are retired (their IDs are never reused), and new spaces get new codes.
 
+### Several floors in one drawing
+
+Architects often put every plan of a building (with elevations, sections and a
+site plan) in one drawing. `storeypath views` lists the plans it finds, with their
+titles and the floor each title names; pick one per floor with `--view`, by number
+or by part of its title (or give `--region x0,y0,x1,y1` yourself). The plans are
+drawn apart from each other, so `align` works out how far: floors share columns and
+outside walls, so each plan is moved to where its walls overlap the floor below.
+
+```sh
+storeypath views house.dwg
+storeypath add-floor house.spproj K7Q2XM-HOME-VILLA house.dwg --ordinal 0 --view "ground floor"
+storeypath add-floor house.spproj K7Q2XM-HOME-VILLA house.dwg --ordinal 1 --view "first floor"
+storeypath align house.spproj K7Q2XM-HOME-VILLA
+storeypath convert house.spproj
+```
+
+Units are read from the drawing's doors (a door swing is about 0.85 m), so a
+drawing whose unit setting is wrong is still read right; `--units` overrides.
+
+## Reading a drawing without being told its layers
+
+The default profile, `auto`, reads every plan's layers from what is drawn on them
+(see [analyse.py](src/storeypath/analyse.py)): walls are pairs of parallel lines a
+wall's thickness apart that join into one frame; glazing is thin pairs in line with
+the walls; doors are quarter-circle swings; columns are small repeated shapes; room
+outlines each hold one room's name; labels are texts that name rooms. Dashed lines
+and evenly spaced lines (stair treads, tiles, tables) are not walls. What each layer
+was read as is shown per floor in the web app and kept in the workspace. A YAML
+profile (below) can still be given instead.
+
+## The language model
+
+Room names the rules don't know — abbreviations, misspellings, other languages —
+are read by a small language model running locally on the CPU with llama.cpp's
+`llama-server`; so are sheet titles when finding plans. Its answers are limited to
+StoreyPath's types by a JSON schema and are stored in the workspace (`readings`),
+so a project converts the same way again, with or without the model.
+
+| Environment | |
+|---|---|
+| `STOREYPATH_MODEL` | the `.gguf` model (default: the newest in `STOREYPATH_MODELS`) |
+| `STOREYPATH_MODELS` | the model folder (default `/opt/storeypath/models`, as in the container) |
+| `STOREYPATH_LLAMA_SERVER` | the `llama-server` program (default: from `PATH`) |
+| `STOREYPATH_MODEL_URL` | use an already running `llama-server` instead |
+| `STOREYPATH_THREADS` | CPU threads for the model (default: all) |
+
+Without a model everything works on the rules alone; `convert --no-model` skips it.
+[eval/](eval) scores a model on room labels, sheet titles and layer names
+(`uv run python eval/run.py --model path/to/model.gguf`).
+
 `storeypath save-as-new` copies a workspace as a *different* project with its own
 project code; a plain file copy is the same project.
+
+## Finding spaces
+
+Spaces come from room outlines (closed polylines drawn around each room, such as
+NCS `A-AREA`) when a drawing has them. Otherwise they are found from the walls,
+the way a person reads a plan:
+
+- Everything on the wall, window and column layers forms the walls, whether drawn
+  as single lines, double lines or fills, straight, diagonal or curved.
+- Doors close the openings they stand in: door blocks, or doors drawn as loose
+  lines, by the closed position of their swing (both leaves of a double door).
+- Glazing and closed door leaves on door/window layers continue the wall across
+  their gap; a cross marking a lift car does not.
+- Where a wall stops and another faces its end within `walls.max_doorway`, the gap
+  is a doorway: closed, and recorded as an `opening` between the two rooms.
+- Wider gaps in the outside walls (up to `walls.max_opening`) are spanned by the
+  building's outline, so a room behind a missing door is kept, and listed for review.
+- An open-plan area holding the labels of several rooms is divided where it is
+  narrowest between them (cuts totalling at most `spaces.max_split`); each part is
+  listed for review, and the dividing lines become `opening`s.
+
+Set `spaces.method` in the profile to `outlines` or `walls` to use one way only.
 
 ## Layer-mapping profiles
 

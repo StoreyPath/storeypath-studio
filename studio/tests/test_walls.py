@@ -1,0 +1,175 @@
+from dataclasses import replace
+
+import pytest
+from shapely.geometry import LineString, Point, box
+
+from storeypath.cad import read_drawing
+from storeypath.convert import convert_floor
+from storeypath.extract import extract_floor
+from storeypath.geometry import iou
+from storeypath.profile import WallsConfig, load_profile
+from storeypath.samples import WALL, office_floor, write_floor_dxf
+from storeypath.walls import DoorShape, DoorSwing, open_issue, spaces_from_walls
+
+ORIGIN = (125.0, 48.0)
+
+
+def _extract(tmp_path, cells, profile="ncs", **kw):
+    write_floor_dxf(tmp_path / "plan.dxf", cells, **kw)
+    return extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile(profile) if isinstance(profile, str) else profile)
+
+
+def _room(c):
+    """Where a sample room's floor is: inside its walls, in drawing meters."""
+    ox, oy = ORIGIN
+    h = WALL / 2
+    return box(ox + c.x0 + h, oy + c.y0 + h, ox + c.x1 - h, oy + c.y1 - h)
+
+
+def _key(name, number):
+    return (name or "", number or "")
+
+
+@pytest.mark.parametrize("walls", ["polylines", "lines", "hatch"])
+def test_spaces_found_from_walls_alone(tmp_path, walls):
+    cells = office_floor(1)
+    ex = _extract(tmp_path, cells, area_outlines=False, walls=walls)
+    assert ex.method == "walls"
+    assert ex.warnings == []
+    assert len(ex.spaces) == len(cells)
+    for c in cells:
+        best = max(ex.spaces, key=lambda s: iou(s.polygon, _room(c)))
+        assert iou(best.polygon, _room(c)) > 0.99, c.label
+        assert (_key(best.name, best.number), best.type) == (_key(c.name, c.number), c.expected_type)
+    assert len(ex.doors) == sum(1 for c in cells if c.door)
+    assert 970 < ex.outline.area < 975  # 48 × 20 m to the outer faces of the outside walls
+
+
+def test_outlines_are_used_when_the_drawing_has_them(tmp_path):
+    ex = _extract(tmp_path, office_floor(1))
+    assert ex.method == "outlines"
+
+
+def test_walls_method_ignores_outlines(tmp_path):
+    profile = load_profile("ncs").model_copy(deep=True)
+    profile.spaces.method = "walls"
+    cells = office_floor(1)
+    ex = _extract(tmp_path, cells, profile)
+    assert ex.method == "walls" and len(ex.spaces) == len(cells)
+
+
+def test_outside_door_without_a_block_still_encloses_the_room(tmp_path):
+    cells = office_floor(1)
+    corridor = next(i for i, c in enumerate(cells) if c.expected_type == "corridor")
+    cells[corridor] = replace(cells[corridor], door=replace(cells[corridor].door, block=False))
+    ex = _extract(tmp_path, cells, area_outlines=False)
+    assert len(ex.spaces) == len(cells)
+    found = next(s for s in ex.spaces if s.type == "corridor")
+    assert iou(found.polygon, _room(cells[corridor])) > 0.98
+    assert found.issues == ["open to the outside through 1.8 m with no door or window drawn"]
+    assert all(not s.issues for s in ex.spaces if s is not found)
+
+
+def test_doorway_without_a_door_is_closed_and_joins_the_rooms(tmp_path):
+    cells = office_floor(1)
+    office = next(i for i, c in enumerate(cells) if c.number == "101")
+    cells[office] = replace(cells[office], door=replace(cells[office].door, block=False))
+    ex = _extract(tmp_path, cells, area_outlines=False, walls="lines")
+    assert len(ex.spaces) == len(cells) and ex.warnings == []
+    room = next(i for i, s in enumerate(ex.spaces) if s.number == "101")
+    assert iou(ex.spaces[room].polygon, _room(cells[office])) > 0.99
+    doorway = next(d for d in ex.doors if room in d.connects)
+    assert doorway.source == "doorway"
+    assert {ex.spaces[i].name for i in doorway.connects} == {"OFFICE", "CORRIDOR"}
+
+
+def _wide_opening(cells):
+    office = next(i for i, c in enumerate(cells) if c.number == "101")
+    cells[office] = replace(cells[office], door=replace(cells[office].door, block=False, width=2.0))
+    return office
+
+
+def test_wide_opening_is_split_between_the_labels(tmp_path):
+    cells = office_floor(1)
+    office = _wide_opening(cells)
+    ex = _extract(tmp_path, cells, area_outlines=False)
+    assert len(ex.spaces) == len(cells)
+    room = next(s for s in ex.spaces if s.number == "101")
+    assert room.name == "OFFICE" and iou(room.polygon, _room(cells[office])) > 0.95
+    assert any("no wall is drawn" in i for i in room.issues)
+    opening = next(d for d in ex.doors if d.source == "split")
+    assert {ex.spaces[i].name for i in opening.connects} == {"OFFICE", "CORRIDOR"}
+
+
+def test_labels_too_far_apart_to_split_stay_one_space(tmp_path):
+    profile = load_profile("ncs").model_copy(deep=True)
+    profile.spaces.max_split = 1.0
+    cells = office_floor(1)
+    _wide_opening(cells)
+    ex = _extract(tmp_path, cells, profile, area_outlines=False)
+    assert len(ex.spaces) == len(cells) - 1
+    merged = next(s for s in ex.spaces if s.number == "101")
+    assert merged.issues and "2 rooms" in merged.issues[0]
+    assert any("labels of several rooms" in w for w in ex.warnings)
+
+
+def test_door_swing_closes_a_door_in_a_diagonal_wall():
+    # A 45° wall with a 0.9 m door drawn as a leaf and a swing arc (no block).
+    import math
+    d = math.sqrt(0.5)
+    outline = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+    diag_a = [(0, 0), (4 * d, 4 * d)]
+    diag_b = [((4 + 0.9) * d, (4 + 0.9) * d), (10, 10)]
+    hinge = Point(4 * d, 4 * d)
+    closed = Point((4 + 0.9) * d, (4 + 0.9) * d)
+    leaf_open = Point(hinge.x - 0.9 * d, hinge.y + 0.9 * d)
+    door = DoorShape(box(*LineString([hinge, closed, leaf_open]).bounds), [DoorSwing(hinge, (leaf_open, closed))])
+    lines = [LineString(outline), LineString(diag_a), LineString(diag_b)]
+    found = spaces_from_walls(lines, [], [door], [], [], WallsConfig(max_doorway=0.5), 0.5)
+    assert sorted(round(p.area) for p in found.polygons) == [50, 50]
+
+
+def test_ids_survive_switching_from_outlines_to_walls(workspace):
+    ws, d, f_id, _, cells = workspace
+    first = convert_floor(ws, f_id, d)
+    write_floor_dxf(d / "level-2.dxf", cells, area_outlines=False, walls="lines")
+    again = convert_floor(ws, f_id, d)
+    assert again.method == "walls"
+    assert (len(again.added), len(again.retired)) == (0, 0)
+    assert sorted(again.kept) == sorted(first.added)
+
+
+# A 10 × 6 m building of single-line walls with a 3 m wide, 1.5 m deep entrance
+# recess in the south facade.
+OUTLINE = [(0, 0), (3.5, 0), (3.5, 1.5), (6.5, 1.5), (6.5, 0), (10, 0), (10, 6), (0, 6), (0, 0)]
+
+
+def _house(label_points=()):
+    return spaces_from_walls([LineString(OUTLINE)], [], [], [], [Point(p) for p in label_points], WallsConfig(), 0.5)
+
+
+def test_recess_in_the_facade_is_not_a_space():
+    found = _house()
+    assert found.pockets == 1
+    assert len(found.polygons) == 1
+    assert abs(found.polygons[0].area - (60 - 4.5)) < 0.1
+    assert abs(found.outline.area - (60 - 4.5)) < 0.5
+
+
+def test_recess_with_a_label_is_a_space():
+    found = _house(label_points=[(5, 0.7)])
+    assert found.pockets == 0 and len(found.polygons) == 2
+    porch = min(found.polygons, key=lambda p: p.area)
+    house = max(found.polygons, key=lambda p: p.area)
+    assert open_issue(porch, found.open_edges)[0].startswith("open to the outside through 3.0 m")
+    assert open_issue(house, found.open_edges) == []
+
+
+def test_wall_core_thicker_than_the_limit_is_not_filled():
+    # Two parallel lines 1 m apart are not one wall: the gap between them stays open.
+    lines = [LineString([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]), LineString([(0, 5), (10, 5)]),
+             LineString([(0, 6), (10, 6)])]
+    found = spaces_from_walls(lines, [], [], [], [], WallsConfig(), 0.5)
+    assert sorted(round(p.area) for p in found.polygons) == [10, 40, 50]
+    found = spaces_from_walls(lines, [], [], [], [], WallsConfig(max_thickness=1.2), 0.5)
+    assert sorted(round(p.area) for p in found.polygons) == [40, 50]

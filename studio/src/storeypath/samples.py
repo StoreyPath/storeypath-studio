@@ -1,10 +1,11 @@
 """Synthetic floor plans with a known correct answer, for tests and demos.
 
 The generated DXF looks like a typical architectural plan: millimetre units,
-NCS layer names, double-line walls with door gaps, door blocks, room labels in
-three styles (TEXT, MTEXT and a tag block with attributes), elevator car
-blocks, stair treads, furniture, a dimension and a title, placed away from
-the drawing origin.
+NCS layer names, double-line walls with door gaps, door blocks, windows in the
+outside walls, room labels in three styles (TEXT, MTEXT and a tag block with
+attributes), elevator car blocks, stair treads, furniture, a dimension and a
+title, placed away from the drawing origin. Room outlines (A-AREA) can be left
+out to get a plan whose spaces must be found from its walls.
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ from shapely.ops import unary_union
 
 WALL = 0.2  # m
 LAYERS = {
-    "A-WALL": 7, "A-AREA": 3, "A-AREA-IDEN": 2, "A-DOOR": 4, "A-EQPM-VERT": 6,
+    "A-WALL": 7, "A-GLAZ": 4, "A-AREA": 3, "A-AREA-IDEN": 2, "A-DOOR": 4, "A-EQPM-VERT": 6,
     "A-FLOR-STRS": 5, "I-FURN": 8, "A-ANNO-DIMS": 1, "A-ANNO-TTLB": 1,
 }
+WINDOW_TYPES = {"office", "meeting_room", "open_area", "lobby", "kitchen"}
 
 
 @dataclass
@@ -31,6 +33,7 @@ class Door:
     axis: str  # "h": wall runs along x, "v": along y
     swing: int  # +1 / -1: side the leaf opens to (y for "h", x for "v")
     width: float = 0.9
+    block: bool = True  # False: just an opening in the wall, no door drawn
 
 
 @dataclass
@@ -119,18 +122,56 @@ def _door_block(doc, width_mm: int) -> str:
     return name
 
 
-def write_floor_dxf(path: str | Path, cells: list[Cell], *, origin=(125.0, 48.0), title: str = "FLOOR PLAN") -> None:
+def _windows(cells: list[Cell]) -> list[tuple[float, float, float]]:
+    """(x centre, y of the wall, width) of a window in the outside wall of each
+    office-like room along the long sides of the floor."""
+    ymin, ymax = min(c.y0 for c in cells), max(c.y1 for c in cells)
+    out = []
+    for c in cells:
+        if c.expected_type in WINDOW_TYPES:
+            width = min(1.8, c.x1 - c.x0 - 1.2)
+            for y in (ymin, ymax):
+                if y in (c.y0, c.y1):
+                    out.append(((c.x0 + c.x1) / 2, y, width))
+    return out
+
+
+def write_floor_dxf(
+    path: str | Path,
+    cells: list[Cell],
+    *,
+    origin=(125.0, 48.0),
+    title: str = "FLOOR PLAN",
+    area_outlines: bool = True,
+    walls: str = "polylines",
+) -> None:
+    """Write a floor plan. ``area_outlines=False`` leaves out the room outlines.
+    ``walls`` is how walls are drawn: "polylines" (closed outlines), "lines"
+    (separate LINEs) or "hatch" (a solid fill only)."""
+    write_sheet_dxf(path, [(cells, origin, title)], area_outlines=area_outlines, walls=walls)
+
+
+def write_sheet_dxf(path: str | Path, plans: list[tuple[list[Cell], tuple[float, float], str]], **kw) -> None:
+    """Write several floor plans side by side in one drawing, as architects often
+    do: each is (cells, origin in meters, title)."""
     doc = ezdxf.new("R2018", setup=True)
     doc.units = ezdxf.units.MM
     _setup(doc)
+    for cells, origin, title in plans:
+        _draw_floor(doc, cells, origin=origin, title=title, **kw)
+    doc.saveas(path)
+
+
+def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bool = True,
+                walls: str = "polylines") -> None:
     msp = doc.modelspace()
     ox, oy = origin
 
     def mm(x: float, y: float) -> tuple[float, float]:
         return round((ox + x) * 1000, 3), round((oy + y) * 1000, 3)
 
-    # walls: cell edges thickened, minus the door openings
-    walls = unary_union([box(c.x0, c.y0, c.x1, c.y1).exterior for c in cells]).buffer(WALL / 2, join_style="mitre")
+    # walls: cell edges thickened, minus the door and window openings
+    wall_mass = unary_union([box(c.x0, c.y0, c.x1, c.y1).exterior for c in cells]).buffer(WALL / 2, join_style="mitre")
     gaps = []
     for c in cells:
         if c.door:
@@ -138,18 +179,36 @@ def write_floor_dxf(path: str | Path, cells: list[Cell], *, origin=(125.0, 48.0)
             h = d.width / 2
             seg = LineString([(d.x - h, d.y), (d.x + h, d.y)] if d.axis == "h" else [(d.x, d.y - h), (d.x, d.y + h)])
             gaps.append(seg.buffer(WALL, cap_style="flat"))
-    walls = walls.difference(unary_union(gaps))
-    for poly in getattr(walls, "geoms", [walls]):
-        for ring in [poly.exterior, *poly.interiors]:
-            msp.add_lwpolyline([mm(*p) for p in ring.coords[:-1]], close=True, dxfattribs={"layer": "A-WALL"})
+    windows = _windows(cells)
+    for x, y, width in windows:
+        gaps.append(LineString([(x - width / 2, y), (x + width / 2, y)]).buffer(WALL, cap_style="flat"))
+    wall_mass = wall_mass.difference(unary_union(gaps))
+    for poly in getattr(wall_mass, "geoms", [wall_mass]):
+        rings = [[mm(*p) for p in ring.coords] for ring in [poly.exterior, *poly.interiors]]
+        if walls == "hatch":
+            hatch = msp.add_hatch(color=7, dxfattribs={"layer": "A-WALL"})
+            for i, pts in enumerate(rings):
+                hatch.paths.add_polyline_path(pts[:-1], is_closed=True, flags=1 if i == 0 else 16)
+            continue
+        for pts in rings:
+            if walls == "lines":
+                for a, b in zip(pts, pts[1:]):
+                    msp.add_line(a, b, dxfattribs={"layer": "A-WALL"})
+            else:
+                msp.add_lwpolyline(pts[:-1], close=True, dxfattribs={"layer": "A-WALL"})
+    # windows: outer face, glass and inner face across each opening
+    for x, y, width in windows:
+        for dy in (-WALL / 2, 0, WALL / 2):
+            msp.add_line(mm(x - width / 2, y + dy), mm(x + width / 2, y + dy), dxfattribs={"layer": "A-GLAZ"})
 
     for c in cells:
         inset = WALL / 2
-        msp.add_lwpolyline(
-            [mm(c.x0 + inset, c.y0 + inset), mm(c.x1 - inset, c.y0 + inset),
-             mm(c.x1 - inset, c.y1 - inset), mm(c.x0 + inset, c.y1 - inset)],
-            close=True, dxfattribs={"layer": "A-AREA"},
-        )
+        if area_outlines:
+            msp.add_lwpolyline(
+                [mm(c.x0 + inset, c.y0 + inset), mm(c.x1 - inset, c.y0 + inset),
+                 mm(c.x1 - inset, c.y1 - inset), mm(c.x0 + inset, c.y1 - inset)],
+                close=True, dxfattribs={"layer": "A-AREA"},
+            )
         cx, cy = c.center
         if c.label:
             if c.label_style == "mtext":
@@ -172,7 +231,7 @@ def write_floor_dxf(path: str | Path, cells: list[Cell], *, origin=(125.0, 48.0)
             while x < c.x1 - 0.5:
                 msp.add_line(mm(x, c.y0 + 1.5), mm(x, c.y1 - 0.5), dxfattribs={"layer": "A-FLOR-STRS"})
                 x += 0.3
-        if c.door:
+        if c.door and c.door.block:
             d = c.door
             name = _door_block(doc, round(d.width * 1000))
             h = d.width / 2
@@ -185,12 +244,12 @@ def write_floor_dxf(path: str | Path, cells: list[Cell], *, origin=(125.0, 48.0)
     xmax = max(c.x1 for c in cells)
     msp.add_linear_dim(base=mm(0, -2), p1=mm(0, 0), p2=mm(xmax, 0), dxfattribs={"layer": "A-ANNO-DIMS"}).render()
     msp.add_text(title, height=600, dxfattribs={"layer": "A-ANNO-TTLB"}).set_placement(mm(0, -4.5))
-    doc.saveas(path)
 
 
 def build_demo(directory: str | Path) -> tuple[Path, Path]:
     """Create sample drawings, a workspace and an exported package. Returns
-    (workspace path, package path)."""
+    (workspace path, package path). The annex drawings have no room outlines, so
+    its spaces are found from the walls."""
     from .convert import convert_floor
     from .export import export_package
     from .workspace import Placement, SourceDrawing, Workspace
@@ -208,7 +267,8 @@ def build_demo(directory: str | Path) -> tuple[Path, Path]:
         ws.building(b_id).placement = placement
         for ordinal in range(n_floors):
             rel = Path("drawings") / f"{code.lower()}-level-{ordinal}.dxf"
-            write_floor_dxf(directory / rel, office_floor(ordinal), title=f"{name.upper()} LEVEL {ordinal}")
+            write_floor_dxf(directory / rel, office_floor(ordinal), title=f"{name.upper()} LEVEL {ordinal}",
+                            area_outlines=code == "HQ", walls="polylines" if code == "HQ" else "lines")
             ws.add_floor(b_id, ordinal, name="Ground floor" if ordinal == 0 else f"Floor {ordinal}",
                          source=SourceDrawing(path=str(rel)))
     for _, _, _, floor_id in ws.iter_floors():

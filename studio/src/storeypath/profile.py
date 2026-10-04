@@ -8,6 +8,7 @@ import re
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -22,8 +23,19 @@ def _compile_any(patterns: list[str]) -> re.Pattern[str]:
 
 
 class SpacesConfig(BaseModel):
-    layers: list[str]
+    layers: list[str] = Field(default_factory=list)
+    # auto: room outlines when the drawing has them, otherwise walls
+    method: Literal["auto", "outlines", "walls"] = "auto"
     min_area: float = 0.5
+    max_split: float = 6.0  # longest total cut that separates open-plan rooms
+
+
+class WallsConfig(BaseModel):
+    layers: list[str] = Field(default_factory=list)
+    max_thickness: float = 0.6
+    max_doorway: float = 1.2
+    max_opening: float = 4.0
+    min_width: float = 0.5
 
 
 class LabelsConfig(BaseModel):
@@ -67,6 +79,7 @@ class Profile(BaseModel):
     name: str
     description: str = ""
     spaces: SpacesConfig
+    walls: WallsConfig = Field(default_factory=WallsConfig)
     labels: LabelsConfig
     doors: DoorsConfig = Field(default_factory=DoorsConfig)
     blocks: BlocksConfig = Field(default_factory=BlocksConfig)
@@ -75,6 +88,10 @@ class Profile(BaseModel):
     @cached_property
     def space_layers(self) -> re.Pattern[str]:
         return _compile_any(self.spaces.layers)
+
+    @cached_property
+    def wall_layers(self) -> re.Pattern[str]:
+        return _compile_any(self.walls.layers)
 
     @cached_property
     def label_layers(self) -> re.Pattern[str]:
@@ -114,7 +131,19 @@ def builtin_profiles() -> list[str]:
     )
 
 
+AUTO = "auto"  # read each plan's layers from what is drawn on them (analyse.py)
+
+
+def resolve_profile(profile: str, base: str | Path) -> str:
+    """A profile as stored in a workspace: YAML paths are relative to the
+    workspace file; anything else is a built-in profile's name (or "auto")."""
+    path = Path(base) / profile
+    return str(path) if path.suffix in (".yaml", ".yml") and path.exists() else profile
+
+
 def load_profile(name_or_path: str) -> Profile:
+    if name_or_path == AUTO:
+        name_or_path = "ncs"  # the type rules; the layers come from analysing the drawing
     path = Path(name_or_path)
     if path.suffix in (".yaml", ".yml") and path.exists():
         text = path.read_text(encoding="utf-8")

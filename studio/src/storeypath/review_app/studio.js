@@ -1,0 +1,370 @@
+// StoreyPath Studio: projects, drawings, plans, floors, placement and export.
+// Everything is served and computed locally (see server.py); nothing is fetched
+// from the internet.
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const $ = (id) => document.getElementById(id);
+const KIND = {
+  floor_plan: "Floor plan", roof_plan: "Roof plan", site_plan: "Site plan", elevation: "Elevation",
+  section: "Section", detail: "Detail", schedule: "Schedule", other: "Other",
+};
+const FLOOR_NAMES = { "-2": "Second basement", "-1": "Basement", 0: "Ground floor", 1: "First floor",
+  2: "Second floor", 3: "Third floor", 4: "Fourth floor", 5: "Fifth floor" };
+
+// ---- helpers -----------------------------------------------------------------
+
+async function api(path, body, { method, raw } = {}) {
+  const init = {};
+  if (raw !== undefined) {
+    init.method = "PUT";
+    init.headers = { "X-StoreyPath": "1", "Content-Type": "application/octet-stream" };
+    init.body = raw;
+  } else if (body !== undefined) {
+    init.method = method || "POST";
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(`/api/${path}`, init);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  return data;
+}
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "value") e.value = v;
+    else if (k === "checked") e.checked = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  e.append(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+  return e;
+}
+
+let toastTimer;
+function toast(message, error = false) {
+  const t = $("toast");
+  t.textContent = message;
+  t.classList.toggle("error", error);
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), error ? 9000 : 3000);
+}
+
+/** Run a server job, showing its progress; resolves with its result. */
+async function runJob(started) {
+  const panel = $("job");
+  panel.hidden = false;
+  panel.className = "job";
+  let job = await started;
+  $("job-title").textContent = job.title;
+  while (job.state === "waiting" || job.state === "running") {
+    $("job-log").replaceChildren(...job.log.slice(-12).map((l) => el("li", {}, l)));
+    await new Promise((r) => setTimeout(r, 600));
+    job = await api(`jobs/${job.id}`);
+  }
+  $("job-log").replaceChildren(...job.log.slice(-12).map((l) => el("li", {}, l)));
+  panel.classList.add(job.state);
+  setTimeout(() => (panel.hidden = true), job.state === "failed" ? 15000 : 4000);
+  if (job.state === "failed") throw new Error(job.error || "failed");
+  return job.result;
+}
+
+// ---- status -----------------------------------------------------------------
+
+async function showStatus() {
+  try {
+    const s = await api("status");
+    $("status").replaceChildren(
+      el("span", { class: `chip ${s.model ? (s.model_ready ? "ok" : "") : "off"}`, title: "Reads room names, sheet titles and layer names" },
+        s.model ? `Model: ${s.model}${s.model_ready ? "" : " (loading…)"}` : "No language model"),
+      el("span", { class: `chip ${s.dwg ? "ok" : "off"}` }, s.dwg ? "Reads DWG and DXF" : "DXF only (no DWG reader)"),
+      el("span", { class: "chip ok", title: "Nothing is sent anywhere" }, "Runs offline"),
+      el("span", { class: "chip" }, `v${s.version}`),
+    );
+  } catch {
+    $("status").replaceChildren(el("span", { class: "chip off" }, "Server not reachable"));
+    return;
+  }
+}
+setInterval(showStatus, 10000);
+
+// ---- pages ------------------------------------------------------------------
+
+async function route() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  try {
+    if (parts[0] === "p" && parts[1]) await projectPage(decodeURIComponent(parts[1]));
+    else await projectsPage();
+  } catch (e) {
+    $("page").replaceChildren(el("div", { class: "card" }, el("p", {}, e.message), el("a", { href: "#/" }, "All projects")));
+  }
+  window.scrollTo(0, 0);
+}
+
+async function projectsPage() {
+  const projects = await api("projects");
+  const name = el("input", { type: "text", placeholder: "Project name, e.g. Head office", required: true });
+  const form = el("form", { class: "row", onsubmit: async (e) => {
+    e.preventDefault();
+    try {
+      const { code } = await api("projects", { name: name.value });
+      location.hash = `#/p/${code}`;
+    } catch (err) {
+      toast(err.message, true);
+    }
+  } }, name, el("button", { class: "primary", type: "submit" }, "New project"));
+
+  $("page").replaceChildren(
+    el("section", {},
+      el("h1", {}, "Projects"),
+      el("p", { class: "lead" }, "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms.")),
+    el("section", { class: "card" }, form),
+    projects.length
+      ? el("section", { class: "projects" }, projects.map((p) =>
+          el("a", { class: "card project-card", href: `#/p/${p.code}` },
+            el("h3", {}, p.name),
+            el("code", { class: "muted small" }, p.code),
+            el("div", { class: "stat" }, el("b", {}, String(p.floors)), " floors · ", el("b", {}, String(p.spaces)), " spaces",
+              p.review ? el("span", { class: "warn" }, ` · ${p.review} to review`) : null))))
+      : el("p", { class: "empty" }, "No projects yet."),
+  );
+}
+
+async function projectPage(code) {
+  const p = await api(`projects/${code}`);
+  document.title = `${p.project.name} · StoreyPath Studio`;
+  const plansArea = el("div", { id: "plans-area" });
+
+  const converted = p.locations.some((l) => l.buildings.some((b) => b.floors.some((f) => f.converted)));
+  $("page").replaceChildren(
+    el("section", {},
+      el("a", { class: "back", href: "#/" }, "← Projects"),
+      el("div", { class: "row" },
+        el("div", { class: "grow" },
+          el("h1", {}, p.project.name),
+          el("p", { class: "lead" }, el("code", {}, p.project.id), ` · ${p.file}`)),
+        converted ? el("a", { class: "button primary", href: worldUrl(code), target: "_blank",
+          title: "The project as it is now, in 3D: orbit it as a dollhouse or walk through it" }, "Walk in 3D") : null)),
+    drawingsCard(code, p, plansArea),
+    plansArea,
+    buildingsCard(code, p),
+    exportCard(code, p),
+  );
+}
+
+// ---- drawings and plans ----------------------------------------------------------
+
+function drawingsCard(code, p, plansArea) {
+  const input = el("input", { type: "file", accept: ".dwg,.dxf", hidden: true, multiple: true });
+  const drop = el("label", { class: "drop" }, input,
+    el("strong", {}, "Add drawings"), el("br"), "Drop DWG or DXF files here, or click to choose them.");
+  const upload = async (files) => {
+    for (const file of files) {
+      try {
+        toast(`Uploading ${file.name}…`);
+        await api(`projects/${code}/drawings/${encodeURIComponent(file.name)}`, undefined, { raw: file });
+      } catch (e) {
+        toast(`${file.name}: ${e.message}`, true);
+        return;
+      }
+    }
+    await projectPage(code);
+    if (files.length === 1) findPlans(code, files[0].name, $("plans-area"));
+  };
+  input.addEventListener("change", () => upload([...input.files]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); upload([...e.dataTransfer.files]); });
+
+  return el("section", { class: "card" },
+    el("h2", {}, "Drawings"),
+    drop,
+    p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
+      el("li", {}, el("code", { class: "grow" }, d),
+        el("button", { type: "button", onclick: () => findPlans(code, d, plansArea) }, "Find plans")))) : null,
+  );
+}
+
+async function findPlans(code, drawing, area) {
+  let result;
+  try {
+    result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, {}));
+  } catch (e) {
+    toast(e.message, true);
+    return;
+  }
+  const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
+  const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
+  const cards = result.plans.map((plan) => planCard(plan, top));
+  const units = el("select", {},
+    ["", "mm", "cm", "m", "in", "ft"].map((u) => el("option", { value: u, selected: u === "" }, u ? u : `as read (${result.units})`)));
+  const add = el("button", { class: "primary", type: "button" }, "Add the chosen plans as floors");
+  const updateCount = () => {
+    const n = cards.filter((c) => c.chosen()).length;
+    add.textContent = n ? `Add ${n} floor${n === 1 ? "" : "s"}` : "Choose plans to add";
+    add.disabled = !n;
+  };
+  cards.forEach((c) => c.onChange(updateCount));
+  updateCount();
+  add.addEventListener("click", async () => {
+    const plans = cards.filter((c) => c.chosen()).map((c) => c.value());
+    try {
+      await runJob(api(`projects/${code}/floors`, { drawing, units: units.value || null, plans }));
+      toast("Floors added and converted");
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+  area.replaceChildren(el("section", { class: "card" },
+    el("h2", {}, `Plans in ${drawing}`),
+    el("p", { class: "muted small" }, `Read in ${result.units}`,
+      result.units_said && result.units_said !== result.units ? ` — the drawing says ${result.units_said}, but its doors are drawn in ${result.units}` : "",
+      ". Choose the plans that are floors; Studio lines them up and finds the rooms."),
+    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", units), el("span", { class: "grow" }), add),
+    el("div", { class: "plans" }, cards.map((c) => c.node)),
+  ));
+  area.scrollIntoView({ behavior: "smooth" });
+}
+
+function planCard(plan, top) {
+  const isFloor = plan.kind === "floor_plan" || plan.kind === "roof_plan";
+  const ordinal = plan.kind === "roof_plan" ? top + 1 : plan.floor;
+  const check = el("input", { type: "checkbox", checked: isFloor && plan.kind !== "site_plan" && ordinal !== null });
+  const building = el("input", { type: "text", value: plan.building || "Main building" });
+  const floor = el("input", { type: "number", step: "1", value: ordinal ?? 0 });
+  const name = el("input", { type: "text", value: plan.kind === "roof_plan" ? "Roof" : FLOOR_NAMES[ordinal ?? 0] || `Floor ${ordinal}` });
+  floor.addEventListener("input", () => { name.value = FLOOR_NAMES[floor.value] || `Floor ${floor.value}`; });
+  const node = el("article", { class: "plan" },
+    thumbnail(plan),
+    el("div", { class: "body" },
+      el("div", { class: "row" }, el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind),
+        el("span", { class: "muted small" }, `${plan.size[0]} × ${plan.size[1]} m`)),
+      el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
+      el("label", { class: "check" }, check, "Add as a floor"),
+      el("div", { class: "fields" },
+        el("label", {}, "Building", building), el("label", {}, "Floor", floor),
+        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name))));
+  const sync = () => node.classList.toggle("chosen", check.checked);
+  sync();
+  return {
+    node,
+    chosen: () => check.checked,
+    onChange: (fn) => check.addEventListener("change", () => { sync(); fn(); }),
+    value: () => ({ index: plan.index, title: plan.title, region: plan.region, building: building.value,
+      ordinal: Number(floor.value), name: name.value }),
+  };
+}
+
+function thumbnail(plan) {
+  const [w, h] = plan.size;
+  const pad = 1.5;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w + 2 * pad} ${h + 2 * pad}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  const d = plan.preview.map((pts) => {
+    let s = `M${pts[0]} ${-pts[1]}`;
+    for (let i = 2; i < pts.length; i += 2) s += `L${pts[i]} ${-pts[i + 1]}`;
+    return s;
+  }).join("");
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("transform", `translate(${pad - 1} ${h + pad + 1})`);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  g.append(path);
+  svg.append(g);
+  return svg;
+}
+
+// ---- buildings, placement, export -------------------------------------------------
+
+/** The 3D world showing the project as it is now: no export needed. */
+function worldUrl(code, { building, floor } = {}) {
+  const q = new URLSearchParams({ pkg: `/api/projects/${encodeURIComponent(code)}/preview.storeypath` });
+  if (building) q.set("building", building);
+  if (floor) q.set("floor", floor);
+  return `/viewer/examples/world/index.html?${q}`;
+}
+
+function buildingsCard(code, p) {
+  const buildings = p.locations.flatMap((l) => l.buildings);
+  if (!buildings.length) {
+    return el("section", { class: "card" }, el("h2", {}, "Buildings"),
+      el("p", { class: "empty" }, "No floors yet: add a drawing and choose its plans."));
+  }
+  return el("section", { class: "buildings" }, buildings.map((b) => el("div", { class: "card" },
+    el("div", { class: "row" }, el("h2", { class: "grow" }, b.name), el("code", { class: "muted small" }, b.id),
+      b.floors.some((f) => f.converted)
+        ? el("a", { class: "button", href: worldUrl(code, { building: b.id }), target: "_blank" }, "3D") : null),
+    el("table", { class: "floors" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Floor"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
+      el("tbody", {}, b.floors.map((f) => el("tr", {},
+        el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, `${f.ordinal} · ${f.id.split("-").at(-1)}`)),
+        el("td", {}, f.drawing || "–", el("div", { class: "muted small" }, f.view || "")),
+        el("td", {}, f.layers.length
+          ? el("details", {}, el("summary", {}, `${f.layers.length} layers recognised`), el("ul", { class: "layers" }, f.layers.map((l) => el("li", {}, l))))
+          : el("span", { class: "muted small" }, f.converted ? "with a layer profile" : "not converted")),
+        el("td", { class: "actions" }, f.converted ? [
+          el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` }, "Review"),
+          el("a", { href: worldUrl(code, { floor: f.id }), target: "_blank", title: "This floor in 3D" }, "3D"),
+        ] : null))))),
+    placementForm(code, b),
+  )));
+}
+
+function placementForm(code, b) {
+  const pl = b.placement || {};
+  const lat = el("input", { type: "number", step: "any", value: pl.lat ?? "", placeholder: "e.g. 24.7136" });
+  const lon = el("input", { type: "number", step: "any", value: pl.lon ?? "", placeholder: "e.g. 46.6753" });
+  const bearing = el("input", { type: "number", step: "any", value: pl.bearing ?? 0 });
+  const save = el("button", { type: "submit" }, b.placement ? "Update location" : "Save location");
+  return el("form", { onsubmit: async (e) => {
+    e.preventDefault();
+    try {
+      const [x, y] = b.placement ? [b.placement.x, b.placement.y] : (b.centre || [0, 0]);
+      await api(`projects/${code}/buildings/${b.id}/placement`, { lat: lat.value, lon: lon.value, bearing: bearing.value, x, y });
+      toast(`${b.name} placed`);
+      projectPage(code);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  } },
+    el("p", { class: "muted small", style: "margin: 14px 0 0" }, b.placement
+      ? "On the map: the building's middle sits at this latitude and longitude."
+      : "Location on the map (optional). Without it the building exports and shows in 3D with its true shape and size; give the latitude and longitude of its middle, and the compass bearing of the drawing's up direction, when you want it on a map."),
+    el("div", { class: "placement" },
+      el("label", {}, "Latitude", lat), el("label", {}, "Longitude", lon), el("label", {}, "Bearing of up (°)", bearing), save));
+}
+
+function exportCard(code, p) {
+  const button = el("button", { class: "primary", type: "button", onclick: async () => {
+    try {
+      const r = await runJob(api(`projects/${code}/export`, {}));
+      toast(`Exported ${r.file}`);
+      projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  } }, "Export package");
+  return el("section", { class: "card" },
+    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), button),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before."),
+    p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
+      const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
+      return el("li", {}, el("code", { class: "grow" }, f),
+        el("a", { href: url, download: f }, "Download"),
+        el("a", { href: `/viewer/examples/world/index.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
+          title: "Walk through the building, or orbit it as a dollhouse" }, "Walk in 3D"),
+        el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
+          title: "Floors as a stacked map, with search" }, "Map view"));
+    })) : el("p", { class: "empty" }, "No packages yet."),
+  );
+}
+
+window.addEventListener("hashchange", route);
+showStatus();
+route();

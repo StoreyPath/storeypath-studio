@@ -118,6 +118,57 @@
           "description": "true when it leads outside the floor",
           "title": "Exterior",
           "type": "boolean"
+        },
+        "width_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "clear width, jamb to jamb",
+          "title": "Width M"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the opening across the wall, jamb to jamb",
+          "title": "Span"
+        },
+        "hidden": {
+          "default": false,
+          "description": "real, but not shown unless asked for",
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "ignored": {
+          "default": false,
+          "description": "judged not worth anything by a person; leave it out",
+          "title": "Ignored",
+          "type": "boolean"
         }
       },
       "required": [
@@ -132,7 +183,9 @@
     },
     "OpeningType": {
       "enum": [
-        "door"
+        "door",
+        "opening",
+        "window"
       ],
       "title": "OpeningType",
       "type": "string"

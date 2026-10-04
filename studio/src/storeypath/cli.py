@@ -18,7 +18,7 @@ from .cad import DrawingError
 from .convert import convert_floor
 from .export import ExportError, export_package
 from .package import json_schemas
-from .profile import builtin_profiles, load_profile
+from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
 from .types import SpaceType
 from .validate import validate_package
 from .workspace import Override, Placement, SourceDrawing, Workspace
@@ -131,15 +131,28 @@ def add_floor(
     name: Annotated[Optional[str], typer.Option()] = None,
     elevation: Annotated[Optional[float], typer.Option(help="meters (default ordinal × height)")] = None,
     height: Annotated[float, typer.Option(help="floor-to-floor height, meters")] = 3.5,
-    profile: Annotated[str, typer.Option(help="layer-mapping profile or YAML path")] = "ncs",
+    profile: Annotated[str, typer.Option(help="auto (read from the drawing), a built-in profile or a YAML path")] = "auto",
     units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
+    view: Annotated[Optional[str], typer.Option(
+        help="the plan to use when the drawing holds several: its number or part of its title (see `storeypath views`)")] = None,
+    region: Annotated[Optional[str], typer.Option(
+        help="the part of the drawing with this floor's plan: x0,y0,x1,y1 in drawing units")] = None,
 ):
     """Add a floor and its source drawing to a building."""
     ws = _load(workspace)
     if not drawing.exists():
         _fail(f"{drawing} does not exist")
-    load_profile(profile)  # fail early on a bad profile
-    source = SourceDrawing(path=_relative_to(drawing, workspace.parent), profile=profile, units=units)
+    prof = load_profile(profile)  # fail early on a bad profile
+    profile_ref = _relative_to(Path(profile), workspace.parent) if Path(profile).suffix in (".yaml", ".yml") else profile
+    source = SourceDrawing(path=_relative_to(drawing, workspace.parent), profile=profile_ref, units=units)
+    if region:
+        try:
+            x0, y0, x1, y1 = (float(v) for v in region.split(","))
+        except ValueError:
+            _fail("--region needs four numbers: x0,y0,x1,y1")
+        source.region = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    elif view:
+        source.region, source.view = _pick_view(drawing, prof, units, view, profile)
     try:
         f_id = ws.add_floor(building_id, ordinal, code=code, name=name, elevation=elevation,
                             height=height, source=source)
@@ -149,13 +162,131 @@ def add_floor(
     typer.echo(f_id)
 
 
+def _rule_reader(prof):
+    """Room-name test for finding plans: the rules' words, levels and tags."""
+    from .reading import NOT_A_ROOM
+    from .types import SpaceType
+
+    def is_room_name(text: str):
+        if NOT_A_ROOM.match(text):
+            return False
+        return True if prof.classify(text, [], "")[0] != SpaceType.UNSPECIFIED else None
+    return is_room_name
+
+
+def _pick_view(drawing: Path, prof, units, query: str, prof_name: str = "auto"):
+    from .cad import meters_per_unit, read_drawing
+    from .sheets import find_views
+
+    try:
+        doc = read_drawing(drawing)
+    except DrawingError as e:
+        _fail(str(e))
+    found = [v for v in find_views(doc, prof, meters_per_unit(doc, units), auto=prof_name == AUTO,
+                                    is_room_name=_rule_reader(prof)) if v.matches(query)]
+    if len(found) != 1:
+        names = "; ".join(f"#{v.index} {v.title or '(untitled)'}" for v in found) or "none"
+        _fail(f"--view {query!r} must match exactly one plan (matches: {names}); see `storeypath views {drawing}`")
+    return found[0].region, found[0].title
+
+
+@app.command()
+def views(
+    drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")],
+    profile: Annotated[str, typer.Option(help="auto, a built-in layer-mapping profile or a YAML path")] = "auto",
+    units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
+    all_views: Annotated[bool, typer.Option("--all", help="also list elevations, sections and details")] = False,
+):
+    """List the plans in a drawing that holds several side by side."""
+    from .cad import meters_per_unit, read_drawing
+    from .sheets import find_views
+
+    try:
+        doc = read_drawing(drawing)
+    except DrawingError as e:
+        _fail(str(e))
+    prof = load_profile(profile)
+    found = [v for v in find_views(doc, prof, meters_per_unit(doc, units), auto=profile == AUTO,
+                                   is_room_name=_rule_reader(prof)) if all_views or v.is_plan]
+    if not found:
+        _fail("no plans found: check the profile's wall layers and the units")
+    typer.echo(f"{'#':>3}  {'title':<40} {'size (m)':>13}  floor  region (drawing units)")
+    for v in found:
+        floor = "" if v.ordinal is None else str(v.ordinal)
+        region = ",".join(f"{round(r, 2):g}" for r in v.region)
+        typer.echo(f"{v.index:>3}  {(v.title or '(untitled)')[:40]:<40} {v.size[0]:>6} x {v.size[1]:<6} {floor:>5}  {region}")
+    typer.echo("\nuse one with: storeypath add-floor <workspace> <building> <drawing> --view <# or title>")
+
+
+@app.command()
+def align(
+    workspace: WorkspaceArg,
+    building_id: str,
+    reference: Annotated[Optional[str], typer.Option(help="floor ID the others are lined up with (default: lowest)")] = None,
+):
+    """Line up a building's floors drawn side by side in one drawing (or shifted
+    between drawings): finds where each plan's walls overlap the reference floor's."""
+    from .cad import meters_per_unit, read_drawing
+    from .sheets import align as align_walls, floor_walls
+
+    ws = _load(workspace)
+    try:
+        b = ws.building(building_id)
+    except (KeyError, ValueError) as e:
+        _fail(str(e))
+    floors = sorted((f for f in b.floors if f.source), key=lambda f: f.ordinal)
+    if len(floors) < 2:
+        _fail("align needs at least two floors with drawings")
+    ref = next((f for f in floors if f"{building_id}-{f.code}" == reference), None) if reference else floors[0]
+    if ref is None:
+        _fail(f"no floor {reference} in {building_id}")
+    docs: dict[str, object] = {}
+
+    def walls(f):
+        src = f.source
+        if src.path not in docs:
+            docs[src.path] = read_drawing(workspace.parent / src.path)
+        doc = docs[src.path]
+        scale = meters_per_unit(doc, src.units)
+        profile = load_profile(resolve_profile(src.profile, workspace.parent))
+        if src.profile == AUTO:  # each plan's wall layers, read from what is drawn
+            from .analyse import analyse
+
+            profile = analyse(doc, scale, src.region, None, profile).profile
+        return floor_walls(doc, profile, scale, src.region), scale
+
+    try:
+        ref_walls, _ = walls(ref)
+        ref_offset = ref.source.offset or (0.0, 0.0)
+        for f in floors:
+            if f is ref:
+                continue
+            other, scale = walls(f)
+            (tx, ty), overlap = align_walls(ref_walls, other)
+            f.source.offset = (round(ref_offset[0] + tx / scale, 6), round(ref_offset[1] + ty / scale, 6))
+            note = "" if overlap >= 0.3 else "  (little overlap: check this floor in review)"
+            typer.echo(f"{building_id}-{f.code}: shifted {tx:.3f}, {ty:.3f} m onto {building_id}-{ref.code}; "
+                       f"{overlap:.0%} of its walls line up{note}")
+    except DrawingError as e:
+        _fail(str(e))
+    ws.save(workspace)
+    typer.echo(f"now run: storeypath convert {workspace}")
+
+
 @app.command()
 def convert(
     workspace: WorkspaceArg,
     floor: Annotated[Optional[str], typer.Option(help="only this floor ID")] = None,
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read unknown room names with the local language model")] = True,
 ):
     """Read the drawings and update the project's objects, keeping existing IDs."""
+    from .llm import LocalModel
+
     ws = _load(workspace)
+    model = LocalModel() if use_model else None
+    if model is not None and model.available():
+        typer.echo(f"reading texts with {model.name}")
     floors = [fid for *_, fid in ws.iter_floors() if (floor is None or fid == floor)]
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
@@ -164,7 +295,7 @@ def convert(
         if ws.floor(fid).source is None:
             continue
         try:
-            report = convert_floor(ws, fid, workspace.parent)
+            report = convert_floor(ws, fid, workspace.parent, model)
         except DrawingError as e:
             typer.secho(f"{fid}: {e}", fg="red", err=True)
             failed = True
@@ -173,6 +304,8 @@ def convert(
         for w in report.warnings:
             typer.secho(f"  warning: {w}", fg="yellow")
     ws.save(workspace)
+    if model is not None:
+        model.close()
     if failed:
         raise typer.Exit(1)
 
@@ -181,7 +314,7 @@ def convert(
 def list_objects(
     workspace: WorkspaceArg,
     floor: Annotated[Optional[str], typer.Option(help="only this floor ID")] = None,
-    review: Annotated[bool, typer.Option(help="only spaces without a type, or without a name and number")] = False,
+    review: Annotated[bool, typer.Option(help="only spaces that need a look: no type, no name or number, merged rooms")] = False,
     retired: Annotated[bool, typer.Option(help="include retired IDs")] = False,
 ):
     """List objects with their IDs, types and labels."""
@@ -191,13 +324,13 @@ def list_objects(
             continue
         for r in sorted(ws.floor_objects(fid, include_retired=retired), key=lambda r: r.id):
             eff = ws.effective(r)
-            if review and not (
-                eff["type"] == "unspecified" or (r.kind == "space" and not eff["name"] and not eff["number"])
-            ):
+            reasons = ws.review_reasons(r)
+            if review and not reasons:
                 continue
             label = " ".join(x for x in (eff["name"], eff["number"]) if x) or "-"
             flag = " (corrected)" if eff["corrected"] else ""
             flag += " (retired)" if r.status == "retired" else ""
+            flag += f"  [{'; '.join(reasons)}]" if review else ""
             typer.echo(f"{r.id}  {eff['type']:<13} {label}{flag}")
 
 
@@ -210,7 +343,9 @@ def fix(
     number: Annotated[Optional[str], typer.Option()] = None,
     clear: Annotated[bool, typer.Option(help="remove all corrections for this object")] = False,
 ):
-    """Correct an object's type, name or number. Corrections survive re-conversion."""
+    """Correct an object's type, name or number. Corrections survive re-conversion.
+    With no options, accepts the object as it is (takes it off the review list).
+    An empty --name "" or --number "" removes a wrongly detected one."""
     ws = _load(workspace)
     record = ws.objects.get(object_id)
     if record is None or record.status != "active":
@@ -230,6 +365,55 @@ def fix(
 
 
 @app.command()
+def serve(
+    data: Annotated[Path, typer.Option(help="folder holding the projects")] = Path("."),
+    host: Annotated[str, typer.Option(help="0.0.0.0 to serve other machines (as in the container)")] = "127.0.0.1",
+    port: Annotated[int, typer.Option()] = 8080,
+    open_browser: Annotated[bool, typer.Option("--open/--no-open")] = False,
+):
+    """Run StoreyPath Studio in the browser: projects, drawings, review, export."""
+    _serve(data, host, port, "/" , open_browser)
+
+
+@app.command()
+def review(
+    workspace: WorkspaceArg,
+    port: Annotated[int, typer.Option()] = 8766,
+    open_browser: Annotated[bool, typer.Option("--open/--no-open")] = True,
+):
+    """Open the review editor: each floor over its drawing, click a space to correct it."""
+    ws = _load(workspace)
+    _serve(workspace.parent, "127.0.0.1", port, f"/review.html?p={ws.id}", open_browser,
+           f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them")
+
+
+def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "") -> None:
+    from .server import Studio, make_server
+
+    studio = Studio(data)
+    try:
+        server = make_server(studio, host, port)
+    except OSError as e:
+        _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_port}{page}"
+    status = studio.status()
+    typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
+    typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
+               f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}")
+    if note:
+        typer.echo(note)
+    if open_browser:
+        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        studio.model.close()
+
+
+@app.command()
 def export(
     workspace: WorkspaceArg,
     output: Annotated[Path, typer.Option("-o", "--output", help="package file (*.storeypath)")],
@@ -244,6 +428,9 @@ def export(
     errors = validate_package(output)
     counts = ", ".join(f"{n} {k}" for k, n in manifest.counts.items())
     typer.echo(f"export #{manifest.export.sequence} → {output} ({counts})")
+    loose = [b for b, p in manifest.placements.items() if not p.placed]
+    if loose:
+        typer.echo(f"not on the map yet (exported around 0°N 0°E; `storeypath place` when known): {', '.join(loose)}")
     if errors:
         _fail("the package failed validation:\n  " + "\n  ".join(errors))
 
@@ -317,4 +504,7 @@ def demo(directory: Path):
 
 
 def main() -> None:
+    import logging
+
+    logging.getLogger("ezdxf").setLevel(logging.ERROR)  # font and repair chatter from real drawings
     app()

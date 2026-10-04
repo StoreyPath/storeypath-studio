@@ -211,6 +211,18 @@
           ],
           "title": "Display Point",
           "type": "array"
+        },
+        "hidden": {
+          "default": false,
+          "description": "real, but not shown unless asked for (a shaft, a plant room)",
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "ignored": {
+          "default": false,
+          "description": "judged not worth anything by a person (a sliver, a pocket); leave it out",
+          "title": "Ignored",
+          "type": "boolean"
         }
       },
       "required": [
@@ -240,7 +252,18 @@
         "utility",
         "shaft",
         "open_area",
-        "unspecified"
+        "unspecified",
+        "bedroom",
+        "living_room",
+        "dining_room",
+        "bathroom",
+        "dressing_room",
+        "laundry",
+        "prayer_room",
+        "parking",
+        "balcony",
+        "terrace",
+        "open_to_below"
       ],
       "title": "SpaceType",
       "type": "string"

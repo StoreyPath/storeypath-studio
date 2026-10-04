@@ -87,6 +87,50 @@
           "description": "floor-to-floor height in meters",
           "title": "Height",
           "type": "number"
+        },
+        "walls": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+                  "Point": "#/$defs/PointGeometry",
+                  "Polygon": "#/$defs/PolygonGeometry"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PointGeometry"
+                },
+                {
+                  "$ref": "#/$defs/PolygonGeometry"
+                },
+                {
+                  "$ref": "#/$defs/MultiPolygonGeometry"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the walls as drawn, with their door and window gaps",
+          "title": "Walls"
+        },
+        "wall_thickness_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the walls' typical thickness",
+          "title": "Wall Thickness M"
         }
       },
       "required": [

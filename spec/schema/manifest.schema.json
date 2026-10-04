@@ -77,6 +77,12 @@
           "default": "aeqd centred on (lon, lat), drawing +Y rotated to bearing",
           "title": "Projection",
           "type": "string"
+        },
+        "placed": {
+          "default": true,
+          "description": "false: the building is not placed on the map yet; it is exported around 0\u00b0N 0\u00b0E with its true shape and size, but its position on earth is not known",
+          "title": "Placed",
+          "type": "boolean"
         }
       },
       "required": [

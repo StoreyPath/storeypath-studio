@@ -16,7 +16,7 @@ A copy of this document is included in every package.
 | `buildings.geojson` | Buildings, with their footprint |
 | `floors.geojson` | Floors, with their outline, order, elevation and height |
 | `spaces.geojson` | Rooms, offices, corridors, elevators, stairs, … |
-| `openings.geojson` | Doors, and which spaces each one connects |
+| `openings.geojson` | Doors and other ways through, and which spaces each one connects |
 | `objects.csv` | Every ID in one flat table, with its parent IDs — for building ID mappings |
 | `changes.json` | IDs added, changed and retired since the previous export |
 | `schema/*.schema.json` | JSON Schema for every JSON file |
@@ -53,6 +53,12 @@ GeoJSON in WGS84 longitude/latitude (EPSG:4326, RFC 7946), rounded to 7 decimals
 for each building, the anchor and bearing used to place the drawing, so local
 drawing coordinates can be rebuilt if needed.
 
+Placing a building on the map is optional. A building whose placement has
+`"placed": false` is not on the map yet: it is exported around 0°N 0°E with its
+true shape and size (unplaced buildings of one location keep their positions
+relative to each other as drawn), but its position on earth is not known. Its
+coordinates change once it is placed, and that export lists its objects as changed.
+
 ## Features
 
 Every feature has a top-level `id` and a `properties.kind`. Readers must ignore
@@ -65,22 +71,33 @@ convex hull of its buildings (or null).
 null if no floor has been converted).
 
 **floor** — `code`, `name`, `building_id`, `ordinal` (0 = ground, negative = below
-ground), `elevation` (m above the ground floor), `height` (floor-to-floor, m).
+ground), `elevation` (m above the ground floor), `height` (floor-to-floor, m),
+`walls` (the walls as drawn, with their door and window gaps: a Polygon or
+MultiPolygon, for drawing or modelling the floor) and `wall_thickness_m`.
 Geometry: floor outline (or null).
 
 **space** — `type`, `name`, `number`, `floor_id`, `area_m2`, `display_point` (a good
-spot for its label). Geometry: Polygon or MultiPolygon.
+spot for its label), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
 
 **opening** — `type`, `floor_id`, `connects` (IDs of the one or two spaces it joins),
-`exterior` (true when it leads outside). Geometry: Point in the wall.
+`exterior` (true when it leads outside), `width_m` and `span` (jamb to jamb, when
+known), `hidden`, `ignored`. Geometry: Point in the wall.
+
+`hidden` and `ignored` are set by a person in review. A hidden object is real but
+not shown unless asked for (a shaft, a plant room); an ignored one was judged not
+worth anything (a sliver, a pocket) and is best left out. Both keep their IDs, so
+they are exported like any other object, and are listed in `objects.csv`.
 
 ## Types
 
 Space types: `office`, `room`, `meeting_room`, `corridor`, `lobby`, `elevator`,
 `stairs`, `escalator`, `ramp`, `restroom`, `kitchen`, `storage`, `utility`, `shaft`,
-`open_area`, `unspecified`.
+`open_area`, `unspecified`, `bedroom`, `living_room`, `dining_room`, `bathroom`
+(private; public toilets are `restroom`), `dressing_room`, `laundry`, `prayer_room`,
+`parking`, `balcony`, `terrace`, `open_to_below` (a void over the floor below).
 
-Opening types: `door`.
+Opening types: `door`, `opening` (a way through with no door: a doorway, or where
+open-plan rooms meet).
 
 Type names are never renamed or removed; new types may be added in later versions,
 and `manifest.json → types` lists the ones this package may use. `unspecified`

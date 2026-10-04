@@ -9,7 +9,22 @@ description: US National CAD Standard / AIA layer names
 spaces:
   # Closed outlines (or lines that close up) drawn around each room or area.
   layers: ['A-AREA', 'A-AREA-BDRY', 'A-SPCE', 'A-SPCE-BDRY', 'ROOMS?']
-  min_area: 0.5 # m², smaller outlines are ignored
+  # auto: use the outlines when the drawing has them, otherwise find spaces from walls
+  method: auto # or: outlines, walls
+  min_area: 0.5 # m², smaller spaces are ignored
+  # An area holding the labels of several rooms (open plan) is split where it is
+  # narrowest between them, when the cut lines total at most this long (m).
+  max_split: 6.0
+
+walls:
+  # Walls, windows and columns: what encloses spaces when there are no outlines.
+  # Door blocks (see doors) close the openings they stand in.
+  layers: ['A-WALL', 'A-WALL-(?!DEMO).*', 'A-GLAZ', 'A-GLAZ-.*', 'A-COLS', 'A-COLS-.*', 'S-COLS', 'S-COLS-.*',
+           'WALLS?', 'WINDOWS?', 'COLUMNS?']
+  max_thickness: 0.6 # m, the core of a wall drawn as two lines up to this far apart is filled
+  max_doorway: 1.2 # m, where a wall stops and another faces it this close, the gap is closed (a doorway)
+  max_opening: 4.0 # m, wider gaps in the outside walls (without a door block) leave a space open to the outside
+  min_width: 0.5 # m, enclosed areas narrower than this are not spaces
 
 labels:
   # Text, multi-line text and block attributes that name and number spaces.

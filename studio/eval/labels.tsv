@@ -1,0 +1,138 @@
+# text	expected type, or - when the text is not a room name
+OFFICE	office
+OFF. 204	office
+MANAGER	office
+GM OFFICE	office
+مكتب المدير	office
+BUREAU	office
+STUDY	room
+PLAYING ROOM	room
+GYM	room
+MULTIPURPOSE HALL	room
+CLASSROOM	room
+CONF. RM 3	meeting_room
+BOARD ROOM	meeting_room
+MEETING ROOM	meeting_room
+HUDDLE	meeting_room
+غرفة اجتماعات	meeting_room
+SALLE DE RÉUNION	meeting_room
+CORR.	corridor
+CORRIDOR	corridor
+PASSAGE	corridor
+ممر	corridor
+LOBBY	lobby
+RECEPTION	lobby
+FOYER	lobby
+ENTRANCE HALL	lobby
+ELEV. LOBBY	lobby
+استقبال	lobby
+LIFT	elevator
+ELEV. 2	elevator
+مصعد	elevator
+STAIR A	stairs
+STAIRCASE	stairs
+درج	stairs
+ESCALATOR	escalator
+RAMP	ramp
+MEN WC	restroom
+LADIES TOILET	restroom
+H.WASH	restroom
+TOILET	restroom
+POWDER ROOM	restroom
+ACCESSIBLE WC	restroom
+دورة مياه	restroom
+BATH	bathroom
+MASTER BATH	bathroom
+ENSUITE	bathroom
+حمام	bathroom
+SALLE DE BAIN	bathroom
+KITCHEN	kitchen
+OPEN KITCHEN	kitchen
+PANTRY	kitchen
+KITCHENETTE	kitchen
+مطبخ	kitchen
+KÜCHE	kitchen
+STORE	storage
+STORAGE	storage
+ARCHIVE	storage
+مخزن	storage
+EE.RM.	utility
+ELEC.	utility
+MECH. RM	utility
+SERVER	utility
+IDF	utility
+JANITOR	utility
+PUMP ROOM	utility
+غرفة كهرباء	utility
+SHAFT	shaft
+RISER	shaft
+OPEN OFFICE	open_area
+WORKSTATIONS	open_area
+BEDROOM	bedroom
+M.BEDROOM	bedroom
+MASTER BEDROOM	bedroom
+GUEST ROOM	bedroom
+MAID ROOM	bedroom
+DRIVER RM.	bedroom
+غرفة نوم	bedroom
+غرفة نوم رئيسية	bedroom
+غرفة خادمة	bedroom
+CHAMBRE	bedroom
+DORMITORIO	bedroom
+SITTING	living_room
+LIVING	living_room
+FAMILY LIVING	living_room
+LOUNGE	living_room
+MAJLIS	living_room
+MEN MAJLIS	living_room
+LADIES MAJLIS	living_room
+مجلس رجال	living_room
+صالة	living_room
+SALON	living_room
+WOHNZIMMER	living_room
+DINING	dining_room
+F.DINNING	dining_room
+FORMAL DINING	dining_room
+غرفة طعام	dining_room
+COMEDOR	dining_room
+DRESS	dressing_room
+DRESSING	dressing_room
+WALK-IN CLOSET	dressing_room
+غرفة ملابس	dressing_room
+LAUNDRY	laundry
+غرفة غسيل	laundry
+PRAYER ROOM	prayer_room
+MUSALLA	prayer_room
+مصلى	prayer_room
+CARPORT	parking
+GARAGE	parking
+موقف سيارات	parking
+BALCONY	balcony
+شرفة	balcony
+TERRACE	terrace
+ROOF DECK	terrace
+VERANDAH	terrace
+PORCH	terrace
+COURTYARD	terrace
+VOID	open_to_below
+OPEN TO BELOW	open_to_below
+±0.00 FGL	-
++0.45 FFL	-
+SSL+0.35	-
+STEP UP	-
+A/C SPLIT UNIT	-
+D1	-
+W4	-
+UP	-
+DN	-
+SCALE 1:100	-
+SOLID BLOCK WALL, 1.80M ABOVE / FIN. FLR	-
+GRC	-
+ROOF SLAB	-
++9.85 LVL	-
+DESK	-
+FIRE EXTINGUISHER	-
+NOTE: ALL DIMENSIONS IN MM	-
+TYPICAL	-
+MODIFIED GROUND FLOOR PLAN	-
+مستوى +٠٫٤٥	-

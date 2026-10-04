@@ -31,7 +31,7 @@ from .package import (
     json_schemas,
 )
 from .types import OpeningType, SpaceType
-from .workspace import ExportRecord, Workspace, utcnow
+from .workspace import ExportRecord, Placement, Workspace, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
 
@@ -72,25 +72,38 @@ def _hash(feature: dict) -> str:
     return hashlib.sha256(json.dumps(feature, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def build_features(ws: Workspace) -> dict[str, list[dict]]:
-    missing = [
-        make_id(ws.id, loc.code, b.code)
-        for loc in ws.locations
-        for b in loc.buildings
-        if b.placement is None and any(f.outline for f in b.floors)
-    ]
-    if missing:
-        raise ExportError(
-            "these buildings are not placed on the map yet (use `storeypath place`): " + ", ".join(missing)
-        )
+def unplaced(ws: Workspace) -> list[str]:
+    """Buildings with floors that are not placed on the map yet."""
+    return [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings
+            if b.placement is None and any(f.outline for f in b.floors)]
 
+
+def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
+    """Each building's placement, and whether it is a real one. A building not
+    placed yet goes around 0°N 0°E: its shape and size are true, its position on
+    earth is not. Unplaced buildings of one location share an anchor (the middle of
+    them all), so they keep their positions relative to each other as drawn."""
+    out = {}
+    for loc in ws.locations:
+        loose = [b for b in loc.buildings if b.placement is None]
+        outlines = [shape(f.outline) for b in loose for f in b.floors if f.outline]
+        middle = unary_union(outlines).centroid if outlines else None
+        provisional = Placement(lon=0.0, lat=0.0, x=round(middle.x, 3) if middle else 0.0,
+                                y=round(middle.y, 3) if middle else 0.0, bearing=0.0)
+        for b in loc.buildings:
+            out[make_id(ws.id, loc.code, b.code)] = (b.placement, True) if b.placement else (provisional, False)
+    return out
+
+
+def build_features(ws: Workspace) -> dict[str, list[dict]]:
+    placed = placements(ws)
     out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "openings")}
     for loc in ws.locations:
         loc_id = make_id(ws.id, loc.code)
         footprints = []
         for b in loc.buildings:
             b_id = child_id(loc_id, b.code)
-            g = Georeferencer(b.placement) if b.placement else None
+            g = Georeferencer(placed[b_id][0])
             outlines = []
             for f in sorted(b.floors, key=lambda f: f.ordinal):
                 f_id = child_id(b_id, f.code)
@@ -102,7 +115,9 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                         f_id,
                         _geo(outline, g) if outline is not None else None,
                         {"kind": "floor", "code": f.code, "name": f.name, "building_id": b_id,
-                         "ordinal": f.ordinal, "elevation": f.elevation, "height": f.height},
+                         "ordinal": f.ordinal, "elevation": f.elevation, "height": f.height,
+                         "walls": _geo(shape(f.walls), g) if f.walls else None,
+                         "wall_thickness_m": f.wall_thickness},
                     )
                 )
                 for r in sorted(ws.floor_objects(f_id), key=lambda r: r.id):
@@ -116,7 +131,8 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                 {"kind": "space", "type": eff["type"], "name": eff["name"],
                                  "number": eff["number"], "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
-                                 "display_point": _lonlat(g, _label_point(geom))},
+                                 "display_point": _lonlat(g, _label_point(geom)),
+                                 "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
                     else:
@@ -125,7 +141,10 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                 r.id,
                                 _geo(geom, g),
                                 {"kind": "opening", "type": r.type, "floor_id": f_id,
-                                 "connects": r.connects, "exterior": len(r.connects) == 1},
+                                 "connects": r.connects, "exterior": len(r.connects) == 1,
+                                 "width_m": r.width,
+                                 "span": [_lonlat(g, p) for p in r.span] if r.span else None,
+                                 "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
             footprint = None
@@ -177,12 +196,15 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
                 "floor_ordinal": ordinals.get(ids.get("floor_id"), ""),
                 "area_m2": p.get("area_m2", ""),
                 "lon": pt[0] if pt else "", "lat": pt[1] if pt else "",
+                "hidden": "true" if p.get("hidden") else "", "ignored": "true" if p.get("ignored") else "",
             })
     return buf.getvalue()
 
 
-def export_package(ws: Workspace, out_path: str | Path) -> Manifest:
-    out_path = Path(out_path)
+def export_package(ws: Workspace, out_path, *, record: bool = True) -> Manifest:
+    """Write the package to ``out_path`` (a path, or a binary file object). With
+    ``record`` the export is entered in the workspace, so the next one lists what
+    changed since; without it (a preview) the workspace is left as it was."""
     features = build_features(ws)
     hashes = {f["id"]: _hash(f) for fs in features.values() for f in fs}
 
@@ -212,12 +234,13 @@ def export_package(ws: Workspace, out_path: str | Path) -> Manifest:
             for _, _, f, fid in ws.iter_floors() if f.source
         ],
         placements={
-            make_id(ws.id, loc.code, b.code): PlacementInfo(**b.placement.model_dump())
-            for loc in ws.locations for b in loc.buildings if b.placement
+            b_id: PlacementInfo(**p.model_dump(), placed=real) for b_id, (p, real) in placements(ws).items()
         },
     )
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(out_path, (str, Path)):
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", manifest.model_dump_json(indent=2))
         for role, fs in features.items():
@@ -228,5 +251,6 @@ def export_package(ws: Workspace, out_path: str | Path) -> Manifest:
         for name, schema in json_schemas().items():
             z.writestr(f"schema/{name}", json.dumps(schema, indent=2))
 
-    ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=out_path.name, objects=hashes))
+    if record:
+        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name, objects=hashes))
     return manifest

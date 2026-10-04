@@ -7,24 +7,35 @@ IDs are not assigned here (see convert.py).
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 
 import ezdxf.bbox
 import ezdxf.path
+import numpy as np
 from ezdxf.document import Drawing
 from ezdxf.entities import DXFGraphic
 from shapely import STRtree, make_valid
+from shapely.affinity import translate
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 from shapely.ops import polygonize, unary_union
 
-from .cad import meters_per_unit
+from .cad import drawing_units, header_units, meters_per_unit
+from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
+from .split import split_by_labels
+from .walls import DoorShape, DoorSwing, open_issue, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
 CURVE_TOLERANCE_M = 0.02
 OUTLINE_CLOSING_M = 0.3
 OUTLINE_MIN_HOLE_M2 = 10.0
+HATCH_FILL_MAX_M2 = 4.0  # larger hatches on wall layers count as wall only when thin
+LABEL_GROUP_M = 1.5  # label pieces closer than this belong to the same room
+DOOR_SWING_RADIUS_M = (0.35, 2.0)  # an arc on a door layer this size and…
+DOOR_SWING_SWEEP = (60.0, 120.0)  # …about a quarter turn is a door swing
+DOOR_MERGE_M = 0.1  # door swings this close are one door (double doors)
 
 
 @dataclass
@@ -42,6 +53,7 @@ class ExtractedSpace:
     blocks: list[str] = field(default_factory=list)
     type: SpaceType = SpaceType.UNSPECIFIED
     type_source: str = "default"
+    issues: list[str] = field(default_factory=list)  # reasons a person should look at it
 
 
 @dataclass
@@ -49,6 +61,11 @@ class ExtractedDoor:
     footprint: Polygon
     point: Point
     connects: list[int]  # indexes into FloorExtraction.spaces
+    # "door": drawn as a block or swing; "doorway": a gap in a wall with no door
+    # drawn; "split": where open-plan rooms meet; "window"
+    source: str = "door"
+    span: LineString | None = None  # jamb to jamb, meters
+    width: float | None = None
 
 
 @dataclass
@@ -58,11 +75,16 @@ class FloorExtraction:
     outline: Polygon | MultiPolygon | None
     scale: float  # meters per drawing unit
     warnings: list[str] = field(default_factory=list)
+    method: str = "outlines"  # how spaces were found: "outlines" or "walls"
+    walls: object = None  # the walls as drawn, with their door and window gaps
+    wall_thickness: float | None = None
 
 
-def _walk(entities, parent_layer: str | None = None, depth: int = 0):
+def _walk(entities, parent_layer: str | None = None, depth: int = 0,
+          expand: Callable[[DXFGraphic, str], bool] | None = None):
     """Yield (entity, effective layer) through nested block inserts. Entities on
-    layer "0" inside a block take the layer of the insert, as CAD programs show them."""
+    layer "0" inside a block take the layer of the insert, as CAD programs show them.
+    ``expand(insert, layer)`` returning False keeps a block's contents out."""
     for e in entities:
         layer = e.dxf.get("layer", "0")
         if parent_layer is not None and layer == "0":
@@ -72,12 +94,46 @@ def _walk(entities, parent_layer: str | None = None, depth: int = 0):
             for attrib in e.attribs:
                 a_layer = attrib.dxf.get("layer", "0")
                 yield attrib, (layer if a_layer == "0" else a_layer)
-            if depth < MAX_BLOCK_DEPTH:
+            if depth < MAX_BLOCK_DEPTH and (expand is None or expand(e, layer)):
                 try:
                     children = list(e.virtual_entities())
                 except Exception:  # broken or unsupported block content
                     continue
-                yield from _walk(children, layer, depth + 1)
+                yield from _walk(children, layer, depth + 1, expand)
+
+
+def modelspace_entities(doc: Drawing, region: tuple[float, float, float, float] | None = None):
+    """Top-level entities of the drawing; with ``region`` (x0, y0, x1, y1 in drawing
+    units) only those whose middle lies inside it, for drawings that hold several
+    floors (or sheets) side by side."""
+    if region is None:
+        yield from doc.modelspace()
+        return
+    entities, centres = _entity_index(doc)
+    x0, y0, x1, y1 = region
+    inside = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
+    for i in np.nonzero(inside)[0]:
+        yield entities[i]
+
+
+def _entity_index(doc: Drawing):
+    """The middle of every top-level entity, measured once per drawing: picking one
+    plan out of a sheet set is then a lookup, not a pass over every entity."""
+    index = getattr(doc, "_storeypath_index", None)
+    if index is None:
+        entities, centres = [], []
+        cache = ezdxf.bbox.Cache()
+        for e in doc.modelspace():
+            try:
+                ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
+            except Exception:
+                continue
+            if ext.has_data:
+                entities.append(e)
+                centres.append((ext.center.x, ext.center.y))
+        index = (entities, np.array(centres, dtype=float).reshape(-1, 2))
+        doc._storeypath_index = index
+    return index
 
 
 def _flatten(e: DXFGraphic, tolerance: float) -> tuple[list[tuple[float, float]], bool] | None:
@@ -93,14 +149,6 @@ def _flatten(e: DXFGraphic, tolerance: float) -> tuple[list[tuple[float, float]]
     if not closed and len(pts) > 3:
         closed = Point(pts[0]).distance(Point(pts[-1])) <= tolerance
     return pts, closed
-
-
-def _as_polygons(geom) -> list[Polygon]:
-    if isinstance(geom, Polygon):
-        return [geom] if not geom.is_empty else []
-    if hasattr(geom, "geoms"):
-        return [g for part in geom.geoms for g in _as_polygons(part)]
-    return []
 
 
 def _text_lines(e: DXFGraphic) -> list[str]:
@@ -142,60 +190,94 @@ def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | 
     return (" ".join(names) or None), number
 
 
-def extract_floor(doc: Drawing, profile: Profile, units: str | None = None) -> FloorExtraction:
+def extract_floor(
+    doc: Drawing,
+    profile: Profile,
+    units: str | None = None,
+    region: tuple[float, float, float, float] | None = None,
+    offset: tuple[float, float] | None = None,
+    skip_label: Callable[[str], bool] | None = None,
+) -> FloorExtraction:
+    """Spaces, doors and outline of one floor, in meters. ``region`` limits the
+    drawing to one floor's plan; ``offset`` (drawing units) is subtracted from every
+    point so that floors drawn side by side line up. ``skip_label`` leaves out texts
+    on label layers that do not name rooms (levels, notes…)."""
     scale = meters_per_unit(doc, units)
     tol = CURVE_TOLERANCE_M / scale
     warnings: list[str] = []
-    if not units and doc.header.get("$INSUNITS", 0) == 0:
-        warnings.append(
-            f"drawing has no unit setting; assumed 1 unit = {scale} m (set units on the floor to override)"
-        )
+    if not units:
+        used, said = drawing_units(doc), header_units(doc)
+        if said and used != said:
+            warnings.append(f"the drawing says it is in {said}, but its doors are drawn in {used}; read as {used}")
+        elif not said and used != getattr(doc, "_storeypath_units", None):
+            warnings.append(f"the drawing has no unit setting; read as {used} (set units on the floor to override)")
 
+    method = profile.spaces.method
     closed_shapes: list[tuple[Polygon, str]] = []
     linework: list[LineString] = []
+    wall_lines: list[LineString] = []
+    wall_fills: list[Polygon] = []
     labels: list[Label] = []
     blocks: list[tuple[str, Point]] = []
-    door_boxes: list[Polygon] = []
+    door_shapes: list[DoorShape] = []
+    opening_lines: list[LineString] = []  # door/window linework: glazing, leaves, frames
     layer_counts: Counter[str] = Counter()
     loose_door_entities = 0
 
-    for e, layer in _walk(doc.modelspace()):
+    def expand(insert, layer) -> bool:  # a door block is read whole, not its lines
+        return not profile.door_layers.fullmatch(layer)
+
+    for e, layer in _walk(modelspace_entities(doc, region), expand=expand):
         kind = e.dxftype()
         layer_counts[layer] += 1
         if kind in ("TEXT", "MTEXT", "ATTRIB"):
             if profile.label_layers.fullmatch(layer):
                 lines, c = _text_lines(e), _center(e)
+                if skip_label is not None and lines and all(
+                    skip_label(ln) and not profile.number_re.fullmatch(ln) for ln in lines
+                ):
+                    continue
                 if lines and c:
                     labels.append(Label(lines, Point(c[0] * scale, c[1] * scale)))
             continue
         if kind == "INSERT":
             if profile.door_layers.fullmatch(layer):
-                ext = ezdxf.bbox.extents([e], fast=True)
-                if ext.has_data:
-                    door_boxes.append(
-                        box(ext.extmin.x * scale, ext.extmin.y * scale, ext.extmax.x * scale, ext.extmax.y * scale)
-                    )
+                if (shape := _door_block(e, scale)) is not None:
+                    door_shapes.append(shape)
             elif profile.block_layers.fullmatch(layer):
                 c = _center(e)
                 if c:
                     blocks.append((e.dxf.name, Point(c[0] * scale, c[1] * scale)))
             continue
-        if profile.door_layers.fullmatch(layer) and kind in ("LINE", "ARC", "LWPOLYLINE"):
-            loose_door_entities += 1
-        if not profile.space_layers.fullmatch(layer):
+        if profile.door_layers.fullmatch(layer):
+            if kind == "ARC" and (shape := _door_swing(e, scale)) is not None:
+                door_shapes.append(shape)
+            elif (flat := _flatten(e, tol)) is not None:
+                loose_door_entities += 1
+                opening_lines.append(LineString([(x * scale, y * scale) for x, y in flat[0]]))
+        on_walls = bool(profile.wall_layers.fullmatch(layer))  # walls are kept in every case
+        on_spaces = method != "walls" and bool(profile.space_layers.fullmatch(layer))
+        if not (on_walls or on_spaces):
             continue
         if kind == "HATCH":
-            continue  # outlines are read from boundary lines, not fills
+            # Outlines are read from boundary lines, not fills; walls from both.
+            if on_walls:
+                _wall_hatch(e, tol, scale, profile.walls.max_thickness, wall_lines, wall_fills)
+            continue
         flat = _flatten(e, tol)
         if flat is None:
             continue
         pts, closed = flat
         pts = [(x * scale, y * scale) for x, y in pts]
+        if on_walls:
+            wall_lines.append(LineString(pts + pts[:1] if closed and pts[0] != pts[-1] else pts))
+        if not on_spaces:
+            continue
         if closed and len(pts) >= 3:
             poly = Polygon(pts)
             if not poly.is_valid:
                 poly = make_valid(poly)
-            for p in _as_polygons(poly):
+            for p in as_polygons(poly):
                 closed_shapes.append((p, layer))
         else:
             linework.append(LineString(pts))
@@ -204,27 +286,178 @@ def extract_floor(doc: Drawing, profile: Profile, units: str | None = None) -> F
         for p in polygonize(unary_union(linework)):
             closed_shapes.append((p, "linework"))
 
+    door_shapes = _merge_doors(door_shapes)
+    doorways: list[Polygon] = []
+    open_edges = fabric = None
     spaces, containers = _clean_spaces(closed_shapes, profile, warnings)
     outline = _floor_outline(spaces, containers)
+    used = "outlines"
+    if not spaces and method != "outlines" and (wall_lines or wall_fills):
+        found = spaces_from_walls(
+            wall_lines, wall_fills, door_shapes, opening_lines, [lb.point for lb in labels], profile.walls,
+            profile.spaces.min_area,
+        )
+        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in found.polygons]
+        doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
+        outline, used = found.outline, "walls"
+        if found.pockets:
+            warnings.append(
+                f"{found.pockets} area(s) open to the outside were left out; "
+                "if one is a room, check that its doors are drawn on a door layer"
+            )
 
     if not spaces:
         top = ", ".join(f"{name} ({n})" for name, n in layer_counts.most_common(15))
-        warnings.append(
-            f"no spaces found on layers matching {profile.spaces.layers}; "
-            f"busiest layers in this drawing: {top}"
-        )
+        looked = {"outlines": f"outlines on layers matching {profile.spaces.layers}",
+                  "walls": f"walls on layers matching {profile.walls.layers}"}
+        where = " or ".join(v for k, v in looked.items() if method in (k, "auto"))
+        warnings.append(f"no spaces found from {where}; busiest layers in this drawing: {top}")
 
+    cuts: list[LineString] = []
+    if used == "walls":
+        spaces, cuts = _split_open_areas(spaces, labels, profile)
+        for s in spaces:
+            s.issues += open_issue(s.polygon, open_edges)
     _assign_labels(spaces, labels, profile, warnings)
     _assign_blocks(spaces, blocks)
     for s in spaces:
         s.type, s.type_source = profile.classify(s.name, s.blocks, s.layer)
 
-    doors = _connect_doors(spaces, door_boxes, profile.doors.reach, warnings)
-    if loose_door_entities and not door_boxes:
+    if fabric is None and (wall_lines or wall_fills):
+        fabric = read_fabric(wall_lines, wall_fills, door_shapes, opening_lines, profile.walls)
+    doors = _connect_doors(spaces, [d.box for d in door_shapes], profile.doors.reach, warnings,
+                           [(d.span, d.width) for d in door_shapes])
+    # Openings closed with no door drawn count as doors between two spaces; on the
+    # outside they are most likely windows.
+    doors += [
+        replace(d, source="doorway")
+        for d in _connect_doors(spaces, doorways, profile.doors.reach, [])
+        if len(d.connects) == 2
+    ]
+    doors += [
+        replace(d, source="split")
+        for d in _connect_doors(spaces, [c.buffer(0.05) for c in cuts], profile.doors.reach, [])
+        if len(d.connects) == 2
+    ]
+    if fabric is not None:
+        doors += [
+            replace(d, source="window")
+            for d in _connect_doors(spaces, [w.buffer(0.15, cap_style="flat") for w in fabric.windows],
+                                    profile.doors.reach, [], [(w, round(w.length, 3)) for w in fabric.windows])
+        ]
+    if loose_door_entities and not door_shapes:
         warnings.append(
-            f"{loose_door_entities} lines/arcs on door layers are not blocks; doors are only read from blocks"
+            f"{loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
         )
-    return FloorExtraction(spaces, doors, outline, scale, warnings)
+    if offset:
+        dx, dy = -offset[0] * scale, -offset[1] * scale
+        for s in spaces:
+            s.polygon = translate(s.polygon, dx, dy)
+        for d in doors:
+            d.footprint, d.point = translate(d.footprint, dx, dy), translate(d.point, dx, dy)
+            d.span = translate(d.span, dx, dy) if d.span is not None else None
+        outline = translate(outline, dx, dy) if outline is not None else None
+        if fabric is not None:
+            fabric.walls = translate(fabric.walls, dx, dy)
+    walls = fabric.walls if fabric is not None and not fabric.walls.is_empty else None
+    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls))
+
+
+def _thickness(walls) -> float | None:
+    """A wall network's typical thickness: area over half its outline, which for long
+    thin shapes is their width."""
+    if walls is None or walls.length == 0:
+        return None
+    return round(2 * walls.area / walls.length, 3)
+
+
+def _door_swing(e, scale: float) -> DoorShape | None:
+    """A door drawn as loose lines, from its swing: an arc of about a quarter turn
+    centred on the hinge, as wide as the door."""
+    radius = e.dxf.radius * scale
+    sweep = (e.dxf.end_angle - e.dxf.start_angle) % 360
+    if not (DOOR_SWING_RADIUS_M[0] <= radius <= DOOR_SWING_RADIUS_M[1]
+            and DOOR_SWING_SWEEP[0] <= sweep <= DOOR_SWING_SWEEP[1]):
+        return None
+    flat = _flatten(e, CURVE_TOLERANCE_M / scale)
+    if flat is None:
+        return None
+    pts = [(x * scale, y * scale) for x, y in flat[0]]
+    c = e.ocs().to_wcs(e.dxf.center)
+    hinge = Point(c.x * scale, c.y * scale)
+    xs, ys = [p[0] for p in pts] + [hinge.x], [p[1] for p in pts] + [hinge.y]
+    return DoorShape(box(min(xs), min(ys), max(xs), max(ys)), [DoorSwing(hinge, (Point(pts[0]), Point(pts[-1])))])
+
+
+def _door_block(e, scale: float) -> DoorShape | None:
+    """A door block: its extent, and the swing arcs drawn in it."""
+    ext = ezdxf.bbox.extents([e], fast=True)
+    if not ext.has_data:
+        return None
+    swings = []
+    try:
+        for child in e.virtual_entities():
+            if child.dxftype() == "ARC" and (shape := _door_swing(child, scale)) is not None:
+                swings += shape.swings
+    except Exception:  # broken or unsupported block content
+        pass
+    return DoorShape(box(ext.extmin.x * scale, ext.extmin.y * scale, ext.extmax.x * scale, ext.extmax.y * scale),
+                     swings)
+
+
+def _merge_doors(doors: list[DoorShape]) -> list[DoorShape]:
+    """One door per opening: the two leaves of a double door become one."""
+    if len(doors) < 2:
+        return doors
+    merged = as_polygons(unary_union([d.box.buffer(DOOR_MERGE_M / 2, join_style="mitre") for d in doors]))
+    out = [DoorShape(box(*p.buffer(-DOOR_MERGE_M / 2, join_style="mitre").bounds)) for p in merged]
+    for d in doors:
+        target = next(o for o, p in zip(out, merged) if p.intersects(d.box))
+        target.swings += d.swings
+    return out
+
+
+def _split_open_areas(spaces, labels, profile) -> tuple[list[ExtractedSpace], list[LineString]]:
+    """Spaces holding the labels of several rooms, split between them where they
+    are narrowest (see split.py)."""
+    if not spaces or not labels:
+        return spaces, []
+    tree = STRtree([s.polygon for s in spaces])
+    per_space: dict[int, list[Label]] = {}
+    for label in labels:
+        i = _containing_space(tree, spaces, label.point)
+        if i is not None:
+            per_space.setdefault(i, []).append(label)
+    out, cuts = [], []
+    for i, s in enumerate(spaces):
+        groups = _label_groups(per_space.get(i, []))
+        if len(groups) < 2:
+            out.append(s)
+            continue
+        parts, lines = split_by_labels(
+            s.polygon, [[lb.point for lb in g] for g in groups], profile.spaces.max_split, profile.spaces.min_area
+        )
+        if len(parts) == 1:
+            out.append(s)
+            continue
+        cuts += lines
+        note = "separated from a neighbouring room where no wall is drawn; check the dividing line"
+        out += [replace(s, polygon=p, issues=[*s.issues, note]) for p in parts]
+    return out, cuts
+
+
+def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
+    """A hatch on a wall layer: a filled wall area if small or thin, otherwise just
+    its boundary (a hatch covering a whole floor must not turn it into wall)."""
+    for path in ezdxf.path.from_hatch(e):
+        pts = [(v.x * scale, v.y * scale) for v in path.flattening(tol)]
+        if len(pts) < 3:
+            continue
+        for poly in as_polygons(make_valid(Polygon(pts))):
+            if poly.area <= HATCH_FILL_MAX_M2 or poly.buffer(-max_thickness / 2).is_empty:
+                fills.append(poly)
+            else:
+                lines.append(poly.exterior)
 
 
 def _clean_spaces(
@@ -245,7 +478,7 @@ def _clean_spaces(
         if len(inner) >= 2:
             containers.append(poly)
             continue
-        dup = next((k for k in kept if _iou(k.polygon, poly) > 0.95), None)
+        dup = next((k for k in kept if iou(k.polygon, poly) > 0.95), None)
         if dup is not None:
             continue
         if len(inner) == 1:
@@ -273,17 +506,10 @@ def _floor_outline(spaces: list[ExtractedSpace], containers: list[Polygon]):
         -c, join_style="mitre"
     )
     parts = []
-    for p in _as_polygons(merged):
+    for p in as_polygons(merged):
         holes = [h for h in p.interiors if Polygon(h).area >= OUTLINE_MIN_HOLE_M2]
         parts.append(Polygon(p.exterior, holes))
     return parts[0] if len(parts) == 1 else MultiPolygon(parts)
-
-
-def _iou(a: Polygon, b: Polygon) -> float:
-    if not a.intersects(b):
-        return 0.0
-    inter = a.intersection(b).area
-    return inter / (a.area + b.area - inter)
 
 
 def _warn_overlaps(spaces: list[ExtractedSpace], warnings: list[str]) -> None:
@@ -320,12 +546,35 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
             orphans.append(" / ".join(label.lines))
         else:
             per_space.setdefault(i, []).append(label)
+    merged = 0
     for i, ls in per_space.items():
         ls.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))  # reading order
         spaces[i].name, spaces[i].number = _split_label([ln for lb in ls for ln in lb.lines], profile)
+        groups = _label_groups(ls)
+        if len(groups) > 1:
+            merged += 1
+            names = " / ".join(repr(" ".join(ln for lb in g for ln in lb.lines)) for g in groups)
+            spaces[i].issues.append(f"has the labels of {len(groups)} rooms: {names}")
+    if merged:
+        warnings.append(
+            f"{merged} space(s) have the labels of several rooms; rooms may have merged "
+            "through an opening without a door block or a missing wall"
+        )
     if orphans:
         sample = ", ".join(repr(o) for o in orphans[:5])
         warnings.append(f"{len(orphans)} label(s) are not inside any space: {sample}")
+
+
+def _label_groups(labels: list[Label]) -> list[list[Label]]:
+    """Labels split into groups of pieces that sit together (name above number…)."""
+    groups: list[list[Label]] = []
+    for label in labels:
+        near = [g for g in groups if any(label.point.distance(o.point) <= LABEL_GROUP_M for o in g)]
+        merged = [label] + [lb for g in near for lb in g]
+        groups = [g for g in groups if g not in near] + [merged]
+    for g in groups:
+        g.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))
+    return sorted(groups, key=lambda g: (-round(g[0].point.y, 1), g[0].point.x))
 
 
 def _assign_blocks(spaces, blocks) -> None:
@@ -338,14 +587,16 @@ def _assign_blocks(spaces, blocks) -> None:
             spaces[i].blocks.append(name)
 
 
-def _connect_doors(spaces, door_boxes, reach, warnings) -> list[ExtractedDoor]:
+def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[ExtractedDoor]:
+    """Doors (by their extents) and the one or two spaces each joins. ``spans`` gives
+    each door's (span, width) when known."""
     if not spaces:
         return []
     polys = [s.polygon for s in spaces]
     tree = STRtree(polys)
     doors = []
     unconnected = 0
-    for fp in door_boxes:
+    for k, fp in enumerate(door_boxes):
         zone = fp.buffer(reach)
         near = []
         for i in tree.query(zone, predicate="intersects"):
@@ -362,7 +613,8 @@ def _connect_doors(spaces, door_boxes, reach, warnings) -> list[ExtractedDoor]:
         for i in connects:
             wall = wall.intersection(polys[i].buffer(reach)).difference(polys[i])
         point = wall.centroid if not wall.is_empty else fp.centroid
-        doors.append(ExtractedDoor(footprint=fp, point=point, connects=connects))
+        span, width = spans[k] if spans else (None, None)
+        doors.append(ExtractedDoor(footprint=fp, point=point, connects=connects, span=span, width=width))
     if unconnected:
         warnings.append(f"{unconnected} door(s) are not next to any space and were skipped")
     return doors

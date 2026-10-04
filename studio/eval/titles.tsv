@@ -1,0 +1,26 @@
+# title	kind	floor (or -)	building (or -)
+MODIFIED GROUND FLOOR PLAN	floor_plan	0	-
+MODIFIED FIRST FLOOR PLAN	floor_plan	1	-
+MODIFIED ROOF DECK  PLAN	roof_plan	-	-
+MODIFIED FRONT ELEVATION	elevation	-	-
+MODIFIED REAR ELEVATION	elevation	-	-
+MODIFIED CROSS SECTION	section	-	-
+MODIFIED SITE DEVELOPMENT PLAN	site_plan	-	-
+LOCATION PLAN	site_plan	-	-
+OUT KITCHEN FLOOR PLAN	floor_plan	0	OUT KITCHEN
+OUT MAJLIS PLAN DETAIL	floor_plan	0	OUT MAJLIS
+GUARD RM. PLAN DETAIL	floor_plan	0	GUARD ROOM
+LEVEL 02 PLAN	floor_plan	2	-
+BASEMENT PLAN	floor_plan	-1	-
+SECOND FLOOR PLAN	floor_plan	2	-
+3RD FLOOR PLAN	floor_plan	3	-
+TYPICAL OFFICE FLOOR	floor_plan	-	-
+المسقط الأفقي للدور الأرضي	floor_plan	0	-
+مسقط الدور الأول	floor_plan	1	-
+الواجهة الأمامية	elevation	-	-
+قطاع رأسي	section	-	-
+REZ-DE-CHAUSSÉE	floor_plan	0	-
+ERDGESCHOSS GRUNDRISS	floor_plan	0	-
+PLANTA BAJA	floor_plan	0	-
+SCHEDULE OF OPENINGS	schedule	-	-
+DOOR DETAILS	detail	-	-

@@ -24,10 +24,24 @@ class SpaceType(StrEnum):
     SHAFT = "shaft"
     OPEN_AREA = "open_area"
     UNSPECIFIED = "unspecified"
+    # Added in format 0.1 for homes and for prayer rooms.
+    BEDROOM = "bedroom"
+    LIVING_ROOM = "living_room"  # sitting room, lounge, majlis
+    DINING_ROOM = "dining_room"
+    BATHROOM = "bathroom"  # a private bathroom; public toilets are restroom
+    DRESSING_ROOM = "dressing_room"
+    LAUNDRY = "laundry"
+    PRAYER_ROOM = "prayer_room"
+    PARKING = "parking"  # garage, carport, parking
+    BALCONY = "balcony"
+    TERRACE = "terrace"  # terrace, roof deck, veranda, porch, courtyard
+    OPEN_TO_BELOW = "open_to_below"  # a void over the floor below
 
 
 class OpeningType(StrEnum):
     DOOR = "door"
+    OPENING = "opening"  # a way through with no door: a doorway, or where open-plan rooms meet
+    WINDOW = "window"  # not a way through: glazing in a wall
 
 
 # Spaces that connect floors vertically. Their per-floor objects share one

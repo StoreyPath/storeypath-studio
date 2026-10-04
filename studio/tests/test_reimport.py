@@ -89,6 +89,27 @@ def test_corrections_survive_reconversion(converted):
     assert ws.objects[target].type == "unspecified"  # detection itself unchanged
 
 
+def test_review_list_and_accepting(converted):
+    ws, d, f_id, _, _, _ = converted
+    reasons = {r.id: ws.review_reasons(r) for r in ws.floor_objects(f_id)}
+    flagged = {i: v for i, v in reasons.items() if v}
+    assert sorted(map(tuple, flagged.values())) == [("no name or number",), ("no type",)]
+    unnamed = next(i for i, v in flagged.items() if v == ["no name or number"])
+    ws.overrides[unnamed] = Override()  # accepted as it is
+    assert ws.review_reasons(ws.objects[unnamed]) == []
+    untyped = next(i for i, v in flagged.items() if v == ["no type"])
+    ws.overrides[untyped] = Override(name="QUIET ROOM")  # still needs a type
+    assert ws.review_reasons(ws.objects[untyped]) == ["no type"]
+
+
+def test_empty_correction_removes_a_detected_name(converted):
+    ws, d, f_id, _, _, _ = converted
+    target = _by_number(ws, f_id)["201"]
+    ws.overrides[target] = Override(name="")
+    eff = ws.effective(ws.objects[target])
+    assert eff["name"] is None and eff["number"] == "201"
+
+
 def test_doors_keep_ids_and_follow_their_spaces(converted):
     ws, d, f_id, _, _, _ = converted
     doors = {r.id: r.connects for r in ws.floor_objects(f_id) if r.kind == "opening"}

@@ -29,7 +29,7 @@ FILES = {
 }
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
-    "building_id", "floor_id", "floor_ordinal", "area_m2", "lon", "lat",
+    "building_id", "floor_id", "floor_ordinal", "area_m2", "lon", "lat", "hidden", "ignored",
 ]
 
 LonLat = tuple[float, float]
@@ -85,6 +85,8 @@ class FloorProps(_Props):
     ordinal: int = Field(description="0 = ground floor, negative = below ground")
     elevation: float = Field(description="meters above the building's ground floor")
     height: float = Field(description="floor-to-floor height in meters")
+    walls: Geometry | None = Field(None, description="the walls as drawn, with their door and window gaps")
+    wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
 
 
 class SpaceProps(_Props):
@@ -95,6 +97,8 @@ class SpaceProps(_Props):
     floor_id: str
     area_m2: float
     display_point: LonLat
+    hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
+    ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 
 
 class OpeningProps(_Props):
@@ -103,6 +107,10 @@ class OpeningProps(_Props):
     floor_id: str
     connects: list[str] = Field(description="IDs of the spaces this opening joins")
     exterior: bool = Field(description="true when it leads outside the floor")
+    width_m: float | None = Field(None, description="clear width, jamb to jamb")
+    span: list[LonLat] | None = Field(None, description="the opening across the wall, jamb to jamb")
+    hidden: bool = Field(False, description="real, but not shown unless asked for")
+    ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
 P = TypeVar("P", bound=_Props)
@@ -151,6 +159,9 @@ class PlacementInfo(BaseModel):
     y: float
     bearing: float
     projection: str = "aeqd centred on (lon, lat), drawing +Y rotated to bearing"
+    placed: bool = Field(True, description=(
+        "false: the building is not placed on the map yet; it is exported around 0°N 0°E with its true "
+        "shape and size, but its position on earth is not known"))
 
 
 class Manifest(BaseModel):

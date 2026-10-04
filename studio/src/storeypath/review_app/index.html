@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StoreyPath Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body class="studio">
+  <header class="topbar">
+    <a class="brand" href="#/">StoreyPath <span>Studio</span></a>
+    <div id="status" class="chips"></div>
+  </header>
+
+  <main id="page" class="page"></main>
+
+  <aside id="job" class="job" hidden>
+    <div class="job-head"><span class="spinner" aria-hidden="true"></span><strong id="job-title"></strong></div>
+    <ol id="job-log"></ol>
+  </aside>
+
+  <div id="toast" hidden></div>
+  <script type="module" src="studio.js"></script>
+</body>
+</html>

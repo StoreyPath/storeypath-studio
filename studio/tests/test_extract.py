@@ -81,6 +81,7 @@ def test_no_spaces_reports_the_layers_it_saw(tmp_path):
     write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))
     profile = load_profile("ncs").model_copy(deep=True)
     profile.spaces.layers = ["NOPE"]
+    profile.spaces.method = "outlines"
     profile.__dict__.pop("space_layers", None)
     ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), profile)
     assert ex.spaces == []

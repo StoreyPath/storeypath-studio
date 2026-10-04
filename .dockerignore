@@ -1,0 +1,12 @@
+# build context: only what the image needs
+*
+!studio/
+!viewer/
+!spec/
+!docker/
+studio/.venv
+studio/**/__pycache__
+studio/src/storeypath/_bundled
+studio/eval
+docker/models/eval
+**/.DS_Store

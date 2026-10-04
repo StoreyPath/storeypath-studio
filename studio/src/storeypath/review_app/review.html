@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StoreyPath Review</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <a id="back" class="back" href="/">← Projects</a>
+      <h1 id="project-name">StoreyPath Review</h1>
+      <div id="project-meta" class="meta"></div>
+    </header>
+
+    <section>
+      <label class="field">Floor
+        <select id="floor"></select>
+      </label>
+      <div id="floor-meta" class="meta"></div>
+      <div class="row">
+        <button id="convert" type="button" title="Read the floor's drawing again; IDs and corrections are kept">Re-read drawing</button>
+        <a id="walk3d" class="button" target="_blank" title="This floor in 3D, as it is now: orbit it or walk through it">Walk in 3D</a>
+      </div>
+      <details id="warnings" hidden>
+        <summary></summary>
+        <ul></ul>
+      </details>
+    </section>
+
+    <section id="editor" hidden>
+      <div class="editor-head">
+        <h3 id="ed-title"></h3>
+        <button id="ed-close" type="button" class="icon" title="Close (Esc)" aria-label="Close">×</button>
+      </div>
+      <div class="id-row"><code id="ed-id"></code><button id="ed-copy" type="button">Copy</button></div>
+      <ul id="ed-reasons" class="reasons"></ul>
+      <form id="ed-form" autocomplete="off">
+        <label class="field">Type
+          <select id="ed-type"></select>
+          <span class="detected" id="ed-type-detected"></span>
+        </label>
+        <label class="field">Name
+          <input id="ed-name" type="text" placeholder="no name">
+          <span class="detected" id="ed-name-detected"></span>
+        </label>
+        <label class="field">Number
+          <input id="ed-number" type="text" placeholder="no number">
+          <span class="detected" id="ed-number-detected"></span>
+        </label>
+        <div class="meta" id="ed-area"></div>
+        <div class="row">
+          <button id="ed-save" type="submit" class="primary">Save</button>
+          <button id="ed-reset" type="button" title="Remove the corrections and use what was detected">Use detected</button>
+        </div>
+        <div class="row flags">
+          <button id="ed-ignore" type="button" title="Not worth anything (a sliver, a pocket): off the review list and out of views, kept with its ID">Ignore</button>
+          <button id="ed-hide" type="button" title="Real, but not shown unless asked for (a shaft, a plant room)">Hide</button>
+          <span id="ed-flags" class="meta"></span>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>To review <span id="review-count" class="count"></span></h2>
+        <button id="next" type="button" title="Next space to review (N)">Next ›</button>
+      </div>
+      <ul id="review-list" class="list"></ul>
+      <p id="review-done" class="meta" hidden>Nothing left to review on this floor.</p>
+    </section>
+
+    <section>
+      <h2>All spaces <span id="space-count" class="count"></span></h2>
+      <input id="search" type="search" placeholder="Filter by name, number, type or ID">
+      <ul id="space-list" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>Space types</h2>
+      <ul id="legend" class="legend"></ul>
+    </section>
+  </aside>
+
+  <main id="map">
+    <svg id="svg" tabindex="0" aria-label="Floor plan">
+      <g id="world">
+        <g id="drawing"></g>
+        <path id="outline"></path>
+        <g id="spaces"></g>
+        <g id="doors"></g>
+      </g>
+      <g id="labels"></g>
+    </svg>
+    <div id="toolbar">
+      <button id="fit" type="button" title="Show the whole floor (F)">Fit</button>
+      <label><input type="checkbox" id="show-drawing" checked> Drawing</label>
+      <label><input type="checkbox" id="show-labels" checked> Labels</label>
+      <label title="Show spaces marked hidden or ignored"><input type="checkbox" id="show-hidden"> Hidden and ignored</label>
+      <span id="status" class="meta"></span>
+    </div>
+  </main>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="review.js"></script>
+</body>
+</html>

@@ -101,11 +101,20 @@ def test_change_list_between_exports(package):
     assert set(report.retired) <= set(second["all_retired"])
 
 
-def test_export_needs_placement(converted):
+def test_unplaced_building_exports_with_its_true_shape(converted):
     ws, d, _, b_id, *_ = converted
+    export_package(ws, d / "a.storeypath")
+    placed = json.loads(zipfile.ZipFile(d / "a.storeypath").read("spaces.geojson"))
     ws.building(b_id).placement = None
-    with pytest.raises(ExportError, match="not placed"):
-        export_package(ws, d / "x.storeypath")
+    path = d / "b.storeypath"
+    manifest = export_package(ws, path)
+    assert validate_package(path) == []
+    assert manifest.placements[b_id].placed is False
+    loose = json.loads(zipfile.ZipFile(path).read("spaces.geojson"))
+    lons = [c[0] for f in loose["features"] for ring in f["geometry"]["coordinates"] for c in ring]
+    assert max(abs(x) for x in lons) < 0.001  # around 0°N 0°E
+    # same rooms, same sizes
+    assert [f["properties"]["area_m2"] for f in loose["features"]] == [f["properties"]["area_m2"] for f in placed["features"]]
 
 
 def test_validator_catches_problems(package):
