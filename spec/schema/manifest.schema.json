@@ -1,0 +1,226 @@
+{
+  "$defs": {
+    "ExportInfo": {
+      "properties": {
+        "sequence": {
+          "description": "1 for the project's first export, then 2, 3, \u2026",
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "exported_at": {
+          "format": "date-time",
+          "title": "Exported At",
+          "type": "string"
+        },
+        "previous_sequence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Sequence"
+        }
+      },
+      "required": [
+        "sequence",
+        "exported_at"
+      ],
+      "title": "ExportInfo",
+      "type": "object"
+    },
+    "Generator": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Generator",
+      "type": "object"
+    },
+    "PlacementInfo": {
+      "description": "Lets a consumer rebuild local drawing coordinates in meters.",
+      "properties": {
+        "lon": {
+          "title": "Lon",
+          "type": "number"
+        },
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "bearing": {
+          "title": "Bearing",
+          "type": "number"
+        },
+        "projection": {
+          "default": "aeqd centred on (lon, lat), drawing +Y rotated to bearing",
+          "title": "Projection",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lon",
+        "lat",
+        "x",
+        "y",
+        "bearing"
+      ],
+      "title": "PlacementInfo",
+      "type": "object"
+    },
+    "ProjectInfo": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "ProjectInfo",
+      "type": "object"
+    },
+    "SourceInfo": {
+      "properties": {
+        "floor_id": {
+          "title": "Floor Id",
+          "type": "string"
+        },
+        "file": {
+          "description": "file name only; local paths are not exported",
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "floor_id",
+        "file"
+      ],
+      "title": "SourceInfo",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "format": {
+      "const": "storeypath-package",
+      "default": "storeypath-package",
+      "title": "Format",
+      "type": "string"
+    },
+    "format_version": {
+      "default": "0.1.0",
+      "title": "Format Version",
+      "type": "string"
+    },
+    "generator": {
+      "$ref": "#/$defs/Generator"
+    },
+    "project": {
+      "$ref": "#/$defs/ProjectInfo"
+    },
+    "export": {
+      "$ref": "#/$defs/ExportInfo"
+    },
+    "crs": {
+      "const": "EPSG:4326",
+      "default": "EPSG:4326",
+      "title": "Crs",
+      "type": "string"
+    },
+    "length_unit": {
+      "const": "m",
+      "default": "m",
+      "title": "Length Unit",
+      "type": "string"
+    },
+    "files": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Files",
+      "type": "object"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "types": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Types",
+      "type": "object"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceInfo"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "placements": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PlacementInfo"
+      },
+      "title": "Placements",
+      "type": "object"
+    }
+  },
+  "required": [
+    "generator",
+    "project",
+    "export",
+    "files",
+    "counts",
+    "types",
+    "sources",
+    "placements"
+  ],
+  "title": "Manifest",
+  "type": "object"
+}

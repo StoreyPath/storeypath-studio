@@ -1,0 +1,23 @@
+/* Styles the viewer adds to its container. Include alongside maplibre-gl.css. */
+
+.storeypath-viewer {
+  position: relative;
+}
+
+.sp-label {
+  font: 11px/1.15 system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
+  color: #1d1d1f;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sp-label b {
+  display: block;
+  font-weight: 600;
+}
+
+.sp-labels-hidden .sp-label {
+  display: none;
+}

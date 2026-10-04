@@ -1,0 +1,48 @@
+# Layer-mapping profile for drawings that follow the US National CAD Standard /
+# AIA layer guidelines. Copy this file and adjust it for other naming schemes.
+# Layer and block patterns are case-insensitive regular expressions matched
+# against the whole name.
+
+name: ncs
+description: US National CAD Standard / AIA layer names
+
+spaces:
+  # Closed outlines (or lines that close up) drawn around each room or area.
+  layers: ['A-AREA', 'A-AREA-BDRY', 'A-SPCE', 'A-SPCE-BDRY', 'ROOMS?']
+  min_area: 0.5 # m², smaller outlines are ignored
+
+labels:
+  # Text, multi-line text and block attributes that name and number spaces.
+  layers: ['A-AREA-IDEN', 'A-SPCE-IDEN', 'A-ANNO-ROOM', 'ROOM-?(NAMES?|TAGS?|LABELS?)']
+  # A label line that matches this is the room number; anything else is the name.
+  number_pattern: '[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}'
+
+doors:
+  layers: ['A-DOOR', 'A-DOOR-.*']
+  reach: 0.35 # m, how far across a wall a door looks for the spaces it joins
+
+blocks:
+  # Block inserts on these layers are used by the "block" rules below.
+  layers: ['A-EQPM-VERT', 'A-FLOR-EVTR', 'A-FLOR-STRS', 'A-FLOR-.*', 'A-EQPM.*']
+
+# How spaces get their type: the first rule that matches wins.
+#   label: pattern searched in the space's name
+#   block: pattern matched against block names placed inside the space
+#   layer: pattern matched against the layer of the space's outline
+rules:
+  - { type: lobby, label: '\b(lobby|reception|foyer|entrance hall)\b' }
+  - { type: elevator, label: '\b(elev(ator)?|lift)s?\b' }
+  - { type: elevator, block: '.*(elev|lift).*' }
+  - { type: escalator, label: '\bescalators?\b' }
+  - { type: stairs, label: '\bstair(s|case|well)?\b' }
+  - { type: stairs, block: '.*stair.*' }
+  - { type: ramp, label: '\bramps?\b' }
+  - { type: corridor, label: '\b(corr(idor)?|hall(way)?|passage)\b' }
+  - { type: restroom, label: '\b(wc|toilets?|restrooms?|lav(atory)?|washrooms?|bathroom)\b' }
+  - { type: kitchen, label: '\b(kitchen(ette)?|pantry|break ?room|cafe(teria)?)\b' }
+  - { type: meeting_room, label: '\b(meeting|conf(erence)?|board ?room|huddle)\b' }
+  - { type: open_area, label: '\bopen (office|plan|area)\b' }
+  - { type: office, label: '\b(office|off\.?|manager|director)\b' }
+  - { type: storage, label: '\b(stor(age|e)?|archive|file room)\b' }
+  - { type: utility, label: '\b(elec(trical)?|mech(anical)?|server|it|data|janitor|jan\.?|utility|comms?)\b' }
+  - { type: shaft, label: '\b(shaft|riser|duct)s?\b' }

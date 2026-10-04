@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "Feature_SpaceProps_": {
+      "properties": {
+        "type": {
+          "const": "Feature",
+          "default": "Feature",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+                  "Point": "#/$defs/PointGeometry",
+                  "Polygon": "#/$defs/PolygonGeometry"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PointGeometry"
+                },
+                {
+                  "$ref": "#/$defs/PolygonGeometry"
+                },
+                {
+                  "$ref": "#/$defs/MultiPolygonGeometry"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/SpaceProps"
+        }
+      },
+      "required": [
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "title": "Feature[SpaceProps]",
+      "type": "object"
+    },
+    "MultiPolygonGeometry": {
+      "properties": {
+        "type": {
+          "const": "MultiPolygon",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "items": {
+            "items": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "MultiPolygonGeometry",
+      "type": "object"
+    },
+    "PointGeometry": {
+      "properties": {
+        "type": {
+          "const": "Point",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "PointGeometry",
+      "type": "object"
+    },
+    "PolygonGeometry": {
+      "properties": {
+        "type": {
+          "const": "Polygon",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "PolygonGeometry",
+      "type": "object"
+    },
+    "SpaceProps": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "const": "space",
+          "title": "Kind",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/SpaceType"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Number"
+        },
+        "floor_id": {
+          "title": "Floor Id",
+          "type": "string"
+        },
+        "area_m2": {
+          "title": "Area M2",
+          "type": "number"
+        },
+        "display_point": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Display Point",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "floor_id",
+        "area_m2",
+        "display_point"
+      ],
+      "title": "SpaceProps",
+      "type": "object"
+    },
+    "SpaceType": {
+      "enum": [
+        "office",
+        "room",
+        "meeting_room",
+        "corridor",
+        "lobby",
+        "elevator",
+        "stairs",
+        "escalator",
+        "ramp",
+        "restroom",
+        "kitchen",
+        "storage",
+        "utility",
+        "shaft",
+        "open_area",
+        "unspecified"
+      ],
+      "title": "SpaceType",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "type": {
+      "const": "FeatureCollection",
+      "default": "FeatureCollection",
+      "title": "Type",
+      "type": "string"
+    },
+    "features": {
+      "items": {
+        "$ref": "#/$defs/Feature_SpaceProps_"
+      },
+      "title": "Features",
+      "type": "array"
+    }
+  },
+  "required": [
+    "features"
+  ],
+  "title": "FeatureCollection[SpaceProps]",
+  "type": "object"
+}

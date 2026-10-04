@@ -1,0 +1,24 @@
+{
+  "name": "@storeypath/viewer",
+  "version": "0.1.0",
+  "description": "StoreyPath Viewer: read-only 3D web viewer engine for StoreyPath indoor map packages",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./viewer.css": "./src/viewer.css"
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "jszip": "^3.10.1",
+    "maplibre-gl": "^4.7.1"
+  },
+  "keywords": ["indoor-mapping", "floor-plans", "wayfinding", "maplibre", "3d"],
+  "license": "Apache-2.0",
+  "author": "Khalefa <storeypath@alahmad.org>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StoreyPath/storeypath.git",
+    "directory": "viewer"
+  }
+}

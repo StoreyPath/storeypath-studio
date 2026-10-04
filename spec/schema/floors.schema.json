@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "Feature_FloorProps_": {
+      "properties": {
+        "type": {
+          "const": "Feature",
+          "default": "Feature",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+                  "Point": "#/$defs/PointGeometry",
+                  "Polygon": "#/$defs/PolygonGeometry"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PointGeometry"
+                },
+                {
+                  "$ref": "#/$defs/PolygonGeometry"
+                },
+                {
+                  "$ref": "#/$defs/MultiPolygonGeometry"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/FloorProps"
+        }
+      },
+      "required": [
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "title": "Feature[FloorProps]",
+      "type": "object"
+    },
+    "FloorProps": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "const": "floor",
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "building_id": {
+          "title": "Building Id",
+          "type": "string"
+        },
+        "ordinal": {
+          "description": "0 = ground floor, negative = below ground",
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "elevation": {
+          "description": "meters above the building's ground floor",
+          "title": "Elevation",
+          "type": "number"
+        },
+        "height": {
+          "description": "floor-to-floor height in meters",
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "code",
+        "name",
+        "building_id",
+        "ordinal",
+        "elevation",
+        "height"
+      ],
+      "title": "FloorProps",
+      "type": "object"
+    },
+    "MultiPolygonGeometry": {
+      "properties": {
+        "type": {
+          "const": "MultiPolygon",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "items": {
+            "items": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "MultiPolygonGeometry",
+      "type": "object"
+    },
+    "PointGeometry": {
+      "properties": {
+        "type": {
+          "const": "Point",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "PointGeometry",
+      "type": "object"
+    },
+    "PolygonGeometry": {
+      "properties": {
+        "type": {
+          "const": "Polygon",
+          "title": "Type",
+          "type": "string"
+        },
+        "coordinates": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Coordinates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "title": "PolygonGeometry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "type": {
+      "const": "FeatureCollection",
+      "default": "FeatureCollection",
+      "title": "Type",
+      "type": "string"
+    },
+    "features": {
+      "items": {
+        "$ref": "#/$defs/Feature_FloorProps_"
+      },
+      "title": "Features",
+      "type": "array"
+    }
+  },
+  "required": [
+    "features"
+  ],
+  "title": "FeatureCollection[FloorProps]",
+  "type": "object"
+}
