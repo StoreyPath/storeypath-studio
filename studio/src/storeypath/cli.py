@@ -6,6 +6,7 @@ import functools
 import http.server
 import json
 import os
+import signal
 import threading
 import webbrowser
 from pathlib import Path
@@ -437,6 +438,8 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
         typer.echo(note)
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+    # `kill` and `docker stop` send SIGTERM: stop as for Ctrl+C, so llama-server stops too.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
