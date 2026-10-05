@@ -230,3 +230,42 @@ def test_markers_beside_the_plan_on_a_wall_layer_are_not_walls(tmp_path):
     assert not ex.walls.intersects(Point(ox + xmax + 1.3, oy + 5))  # the marker
     assert not ex.outline.intersects(Point(ox + xmax + 1.3, oy + 5))  # nor a floor under it
     assert ex.walls.intersects(Point(ox + cx, oy + cy))  # the column
+
+
+def test_an_x_across_a_room_does_not_cut_it(tmp_path):
+    # A void, an opening to below or a lift car is marked with an X, often drawn on
+    # the wall layer, even inside one polyline with the rectangle around it.
+    import ezdxf
+
+    cells = office_floor(1)
+    room = next(c for c in cells if c.number == "101")
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False, walls="lines")
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    ox, oy = ORIGIN
+    h = WALL / 2  # the X's rectangle on the room's wall faces, as drawn
+    x0, y0, x1, y1 = (ox + room.x0 + h) * 1000, (oy + room.y0 + h) * 1000, (ox + room.x1 - h) * 1000, (oy + room.y1 - h) * 1000
+    doc.modelspace().add_lwpolyline([(x0, y0), (x1, y1), (x0, y1), (x1, y0), (x0, y0)], dxfattribs={"layer": "A-WALL"})
+    doc.saveas(tmp_path / "plan.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
+    assert len(ex.spaces) == len(cells)
+    found = next(s for s in ex.spaces if s.number == "101")
+    assert iou(found.polygon, _room(room)) > 0.95
+
+
+def test_the_garden_inside_a_plot_wall_is_not_a_room(tmp_path):
+    # A plot wall drawn around the house with the same walls: the yard between them
+    # holds every room in its hole. A person sees the outside, not a room.
+    import ezdxf
+
+    cells = office_floor(1)
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False, walls="lines")
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    ox, oy = ORIGIN
+    for inset in (0.0, 0.2):
+        a, b, c, d = ox - 8 + inset, oy - 8 + inset, ox + 56 - inset, oy + 28 - inset
+        doc.modelspace().add_lwpolyline([(a * 1000, b * 1000), (c * 1000, b * 1000), (c * 1000, d * 1000), (a * 1000, d * 1000)],
+                                         close=True, dxfattribs={"layer": "A-WALL"})
+    doc.saveas(tmp_path / "plan.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
+    assert len(ex.spaces) == len(cells)  # the rooms, and no yard
+    assert ex.outline.area < 60 * 30  # the building, not the plot

@@ -25,6 +25,8 @@ NOT_A_ROOM = re.compile(
       | (ffl|fgl|ssl|lvl|el\.?|level)\s*[±+\-]?\s*\d+([.,]\d+)?                    # SSL+0.35, LEVEL 0.00
       | [a-z]{1,2}-?\d{1,3}[a-z]?                                                   # D1, W4, DW-12
       | up|dn|down|n|north
+      | (\d+\s*)?(steps?|ramp)\s+(up|down|dn)(\s+\d+\s*steps?\s+(up|down|dn))*         # 3 STEPS UP, RAMP UP: level notes
+      | hidden\s+door|open(\s+(to\s+)?below)?|below                                     # notes in a plan, not rooms
       | ((a\.?\s?/?\s?c|s\.?\s?a\.?\s?c|split|outdoor|indoor|condensing|packaged?)\s+)+units?  # SAC UNIT, A/C SPLIT UNIT
       | (fcu|ahu|cdu|vrf|vrv)(\s*-?\s*\d+)?                                          # FCU-1, AHU
       | scale\b.*|\d+\s*[x×]\s*\d+.*                                               # SCALE 1:100, 1200x600

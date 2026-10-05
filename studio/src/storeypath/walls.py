@@ -160,8 +160,12 @@ def spaces_from_walls(
     edge = envelope.boundary.buffer(SNAP_M)
     glazing = openings.buffer(cfg.max_thickness / 2 + 0.05) if openings is not None else None
     spaces, pockets, open_edges = [], [], []
-    for region in as_polygons(envelope.difference(mass)):
-        if region.area < min_area or region.buffer(-cfg.min_width / 2).is_empty:
+    regions = [r for r in as_polygons(envelope.difference(mass))
+               if r.area >= min_area and not r.buffer(-cfg.min_width / 2).is_empty]
+    around = _surrounding(regions, envelope.area, label_points)
+    for k, region in enumerate(regions):
+        if k in around:
+            pockets.append(region)  # the garden inside a plot wall, a sheet's frame: outside
             continue
         # Edges along the envelope rather than walls: open to the outside, unless
         # glazing is drawn there (a window).
@@ -185,6 +189,41 @@ def spaces_from_walls(
     fabric.windows = _one_per_window(fabric.windows + [_axis(b) for b in glazed_gaps])
     return WallSpaces(spaces, outline, len(pockets), doorways,
                       shapely.union_all(open_edges) if open_edges else None, fabric)
+
+
+SURROUNDS = 3  # an area with this many others inside or within its reach…
+SURROUNDS_SHARE = 0.5  # …holding this share of their area…
+OUTSIDE_SHARE = 0.25  # …and (when it wraps round them) this share of the plan is the outside
+
+
+def _surrounding(regions: list[Polygon], plan_area: float, label_points) -> set[int]:
+    """Areas that are the outside around the building: the garden between a plot
+    wall and the house, a sheet's frame around a plan. Such an area holds most of
+    the other areas in its holes, or (a garden that meets the house, so has no hole)
+    is a big unnamed area wrapped round most of them. A corridor ringing an office
+    core holds a few small rooms, not most of the floor; a named area is a room."""
+    if len(regions) <= SURROUNDS:
+        return set()
+    points = [r.representative_point() for r in regions]
+    tree = shapely.STRtree(points)
+    areas = [r.area for r in regions]
+    total = sum(areas)
+    out = set()
+    for k, region in enumerate(regions):
+        others = total - areas[k]
+        holes = shapely.union_all([Polygon(ring) for ring in region.interiors]) if region.interiors else None
+        inside = [int(j) for j in tree.query(holes, predicate="contains")] if holes is not None else []
+        inside = [j for j in inside if j != k]
+        if len(inside) >= SURROUNDS and sum(areas[j] for j in inside) >= SURROUNDS_SHARE * others:
+            out.add(k)
+            continue
+        if region.area < OUTSIDE_SHARE * plan_area or any(region.contains(p) for p in label_points):
+            continue
+        hull = region.convex_hull
+        within = [int(j) for j in tree.query(hull, predicate="contains") if int(j) != k]
+        if len(within) >= SURROUNDS and sum(areas[j] for j in within) >= SURROUNDS_SHARE * others:
+            out.add(k)
+    return out
 
 
 def _axis(poly: Polygon) -> LineString:

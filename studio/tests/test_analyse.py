@@ -380,3 +380,10 @@ def test_a_text_box_with_broken_columns_does_not_stop_the_drawing(tmp_path):
     (tmp_path / "broken.dxf").write_text(broken)
     read = read_drawing(tmp_path / "broken.dxf")
     assert len(read.modelspace().query("LINE")) == 1 and len(read.modelspace().query("MTEXT")) >= 1
+
+
+@pytest.mark.parametrize("text", ["3 STEPS UP", "1 STEP UP", "RAMP UP", "RAMP UP 3 STEPS UP 2 STEPS UP", "HIDDEN DOOR",
+                                  "OPEN BELOW"])
+def test_level_notes_are_not_room_names(text):
+    assert NOT_A_ROOM.match(text)
+    assert not NOT_A_ROOM.match("STEPS=30 UP") and not NOT_A_ROOM.match("OPEN KITCHEN")

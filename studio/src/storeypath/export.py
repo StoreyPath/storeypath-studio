@@ -47,8 +47,24 @@ def _rounded(lonlat_geom) -> dict:
     return json.loads(json.dumps(mapping(out)))  # tuples → lists
 
 
+SLIVER_M2 = 0.01  # holes and parts smaller than this (1 dm²) do not survive 1 cm rounding
+
+
+def _without_slivers(geom):
+    """Polygons without holes and parts too small to keep their shape once rounded to
+    the package's 1 cm: they come out as rings of one or two points, which readers
+    (the 3D viewer's triangulator among them) cannot draw."""
+    if not isinstance(geom, (Polygon, MultiPolygon)):
+        return geom
+    parts = [Polygon(p.exterior, [h for h in p.interiors if Polygon(h).area >= SLIVER_M2])
+             for p in as_polygons(geom) if p.area >= SLIVER_M2]
+    if not parts:
+        return geom
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts)
+
+
 def _geo(geom, g: Georeferencer) -> dict:
-    return _rounded(g.geometry(geom))
+    return _rounded(g.geometry(_without_slivers(geom)))
 
 
 def _label_point(geom) -> tuple[float, float]:

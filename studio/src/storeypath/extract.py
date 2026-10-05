@@ -312,6 +312,7 @@ def extract_floor(
     spaces, containers = _clean_spaces(closed_shapes, profile, warnings)
     outline = _floor_outline(spaces, containers)
     used = "outlines"
+    wall_lines = _without_crosses(wall_lines)
     if not spaces and method != "outlines" and (wall_lines or wall_fills):
         found = spaces_from_walls(
             wall_lines, wall_fills, door_shapes, opening_lines, [lb.point for lb in labels], profile.walls,
@@ -467,6 +468,72 @@ def add_lift_doors(ex: FloorExtraction, reach: float = 0.4) -> None:
             issues=[f"no door into the lift is drawn; one is assumed on the side facing "
                     f"{other.name or other.type.value.replace('_', ' ')}; check it"],
         ))
+
+
+X_MIN_M = 0.8  # lines this long and longer may mark an X
+X_MIDDLE = 0.15  # an X's lines cross within this share of their length of their middles
+X_DIAGONAL_DEG = (15.0, 75.0)  # …and run at an angle to the plan's walls
+
+
+def _without_crosses(lines: list[LineString]) -> list[LineString]:
+    """Wall lines without the X marks drawn across voids, openings to below and lift
+    cars: two straight stretches that cross near both their middles, diagonally to
+    the plan's main directions, whether drawn as two lines or inside one polyline with
+    the rectangle around them. Walls meet at their ends or run into each other; they
+    do not cross diagonally through each other's middles."""
+    segments = []  # (line index, segment index, segment)
+    for k, ln in enumerate(lines):
+        c = list(ln.coords)
+        for m, (a, b) in enumerate(zip(c, c[1:])):
+            seg = LineString([a, b])
+            if seg.length >= X_MIN_M:
+                segments.append((k, m, seg))
+    if len(segments) < 2:
+        return lines
+
+    def angle(seg):
+        (x0, y0), (x1, y1) = seg.coords
+        return np.degrees(np.arctan2(y1 - y0, x1 - x0)) % 90.0
+
+    angles = np.array([angle(seg) for _, _, seg in segments])
+    hist, _ = np.histogram(angles, bins=90, range=(0.0, 90.0), weights=[seg.length for _, _, seg in segments])
+    axis = float(np.argmax(hist)) + 0.5  # the plan's main wall direction, modulo 90°
+    diagonal = [s for s, a in zip(segments, angles) if X_DIAGONAL_DEG[0] <= (a - axis) % 90.0 <= X_DIAGONAL_DEG[1]]
+    if len(diagonal) < 2:
+        return lines
+    tree = STRtree([seg for _, _, seg in diagonal])
+    marks: set[tuple[int, int]] = set()
+    for i, (k, m, seg) in enumerate(diagonal):
+        for j in tree.query(seg, predicate="crosses"):
+            j = int(j)
+            if j <= i:
+                continue
+            other = diagonal[j][2]
+            if not 0.5 <= seg.length / other.length <= 2.0:
+                continue
+            hit = seg.intersection(other)
+            if hit.geom_type == "Point" and all(abs(g.project(hit, normalized=True) - 0.5) <= X_MIDDLE for g in (seg, other)):
+                marks.update({(k, m), diagonal[j][:2]})
+    if not marks:
+        return lines
+    out = []
+    for k, ln in enumerate(lines):
+        cut = sorted(m for kk, m in marks if kk == k)
+        if not cut:
+            out.append(ln)
+            continue
+        c = list(ln.coords)
+        run = [c[0]]
+        for m in range(len(c) - 1):  # keep the line, less its X stretches
+            if m in cut:
+                if len(run) > 1:
+                    out.append(LineString(run))
+                run = [c[m + 1]]
+            else:
+                run.append(c[m + 1])
+        if len(run) > 1:
+            out.append(LineString(run))
+    return out
 
 
 def _attached(walls, rooms, touch: float = 0.1):

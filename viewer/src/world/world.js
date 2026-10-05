@@ -391,26 +391,55 @@ export class StoreyPathWorld extends EventTarget {
     return polys.map((rings) => rings.map((ring) => ring.map((c) => this.#local(c))));
   }
 
+  /** A polygon's rings as a shape, or null. A ring too small to have an inside (a
+   * hole a few millimetres wide, collapsed by the package's 1 cm rounding) is
+   * left out: the triangulator fails on it, and takes the whole floor with it. */
   #shape(rings) {
     const toPts = (ring) => ring.map(([x, n]) => new THREE.Vector2(x, n));
-    const shape = new THREE.Shape(toPts(rings[0]));
-    for (const hole of rings.slice(1)) shape.holes.push(new THREE.Path(toPts(hole)));
+    const usable = (pts) => pts.length >= 3 && Math.abs(THREE.ShapeUtils.area(pts)) > 1e-4;
+    const outer = toPts(rings[0]);
+    if (!usable(outer)) return null;
+    const shape = new THREE.Shape(outer);
+    for (const hole of rings.slice(1)) {
+      const pts = toPts(hole);
+      if (usable(pts)) shape.holes.push(new THREE.Path(pts));
+    }
     return shape;
+  }
+
+  /** Shapes for ``polygons``, built with ``make``; when that fails on the whole set,
+   * with only the shapes it works on, one bad outline does not hide the rest. */
+  #geometry(polygons, make) {
+    const shapes = polygons.map((rings) => this.#shape(rings)).filter(Boolean);
+    if (!shapes.length) return new THREE.BufferGeometry();
+    try {
+      return make(shapes);
+    } catch {
+      const good = shapes.filter((shape) => {
+        try {
+          make([shape]).dispose();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      return good.length ? make(good) : new THREE.BufferGeometry();
+    }
   }
 
   /** Polygons extruded upward from ``y`` by ``depth``: material 0 on the top and
    * bottom faces, material 1 on the sides. */
   #extrude(polygons, depth, y) {
     if (!polygons.length) return null;
-    const g = new THREE.ExtrudeGeometry(polygons.map((rings) => this.#shape(rings)),
-      { depth, bevelEnabled: false, curveSegments: 1 });
+    const g = this.#geometry(polygons,
+      (shapes) => new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 }));
     g.rotateX(-Math.PI / 2);
     g.translate(0, y, 0);
     return g;
   }
 
   #flat(polygons, y) {
-    const g = new THREE.ShapeGeometry(polygons.map((rings) => this.#shape(rings)), 1);
+    const g = this.#geometry(polygons, (shapes) => new THREE.ShapeGeometry(shapes, 1));
     g.rotateX(-Math.PI / 2);
     g.translate(0, y, 0);
     return g;
