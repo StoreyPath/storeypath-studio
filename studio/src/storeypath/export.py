@@ -101,15 +101,15 @@ OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value}
 
 
 def _walls_and_parapets(walls, spaces, thickness: float | None):
-    """A floor's walls, split into those that rise to the ceiling and the parapets:
-    walls beside a terrace or balcony with no room on their other side (the low wall
-    around a roof). A room's own walls stay full height, terrace or not beside them."""
+    """A floor's walls, split into those that rise to the ceiling and the parapets. On
+    a floor with a terrace or balcony, a wall that encloses no room is low: the wall
+    around a roof, and anything built onto it (a pier, a box for a pipe). A room's
+    own walls stay full height, terrace or not beside them."""
     if walls is None or walls.is_empty or not any(t in OUTDOOR for _, t in spaces):
         return walls, None
     reach = 1.5 * max(thickness or 0.2, 0.1) + 0.05  # across a wall, to the space on its far side
     rooms = unary_union([s for s, t in spaces if t not in OUTDOOR]).buffer(reach)
-    outdoor = unary_union([s for s, t in spaces if t in OUTDOOR]).buffer(reach)
-    low = walls.difference(rooms).intersection(outdoor)
+    low = walls.difference(rooms)
     low = unary_union([p for p in as_polygons(low) if p.area >= 0.01])
     if low.is_empty:
         return walls, None

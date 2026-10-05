@@ -288,3 +288,21 @@ def test_air_conditioner_tags_do_not_split_rooms(tmp_path):
         return sorted(ws.effective(r)["name"] or "-" for r in ws.floor_objects(f_id) if r.kind == "space")
 
     assert rooms("tagged.dxf") == rooms("plain.dxf")
+
+
+def test_handrails_and_steps_are_not_read_as_walls(tmp_path):
+    # A handrail is a pair of lines a wall's thickness apart along the walls; step
+    # outlines are small closed shapes, like columns. Their names say what they are.
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1), area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    for e in list(doc.modelspace().query('LWPOLYLINE[layer=="A-WALL"]')):
+        rail = e.copy()
+        rail.dxf.layer = "HAND RAIL"
+        doc.modelspace().add_entity(rail)
+    for i in range(8):
+        doc.modelspace().add_lwpolyline([(130000 + 300 * i, 50000), (130250 + 300 * i, 50000), (130250 + 300 * i, 50300),
+                                         (130000 + 300 * i, 50300)], close=True, dxfattribs={"layer": "STEP"})
+    doc.saveas(tmp_path / "plan.dxf")
+    roles = {r.layer: r.roles for r in analyse(read_drawing(tmp_path / "plan.dxf"), 0.001, None, rules_only).roles}
+    assert "walls" in roles["A-WALL"]
+    assert "walls" not in roles.get("HAND RAIL", []) and "walls" not in roles.get("STEP", [])

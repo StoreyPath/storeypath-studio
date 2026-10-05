@@ -60,8 +60,13 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("furniture", re.compile(r"furn|equip|sanit|plumb|fixt|اثاث|أثاث", re.I)),
     ("dimension", re.compile(r"dim|cota|bema[ßs]|أبعاد|ابعاد", re.I)),
     ("grid", re.compile(r"grid|axis|^ax$|achse|محاور", re.I)),
-    ("stairs", re.compile(r"stair|strs|درج|سلم", re.I)),
+    ("stairs", re.compile(r"stair|strs|steps?\b|tread|riser|درج|سلم", re.I)),
+    ("railing", re.compile(r"rail|balust|guard|gel[aä]nder|garde.?corps|barandilla|درابزين", re.I)),
 ]
+# Layers that a name says hold something else are not read as walls, however
+# much their lines look like them: handrails are pairs of lines a wall's
+# thickness apart, step outlines are small closed shapes like columns.
+NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing"}
 
 
 @dataclass
@@ -513,7 +518,7 @@ def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None,
         why.append("drawn dashed (hidden or centre lines)")
     elif st.ladder > st.paired:
         why.append(f"{st.ladder:.0f} m of evenly spaced lines (stairs or a pattern)")
-    elif "outlines" not in roles and in_frame and thick_enough:
+    elif "outlines" not in roles and in_frame and thick_enough and hint not in NOT_WALLS:
         roles.append("walls")
         why.append(f"{st.framed / 2:.0f} m of the wall frame, {own_gap:.2f} m thick")
     elif st.small_closed >= 4 and st.small_closed * 2 >= st.entities - len(st.texts) and hint in (None, "column", "wall"):

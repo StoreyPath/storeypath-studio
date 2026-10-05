@@ -204,3 +204,29 @@ def test_rooms_are_divided_straight_across_not_on_the_diagonal():
     (x0, y0), (x1, y1) = cuts[0].coords[0], cuts[0].coords[-1]
     assert abs(y1 - y0) < 0.01 and math.dist((x0, y0), (x1, y1)) < 5.2  # square to the walls, across the room
     assert abs(sum(p.area for p in parts) - room.area) < 1e-6
+
+
+def test_markers_beside_the_plan_on_a_wall_layer_are_not_walls(tmp_path):
+    # An elevation marker, a filled triangle, drawn on the wall layer a little way off
+    # the building: not a wall. A column inside a room is.
+    import ezdxf
+
+    cells = office_floor(1)
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    ox, oy = ORIGIN
+    xmax = max(c.x1 for c in cells)
+    marker = [((ox + xmax + 0.8) * 1000, (oy + 5) * 1000), ((ox + xmax + 1.6) * 1000, (oy + 4.5) * 1000),
+              ((ox + xmax + 1.6) * 1000, (oy + 5.5) * 1000)]
+    hatch = doc.modelspace().add_hatch(dxfattribs={"layer": "A-WALL"})
+    hatch.paths.add_polyline_path(marker, is_closed=True)
+    office = next(c for c in cells if c.number == "101")
+    cx, cy = office.center
+    doc.modelspace().add_lwpolyline([((ox + cx + dx) * 1000, (oy + cy + dy) * 1000) for dx, dy in
+                                     ((-0.15, -0.15), (0.15, -0.15), (0.15, 0.15), (-0.15, 0.15))],
+                                    close=True, dxfattribs={"layer": "A-WALL"})
+    doc.saveas(tmp_path / "plan.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
+    assert not ex.walls.intersects(Point(ox + xmax + 1.3, oy + 5))  # the marker
+    assert not ex.outline.intersects(Point(ox + xmax + 1.3, oy + 5))  # nor a floor under it
+    assert ex.walls.intersects(Point(ox + cx, oy + cy))  # the column

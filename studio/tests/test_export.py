@@ -165,11 +165,13 @@ def test_walls_around_a_roof_terrace_are_parapets():
 
     edge = box(0, 0, 10, 10).difference(box(0.2, 0.2, 9.8, 9.8))
     room_walls = box(4.0, 0.2, 4.2, 4.2).union(box(0.2, 4.0, 4.2, 4.2))
-    walls = edge.union(room_walls)
+    pier = box(10, 6, 10.4, 6.4)  # built onto the outside of the parapet
+    walls = edge.union(room_walls).union(pier)
     room = box(0.2, 0.2, 4.0, 4.0)
     terrace = box(0.2, 0.2, 9.8, 9.8).difference(box(0.2, 0.2, 4.2, 4.2))
     full, parapets = _walls_and_parapets(walls, [(room, "bedroom"), (terrace, "terrace")], 0.2)
     assert parapets.contains(Point(7, 9.9)) and parapets.contains(Point(9.9, 7))  # the roof's edge
+    assert parapets.contains(Point(10.3, 6.2))  # and what is built onto it
     assert full.contains(Point(2, 0.1)) and full.contains(Point(0.1, 2))  # the room's outside walls
     assert full.contains(Point(4.1, 2)) and full.contains(Point(2, 4.1))  # between the room and the terrace
     assert abs(full.area + parapets.area - walls.area) < 1e-6

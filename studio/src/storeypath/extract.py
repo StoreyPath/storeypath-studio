@@ -360,7 +360,29 @@ def extract_floor(
         if fabric is not None:
             fabric.walls = translate(fabric.walls, dx, dy)
     walls = fabric.walls if fabric is not None and not fabric.walls.is_empty else None
+    if spaces:
+        rooms = unary_union([s.polygon for s in spaces])
+        if walls is not None:
+            walls = _attached(walls, rooms)
+        if outline is not None:  # drawn from the same walls: without the markers' pieces too
+            outline = unary_union([p for p in as_polygons(outline) if p.distance(rooms) <= 0.1]) or outline
     return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls))
+
+
+def _attached(walls, rooms, touch: float = 0.1):
+    """The walls of the building: the ones its rooms meet (a room ends at a wall's
+    face; a column stands inside), and whatever is built onto those. A filled section
+    or elevation marker, a north arrow or a symbol beside the plan, drawn on a wall
+    layer, stands apart and is left out."""
+    pieces = as_polygons(walls)
+    kept = [p.distance(rooms) <= touch for p in pieces]
+    grew = True
+    while grew:  # what touches a kept piece is kept
+        grew = False
+        for i, p in enumerate(pieces):
+            if not kept[i] and any(k and p.distance(q) <= touch for k, q in zip(kept, pieces)):
+                kept[i] = grew = True
+    return unary_union([p for p, k in zip(pieces, kept) if k]) or None
 
 
 def _thickness(walls) -> float | None:
