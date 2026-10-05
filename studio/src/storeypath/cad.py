@@ -51,6 +51,37 @@ _DRAWINGS_LOCK = threading.Lock()
 KEEP_DRAWINGS = 2  # parsed drawings kept in memory (a large sheet set is a few hundred MB)
 
 
+def _tolerate_broken_text_columns() -> None:
+    """Real drawings (and DWG converted by LibreDWG) carry multi-column text boxes
+    whose column data is broken: a column type no program writes, or columns linked
+    to a sheet that is gone. ezdxf then refuses the whole drawing. A floor plan does
+    not need text columns: such a box is read as plain text, as AutoCAD shows it."""
+    import ezdxf.document
+    import ezdxf.entities.mtext as mtext
+
+    load_columns = mtext.load_columns_from_embedded_object
+
+    def tolerant_columns(dxf, embedded_obj):
+        try:
+            return load_columns(dxf, embedded_obj)
+        except (ValueError, KeyError, IndexError):
+            return None
+
+    def tolerant_post_init(self):
+        for cmd in self._post_init_commands:
+            try:
+                cmd()
+            except (KeyError, ValueError, AttributeError):  # a column linked to a missing sheet
+                pass
+        del self._post_init_commands
+
+    mtext.load_columns_from_embedded_object = tolerant_columns
+    ezdxf.document.Drawing._execute_post_init_commands = tolerant_post_init
+
+
+_tolerate_broken_text_columns()
+
+
 def read_drawing(path: str | Path) -> Drawing:
     """A drawing, parsed. The last few are kept in memory: converting a sheet set
     reads the same large file for every floor and step, and parsing it (after

@@ -199,7 +199,7 @@ TYPE_GUIDE = {
     "escalator": "escalator",
     "ramp": "ramp",
     "storage": "store, storeroom, storage, archive (مخزن, rangement, almacén)",
-    "utility": "electrical, mechanical, server, plant, pump, janitor or other technical room (كهرباء, technique)",
+    "utility": "electrical, mechanical, server, plant, pump, janitor or other technical room; DB room (electrical distribution board) (كهرباء, technique)",
     "shaft": "shaft, riser, duct",
     "parking": "garage, carport, parking (موقف, garage, aparcamiento)",
     "balcony": "balcony (شرفة, بلكونة, balcon)",

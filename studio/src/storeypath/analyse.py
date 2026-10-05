@@ -56,7 +56,7 @@ BUILDING_MIN_M = 4 * WALL_MIN_STRUCTURE_M  # …and at least this much paired wa
 
 NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("window", re.compile(r"glaz|win(d|do)|(^|[^a-z])win([^a-z]|$)|fen[eê]t|fenster|ventana|نافذ|شباك|شبابيك", re.I)),
-    ("door", re.compile(r"door|d[oö]r|t[uü]r\b|porte|puerta|باب|أبواب|ابواب", re.I)),
+    ("door", re.compile(r"door|d[oö]r|(^|[^a-z])t[uü]r\b|porte|puerta|باب|أبواب|ابواب", re.I)),
     ("column", re.compile(r"col(s|umn)|s-cols|pilar|st[uü]tze|عمود|اعمدة|أعمدة", re.I)),
     ("wall", re.compile(r"wall|wand|mur\b|muro|pared|جدار|جدران|حائط", re.I)),
     ("room_name", re.compile(r"room.?name|area.?iden|spce.?iden|anno.?room|room.?tag|اسماء|أسماء", re.I)),

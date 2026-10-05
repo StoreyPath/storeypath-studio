@@ -362,3 +362,21 @@ def test_buildings_standing_apart_are_all_walls_and_lift_cars_are_not_rooms(tmp_
     roles = {r.layer: r.roles for r in a.roles}
     assert roles["A-WALL"] == ["walls"] and "outlines" not in roles.get("A-EQPM-VERT", [])
     assert len(extract_floor(doc, a.profile).spaces) == 4 * len(office_floor(1))
+
+
+def test_a_text_box_with_broken_columns_does_not_stop_the_drawing(tmp_path):
+    # Real drawings (and DWG converted by LibreDWG) carry multi-column text whose
+    # column type no program writes; the drawing is read, the text as plain text.
+    import io
+
+    doc = ezdxf.new("R2018")
+    doc.modelspace().add_mtext_static_columns(["NOTES", "MORE NOTES"], width=50, gutter_width=5, height=20)
+    doc.modelspace().add_line((0, 0), (1000, 0))
+    out = io.StringIO()
+    doc.write(out)
+    text = out.getvalue()
+    start = text.index("Embedded Object")
+    broken = text[:start] + text[start:].replace(" 71\n1\n", " 71\n65032\n", 1)
+    (tmp_path / "broken.dxf").write_text(broken)
+    read = read_drawing(tmp_path / "broken.dxf")
+    assert len(read.modelspace().query("LINE")) == 1 and len(read.modelspace().query("MTEXT")) >= 1
