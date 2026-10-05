@@ -5,8 +5,9 @@ port. Everything runs locally: drawings are read here, the language model runs
 here (llama-server, started on first use), and nothing is fetched from anywhere
 else — Studio works on a machine with no network at all.
 
-Projects live in the data folder, one folder each (``<data>/<slug>/<slug>.spproj``
-with its drawings and exports beside it). Long steps — reading a drawing's plans,
+Projects live in the data folder, one folder each named by the project's code
+(``<data>/<code>/<code>.spproj`` with its drawings and exports beside it; the name
+people give a project is only shown). Long steps — reading a drawing's plans,
 converting, exporting — run as jobs, one at a time, and report progress.
 
     GET  /api/status
@@ -184,15 +185,16 @@ class Studio:
         name = (name or "").strip()
         if not name:
             raise ValueError("a project needs a name")
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "project"
-        folder = self.data / slug
-        n = 2
-        while folder.exists():
-            folder, n = self.data / f"{slug}-{n}", n + 1
-        folder.mkdir(parents=True)
+        # The folder is named by the project's code, which never changes, not by its
+        # name, which people type (and retype, repeat, or write in Arabic).
+        taken = self._workspaces()
         ws = Workspace.new(name)
+        while ws.id in taken or (self.data / ws.id).exists():
+            ws = Workspace.new(name)
         ws.add_location("SITE", name)
-        ws.save(folder / f"{folder.name}.spproj")
+        folder = self.data / ws.id
+        folder.mkdir(parents=True)
+        ws.save(folder / f"{ws.id}.spproj")
         return {"code": ws.id}
 
     def project(self, code: str) -> dict:
@@ -427,7 +429,7 @@ class Studio:
                 folder = ws_path.parent / "exports"
                 folder.mkdir(exist_ok=True)
                 seq = len(ws.exports) + 1
-                out = folder / f"{ws_path.stem}-{seq:03d}.storeypath"
+                out = folder / f"{ws.id}-{seq:03d}.storeypath"  # by code, as the folder
                 job.say(f"writing {out.name}")
                 manifest = export_package(ws, out)
                 ws.save(ws_path)

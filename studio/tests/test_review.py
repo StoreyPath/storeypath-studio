@@ -272,6 +272,7 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     assert status == 200
     _, job = call(f"{base}/api/projects/{code}/export", {})
     exported = wait(base, job)
+    assert exported["file"] == f"{code}-001.storeypath"  # by code, as the project's folder
     status, package = call(f"{base}/api/projects/{code}/exports/{exported['file']}")
     assert status == 200
     with zipfile.ZipFile(io.BytesIO(package)) as z:
@@ -357,3 +358,15 @@ def test_floor_heights_come_from_the_levels_on_the_sheet(studio, tmp_path):
     floors = {f.ordinal: f for _, _, f, _ in Workspace.load(app.path(code)).iter_floors()}
     assert {n: (f.elevation, f.height, f.parapet_height) for n, f in floors.items()} == {
         0: (0.0, 3.4, 1.1), 1: (3.4, 3.4, 1.1)}
+
+
+def test_project_folders_are_named_by_code_not_by_name(studio):
+    base, app = studio
+    names = ["Villa", "Villa", "فيلا الرياض"]
+    codes = [call(f"{base}/api/projects", {"name": n})[1]["code"] for n in names]
+    assert len(set(codes)) == 3
+    for code, name in zip(codes, names):
+        path = app.path(code)
+        assert path == app.data / code / f"{code}.spproj"  # the name people type is only shown
+        assert Workspace.load(path).project.name == name
+    assert sorted(p.name for p in app.data.iterdir()) == sorted(codes)
