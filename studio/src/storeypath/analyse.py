@@ -51,7 +51,7 @@ WALL_MIN_STRUCTURE_M = 8.0  # a layer of walls holds at least this much connecte
 WALL_SHARE_OF_MAIN = 0.2  # …and at least this share of the plan's main wall structure
 
 NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
-    ("window", re.compile(r"glaz|win(d|do)|fen[eê]t|fenster|ventana|نافذ|شباك|شبابيك", re.I)),
+    ("window", re.compile(r"glaz|win(d|do)|(^|[^a-z])win([^a-z]|$)|fen[eê]t|fenster|ventana|نافذ|شباك|شبابيك", re.I)),
     ("door", re.compile(r"door|d[oö]r|t[uü]r\b|porte|puerta|باب|أبواب|ابواب", re.I)),
     ("column", re.compile(r"col(s|umn)|s-cols|pilar|st[uü]tze|عمود|اعمدة|أعمدة", re.I)),
     ("wall", re.compile(r"wall|wand|mur\b|muro|pared|جدار|جدران|حائط", re.I)),
@@ -64,9 +64,10 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("railing", re.compile(r"rail|balust|guard|gel[aä]nder|garde.?corps|barandilla|درابزين", re.I)),
 ]
 # Layers that a name says hold something else are not read as walls, however
-# much their lines look like them: handrails are pairs of lines a wall's
-# thickness apart, step outlines are small closed shapes like columns.
-NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing"}
+# much their lines look like them: handrails and window frames are pairs of lines
+# a wall's thickness apart, step outlines are small closed shapes like columns.
+# Windows are then read as glazing in the walls' gaps.
+NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing", "window"}
 
 
 @dataclass

@@ -306,3 +306,33 @@ def test_handrails_and_steps_are_not_read_as_walls(tmp_path):
     roles = {r.layer: r.roles for r in analyse(read_drawing(tmp_path / "plan.dxf"), 0.001, None, rules_only).roles}
     assert "walls" in roles["A-WALL"]
     assert "walls" not in roles.get("HAND RAIL", []) and "walls" not in roles.get("STEP", [])
+
+
+@pytest.mark.parametrize("layer", ["WIN", "A-WIN-FRAME", "WINDOWS"])
+def test_window_frames_as_thick_as_walls_are_windows_when_the_layer_says_so(tmp_path, layer):
+    # Window frames drawn at the wall's faces are a pair of lines a wall's thickness
+    # apart, in line with the walls, like the walls themselves. Unnamed, they cannot be
+    # told from walls; on a layer named for windows they are glazing in the walls' gaps.
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1), area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    doc.layers.add(layer)
+    doc.layers.add("FRAMES")
+    lines = list(doc.modelspace().query('LINE[layer=="A-GLAZ"]'))
+    # each window is drawn as outer face, glass, inner face: keep the faces only
+    south, glass_s, _, _, glass_n, north = sorted({round(e.dxf.start.y) for e in lines})
+    for e in lines:
+        if round(e.dxf.start.y) in (glass_s, glass_n):
+            doc.modelspace().delete_entity(e)
+        else:
+            e.dxf.layer = "FRAMES"
+    doc.saveas(tmp_path / "unnamed.dxf")
+    roles = {r.layer: r.roles for r in analyse(read_drawing(tmp_path / "unnamed.dxf"), 0.001, None, rules_only).roles}
+    assert roles["FRAMES"] == ["walls"]
+    for e in doc.modelspace().query('LINE[layer=="FRAMES"]'):
+        e.dxf.layer = layer
+    doc.saveas(tmp_path / "named.dxf")
+    named = read_drawing(tmp_path / "named.dxf")
+    a = analyse(named, 0.001, None, rules_only)
+    assert {r.layer: r.roles for r in a.roles}[layer] == ["openings"]
+    windows = [d for d in extract_floor(named, a.profile).doors if d.source == "window"]
+    assert len(windows) == len(_windows(office_floor(1)))

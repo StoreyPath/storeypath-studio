@@ -118,7 +118,8 @@ floor, in the web app too, so a project converts the same way again.
 The default profile, `auto`, reads every plan's layers from what is drawn on them
 (see [analyse.py](src/storeypath/analyse.py)): walls are pairs of parallel lines a
 wall's thickness apart that join into one frame; glazing is thin pairs in line with
-the walls; doors are quarter-circle swings; columns are small repeated shapes; room
+the walls (and a layer named for windows is glazing, however thick its frames are
+drawn); doors are quarter-circle swings; columns are small repeated shapes; room
 outlines each hold one room's name; labels are texts that name rooms. Dashed lines
 and evenly spaced lines (stair treads, tiles, tables) are not walls. What each layer
 was read as is shown per floor in the web app and kept in the workspace. A YAML
