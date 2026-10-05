@@ -31,6 +31,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,8 @@ class LocalModel:
         self.threads = threads or int(os.environ.get("STOREYPATH_THREADS", "0")) or os.cpu_count() or 4
         self.parallel = max(1, int(os.environ.get("STOREYPATH_PARALLEL", "1")))
         self._proc: subprocess.Popen | None = None
+        self._log: deque[str] = deque(maxlen=40)  # the server's last log lines, for errors
+        self._log_reader: threading.Thread | None = None
         self._warmed = bool(self.url)
         self._lock = threading.Lock()
 
@@ -88,13 +91,20 @@ class LocalModel:
                     # Repacking copies the weights for faster maths: ~2.6 GB more memory for the
                     # 4B model, and no measurable gain on Studio's short questions.
                     "--no-repack"]
-            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                          errors="replace")
+            # Its log is read as it is written: a pipe nobody reads fills up (64 KB) and
+            # llama-server stops at its next log line, in the middle of a question.
+            self._log.clear()
+            self._log_reader = threading.Thread(target=self._log.extend, args=(self._proc.stderr,), daemon=True)
+            self._log_reader.start()
             atexit.register(self.close)
             self.url = f"http://127.0.0.1:{port}"
             deadline = time.monotonic() + START_TIMEOUT_S
             while time.monotonic() < deadline:
                 if self._proc.poll() is not None:
-                    err = (self._proc.stderr.read() if self._proc.stderr else "")[-800:]
+                    self._log_reader.join(timeout=2)
+                    err = "".join(self._log)[-800:]
                     self._proc, self.url = None, None
                     raise ModelUnavailable(f"llama-server stopped: {err}")
                 try:
