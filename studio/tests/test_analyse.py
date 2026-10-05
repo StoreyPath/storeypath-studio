@@ -238,3 +238,37 @@ def test_plain_titles_are_read_by_rule_and_the_rest_left_to_the_model():
     assert read_title("SITE DEVELOPMENT PLAN") == ("site_plan", None)
     for unsure in ("OUT KITCHEN FLOOR PLAN", "GUARD RM. PLAN DETAIL", "المسقط الأفقي للدور الأرضي", "TYPICAL OFFICE FLOOR"):
         assert read_title(unsure) is None
+
+
+@pytest.mark.parametrize("text, room", [
+    ("SAC UNIT", False), ("A/C SPLIT UNIT", False), ("SPLIT AC UNIT", False), ("OUTDOOR UNIT", False),
+    ("FCU-1", False), ("AHU", False), ("UNIT 3", None), ("OUTDOOR SEATING", None), ("SPLIT LEVEL", None),
+])
+def test_air_conditioner_tags_are_not_room_names(text, room):
+    assert TextReader(Workspace.new("P"), RULES).is_room_name(text) is room
+
+
+def test_air_conditioner_tags_do_not_split_rooms(tmp_path):
+    # A villa's plans tag the split air conditioner on a wall of every room: SAC UNIT,
+    # on the layer of the room names.
+    from storeypath.convert import convert_floor
+    from storeypath.workspace import SourceDrawing
+
+    cells = office_floor(1)
+    write_floor_dxf(tmp_path / "plain.dxf", cells, area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plain.dxf")
+    for c in cells:
+        if c.label:
+            for x, y in ((c.x0 + 0.6, c.y0 + 0.6), (c.x1 - 0.6, c.y1 - 0.6)):
+                doc.modelspace().add_text("SAC UNIT", height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
+                    ((125 + x) * 1000, (48 + y) * 1000))
+    doc.saveas(tmp_path / "tagged.dxf")
+
+    def rooms(drawing):
+        ws = Workspace.new("P")
+        b_id = ws.add_building(ws.add_location("SITE", "Site"), "HQ", "HQ")
+        f_id = ws.add_floor(b_id, 1, source=SourceDrawing(path=drawing))
+        convert_floor(ws, f_id, tmp_path)
+        return sorted(ws.effective(r)["name"] or "-" for r in ws.floor_objects(f_id) if r.kind == "space")
+
+    assert rooms("tagged.dxf") == rooms("plain.dxf")

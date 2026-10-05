@@ -485,12 +485,17 @@ def _one_room_each(st: LayerStats, points) -> bool:
     return sum(1 for c in counts if c <= 1) >= 0.8 * len(counts) and sum(1 for c in counts if c == 1) >= 2
 
 
+NUMBER_OR_TAG = re.compile(r"^([a-z]{1,2}\s?-?\s?)?\d{1,4}[a-z]?$", re.IGNORECASE)  # 201, D1, W-10, 12A
+
 def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None, outlines: bool) -> LayerRole:
     hint = name_hint(st.name)
     roles, why = [], []
     names = [t for t in st.texts if t.strip()]
     if names and is_room_name is not None:
-        known = [v for v in (is_room_name(t) for t in names) if v is not None]
+        # Each word once, so a tag by every air conditioner (SAC UNIT) does not outvote
+        # the room names beside it; numbers and tags (201, D1) say nothing either way.
+        words = [t for t in dict.fromkeys(t.strip() for t in names) if not NUMBER_OR_TAG.match(t)]
+        known = [v for v in (is_room_name(t) for t in words) if v is not None]
         rooms = sum(1 for v in known if v)
         if rooms >= 2 and rooms >= 0.5 * len(known):
             roles.append("labels")

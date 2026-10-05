@@ -219,7 +219,8 @@ LABEL_SYSTEM = (
     "or furniture (A/C SPLIT UNIT), a note, a dimension or a drawing title.\n"
     "Drawings abbreviate: RM room, CORR corridor, OFF office, CONF conference, ELEV "
     "elevator, EE or ELEC electrical, MECH mechanical, STR or STO store, M. master, F. "
-    "family, H. hand, WC toilet; a number after a name is the room number.\n"
+    "family, H. hand, WC toilet, SAC or A/C a split air-conditioner on the wall (equipment, "
+    "not a room); a number after a name is the room number.\n"
     "Answer in compact JSON."
 )
 
