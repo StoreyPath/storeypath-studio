@@ -101,6 +101,19 @@ def test_wide_opening_is_split_between_the_labels(tmp_path):
     assert {ex.spaces[i].name for i in opening.connects} == {"OFFICE", "CORRIDOR"}
 
 
+
+def test_labels_that_say_the_same_do_not_split_a_space(tmp_path):
+    # ROOF at both ends of a roof is one roof: the office opening wide onto the
+    # corridor, labelled CORRIDOR too, stays part of the corridor.
+    cells = office_floor(1)
+    office = _wide_opening(cells)
+    cells[office] = replace(cells[office], label=["CORRIDOR"])
+    ex = _extract(tmp_path, cells, area_outlines=False)
+    assert len(ex.spaces) == len(cells) - 1
+    corridor = next(s for s in ex.spaces if s.name and "CORRIDOR" in s.name)
+    assert corridor.name == "CORRIDOR" and not corridor.issues
+    assert not [d for d in ex.doors if d.source == "split"]
+
 def test_labels_too_far_apart_to_split_stay_one_space(tmp_path):
     profile = load_profile("ncs").model_copy(deep=True)
     profile.spaces.max_split = 1.0

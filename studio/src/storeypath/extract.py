@@ -187,7 +187,7 @@ def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | 
             number = tail
         else:
             names.append(line)
-    return (" ".join(names) or None), number
+    return (" ".join(dict.fromkeys(names)) or None), number  # ROOF at both ends: one ROOF
 
 
 def extract_floor(
@@ -566,12 +566,19 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
 
 
 def _label_groups(labels: list[Label]) -> list[list[Label]]:
-    """Labels split into groups of pieces that sit together (name above number…)."""
+    """Labels split into groups of pieces that sit together (name above number…).
+    Groups that say the same (ROOF at both ends of a roof) are one room's."""
     groups: list[list[Label]] = []
     for label in labels:
         near = [g for g in groups if any(label.point.distance(o.point) <= LABEL_GROUP_M for o in g)]
         merged = [label] + [lb for g in near for lb in g]
         groups = [g for g in groups if g not in near] + [merged]
+    by_text: dict[str, list[Label]] = {}
+    for g in groups:
+        text = " ".join(" ".join(line for lb in sorted(g, key=lambda lb: (-lb.point.y, lb.point.x))
+                                 for line in lb.lines).upper().split())
+        by_text.setdefault(text, []).extend(g)
+    groups = list(by_text.values())
     for g in groups:
         g.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))
     return sorted(groups, key=lambda g: (-round(g[0].point.y, 1), g[0].point.x))
