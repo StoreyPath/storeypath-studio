@@ -24,6 +24,7 @@ from .profile import AUTO, load_profile, resolve_profile
 from .reading import TextReader
 from .symbols import MODEL as SYMBOLS_MODEL
 from .symbols import Symbol, SymbolSpotter, from_records, to_records, type_rooms
+from .vision import VisionModel, look_at_rooms
 from .types import VERTICAL_TYPES, SpaceType
 from .workspace import ObjectRecord, Workspace, utcnow
 
@@ -54,12 +55,12 @@ class ConversionReport:
 
 def convert_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
-    symbols: SymbolSpotter | None = None,
+    symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds. With the "auto" profile the
     layers are read from what is drawn on them; ``model`` (a local language model)
     reads the texts the rules do not know; ``symbols`` spots the fixtures drawn in
-    rooms that have no name."""
+    rooms that have no name; ``vision`` looks at every room as drawn (vision.py)."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -83,11 +84,15 @@ def convert_floor(
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
     type_rooms(extraction.spaces, spotted)
     add_lift_doors(extraction)
+    if vision is not None or ws.vision:
+        look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
     if spot_failed:
         report.warnings.append(f"symbols were not spotted: {spot_failed}")
+    if vision is not None and vision.failed:
+        report.warnings.append(f"vision: {vision.failed}")
     floor.source.sha256 = sha
     return report
 
@@ -149,6 +154,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
         record.type, record.type_source = space.type, space.type_source
         record.name, record.number = space.name, space.number
         record.issues = list(space.issues)
+        record.detected_ignored = space.ignored
         record.geometry = _local(space.polygon)
         space_ids.append(record.id)
         if ws.effective(record)["type"] == "unspecified":

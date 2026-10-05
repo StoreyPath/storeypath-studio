@@ -152,6 +152,38 @@ level labels
 `storeypath save-as-new` copies a workspace as a *different* project with its own
 project code; a plain file copy is the same project.
 
+## Looking at the plans (vision)
+
+A drawing is made to be printed and read by people, and everything a builder needs is
+on the print. Studio can look at it the same way: each room it found is drawn as
+printed, outlined in red, and a vision model says whether that is really one room and
+what kind it is. Code keeps the exact geometry and IDs; the model makes the calls a
+person makes at a glance:
+
+- an unnamed area that is not a room (the garden inside a plot wall, a sheet frame, a
+  gap) is set aside: listed under "Hidden and ignored", for a person to restore;
+- a room with no type gets the one its furniture and fixtures show (a bed, a WC);
+- an outline holding several rooms, or only part of one, is listed for review.
+
+Every decision is marked `vision` and listed for a person to check. The answers are
+kept in the workspace by room shape, so converting again asks only about rooms that
+changed, and the project converts the same way without the model.
+
+The model is any OpenAI-compatible endpoint that takes images: `llama-server` (with
+the model's `--mmproj`) or vLLM on a GPU, or a hosted service.
+
+| Environment | |
+|---|---|
+| `STOREYPATH_VISION_URL` | the endpoint, e.g. `http://127.0.0.1:8105/v1` (none: no vision) |
+| `STOREYPATH_VISION_MODEL` | the model name, when the server serves several |
+| `STOREYPATH_VISION_KEY` | a bearer token, for hosted services |
+| `STOREYPATH_VISION_PARALLEL` | questions in flight at once (default 2) |
+
+Outside Docker, `uv sync --extra vision` adds what rendering needs (matplotlib,
+Pillow). Measured on 119 rooms of two houses and an interior designer's furniture
+plan, each checked by hand, Gemma 4 31B (4-bit, about 22 GB of GPU memory) judged 84%
+of outlines and 85% of types right; `convert --no-vision` skips it.
+
 ## Symbols drawn in a plan (optional, research use only)
 
 A room with no name can still be told by what is drawn in it. With

@@ -364,6 +364,9 @@ def convert(
     use_symbols: Annotated[bool, typer.Option("--symbols/--no-symbols",
                                               help="type unnamed rooms by the fixtures drawn in them, when "
                                                    "SymPoint-V2 is installed (research use only)")] = True,
+    use_vision: Annotated[bool, typer.Option("--vision/--no-vision",
+                                             help="look at every room with the vision model "
+                                                  "($STOREYPATH_VISION_URL), when one is set")] = True,
 ):
     """Read the drawings and update the project's objects, keeping existing IDs."""
     from .llm import LocalModel
@@ -376,6 +379,13 @@ def convert(
     symbols = SymbolSpotter() if use_symbols else None
     if symbols is not None and symbols.available():
         typer.echo(f"spotting symbols with {symbols.name} (research use only)")
+    from .vision import VisionModel
+
+    vision = VisionModel() if use_vision else None
+    if vision is not None and vision.available():
+        typer.echo(f"looking at the rooms with {vision.name}")
+    elif vision is not None and vision.url:
+        typer.secho(f"  warning: {vision.failed}", fg="yellow")
     floors = [fid for *_, fid in ws.iter_floors() if (floor is None or fid == floor)]
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
@@ -384,7 +394,9 @@ def convert(
         if ws.floor(fid).source is None:
             continue
         try:
-            report = convert_floor(ws, fid, workspace.parent, model, symbols)
+            report = convert_floor(ws, fid, workspace.parent, model, symbols,
+                                   vision if vision is not None and vision.available() else None,
+                                   say=lambda m: typer.echo(f"  {m}"))
         except DrawingError as e:
             typer.secho(f"{fid}: {e}", fg="red", err=True)
             failed = True
@@ -489,7 +501,8 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
     typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
-               + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else ""))
+               + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
+               + (f"; vision: {status['vision']}" if status["vision"] else ""))
     if note:
         typer.echo(note)
     if open_browser:

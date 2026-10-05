@@ -27,6 +27,12 @@ symbols = [
     "torch>=2.4",
 ]
 
+# Looking at the plans with a vision model (vision.py): rendering the drawing.
+vision = [
+    "matplotlib>=3.9",
+    "pillow>=10",
+]
+
 [project.urls]
 Homepage = "https://github.com/StoreyPath/storeypath"
 Source = "https://github.com/StoreyPath/storeypath/tree/main/studio"

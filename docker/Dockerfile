@@ -79,7 +79,7 @@ COPY studio /build/studio
 COPY spec /build/spec
 COPY viewer /build/viewer
 RUN cd /build/studio && uv build --wheel -o /build/dist \
-    && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache /build/dist/*.whl
+    && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache "$(ls /build/dist/*.whl)[vision]"
 
 # ---- the image -------------------------------------------------------------------------
 FROM debian:${DEBIAN}-slim

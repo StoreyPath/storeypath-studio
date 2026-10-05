@@ -68,6 +68,7 @@ class ExtractedSpace:
     type: SpaceType = SpaceType.UNSPECIFIED
     type_source: str = "default"
     issues: list[str] = field(default_factory=list)  # reasons a person should look at it
+    ignored: bool = False  # judged not a room (vision): set aside, for a person to restore
 
 
 @dataclass

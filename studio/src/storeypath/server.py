@@ -54,6 +54,7 @@ from .profile import AUTO, load_profile
 from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, read_level_marks
 from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
+from .vision import VisionModel
 from .review import CONTENT_TYPES, NotFound, Review
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
@@ -123,11 +124,12 @@ def _message(e: Exception) -> str:
 
 class Studio:
     def __init__(self, data: str | Path, model: LocalModel | None = None, warm: bool = True,
-                 symbols: SymbolSpotter | None = None):
+                 symbols: SymbolSpotter | None = None, vision: VisionModel | None = None):
         self.data = Path(data)
         self.data.mkdir(parents=True, exist_ok=True)
         self.model = model if model is not None else LocalModel()
         self.symbols = symbols if symbols is not None else SymbolSpotter()
+        self.vision = vision if vision is not None else VisionModel()
         self.jobs = Jobs()
         if warm and self.model.available():
             # Load the model now, in the background, so the first drawing does not
@@ -171,6 +173,7 @@ class Studio:
             "model": self.model.name if self.model.available() else None,
             "model_ready": self.model.ready,
             "symbols": self.symbols.name if self.symbols.available() else None,
+            "vision": self.vision.name if self.vision.available() else None,
             "dwg": bool(which("dwg2dxf")) or odafc.is_installed(),
             "data": str(self.data),
         }
@@ -395,6 +398,8 @@ class Studio:
             job.say(f"reading texts with {self.model.name}")
         if self.symbols.available():
             job.say(f"spotting symbols with {self.symbols.name} (research use only)")
+        if self.vision.available():
+            job.say(f"looking at the rooms with {self.vision.name}")
         summaries = []
         with self._lock:
             ws = Workspace.load(ws_path)
@@ -402,7 +407,8 @@ class Studio:
                 if ws.floor(fid).source is None:
                     continue
                 job.say(f"converting {fid}")
-                report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols)
+                report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols,
+                                       self.vision if self.vision.available() else None, say=lambda m: job.say("  " + m))
                 job.say("  " + report.summary())
                 for w in report.warnings:
                     job.say("  warning: " + w)

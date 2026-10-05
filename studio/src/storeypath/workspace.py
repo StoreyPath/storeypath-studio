@@ -115,6 +115,7 @@ class ObjectRecord(BaseModel):
     width: float | None = None  # openings: meters
     tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
     issues: list[str] = Field(default_factory=list)  # found on conversion, for review
+    detected_ignored: bool = False  # judged not a room on conversion (vision); a correction wins
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)
     retired_at: datetime | None = None
@@ -164,6 +165,7 @@ class Workspace(BaseModel):
     objects: dict[str, ObjectRecord] = Field(default_factory=dict)
     overrides: dict[str, Override] = Field(default_factory=dict)
     readings: dict[str, Reading] = Field(default_factory=dict)  # text → what it means
+    vision: dict[str, dict[str, Any]] = Field(default_factory=dict)  # what the vision model saw, per room shape
     exports: list[ExportRecord] = Field(default_factory=list)
 
     # ---- files -------------------------------------------------------------
@@ -325,7 +327,7 @@ class Workspace(BaseModel):
             "number": ((o.number or None) if o and o.number is not None else record.number),
             "corrected": o is not None,
             "hidden": bool(o and o.hidden),
-            "ignored": bool(o and o.ignored),
+            "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
         }
 
     def review_reasons(self, record: ObjectRecord) -> list[str]:
