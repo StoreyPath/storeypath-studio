@@ -96,3 +96,22 @@ def test_merged_rooms_are_flagged_and_a_named_room_is_never_set_aside(workspace)
     big = [r for r in spaces if r.name == "CORRIDOR"]
     assert big and all("vision: looks like two or more rooms merged; split it" in r.issues for r in big)
     assert all(not r.detected_ignored for r in spaces if r.name)
+
+
+def test_a_named_area_that_is_not_a_room_and_wraps_the_house_is_set_aside():
+    # a yard named after the landing in it: vision says not a room, and its outline
+    # wraps round the rooms; both together, it is the outside
+    from shapely.geometry import Polygon, box
+
+    from storeypath.extract import ExtractedSpace
+    from storeypath.vision import RoomView, apply_view, _wraps_the_rest
+
+    house = [box(10, 10, 15, 15), box(15, 10, 20, 15), box(10, 15, 20, 20)]
+    yard = Polygon([(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)], [[(10, 10), (20, 10), (20, 20), (10, 20), (10, 10)]])
+    spaces = [ExtractedSpace(p, "walls", name=n) for p, n in zip(house + [yard], ["A", "B", "C", "LANDING"])]
+    assert _wraps_the_rest(3, spaces) and not _wraps_the_rest(0, spaces)
+    landing, room = spaces[3], spaces[0]
+    apply_view(landing, RoomView(NOT_A_ROOM, "not a room"), wraps=True)
+    apply_view(room, RoomView(NOT_A_ROOM, "not a room"), wraps=False)
+    assert landing.ignored and not room.ignored
+    assert room.issues == ["vision: does not look like a room; check it"]

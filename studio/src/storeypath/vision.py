@@ -306,22 +306,39 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
                     asked += 1
         if say is not None:
             say(f"vision: asked about {asked} of {len(spaces)} rooms")
-    for space, view in zip(spaces, views):
+    for k, (space, view) in enumerate(zip(spaces, views)):
         if view is not None:
-            apply_view(space, view)
+            apply_view(space, view, wraps=_wraps_the_rest(k, spaces))
     return asked
 
 
-def apply_view(space: ExtractedSpace, view: RoomView) -> None:
-    """What the model saw, applied to a room: an unnamed area that is not a room is
-    set aside (ignored, for a person to restore); one that looks like several rooms,
-    or part of one, gets a note; an untyped room gets the type it looks like."""
+WRAPS_SHARE = 0.5  # an area whose outline wraps round this share of the other rooms' area…
+
+
+def _wraps_the_rest(k: int, spaces: list[ExtractedSpace]) -> bool:
+    """Whether a space's outline wraps round most of the other rooms, as the yard
+    round a house does (the convex hull of its outline holds them)."""
+    hull = spaces[k].polygon.convex_hull
+    others = [s.polygon for j, s in enumerate(spaces) if j != k]
+    total = sum(p.area for p in others)
+    return total > 0 and sum(p.area for p in others if hull.contains(p.representative_point())) >= WRAPS_SHARE * total
+
+
+def apply_view(space: ExtractedSpace, view: RoomView, wraps: bool = False) -> None:
+    """What the model saw, applied to a room: an area that is not a room is set
+    aside (ignored, for a person to restore) when it has no name, or when it also
+    wraps round the other rooms (a yard named after the steps or landing in it);
+    one that looks like several rooms, or part of one, gets a note; an untyped room
+    gets the type it looks like."""
     seen_type = ROOM_TYPES.get(view.type)
     not_a_room = view.outline == NOT_A_ROOM or view.type == "not a room"
     if not_a_room:
         if not space.name:
             space.ignored = True
             space.issues.append("vision: not a room (outside, a frame or a gap); set aside")
+        elif wraps:
+            space.ignored = True
+            space.issues.append("vision: not a room, and it wraps round the rooms (outside); set aside")
         else:
             space.issues.append("vision: does not look like a room; check it")
         return
