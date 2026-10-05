@@ -186,18 +186,40 @@ function drawingsCard(code, p, plansArea) {
     drop,
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
       el("li", {}, el("code", { class: "grow" }, d),
-        el("button", { type: "button", onclick: () => findPlans(code, d, plansArea) }, "Find plans")))) : null,
+        el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,
+          onclick: () => findPlans(code, d, plansArea) }, findingPlans === d ? "Finding plans…" : "Find plans")))) : null,
   );
+}
+
+// The drawing whose plans are being found: one at a time (an upload starts it), and
+// its button says so.
+let findingPlans = null;
+
+function showFindingPlans() {
+  for (const b of document.querySelectorAll("button[data-drawing]")) {
+    b.disabled = findingPlans !== null;
+    b.textContent = findingPlans === b.dataset.drawing ? "Finding plans…" : "Find plans";
+  }
 }
 
 /** Find the plans in a drawing, read in ``units`` (or the units it shows), and offer them as floors. */
 async function findPlans(code, drawing, area, units) {
+  if (findingPlans !== null) return;
+  findingPlans = drawing;
+  showFindingPlans();
+  // Earlier results go: no floors are added from plans being found again.
+  area.replaceChildren(el("section", { class: "card" }, el("h2", {}, `Plans in ${drawing}`),
+    el("p", { class: "muted small" }, units ? `Finding the plans again, in ${UNITS[units]}…` : "Finding the plans…")));
   let result;
   try {
     result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {}));
   } catch (e) {
     toast(e.message, true);
+    area.replaceChildren();
     return;
+  } finally {
+    findingPlans = null;
+    showFindingPlans();
   }
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
