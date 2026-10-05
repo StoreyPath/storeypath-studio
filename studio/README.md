@@ -15,10 +15,14 @@ uv run storeypath demo demo/                  # sample drawings â†’ workspace â†
 uv run storeypath view demo/demo.storeypath   # open it in the viewer
 ```
 
+DWG drawings and the language model need two more programs, `dwg2dxf` and
+`llama-server`, and the model itself: [Without Docker](../README.md#without-docker)
+has the steps for macOS and Linux.
+
 ## In the browser
 
 ```sh
-storeypath serve --data projects/ --open
+uv run storeypath serve --data projects/ --open
 ```
 
 runs StoreyPath Studio as a web application (this is what the container runs):
@@ -124,6 +128,8 @@ so a project converts the same way again, with or without the model.
 | `STOREYPATH_THREADS` | CPU threads for the model (default: all) |
 
 Without a model everything works on the rules alone; `convert --no-model` skips it.
+Outside the container, install `llama-server` and fetch the model as in
+[Without Docker](../README.md#without-docker).
 [eval/](eval) scores a model on room labels, sheet titles and layer names
 (`uv run python eval/run.py --model path/to/model.gguf`).
 
@@ -162,8 +168,9 @@ other naming schemes and pass its path with `add-floor --profile`.
 
 ## DWG files
 
-DXF is read directly. DWG needs an external converter, which is not bundled:
-install [LibreDWG](https://www.gnu.org/software/libredwg/) (`dwg2dxf`) or the
+DXF is read directly. DWG needs an external converter, which this package does not
+include (the container does): install [LibreDWG](https://www.gnu.org/software/libredwg/)
+(`dwg2dxf`, see [Without Docker](../README.md#without-docker)) or the
 [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter),
 or save the drawing as DXF.
 

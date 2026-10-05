@@ -127,9 +127,63 @@ in the `storeypath` volume, so they survive restarts and upgrades:
 | Logs | `docker logs -f storeypath` |
 
 The same image is the command-line tool: `docker run --rm -v "$PWD:/data"
-ghcr.io/storeypath/studio views house.dwg`. [studio/](studio) lists every command,
-and how to install Studio with Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-instead of Docker.
+ghcr.io/storeypath/studio views house.dwg`. [studio/](studio) lists every command.
+
+### Without Docker
+
+Studio is a Python program and runs from a clone of this repository with
+[uv](https://docs.astral.sh/uv/), which fetches Python 3.12 itself if it needs to:
+
+```sh
+brew install uv          # macOS; on Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/StoreyPath/storeypath
+cd storeypath/studio
+uv sync
+uv run storeypath serve --data ~/storeypath --open
+```
+
+That is the whole web app, with projects kept in `~/storeypath`. On its own it reads
+DXF, and room names by the rules alone: the container also holds
+[LibreDWG](https://www.gnu.org/software/libredwg/)'s `dwg2dxf` for DWG drawings and
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the language
+model, and without Docker you install them yourself.
+
+**macOS**, with [Homebrew](https://brew.sh):
+
+```sh
+brew install libredwg llama.cpp
+```
+
+**Linux.** Neither is packaged by Debian or Ubuntu, so build them as the container
+does (in any folder outside the repository):
+
+```sh
+sudo apt-get install build-essential cmake git curl ca-certificates xz-utils pkg-config python3
+
+curl -fsSLO https://ftp.gnu.org/gnu/libredwg/libredwg-0.14.tar.xz
+tar xf libredwg-0.14.tar.xz
+(cd libredwg-0.14 && ./configure --disable-bindings && make -j"$(nproc)" && sudo make install && sudo ldconfig)
+
+git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp
+cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
+cmake --build llama.cpp/build --target llama-server -j"$(nproc)"
+export STOREYPATH_LLAMA_SERVER="$PWD/llama.cpp/build/bin/llama-server"
+```
+
+**Windows:** use Docker, or the Linux steps in WSL.
+
+Then, back in `storeypath/studio`, fetch the model once and start Studio with it:
+
+```sh
+../docker/fetch-models.sh                            # 2.7 GB, checksum-verified
+export STOREYPATH_MODELS="$PWD/../docker/models"
+uv run storeypath serve --data ~/storeypath --open
+```
+
+Studio says what it found as it starts: `language model: Qwen3.5-4B-Q4_K_M; DWG:
+yes`. Add the `export` lines to your shell profile to keep them. To update,
+`git pull`, then `uv sync`. `uv run storeypath demo demo/` builds a sample project to
+try; [studio/](studio) has every command and setting.
 
 ### Requirements
 
