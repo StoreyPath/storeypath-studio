@@ -150,9 +150,10 @@ class RoomView:
     type: str
 
 
-def render(doc, bbox, highlight, px: int = CROP_PX) -> bytes:
-    """A part of the drawing as printed (black on white), with ``highlight``
-    (shapely geometries, drawing units) outlined in red. PNG bytes."""
+def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0):
+    """A square part of the drawing as printed (black on white), ``px`` pixels a
+    side: a matplotlib figure, ``highlight`` (shapely geometries, drawing units)
+    outlined in red. ``pad`` (drawing units) brings in blocks placed just outside."""
     from ezdxf.addons.drawing import Frontend, RenderContext
     from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration
     from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
@@ -163,24 +164,84 @@ def render(doc, bbox, highlight, px: int = CROP_PX) -> bytes:
     fig = Figure(figsize=(px / 100, px / 100), dpi=100)  # no pyplot: safe in Studio's job threads
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
-    side = max(x1 - x0, y1 - y0)
-    pad = side  # blocks placed just outside reach in
     entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
     config = Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.BLACK,
                            lineweight_scaling=0.6, min_lineweight=0.25)
     Frontend(RenderContext(doc), MatplotlibBackend(ax), config=config).draw_entities(entities)
     for g in highlight:
         for part in getattr(g, "geoms", [g]):
-            ring = getattr(part, "exterior", part)
-            xs, ys = ring.xy
+            xs, ys = getattr(part, "exterior", part).xy
             ax.plot(xs, ys, color="red", linewidth=3, alpha=0.75)
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.set_aspect("equal")
     ax.axis("off")
+    return fig
+
+
+def render(doc, bbox, highlight, px: int = CROP_PX) -> bytes:
+    """A part of the drawing as printed, with ``highlight`` outlined in red. PNG."""
+    x0, y0, x1, y1 = bbox
+    fig = _print(doc, bbox, px, highlight, pad=max(x1 - x0, y1 - y0) / 2)
     out = io.BytesIO()
     fig.savefig(out, format="png", dpi=100, facecolor="white")
     return out.getvalue()
+
+
+class FloorPrint:
+    """A floor printed once, in overlapping tiles, and looked at a part at a time,
+    as a person reads a printed sheet: each room's view is cut out of a tile and
+    its outline drawn on it, instead of drawing the plan again for every room.
+    Views wider than the tiles' overlap are drawn on their own."""
+
+    PX_PER_M = CROP_PX / CROP_MIN_M  # the smallest view keeps its full detail
+    STRIDE_M = 30.0
+    OVERLAP_M = 12.0
+
+    def __init__(self, doc, scale: float):
+        self.doc, self.scale = doc, scale
+        self.stride = self.STRIDE_M / scale  # drawing units
+        self.overlap = self.OVERLAP_M / scale
+        self.tile_px = round((self.STRIDE_M + self.OVERLAP_M) * self.PX_PER_M)
+        self._tiles: dict[tuple[int, int], object] = {}
+
+    def _tile(self, i: int, j: int):
+        if (i, j) not in self._tiles:
+            from PIL import Image
+
+            x0, y0 = i * self.stride, j * self.stride
+            side = self.stride + self.overlap
+            fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
+            fig.canvas.draw()
+            self._tiles[(i, j)] = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
+        return self._tiles[(i, j)]
+
+    def view(self, bbox, highlight, px: int = CROP_PX) -> bytes:
+        x0, y0, x1, y1 = bbox
+        if max(x1 - x0, y1 - y0) > self.overlap:
+            return render(self.doc, bbox, highlight, px)
+        from PIL import ImageDraw
+
+        i, j = int(x0 // self.stride), int(y0 // self.stride)
+        tile = self._tile(i, j)
+        tx0, ty1 = i * self.stride, j * self.stride + self.stride + self.overlap
+        k = self.tile_px / (self.stride + self.overlap)  # pixels per drawing unit
+
+        def pixel(x, y):
+            return (x - tx0) * k, (ty1 - y) * k
+
+        left, top = pixel(x0, y1)
+        right, bottom = pixel(x1, y0)
+        out = tile.crop((round(left), round(top), round(right), round(bottom))).resize((px, px))
+        f = px / (right - left)
+        draw = ImageDraw.Draw(out, "RGBA")
+        for g in highlight:
+            for part in getattr(g, "geoms", [g]):
+                pts = [((u - left) * f, (v - top) * f) for u, v in (pixel(x, y) for x, y in getattr(part, "exterior", part).coords)]
+                draw.line(pts, fill=(255, 0, 0, 190), width=3)
+        buf = io.BytesIO()
+        out.save(buf, format="PNG")
+        return buf.getvalue()
 
 
 def _window(geom, scale: float, min_m: float = CROP_MIN_M):
@@ -221,10 +282,11 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
     asked = 0
     if todo and model is not None and model.available():
         images = []
+        sheet = FloorPrint(doc, scale)
         for k, _ in todo:  # rendering is not thread-safe through ezdxf's caches: one at a time
             inset = spaces[k].polygon.buffer(-0.12)  # inside the walls, so the walls stay visible
             region = in_drawing(spaces[k].polygon if inset.is_empty else inset)
-            images.append(render(doc, _window(region, scale), [region]))
+            images.append(sheet.view(_window(region, scale), [region]))
         fields = {"outline": OUTLINES, "type": list(ROOM_TYPES)}
 
         def one(item):

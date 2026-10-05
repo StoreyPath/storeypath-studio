@@ -30,11 +30,11 @@ class FakeVision(VisionModel):
 def area_as_image(monkeypatch):
     # the crop of a room, as the middle of what is outlined in it (the sample is in
     # millimetres): no rendering needed
-    def middle(doc, bbox, highlight, px=0):
+    def middle(sheet, bbox, highlight, px=0):
         c = highlight[0].centroid
         return f"{c.x / 1000},{c.y / 1000}".encode()
 
-    monkeypatch.setattr(vision, "render", middle)
+    monkeypatch.setattr(vision.FloorPrint, "view", middle)
 
 
 def _at(record):
