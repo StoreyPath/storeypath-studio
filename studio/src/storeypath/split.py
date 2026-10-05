@@ -13,16 +13,19 @@ long cuts stay together: they are zones of one room.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 
 import numpy as np
 import shapely
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import linemerge, unary_union
+from shapely.ops import split as split_by_line
 
 from .geometry import as_polygons
 
 SIMPLIFY_M = 0.05  # curves are simplified this much before triangulating
+STRAIGHTER = 1.2  # a straight cut across the room may be this much longer than the shortest
 
 
 def split_by_labels(
@@ -41,9 +44,57 @@ def split_by_labels(
             continue
         budget -= 1
         inside, outside, cut, gs_in, gs_out = found
+        straight = _straighter(poly, cut, gs_in, gs_out, max_cut, min_area)
+        if straight is not None:
+            inside, outside, cut = straight
         cuts.extend(cut)
         work += [(inside, gs_in), (outside, gs_out)]
     return parts, cuts
+
+
+def _straighter(poly: Polygon, cut: list[LineString], gs_in, gs_out, max_cut: float, min_area: float):
+    """A person divides a room straight across, square to its walls, not along the
+    shortest diagonal between two wall corners: a straight cut through the same
+    place (either end of the shortest, or its middle), along or across the room's
+    walls, that still separates the labels and is not much longer."""
+    if len(cut) != 1 or cut[0].length == 0:
+        return None
+    line = cut[0]
+    angle = _wall_direction(poly)
+    reach = math.dist(poly.bounds[:2], poly.bounds[2:])
+    best = None
+    for through in (Point(line.coords[0]), Point(line.coords[-1]), line.interpolate(0.5, normalized=True)):
+        for a in (angle, angle + math.pi / 2):
+            dx, dy = math.cos(a) * reach, math.sin(a) * reach
+            across = LineString([(through.x - dx, through.y - dy), (through.x + dx, through.y + dy)])
+            pieces = [g for g in shapely.get_parts(poly.intersection(across)) if isinstance(g, LineString)]
+            if not pieces:
+                continue
+            piece = min(pieces, key=lambda g: g.distance(through))
+            if piece.length > min(STRAIGHTER * line.length, max_cut) or (best and piece.length >= best[0]):
+                continue
+            # A line that ends on the boundary may not cut it (rounding): reach past it a little.
+            (x0, y0), (x1, y1) = piece.coords[0], piece.coords[-1]
+            ux, uy = (x1 - x0) / piece.length * 0.05, (y1 - y0) / piece.length * 0.05
+            blade = LineString([(x0 - ux, y0 - uy), (x1 + ux, y1 + uy)])
+            halves = [g for g in shapely.get_parts(split_by_line(poly, blade)) if isinstance(g, Polygon)]
+            if len(halves) != 2 or min(h.area for h in halves) < min_area:
+                continue
+            for first, second in (halves, halves[::-1]):
+                if all(_within(g, first) for g in gs_in) and all(_within(g, second) for g in gs_out):
+                    best = (piece.length, first, second, piece)
+    return (best[1], best[2], [best[3]]) if best else None
+
+
+def _wall_direction(poly: Polygon) -> float:
+    """The direction of a room's walls (radians, modulo a right angle): the mean of
+    its edges' directions, each counted by its length."""
+    xy = list(poly.exterior.coords)
+    c = s = 0.0
+    for (x0, y0), (x1, y1) in zip(xy, xy[1:]):
+        length, theta = math.hypot(x1 - x0, y1 - y0), math.atan2(y1 - y0, x1 - x0)
+        c, s = c + length * math.cos(4 * theta), s + length * math.sin(4 * theta)
+    return math.atan2(s, c) / 4
 
 
 def _within(group: list[Point], poly: Polygon) -> bool:

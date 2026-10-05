@@ -186,3 +186,21 @@ def test_wall_core_thicker_than_the_limit_is_not_filled():
     assert sorted(round(p.area) for p in found.polygons) == [10, 40, 50]
     found = spaces_from_walls(lines, [], [], [], [], WallsConfig(max_thickness=1.2), 0.5)
     assert sorted(round(p.area) for p in found.polygons) == [40, 50]
+
+
+def test_rooms_are_divided_straight_across_not_on_the_diagonal():
+    # Dining above, majlis below, no wall between: a nib on each side, at different
+    # heights, makes the shortest cut a diagonal between their corners.
+    import math
+
+    from shapely.geometry import Polygon
+
+    from storeypath.split import split_by_labels
+
+    room = Polygon([(0, 0), (5.1, 0), (5.1, 4.0), (4.7, 4.0), (4.7, 4.6), (5.1, 4.6), (5.1, 7.5), (0, 7.5),
+                    (0, 2.6), (0.4, 2.6), (0.4, 2.0), (0, 2.0)])
+    parts, cuts = split_by_labels(room, [[Point(2.5, 6.5)], [Point(2.5, 1.0)]], max_cut=6.0, min_area=0.5)
+    assert len(parts) == 2 and len(cuts) == 1
+    (x0, y0), (x1, y1) = cuts[0].coords[0], cuts[0].coords[-1]
+    assert abs(y1 - y0) < 0.01 and math.dist((x0, y0), (x1, y1)) < 5.2  # square to the walls, across the room
+    assert abs(sum(p.area for p in parts) - room.area) < 1e-6
