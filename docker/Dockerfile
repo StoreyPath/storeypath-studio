@@ -9,6 +9,11 @@
 # connected machine, `docker load` on the isolated one; run with --network none
 # if you like — nothing in it reaches out.
 #
+# Optional, for research only: docker/fetch-symbols.sh before building bakes in
+# SymPoint-V2, which types unnamed rooms by the fixtures drawn in them. It is not
+# StoreyPath's and its terms do not allow publishing it (see docker/symbols/README.md);
+# without it the image is built as before.
+#
 # Inside: StoreyPath Studio (Apache-2.0); LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in
 # /usr/share/storeypath/source); llama.cpp's llama-server (MIT); a Qwen3.5 model
@@ -57,11 +62,23 @@ FROM debian:${DEBIAN}-slim AS studio
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
+RUN uv venv --python /usr/bin/python3 /opt/storeypath
+# SymPoint-V2, when docker/fetch-symbols.sh put it there: PyTorch (CPU only) and what
+# its code needs, before Studio so a change to Studio does not fetch them again.
+# Otherwise nothing of it goes in.
+ARG TORCH_VERSION=2.14.1
+COPY docker/symbols /build/symbols
+RUN if [ -f /build/symbols/weights/best.pth ]; then \
+        VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache \
+            --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}" \
+        && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache "scipy>=1.13" "munch>=4"; \
+    else \
+        rm -rf /build/symbols && mkdir /build/symbols; \
+    fi
 COPY studio /build/studio
 COPY spec /build/spec
 COPY viewer /build/viewer
 RUN cd /build/studio && uv build --wheel -o /build/dist \
-    && uv venv --python /usr/bin/python3 /opt/storeypath \
     && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache /build/dist/*.whl
 
 # ---- the image -------------------------------------------------------------------------
@@ -76,6 +93,7 @@ COPY --from=libredwg /opt/libredwg /opt/libredwg
 COPY --from=libredwg /opt/source /usr/share/storeypath/source
 COPY --from=libredwg /opt/licenses /usr/share/storeypath/licenses
 COPY --from=studio /opt/storeypath /opt/storeypath
+COPY --from=studio /build/symbols /opt/storeypath/symbols
 COPY docker/models/${MODEL} /opt/storeypath/models/${MODEL}
 COPY viewer/vendor/LICENSE-maplibre-gl.txt viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
 COPY viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
@@ -83,11 +101,17 @@ RUN cp /opt/llama/LICENSE /usr/share/storeypath/licenses/LICENSE-llama.cpp.txt \
     && cp /opt/storeypath/lib/python3*/site-packages/storeypath-*.dist-info/licenses/LICENSE \
           /usr/share/storeypath/licenses/LICENSE-storeypath.txt \
     && printf 'Qwen3.5 model weights: Apache License 2.0, Copyright Alibaba Cloud (Qwen team).\nhttps://huggingface.co/Qwen\n' \
-          > /usr/share/storeypath/licenses/LICENSE-model.txt
+          > /usr/share/storeypath/licenses/LICENSE-model.txt \
+    && if [ -f /opt/storeypath/symbols/weights/best.pth ]; then \
+        printf '%s\n' 'SymPoint-V2 (https://github.com/nicehuster/SymPointV2): no licence stated; weights' \
+          'trained on FloorPlanCAD (CC BY-NC 4.0). Included for research use only: this image' \
+          'must not be published or used commercially.' > /usr/share/storeypath/licenses/NOTICE-SymPoint-V2.txt; \
+    fi
 
 ENV PATH="/opt/storeypath/bin:/opt/llama:/opt/libredwg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/llama:/opt/libredwg/lib" \
     STOREYPATH_MODELS=/opt/storeypath/models \
+    STOREYPATH_SYMBOLS=/opt/storeypath/symbols \
     PYTHONUNBUFFERED=1
 
 USER storeypath

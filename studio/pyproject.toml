@@ -18,6 +18,15 @@ dependencies = [
     "typer>=0.27.2",
 ]
 
+[project.optional-dependencies]
+# SymPoint-V2 for spotting the symbols drawn in plans, for research only: see
+# src/storeypath/symbols/__init__.py. Its code and weights are fetched separately.
+symbols = [
+    "munch>=4",
+    "scipy>=1.13",
+    "torch>=2.4",
+]
+
 [project.urls]
 Homepage = "https://github.com/StoreyPath/storeypath"
 Source = "https://github.com/StoreyPath/storeypath/tree/main/studio"
@@ -43,3 +52,12 @@ path = "hatch_build.py"
 dev = [
     "pytest>=9.1.1",
 ]
+
+# PyTorch without the GPU libraries: SymPoint-V2 runs on the CPU here
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

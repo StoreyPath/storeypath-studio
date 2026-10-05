@@ -21,3 +21,6 @@ demo/
 
 # model weights (downloaded by docker/fetch-models.sh, baked into the image)
 docker/models/
+# SymPoint-V2, research use only (docker/fetch-symbols.sh): never committed
+docker/symbols/*
+!docker/symbols/README.md

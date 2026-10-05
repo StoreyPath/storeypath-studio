@@ -361,14 +361,21 @@ def convert(
     floor: Annotated[Optional[str], typer.Option(help="only this floor ID")] = None,
     use_model: Annotated[bool, typer.Option("--model/--no-model",
                                             help="read unknown room names with the local language model")] = True,
+    use_symbols: Annotated[bool, typer.Option("--symbols/--no-symbols",
+                                              help="type unnamed rooms by the fixtures drawn in them, when "
+                                                   "SymPoint-V2 is installed (research use only)")] = True,
 ):
     """Read the drawings and update the project's objects, keeping existing IDs."""
     from .llm import LocalModel
+    from .symbols import SymbolSpotter
 
     ws = _load(workspace)
     model = LocalModel() if use_model else None
     if model is not None and model.available():
         typer.echo(f"reading texts with {model.name}")
+    symbols = SymbolSpotter() if use_symbols else None
+    if symbols is not None and symbols.available():
+        typer.echo(f"spotting symbols with {symbols.name} (research use only)")
     floors = [fid for *_, fid in ws.iter_floors() if (floor is None or fid == floor)]
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
@@ -377,7 +384,7 @@ def convert(
         if ws.floor(fid).source is None:
             continue
         try:
-            report = convert_floor(ws, fid, workspace.parent, model)
+            report = convert_floor(ws, fid, workspace.parent, model, symbols)
         except DrawingError as e:
             typer.secho(f"{fid}: {e}", fg="red", err=True)
             failed = True
@@ -481,7 +488,8 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     status = studio.status()
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
     typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
-               f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}")
+               f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
+               + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else ""))
     if note:
         typer.echo(note)
     if open_browser:

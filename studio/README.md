@@ -152,6 +152,35 @@ level labels
 `storeypath save-as-new` copies a workspace as a *different* project with its own
 project code; a plain file copy is the same project.
 
+## Symbols drawn in a plan (optional, research use only)
+
+A room with no name can still be told by what is drawn in it. With
+[SymPoint-V2](https://github.com/nicehuster/SymPointV2), a network trained on
+floor plans to spot doors, windows, fixtures and stairs, Studio types such rooms:
+a toilet and a bath make a bathroom, a toilet alone a WC (`restroom`), a stove or a
+fridge a kitchen, a washing machine a laundry, a bed a bedroom, a flight of stairs
+filling the room a stair room. Only symbols found with a score of 0.8 or more count,
+named rooms keep the type their name gives, and every room typed this way is listed
+for review (`type_source` `symbols:…`). What it finds is kept with the floor and used
+again until the drawing, the part of it read or its units change.
+
+It is not part of StoreyPath and is not installed with it: its repository states no
+licence and its weights were trained on non-commercial data (FloorPlanCAD, CC BY-NC),
+so use it **for research only**. To try it:
+
+```sh
+docker/fetch-symbols.sh                                 # its code (pinned) and weights (checksum-verified)
+docker build -f docker/Dockerfile -t storeypath/studio . # baked in, PyTorch for the CPU; offline as before
+```
+
+or outside Docker, `uv sync --extra symbols` and `STOREYPATH_SYMBOLS=../docker/symbols`.
+It runs on the CPU in a process of its own (a plan takes a few seconds);
+`convert --no-symbols` skips it. Images are built without it unless it was fetched,
+and release images only when the repository variable `STOREYPATH_SYMBOLS` is
+`research`. On plans it was not trained on it mistakes things (wall-mounted air
+conditioners for windows, grid lines for walls), so it is used only to type rooms, and
+only from fixtures inside them.
+
 ## Finding spaces
 
 Spaces come from room outlines (closed polylines drawn around each room, such as

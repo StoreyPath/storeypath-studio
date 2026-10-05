@@ -69,6 +69,11 @@ up. It looks at what is drawn:
   room, `EE.RM.` an electrical room, `مجلس رجال` a living room, `DORMITORIO` a
   bedroom, `VOID` is open to the floor below. It can only answer from StoreyPath's
   fixed list of types, its answers are kept with the project, and you confirm them.
+- **Can tell a room by what is drawn in it (research use only).** Optionally, a
+  network trained on floor plans (SymPoint-V2) spots the toilets, baths, stoves and
+  stairs drawn in rooms that have no name, and types them for you to check. It is
+  not StoreyPath's and is for research only: see
+  [Symbols drawn in a plan](studio/README.md#symbols-drawn-in-a-plan-optional-research-use-only).
 - **Shows you exactly what to check.** The review editor draws every floor over
   the original drawing and lists the few spaces that need a person: no type, the
   labels of two rooms in one, a dividing line it drew, a gap to the outside. Click,
@@ -247,6 +252,10 @@ docker/fetch-models.sh                                   # once: the language mo
 docker build -f docker/Dockerfile -t storeypath/studio .
 ```
 
+`docker/fetch-symbols.sh` before building also bakes in SymPoint-V2 for typing
+unnamed rooms by their fixtures; it is for research only and such images must not
+be published (see [studio/README.md](studio/README.md#symbols-drawn-in-a-plan-optional-research-use-only)).
+
 Releases are built the same way by [the release workflow](.github/workflows/release.yml),
 natively for amd64 and arm64.
 
@@ -315,4 +324,5 @@ StoreyPath is [Apache License 2.0](LICENSE). The container also holds, each unde
 its own licence (all in `/usr/share/storeypath/licenses`): LibreDWG's `dwg2dxf`
 (GPL-3.0-or-later, run as a separate program; its exact source is in the image),
 llama.cpp (MIT), the Qwen3.5 model weights (Apache-2.0), three.js (MIT), MapLibre
-GL JS (BSD-3-Clause) and JSZip (MIT).
+GL JS (BSD-3-Clause) and JSZip (MIT). SymPoint-V2 is never in it unless you fetch it
+yourself before building, for research use only.

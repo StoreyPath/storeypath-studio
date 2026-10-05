@@ -14,7 +14,7 @@ from pathlib import Path
 from shapely import set_precision
 from shapely.geometry import Point, mapping, shape
 
-from .analyse import analyse, plan_texts
+from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
 from .extract import ExtractedSpace, FloorExtraction, extract_floor
 from .geometry import iou
@@ -22,6 +22,8 @@ from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
 from .profile import AUTO, load_profile, resolve_profile
 from .reading import TextReader
+from .symbols import MODEL as SYMBOLS_MODEL
+from .symbols import Symbol, SymbolSpotter, from_records, to_records, type_rooms
 from .types import VERTICAL_TYPES, SpaceType
 from .workspace import ObjectRecord, Workspace, utcnow
 
@@ -51,11 +53,13 @@ class ConversionReport:
 
 
 def convert_floor(
-    ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None
+    ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
+    symbols: SymbolSpotter | None = None,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds. With the "auto" profile the
     layers are read from what is drawn on them; ``model`` (a local language model)
-    reads the texts the rules do not know."""
+    reads the texts the rules do not know; ``symbols`` spots the fixtures drawn in
+    rooms that have no name."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -75,11 +79,41 @@ def convert_floor(
     extraction = extract_floor(doc, profile, src.units, src.region, src.offset,
                                skip_label=lambda t: reader.is_room_name(t) is False)
     _read_room_types(extraction, reader)
+    sha = file_sha256(path)
+    spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
+    type_rooms(extraction.spaces, spotted)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
-    floor.source.sha256 = file_sha256(path)
+    if spot_failed:
+        report.warnings.append(f"symbols were not spotted: {spot_failed}")
+    floor.source.sha256 = sha
     return report
+
+
+NOT_SYMBOLS = {"dimension", "grid"}  # layers whose lines are not things in the building
+
+
+def _spot_symbols(floor, doc, profile, spotter: SymbolSpotter | None, scale: float,
+                  sha: str) -> tuple[list[Symbol], str | None]:
+    """The symbols drawn in the floor's plan, and why they could not be found. They
+    are kept with the floor and found again only when the drawing, the part of it
+    read or its units change; without the model, the ones kept are used as long as
+    they are of this same drawing."""
+    src = floor.source
+    key = f"{SYMBOLS_MODEL}/{sha}/{src.region}/{src.offset}/{scale:g}"
+    if floor.symbols is not None and floor.symbols_key == key:
+        return from_records(floor.symbols), None
+    if spotter is None or not spotter.available():
+        return [], None
+
+    def skip(layer: str) -> bool:
+        return name_hint(layer) in NOT_SYMBOLS or bool(profile.label_layers.fullmatch(layer))
+
+    found = spotter.find(doc, src.region, src.offset, scale, skip)
+    if spotter.failed is None:
+        floor.symbols, floor.symbols_key = to_records(found), key
+    return found, spotter.failed
 
 
 def _read_room_types(ex: FloorExtraction, reader: TextReader) -> None:

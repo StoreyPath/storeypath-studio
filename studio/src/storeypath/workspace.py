@@ -79,6 +79,10 @@ class Floor(BaseModel):
     layers: list[str] = Field(default_factory=list)  # what each layer was read as (auto profile)
     walls: dict[str, Any] | None = None  # the walls as drawn, with door and window gaps (local meters)
     wall_thickness: float | None = None  # meters, typical
+    # symbols spotted in the plan by a model (see symbols/), local meters, and what
+    # they were spotted in: the drawing, region, offset and scale
+    symbols: list[dict[str, Any]] | None = None
+    symbols_key: str | None = None
 
 
 class Building(BaseModel):
