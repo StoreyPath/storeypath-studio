@@ -16,7 +16,7 @@ from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
-from .extract import ExtractedSpace, FloorExtraction, add_lift_doors, extract_floor
+from .extract import ExtractedSpace, FloorExtraction, add_lift_doors, extract_floor, keep_to_the_building
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -86,6 +86,7 @@ def convert_floor(
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
         look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say)
+        keep_to_the_building(extraction)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")

@@ -269,3 +269,56 @@ def test_the_garden_inside_a_plot_wall_is_not_a_room(tmp_path):
     ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
     assert len(ex.spaces) == len(cells)  # the rooms, and no yard
     assert ex.outline.area < 60 * 30  # the building, not the plot
+
+
+def test_the_yard_inside_the_land_line_is_not_a_room(tmp_path):
+    # The land drawn as one thin line on the wall layer, the house built against it on
+    # one side (so the yard wraps only part of the house) and a level note in the yard:
+    # still the outside, and the line is not a wall.
+    import ezdxf
+
+    cells = office_floor(1)
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False, walls="lines")
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    ox, oy = ORIGIN
+    top = oy + 20 + WALL / 2
+    land = [(ox - 8, oy - 8), (ox + 56, oy - 8), (ox + 56, top), (ox - 8, top)]
+    doc.modelspace().add_lwpolyline([(x * 1000, y * 1000) for x, y in land], close=True, dxfattribs={"layer": "A-WALL"})
+    doc.modelspace().add_text("LANDING", height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
+        ((ox - 4) * 1000, (oy + 5) * 1000))
+    doc.saveas(tmp_path / "plan.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
+    assert len(ex.spaces) == len(cells) and not any(s.name == "LANDING" for s in ex.spaces)
+    assert ex.outline.area < 49 * 21  # the building, not the land
+    assert ex.walls.distance(Point(ox - 8, oy)) > 1 and ex.walls.distance(Point(ox + 30, oy - 8)) > 1
+
+
+def test_a_plan_in_single_lines_has_no_yard_to_set_apart():
+    # The same shapes drawn all in single lines: a big room on the edge is a room.
+    lines = [LineString([(0, 0), (20, 0), (20, 10), (0, 10), (0, 0)]), LineString([(14, 0), (14, 10)]),
+             LineString([(14, 5), (20, 5)])]
+    found = spaces_from_walls(lines, [], [], [], [], WallsConfig(), 0.5)
+    assert sorted(round(p.area) for p in found.polygons) == [30, 30, 140]
+
+
+def test_the_outside_set_aside_takes_its_walls_out_of_the_building():
+    # Vision set aside the yard inside a plot wall drawn as a wall: the floor's outline
+    # and walls end at the house; a shaft set aside inside the house stays in it.
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    from storeypath.extract import ExtractedSpace, FloorExtraction, keep_to_the_building
+
+    def ring(a, b):
+        return box(-a, -a, 10 + a, 10 + a).difference(box(-b, -b, 10 + b, 10 + b))
+
+    rooms = [box(0, 0, 4.9, 10), box(5.1, 0, 10, 8)]
+    shaft = box(5.1, 8.2, 10, 10)
+    yard = Polygon(box(-5, -5, 15, 15).exterior, [box(-0.2, -0.2, 10.2, 10.2).exterior.coords])
+    walls = unary_union([ring(5.2, 5), ring(0.2, 0), box(4.9, 0, 5.1, 10), box(5.1, 8, 10, 8.2)])
+    spaces = [ExtractedSpace(p, "walls") for p in rooms] + [ExtractedSpace(shaft, "walls", ignored=True),
+                                                         ExtractedSpace(yard, "walls", name="GARDEN", ignored=True)]
+    ex = FloorExtraction(spaces, [], box(-5.2, -5.2, 15.2, 15.2), 1.0, walls=walls)
+    keep_to_the_building(ex)
+    assert abs(ex.outline.area - 10.4 ** 2) < 1  # the house, shaft and all
+    assert ex.walls.distance(Point(-5.1, 5)) > 4 and ex.walls.distance(Point(-0.1, 5)) == 0

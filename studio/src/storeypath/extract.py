@@ -96,6 +96,7 @@ class FloorExtraction:
     method: str = "outlines"  # how spaces were found: "outlines" or "walls"
     walls: object = None  # the walls as drawn, with their door and window gaps
     wall_thickness: float | None = None
+    labels: list[Label] = field(default_factory=list)  # the room names and numbers as placed
 
 
 def _walk(entities, parent_layer: str | None = None, depth: int = 0,
@@ -310,6 +311,7 @@ def extract_floor(
     door_shapes = _merge_doors(door_shapes)
     doorways: list[Polygon] = []
     open_edges = fabric = None
+    outside = 0
     spaces, containers = _clean_spaces(closed_shapes, profile, warnings)
     outline = _floor_outline(spaces, containers)
     used = "outlines"
@@ -322,6 +324,7 @@ def extract_floor(
         spaces = [ExtractedSpace(polygon=p, layer="walls") for p in found.polygons]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
         outline, used = found.outline, "walls"
+        outside = found.pockets
         if found.pockets:
             warnings.append(
                 f"{found.pockets} area(s) open to the outside were left out; "
@@ -380,6 +383,7 @@ def extract_floor(
             d.footprint, d.point = translate(d.footprint, dx, dy), translate(d.point, dx, dy)
             d.span = translate(d.span, dx, dy) if d.span is not None else None
         outline = translate(outline, dx, dy) if outline is not None else None
+        labels = [Label(lb.lines, translate(lb.point, dx, dy)) for lb in labels]
         if fabric is not None:
             fabric.walls = translate(fabric.walls, dx, dy)
     walls = fabric.walls if fabric is not None and not fabric.walls.is_empty else None
@@ -389,7 +393,9 @@ def extract_floor(
             walls = _attached(walls, rooms)
         if outline is not None:  # drawn from the same walls: without the markers' pieces too
             outline = unary_union([p for p in as_polygons(outline) if p.distance(rooms) <= 0.1]) or outline
-    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls))
+        if outline is not None and outside:  # areas left out as the outside: the walls round them too
+            outline, walls = _to_the_building(outline, walls, rooms)
+    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels)
 
 
 def _opening_tag(e) -> tuple[str, str] | None:
@@ -551,6 +557,51 @@ def _attached(walls, rooms, touch: float = 0.1):
             if not kept[i] and any(k and p.distance(q) <= touch for k, q in zip(kept, pieces)):
                 kept[i] = grew = True
     return unary_union([p for p, k in zip(pieces, kept) if k]) or None
+
+
+OUTSIDE_REACH_M = 0.6  # an area set aside this close to the outline's edge is outside…
+STRIP_M = 0.6  # …and strips of outline narrower than this left by it (a land line, a plot wall) go too
+
+
+def keep_to_the_building(ex: FloorExtraction) -> None:
+    """The floor's outline and walls without the outside around the building: the
+    areas set aside as not rooms that reach the edge of the plan (a yard inside the
+    line that marks the land, the pool in that yard…), the line itself, and any
+    plot wall running on from the house. Rooms are never cut; areas set aside
+    inside the building (a shaft, a gap) stay part of it."""
+    if ex.outline is None or ex.outline.is_empty:
+        return
+    rooms = [s.polygon for s in ex.spaces if not s.ignored]
+    aside = [s.polygon for s in ex.spaces if s.ignored]
+    if not rooms or not aside:
+        return
+    outline, removed = ex.outline, []
+    while aside:  # from the edge inwards: the yard first, then what stands in it
+        edge = unary_union([Polygon(p.exterior) for p in as_polygons(outline)]).boundary
+        out = [p for p in aside if p.distance(edge) <= OUTSIDE_REACH_M]
+        if not out:
+            break
+        removed += out
+        aside = [p for p in aside if all(p is not q for q in out)]
+        outline = outline.difference(unary_union(out).buffer(0.01, join_style="mitre"))
+    if not removed:
+        return
+    ex.outline, ex.walls = _to_the_building(outline, ex.walls, unary_union(rooms))
+    ex.wall_thickness = _thickness(ex.walls)
+
+
+def _to_the_building(outline, walls, rooms):
+    """An outline the outside was taken from, without the strips it leaves (the line
+    marking the land, a plot wall running on from the house) or the parts that hold
+    no room (a pool in the yard); the walls kept to it."""
+    half = STRIP_M / 2
+    opened = outline.buffer(-half, join_style="mitre").buffer(half, join_style="mitre")
+    parts = [p for p in as_polygons(opened.union(rooms)) if p.intersection(rooms).area > 0.01]
+    outline = unary_union(parts) if parts else None
+    if walls is not None and outline is not None:
+        walls = walls.intersection(outline.buffer(half, join_style="mitre"))
+        walls = _attached(unary_union([p for p in as_polygons(walls) if p.area > 0.001]), rooms)
+    return outline, walls
 
 
 def _thickness(walls) -> float | None:

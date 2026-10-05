@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import shapely
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -163,6 +163,9 @@ def spaces_from_walls(
     regions = [r for r in as_polygons(envelope.difference(mass))
                if r.area >= min_area and not r.buffer(-cfg.min_width / 2).is_empty]
     around = _surrounding(regions, envelope.area, label_points)
+    ways = unary_union([*seals, *(b for b, _ in bridges)]) if seals or bridges else None  # the windows and doors in its gaps
+    around |= _within_the_land_line(regions, envelope, around, built,
+                                    ways.buffer(cfg.max_thickness / 2 + 0.05) if ways is not None else None)
     for k, region in enumerate(regions):
         if k in around:
             pockets.append(region)  # the garden inside a plot wall, a sheet's frame: outside
@@ -224,6 +227,49 @@ def _surrounding(regions: list[Polygon], plan_area: float, label_points) -> set[
         if len(within) >= SURROUNDS and sum(areas[j] for j in within) >= SURROUNDS_SHARE * others:
             out.add(k)
     return out
+
+
+LINE_M = 0.1  # areas this close are parted by a single drawn line, not a wall
+LAND_LINE_SHARE = 0.15  # an area with this share of its edge on the outside across a single line…
+LAND_LINE_MIN_M = 10.0  # …this long…
+WALLED_SHARE = 0.6  # …round a building whose own outside is walls with thickness, this much of it
+
+
+def _within_the_land_line(regions: list[Polygon], envelope, outside: set[int], built, ways) -> set[int]:
+    """The yard inside the line that marks the land: a big area (named or not; a
+    yard holds level notes, steps, a landing) parted from the outside, along a good
+    stretch of its edge, by a single line, round a building whose own outside is
+    walls drawn with thickness (``ways``: its windows and doors, which are not). A
+    room meets the outside through a wall, a window or a door; a plan drawn in single lines has no yard to tell apart."""
+    x0, y0, x1, y1 = envelope.bounds
+    beyond = unary_union([box(x0 - 1, y0 - 1, x1 + 1, y1 + 1).difference(envelope),
+                          *[regions[j] for j in outside]])
+    near_beyond = beyond.buffer(LINE_M)
+    plan = envelope.area - sum(regions[j].area for j in outside)
+    thick = None
+    found = set()
+    for k, region in enumerate(regions):
+        if k in outside or region.area < OUTSIDE_SHARE * plan:
+            continue
+        stretch = region.boundary.intersection(near_beyond)
+        if ways is not None and not stretch.is_empty:
+            stretch = stretch.difference(ways)
+        if stretch.length < LAND_LINE_MIN_M or stretch.length < LAND_LINE_SHARE * region.boundary.length:
+            continue
+        # The building left once the area is taken away (without the line round it):
+        # is its outside walls with thickness?
+        rest = envelope.difference(beyond.union(region).buffer(0.01))
+        rest = rest.buffer(-LINE_M, join_style="mitre").buffer(LINE_M, join_style="mitre")
+        edge = unary_union([Polygon(p.exterior) for p in as_polygons(rest)]).boundary
+        if ways is not None:
+            edge = edge.difference(ways)
+        if edge.length == 0:
+            continue
+        if thick is None:
+            thick = built.buffer(-LINE_M / 2, join_style="mitre").buffer(LINE_M, join_style="mitre")
+        if edge.intersection(thick).length >= WALLED_SHARE * edge.length:
+            found.add(k)
+    return found
 
 
 def _axis(poly: Polygon) -> LineString:
