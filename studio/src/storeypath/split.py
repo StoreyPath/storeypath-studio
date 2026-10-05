@@ -67,7 +67,8 @@ def _straighter(poly: Polygon, cut: list[LineString], gs_in, gs_out, max_cut: fl
         for a in (angle, angle + math.pi / 2):
             dx, dy = math.cos(a) * reach, math.sin(a) * reach
             across = LineString([(through.x - dx, through.y - dy), (through.x + dx, through.y + dy)])
-            pieces = [g for g in shapely.get_parts(poly.intersection(across)) if isinstance(g, LineString)]
+            pieces = [g for g in shapely.get_parts(poly.intersection(across))
+                      if isinstance(g, LineString) and not g.is_empty and g.length > 0]
             if not pieces:
                 continue
             piece = min(pieces, key=lambda g: g.distance(through))
