@@ -12,7 +12,7 @@ from storeypath.reading import NOT_A_ROOM, TextReader, read_units, unit_note
 from storeypath.samples import _windows, office_floor, write_floor_dxf, write_sheet_dxf
 from storeypath.sheets import find_views
 from storeypath.types import SpaceType
-from storeypath.workspace import Workspace
+from storeypath.workspace import Reading, Workspace
 
 RULES = load_profile("ncs")
 
@@ -214,6 +214,22 @@ def test_texts_the_rules_do_not_know_are_read_by_the_model_once():
     again = TextReader(ws, RULES, None)
     assert again.room_type("F.DINNING") == SpaceType.DINING_ROOM
 
+
+
+def test_answers_to_an_older_question_are_asked_again():
+    # Answered before the model was told that SALAH (صالة) is a living room.
+    ws = Workspace.new("P")
+    ws.readings["SALAH"] = Reading(type=None, source="model")
+    ws.readings["MAJLIS"] = Reading(type=SpaceType.DINING_ROOM, source="person")
+    assert TextReader(ws, RULES, None).is_room_name("SALAH") is False  # no model: the saved answer stands
+    model = FakeModel({"SALAH": "living_room", "MAJLIS": "living_room"})
+    reader = TextReader(ws, RULES, model)
+    assert reader.is_room_name("SALAH") is None  # unknown until asked again
+    reader.learn(["SALAH", "MAJLIS"])
+    assert model.asked == ["SALAH"]  # a person's answer is never asked again
+    assert reader.room_type("SALAH") == SpaceType.LIVING_ROOM and reader.room_type("MAJLIS") == SpaceType.DINING_ROOM
+    reader.learn(["SALAH"])
+    assert model.asked == ["SALAH"]  # once per question
 
 def test_conversion_types_rooms_with_the_model(workspace):
     ws, d, f_id, _, cells = workspace

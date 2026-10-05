@@ -13,7 +13,7 @@ import re
 from ezdxf.document import Drawing
 
 from .cad import UnitClue, UnitsDecision, decide_units
-from .llm import LocalModel, ModelUnavailable, read_labels, read_unit_notes
+from .llm import LABEL_QUESTION, LocalModel, ModelUnavailable, read_labels, read_unit_notes
 from .profile import Profile
 from .types import SpaceType
 from .workspace import Reading, Workspace
@@ -41,7 +41,17 @@ class TextReader:
         self.ws = ws
         self.profile = profile
         self.model = model if model is not None and model.available() else None
+        self.question = f"{self.model.name}/{LABEL_QUESTION}" if self.model else None
         self.model_failed: str | None = None
+
+    def _reading(self, text: str) -> Reading | None:
+        """The saved answer for a text. A model's answer to an older question, or from
+        another model, is set aside while a model is here to ask again (the question
+        improves: SAC UNIT, SALAH); without one it stands. A person's always stands."""
+        r = self.ws.readings.get(text)
+        if r is not None and r.source == "model" and self.model is not None and r.asked != self.question:
+            return None
+        return r
 
     # ---- room or not ----------------------------------------------------------
 
@@ -52,7 +62,7 @@ class TextReader:
             return False  # long texts are notes, not names
         if self.profile.classify(text, [], "")[0] != SpaceType.UNSPECIFIED:
             return True
-        r = self.ws.readings.get(text)
+        r = self._reading(text)
         return None if r is None else r.type is not None
 
     def learn(self, texts: list[str], rooms_only: bool = False) -> None:
@@ -69,12 +79,13 @@ class TextReader:
             self.model = None
             return
         for text, reading in answers.items():
-            self.ws.readings[text] = Reading(type=reading.type, source="model", rooms_only=rooms_only)
+            self.ws.readings[text] = Reading(type=reading.type, source="model", rooms_only=rooms_only,
+                                             asked=self.question)
 
     def _unknown(self, text: str, rooms_only: bool) -> bool:
         if NOT_A_ROOM.match(text) or self.profile.classify(text, [], "")[0] != SpaceType.UNSPECIFIED:
             return False
-        r = self.ws.readings.get(text)
+        r = self._reading(text)
         # A "not a room" answer is asked again when the text turns out to label a room.
         return r is None or (rooms_only and r.type is None)
 

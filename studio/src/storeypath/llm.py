@@ -21,6 +21,7 @@ Without a model Studio works on its rules alone.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -180,13 +181,13 @@ def _free_port() -> int:
 # broad match. Examples in several languages, none of them from eval/labels.tsv.
 TYPE_GUIDE = {
     "bedroom": "bedroom, master or guest bedroom, kids' room, maid's or driver's room (غرفة نوم, chambre, Schlafzimmer, habitación)",
-    "living_room": "sitting room, living room, family room, lounge, majlis, salon, TV room (صالة, مجلس, séjour)",
+    "living_room": "sitting room, living room, family room, lounge, majlis, salon, sala (also written salah or saleh), TV room (صالة, مجلس, séjour)",
     "dining_room": "dining room, dining area (طعام, salle à manger, Esszimmer)",
     "kitchen": "kitchen, pantry, kitchenette, coffee point (مطبخ, cuisine, cocina)",
     "bathroom": "private bathroom with a bath or shower, en-suite (حمام, salle d'eau, baño)",
     "restroom": "toilet, WC, washroom, hand-wash room, powder room (دورة مياه, toilettes, aseo)",
     "dressing_room": "dressing room, walk-in closet, wardrobe room (ملابس, dressing)",
-    "laundry": "laundry, washing or ironing room (غسيل, buanderie, lavandería)",
+    "laundry": "laundry: a room for washing and ironing clothes (غسيل, buanderie, lavandería)",
     "prayer_room": "prayer room, musalla (مصلى)",
     "office": "office, manager's or director's room (مكتب, bureau, despacho)",
     "meeting_room": "meeting, conference, board or huddle room (اجتماعات, réunion, reunión)",
@@ -223,6 +224,10 @@ LABEL_SYSTEM = (
     "not a room); a number after a name is the room number.\n"
     "Answer in compact JSON."
 )
+
+
+# Changes when the question does: answers to an older question are asked again.
+LABEL_QUESTION = hashlib.sha1(LABEL_SYSTEM.encode()).hexdigest()[:8]
 
 
 @dataclass

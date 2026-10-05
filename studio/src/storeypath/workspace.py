@@ -134,6 +134,7 @@ class Reading(BaseModel):
     type: SpaceType | None = None  # None: not a room name
     source: Literal["rules", "model", "person"] = "model"
     rooms_only: bool = False  # asked knowing the text labels a room
+    asked: str | None = None  # a model's answer: the model and question it came from
 
 
 class ExportRecord(BaseModel):
