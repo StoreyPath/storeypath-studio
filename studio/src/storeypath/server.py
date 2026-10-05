@@ -306,6 +306,7 @@ class Studio:
         plans = body.get("plans") or []
         if not plans:
             raise ValueError("choose at least one plan")
+        _floors_to_add(Workspace.load(ws_path), plans)  # two plans as one floor: say so now, change nothing
 
         def run(job: Job):
             from .convert import convert_floor
@@ -315,11 +316,10 @@ class Studio:
             with self._lock:
                 ws = Workspace.load(ws_path)
                 loc = ws.locations[0] if ws.locations else None
+                places = _floors_to_add(ws, plans)
                 loc_id = f"{ws.id}-{loc.code}" if loc else ws.add_location("SITE", ws.project.name)
                 added: dict[str, list[str]] = {}
-                for p in plans:
-                    b_name = (p.get("building") or "Main building").strip()
-                    b_code = _code(p.get("building_code") or b_name)
+                for b_code, b_name, ordinal, p in places:
                     b_id = f"{loc_id}-{b_code}"
                     try:
                         ws.building(b_id)
@@ -328,7 +328,7 @@ class Studio:
                         job.say(f"building {b_name} ({b_code})")
                     source = SourceDrawing(path=str(drawing.relative_to(ws_path.parent)), profile=AUTO,
                                            units=units, region=tuple(p["region"]), view=p.get("title"))
-                    f_id = ws.add_floor(b_id, int(p["ordinal"]), name=p.get("name") or None, source=source)
+                    f_id = ws.add_floor(b_id, ordinal, name=p.get("name") or None, source=source)
                     added.setdefault(b_id, []).append(f_id)
                     job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}")
                 ws.save(ws_path)
@@ -451,6 +451,41 @@ class Studio:
         if not path.is_file():
             raise NotFound(f"no export {name}")
         return path
+
+
+def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[tuple[str, str, int, dict]]:
+    """Where each chosen plan goes: (building code, building name, floor, plan). A
+    building is known by its name; a new one gets a code from its name that no other
+    building has. Fails, before anything changes, when two plans would be the same
+    floor of a building or the building already has that floor."""
+    loc = ws.locations[0] if ws.locations else None
+    existing = {b.name.strip().lower(): b for b in loc.buildings} if loc else {}
+    codes = {key: b.code for key, b in existing.items()}
+    taken = set(codes.values())
+    chosen: dict[tuple[str, int], str] = {}
+    out = []
+    for p in plans:
+        name = (p.get("building") or "Main building").strip()
+        key = name.lower()
+        if key not in codes:
+            code = base = _code(p.get("building_code") or name)
+            n = 2
+            while code in taken:  # "Main building" and "Main kitchen" are two buildings
+                code, n = f"{base[:14]}{n}", n + 1
+            codes[key] = code
+            taken.add(code)
+        ordinal = int(p["ordinal"])
+        title = p.get("title") or f"plan {p.get('index')}"
+        if (key, ordinal) in chosen:
+            raise ValueError(f"{chosen[key, ordinal]} and {title} are both floor {ordinal} of {name}: give one "
+                             "of them another floor or building, or leave it out")
+        has = next((f for f in existing[key].floors if f.ordinal == ordinal), None) if key in existing else None
+        if has:
+            raise ValueError(f"{name} already has floor {ordinal} ({has.name}): give {title} another floor "
+                             "or building")
+        chosen[key, ordinal] = title
+        out.append((codes[key], name, ordinal, p))
+    return out
 
 
 def _code(text: str) -> str:

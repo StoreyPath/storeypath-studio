@@ -179,6 +179,37 @@ def wait(base, job):
     return job["result"]
 
 
+
+def test_two_plans_as_one_floor_are_refused_before_anything_changes(studio, tmp_path):
+    # A sheet with an outbuilding whose plan is titled like the house's.
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Villa"})
+    code = created["code"]
+    write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),
+                                             (office_floor(0), (170.0, 50.0), "GROUND FLOOR PLAN")], area_outlines=False)
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf", raw=(tmp_path / "sheet.dxf").read_bytes())
+    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
+    house, annex = wait(base, job)["plans"]
+
+    def plan(p, building):
+        return {"index": p["index"], "title": p["title"], "region": p["region"], "building": building, "ordinal": 0}
+
+    status, error = call(f"{base}/api/projects/{code}/floors",
+                         {"drawing": "sheet.dxf", "plans": [plan(house, "Main building"), plan(annex, "Main building")]})
+    assert status == 400
+    assert error["error"].startswith("GROUND FLOOR PLAN and GROUND FLOOR PLAN are both floor 0 of Main building")
+    assert Workspace.load(app.path(code)).locations[0].buildings == []  # nothing was added
+
+    # Buildings are known by name: "Main annex" is not "Main building", though both start with Main.
+    _, job = call(f"{base}/api/projects/{code}/floors",
+                  {"drawing": "sheet.dxf", "plans": [plan(house, "Main building"), plan(annex, "Main annex")]})
+    wait(base, job)
+    buildings = Workspace.load(app.path(code)).locations[0].buildings
+    assert [(b.code, b.name, len(b.floors)) for b in buildings] == [("MAIN", "Main building", 1), ("MAIN2", "Main annex", 1)]
+
+    status, error = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [plan(house, "main building")]})
+    assert status == 400 and error["error"].startswith("main building already has floor 0 (")
+
 def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     base, app = studio
     status, body = call(f"{base}/")

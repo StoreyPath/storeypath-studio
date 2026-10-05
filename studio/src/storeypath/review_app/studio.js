@@ -202,14 +202,35 @@ async function findPlans(code, drawing, area, units) {
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
   const cards = result.plans.map((plan) => planCard(plan, top));
+  // One plan per floor of a building to start with, the largest: a second "ground
+  // floor plan" on a sheet is often an outbuilding's.
+  const largest = new Map();
+  for (const c of cards.filter((c) => c.chosen())) {
+    const { key } = c.place();
+    if (!largest.has(key) || c.area > largest.get(key).area) largest.set(key, c);
+  }
+  cards.forEach((c) => { if (c.chosen() && largest.get(c.place().key) !== c) c.choose(false); });
   // The plans are found at the drawing's scale, so other units mean finding them again.
   const unitChoice = el("select", { onchange: () => findPlans(code, drawing, area, unitChoice.value) },
     Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
   const add = el("button", { class: "primary", type: "button" }, "Add the chosen plans as floors");
   const updateCount = () => {
-    const n = cards.filter((c) => c.chosen()).length;
-    add.textContent = n ? `Add ${n} floor${n === 1 ? "" : "s"}` : "Choose plans to add";
-    add.disabled = !n;
+    const chosen = cards.filter((c) => c.chosen());
+    const byPlace = new Map();
+    chosen.forEach((c) => byPlace.set(c.place().key, [...(byPlace.get(c.place().key) || []), c]));
+    let clash = null;
+    for (const c of cards) {
+      const { key, building, floor } = c.place();
+      const others = (byPlace.get(key) || []).filter((o) => o !== c).map((o) => o.plan.title || `plan ${o.plan.index}`);
+      if (!others.length) c.say("");
+      else if (c.chosen()) {
+        c.say(`${others.join(", ")} is also floor ${floor} of ${building}: give one of them another floor or building.`, true);
+        clash = { building, floor };
+      } else c.say(`Floor ${floor} of ${building} is ${others.join(", ")}. To add this plan too, give it another building or floor.`);
+    }
+    add.textContent = clash ? `Two plans are floor ${clash.floor} of ${clash.building}`
+      : chosen.length ? `Add ${chosen.length} floor${chosen.length === 1 ? "" : "s"}` : "Choose plans to add";
+    add.disabled = !chosen.length || clash !== null;
   };
   cards.forEach((c) => c.onChange(updateCount));
   updateCount();
@@ -242,6 +263,7 @@ function planCard(plan, top) {
   const floor = el("input", { type: "number", step: "1", value: ordinal ?? 0 });
   const name = el("input", { type: "text", value: plan.kind === "roof_plan" ? "Roof" : FLOOR_NAMES[ordinal ?? 0] || `Floor ${ordinal}` });
   floor.addEventListener("input", () => { name.value = FLOOR_NAMES[floor.value] || `Floor ${floor.value}`; });
+  const note = el("p", { class: "small", hidden: true });
   const node = el("article", { class: "plan" },
     thumbnail(plan),
     el("div", { class: "body" },
@@ -251,13 +273,27 @@ function planCard(plan, top) {
       el("label", { class: "check" }, check, "Add as a floor"),
       el("div", { class: "fields" },
         el("label", {}, "Building", building), el("label", {}, "Floor", floor),
-        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name))));
+        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name)),
+      note));
   const sync = () => node.classList.toggle("chosen", check.checked);
   sync();
   return {
     node,
+    plan,
+    area: plan.size[0] * plan.size[1],
     chosen: () => check.checked,
-    onChange: (fn) => check.addEventListener("change", () => { sync(); fn(); }),
+    choose: (yes) => { check.checked = yes; sync(); },
+    /** The floor of a building this plan would be: buildings are known by their name. */
+    place: () => {
+      const b = building.value.trim() || "Main building";
+      return { key: `${b.toLowerCase()}|${Number(floor.value)}`, building: b, floor: Number(floor.value) };
+    },
+    say: (text, warn = false) => { note.textContent = text; note.hidden = !text; note.className = warn ? "unsure small" : "muted small"; },
+    onChange: (fn) => {
+      check.addEventListener("change", () => { sync(); fn(); });
+      building.addEventListener("input", fn);
+      floor.addEventListener("input", fn);
+    },
     value: () => ({ index: plan.index, title: plan.title, region: plan.region, building: building.value,
       ordinal: Number(floor.value), name: name.value }),
   };
