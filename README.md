@@ -54,6 +54,11 @@ up. It looks at what is drawn:
 - **Stacks floors drawn side by side.** Floors share columns and outside walls, so
   each plan is moved to where its walls overlap the floor below — on a real sheet
   set, to within millimetres of where the structural grid puts it.
+- **Reads the floor heights from the sections.** A plan has no heights, but the
+  sections beside it do: *+3.65 FIRST FLOOR SLAB LVL*, *+6.95 ROOF SLAB LVL*,
+  *+8.65 PARAPET LVL* give each floor's height and the parapet around the roof, in
+  any language. The walls around a roof terrace or balcony are built as parapets,
+  not as walls up to the ceiling.
 - **Finds rooms even when nothing outlines them.** Door swings close the doors they
   stand in (both leaves of a double door); glazing seals windows, curved bays too;
   a wall that stops with another facing it is a doorway; wider gaps in the facade
@@ -88,7 +93,8 @@ off and no setup of any kind:
 ## Walk through it
 
 Every package opens as a 3D world, straight from Studio, with nothing downloaded:
-the walls at the thickness they were drawn, doorways you walk through, windows with
+the walls at the thickness they were drawn, parapets around roofs and terraces,
+doorways you walk through, windows with
 sills and glass, floors finished by what each room is — wood in offices and
 bedrooms, tile in bathrooms and kitchens, stone in lobbies and stairs — under a
 sun that casts real shadows.

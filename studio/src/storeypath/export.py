@@ -16,6 +16,7 @@ from shapely.geometry import MultiPolygon, Polygon, mapping, shape
 from shapely.ops import polylabel, unary_union
 
 from .assets import format_spec
+from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, make_id
 from .package import (
@@ -30,6 +31,7 @@ from .package import (
     SourceInfo,
     json_schemas,
 )
+from .levels import DEFAULT_PARAPET_M
 from .types import OpeningType, SpaceType
 from .workspace import ExportRecord, Placement, Workspace, utcnow
 
@@ -95,6 +97,25 @@ def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
     return out
 
 
+OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value}
+
+
+def _walls_and_parapets(walls, spaces, thickness: float | None):
+    """A floor's walls, split into those that rise to the ceiling and the parapets:
+    walls beside a terrace or balcony with no room on their other side (the low wall
+    around a roof). A room's own walls stay full height, terrace or not beside them."""
+    if walls is None or walls.is_empty or not any(t in OUTDOOR for _, t in spaces):
+        return walls, None
+    reach = 1.5 * max(thickness or 0.2, 0.1) + 0.05  # across a wall, to the space on its far side
+    rooms = unary_union([s for s, t in spaces if t not in OUTDOOR]).buffer(reach)
+    outdoor = unary_union([s for s, t in spaces if t in OUTDOOR]).buffer(reach)
+    low = walls.difference(rooms).intersection(outdoor)
+    low = unary_union([p for p in as_polygons(low) if p.area >= 0.01])
+    if low.is_empty:
+        return walls, None
+    return walls.difference(low), low
+
+
 def build_features(ws: Workspace) -> dict[str, list[dict]]:
     placed = placements(ws)
     out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "openings")}
@@ -110,14 +131,19 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                 outline = shape(f.outline) if f.outline else None
                 if outline is not None:
                     outlines.append(outline)
+                spaces = [(shape(r.geometry), ws.effective(r)["type"]) for r in ws.floor_objects(f_id)
+                          if r.kind == "space"]
+                walls, parapets = _walls_and_parapets(shape(f.walls) if f.walls else None, spaces, f.wall_thickness)
                 out["floors"].append(
                     _feature(
                         f_id,
                         _geo(outline, g) if outline is not None else None,
                         {"kind": "floor", "code": f.code, "name": f.name, "building_id": b_id,
                          "ordinal": f.ordinal, "elevation": f.elevation, "height": f.height,
-                         "walls": _geo(shape(f.walls), g) if f.walls else None,
-                         "wall_thickness_m": f.wall_thickness},
+                         "walls": _geo(walls, g) if walls is not None else None,
+                         "wall_thickness_m": f.wall_thickness,
+                         "parapets": _geo(parapets, g) if parapets is not None else None,
+                         "parapet_height_m": (f.parapet_height or DEFAULT_PARAPET_M) if parapets is not None else None},
                     )
                 )
                 for r in sorted(ws.floor_objects(f_id), key=lambda r: r.id):

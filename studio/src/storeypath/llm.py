@@ -371,6 +371,39 @@ def read_unit_notes(model: LocalModel, notes: list[str]) -> dict[str, str | None
     return out
 
 
+
+LEVEL_KINDS = ["floor", "roof", "top", "parapet", "ground", "other"]
+LEVEL_SYSTEM = (
+    "You read level labels on architectural sections and elevations, in any language: "
+    "the words after a level in metres. Say what level they mark:\n"
+    "- floor: the slab or finished floor of a floor; give its number: basement -1, ground "
+    "floor 0, first floor 1, second floor 2, and so on\n"
+    "- roof: the main roof slab, above the highest floor\n"
+    "- top: the roof of a stair room, lift room or penthouse that stands on the roof\n"
+    "- parapet: the top of the parapet wall around the roof (دروة, سترة, acrotère, Attika)\n"
+    "- ground: the natural ground, road or site level outside (not the ground floor)\n"
+    "- other: anything else: a window, a lintel, a beam, a tank, or a level that names "
+    "no floor\n"
+    "Sections abbreviate: FFL, SSL, OKFF, OKRD and NIV are levels of a floor; RDC, EG, PB "
+    "and الأرضي are the ground floor; R+1, 1. OG and الأول the first floor; KG, UG and "
+    "SS a basement.\n"
+    "Answer in compact JSON."
+)
+
+
+def read_level_labels(model: LocalModel, labels: list[str]) -> dict[str, tuple[str, int | None]]:
+    """What level each label marks: (kind, floor number for "floor"). One label per
+    question, as for room labels."""
+    schema = {"type": "object", "properties": {"marks": {"enum": LEVEL_KINDS}, "floor": {"type": ["integer", "null"]}},
+              "required": ["marks", "floor"]}
+    out = {}
+    for label in dict.fromkeys(t.strip() for t in labels if t.strip()):
+        answer = model.ask(LEVEL_SYSTEM, f"Label: {label}", schema, max_tokens=30)
+        kind = answer.get("marks") if answer.get("marks") in LEVEL_KINDS else "other"
+        floor = answer.get("floor")
+        out[label] = (kind, floor if isinstance(floor, int) else None)
+    return out
+
 _NOT_WORDS = re.compile(r"^[\W\d_]*$")
 
 

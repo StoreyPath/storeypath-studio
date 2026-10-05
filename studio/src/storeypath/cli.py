@@ -131,7 +131,9 @@ def add_floor(
     code: Annotated[Optional[str], typer.Option(help="floor code (default F00, F01…, B01…)")] = None,
     name: Annotated[Optional[str], typer.Option()] = None,
     elevation: Annotated[Optional[float], typer.Option(help="meters (default ordinal × height)")] = None,
-    height: Annotated[float, typer.Option(help="floor-to-floor height, meters")] = 3.5,
+    height: Annotated[float, typer.Option(help="floor-to-floor height, meters (see `storeypath levels`)")] = 3.5,
+    parapet: Annotated[Optional[float], typer.Option(
+        help="height of the low walls around its terraces and balconies, meters (default 1.1)")] = None,
     profile: Annotated[str, typer.Option(help="auto (read from the drawing), a built-in profile or a YAML path")] = "auto",
     units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
     view: Annotated[Optional[str], typer.Option(
@@ -164,7 +166,7 @@ def add_floor(
         source.region, source.view = _pick_view(drawing, prof, units, view, profile)
     try:
         f_id = ws.add_floor(building_id, ordinal, code=code, name=name, elevation=elevation,
-                            height=height, source=source)
+                            height=height, parapet_height=parapet, source=source)
     except (KeyError, ValueError) as e:
         _fail(str(e))
     ws.save(workspace)
@@ -305,6 +307,52 @@ def align(
         _fail(str(e))
     ws.save(workspace)
     typer.echo(f"now run: storeypath convert {workspace}")
+
+
+@app.command()
+def levels(
+    workspace: WorkspaceArg,
+    building_id: str,
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read level labels in other languages with the local language model")] = True,
+):
+    """Set the floors' heights from the level labels on the building's drawings
+    (+3.65 FIRST FLOOR SLAB LVL on sections and elevations), and the roof's parapet."""
+    from .cad import read_drawing
+    from .levels import floor_levels, read_level_marks
+    from .llm import LocalModel
+
+    ws = _load(workspace)
+    try:
+        b = ws.building(building_id)
+    except (KeyError, ValueError) as e:
+        _fail(str(e))
+    paths = list(dict.fromkeys(f.source.path for f in b.floors if f.source))
+    if not paths:
+        _fail(f"{building_id} has no floors with drawings")
+    model = LocalModel() if use_model else None
+    marks = []
+    try:
+        for path in paths:
+            marks += read_level_marks(read_drawing(workspace.parent / path), model)
+    except DrawingError as e:
+        _fail(str(e))
+    finally:
+        if model is not None:
+            model.close()
+    found = floor_levels(marks)
+    if not found.levels:
+        _fail("no level labels found (such as +3.65 FIRST FLOOR SLAB LVL); set heights with add-floor --height")
+    typer.echo(f"levels: {found.summary()}")
+    for f in b.floors:
+        f.height = found.height(f.ordinal)
+        if found.parapet is not None and f.ordinal == found.roof:
+            f.parapet_height = found.parapet
+    ws.restack(building_id)
+    for f in sorted(b.floors, key=lambda f: f.ordinal):
+        parapet = f", parapets {f.parapet_height:.2f} m" if f.parapet_height else ""
+        typer.echo(f"{building_id}-{f.code}: {f.elevation:.2f} m up, {f.height:.2f} m high{parapet}")
+    ws.save(workspace)
 
 
 @app.command()

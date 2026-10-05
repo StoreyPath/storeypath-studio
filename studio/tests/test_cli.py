@@ -111,3 +111,23 @@ def test_adding_a_floor_warns_when_unsure_of_the_units(tmp_path):
     floor = next(f for _, _, f, _ in Workspace.load(ws_file).iter_floors())
     assert floor.source.units == "mm"
 
+
+
+def test_floor_heights_from_the_levels_on_the_sections(tmp_path):
+    import ezdxf
+
+    _two_floors(tmp_path / "all.dxf")
+    doc = ezdxf.readfile(tmp_path / "all.dxf")
+    for i, text in enumerate(["+0.35 GROUND FLOOR SLAB LVL.", "+3.65 FIRST FLOOR SLAB LVL.", "+6.95 ROOF SLAB LVL."]):
+        doc.modelspace().add_text(text, height=250).set_placement((400000, 50000 + 1000 * i))
+    doc.saveas(tmp_path / "all.dxf")
+    ws_file = tmp_path / "p.spproj"
+    run("new", ws_file, "--name", "Levels")
+    b = run("add-building", ws_file, run("add-location", ws_file, "SITE", "--name", "Site"), "HQ", "--name", "HQ")
+    run("add-floor", ws_file, b, tmp_path / "all.dxf", "--ordinal", "0", "--view", "ground", "--no-model")
+    run("add-floor", ws_file, b, tmp_path / "all.dxf", "--ordinal", "1", "--view", "first", "--no-model")
+    out = run("levels", ws_file, b, "--no-model")
+    assert out.startswith("levels: ground floor +0.35, first floor +3.65, roof +6.95")
+    assert f"{b}-F01: 3.30 m up, 3.30 m high" in out
+    floors = sorted(Workspace.load(ws_file).building(b).floors, key=lambda f: f.ordinal)
+    assert [(f.elevation, f.height) for f in floors] == [(0.0, 3.3), (3.3, 3.3)]

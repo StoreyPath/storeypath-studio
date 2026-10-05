@@ -1,0 +1,22 @@
+# words after a level on a section or elevation	what they mark	floor (or -)
+منسوب بلاطة الدور الأرضي	floor	0
+منسوب بلاطة الدور الأول	floor	1
+منسوب أرضية الدور الثاني	floor	2
+منسوب السطح	roof	-
+منسوب الدروة	parapet	-
+منسوب سقف غرفة الدرج	top	-
+منسوب الأرض الطبيعية	ground	-
+NIVEAU DALLE RDC	floor	0
+NIVEAU PLANCHER R+1	floor	1
+ACROTÈRE	parapet	-
+TERRAIN NATUREL	ground	-
+OKFF EG	floor	0
+OKFF 1. OG	floor	1
+ATTIKA	parapet	-
+NIVEL PISO PLANTA BAJA	floor	0
+SECOND FLOOR FINISHED LEVEL	floor	2
+TOP OF LIFT MACHINE ROOM	top	-
+MAIN ROOF FINISH	roof	-
+LINTEL LVL	other	-
+WINDOW SILL LEVEL	other	-
+TOP OF WATER TANK	other	-

@@ -223,7 +223,7 @@ async function findPlans(code, drawing, area, units) {
   }
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
-  const cards = result.plans.map((plan) => planCard(plan, top));
+  const cards = result.plans.map((plan) => planCard(plan, top, result.levels));
   // One plan per floor of a building to start with, the largest: a second "ground
   // floor plan" on a sheet is often an outbuilding's.
   const largest = new Map();
@@ -270,6 +270,9 @@ async function findPlans(code, drawing, area, units) {
     el("h2", {}, `Plans in ${drawing}`),
     el("p", { class: result.units_sure ? "muted small" : "unsure small" }, result.units_reason,
       result.units_sure ? "" : " If the plans below look the wrong size, choose the units."),
+    el("p", { class: "muted small" }, result.levels.summary
+      ? `Levels on its sections: ${result.levels.summary}. Each floor's height and parapet are set from them.`
+      : `No floor levels on its sections: floors are ${result.levels.height} m high unless you change them.`),
     el("p", { class: "muted small" }, "Choose the plans that are floors; Studio lines them up and finds the rooms."),
     el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), add),
     el("div", { class: "plans" }, cards.map((c) => c.node)),
@@ -277,7 +280,7 @@ async function findPlans(code, drawing, area, units) {
   area.scrollIntoView({ behavior: "smooth" });
 }
 
-function planCard(plan, top) {
+function planCard(plan, top, levels) {
   const isFloor = plan.kind === "floor_plan" || plan.kind === "roof_plan";
   const ordinal = plan.kind === "roof_plan" ? top + 1 : plan.floor;
   const check = el("input", { type: "checkbox", checked: isFloor && plan.kind !== "site_plan" && ordinal !== null });
@@ -285,6 +288,18 @@ function planCard(plan, top) {
   const floor = el("input", { type: "number", step: "1", value: ordinal ?? 0 });
   const name = el("input", { type: "text", value: plan.kind === "roof_plan" ? "Roof" : FLOOR_NAMES[ordinal ?? 0] || `Floor ${ordinal}` });
   floor.addEventListener("input", () => { name.value = FLOOR_NAMES[floor.value] || `Floor ${floor.value}`; });
+  // Height and parapet from the drawing's levels, following the floor number until changed by hand.
+  const heightOf = (n) => levels.heights[String(n)] ?? levels.height;
+  const parapetOf = (n) => (levels.parapet !== null && n === levels.roof ? levels.parapet : levels.default_parapet);
+  const height = el("input", { type: "number", step: "0.05", min: "2", value: heightOf(ordinal ?? 0) });
+  const parapet = el("input", { type: "number", step: "0.05", min: "0", value: parapetOf(ordinal ?? 0) });
+  let heightSet = false, parapetSet = false;
+  height.addEventListener("input", () => { heightSet = true; });
+  parapet.addEventListener("input", () => { parapetSet = true; });
+  floor.addEventListener("input", () => {
+    if (!heightSet) height.value = heightOf(Number(floor.value));
+    if (!parapetSet) parapet.value = parapetOf(Number(floor.value));
+  });
   const note = el("p", { class: "small", hidden: true });
   const node = el("article", { class: "plan" },
     thumbnail(plan),
@@ -295,7 +310,9 @@ function planCard(plan, top) {
       el("label", { class: "check" }, check, "Add as a floor"),
       el("div", { class: "fields" },
         el("label", {}, "Building", building), el("label", {}, "Floor", floor),
-        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name)),
+        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name),
+        el("label", { title: "Floor to floor" }, "Height (m)", height),
+        el("label", { title: "The low walls around its terraces and balconies" }, "Parapet (m)", parapet)),
       note));
   const sync = () => node.classList.toggle("chosen", check.checked);
   sync();
@@ -317,7 +334,7 @@ function planCard(plan, top) {
       floor.addEventListener("input", fn);
     },
     value: () => ({ index: plan.index, title: plan.title, region: plan.region, building: building.value,
-      ordinal: Number(floor.value), name: name.value }),
+      ordinal: Number(floor.value), name: name.value, height: Number(height.value), parapet: Number(parapet.value) }),
   };
 }
 

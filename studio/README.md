@@ -94,8 +94,16 @@ storeypath views house.dwg
 storeypath add-floor house.spproj K7Q2XM-HOME-VILLA house.dwg --ordinal 0 --view "ground floor"
 storeypath add-floor house.spproj K7Q2XM-HOME-VILLA house.dwg --ordinal 1 --view "first floor"
 storeypath align house.spproj K7Q2XM-HOME-VILLA
+storeypath levels house.spproj K7Q2XM-HOME-VILLA   # floor heights from the sections
 storeypath convert house.spproj
 ```
+
+`levels` reads the level labels on the sheets' sections and elevations (*+3.65 FIRST
+FLOOR SLAB LVL*, *+6.95 ROOF SLAB LVL*, *+8.65 PARAPET LVL*; other languages by the
+language model) and sets each floor's height, its elevation and the roof's parapet.
+In the web app this happens when the plans are found, and each plan's height and
+parapet can be changed before it is added. Walls with a terrace or balcony on one
+side and no room on the other are exported as `parapets`, that high.
 
 Units are read from what is drawn, so a drawing whose unit setting is wrong is
 still read right: door swings with their leaf (about 0.85 m), the typical dimension
@@ -120,7 +128,8 @@ profile (below) can still be given instead.
 
 Room names the rules don't know — abbreviations, misspellings, other languages —
 are read by a small language model running locally on the CPU with llama.cpp's
-`llama-server`; so are sheet titles when finding plans, and notes that state the units. Its answers are limited to
+`llama-server`; so are sheet titles when finding plans, notes that state the units, and
+level labels on sections. Its answers are limited to
 StoreyPath's types by a JSON schema and are stored in the workspace (`readings`),
 so a project converts the same way again, with or without the model.
 
@@ -135,7 +144,8 @@ so a project converts the same way again, with or without the model.
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
 [Without Docker](../README.md#without-docker).
-[eval/](eval) scores a model on room labels, sheet titles, layer names and unit notes
+[eval/](eval) scores a model on room labels, sheet titles, layer names, unit notes and
+level labels
 (`uv run python eval/run.py --model path/to/model.gguf`).
 
 `storeypath save-as-new` copies a workspace as a *different* project with its own

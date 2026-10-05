@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.1.0"
+FORMAT_VERSION = "0.2.0"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -85,8 +85,12 @@ class FloorProps(_Props):
     ordinal: int = Field(description="0 = ground floor, negative = below ground")
     elevation: float = Field(description="meters above the building's ground floor")
     height: float = Field(description="floor-to-floor height in meters")
-    walls: Geometry | None = Field(None, description="the walls as drawn, with their door and window gaps")
+    walls: Geometry | None = Field(None, description="the walls as drawn, with their door and window gaps; "
+                                                    "full height, except the parapets")
     wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
+    parapets: Geometry | None = Field(None, description="the low walls around terraces, balconies and roofs, "
+                                                       "parapet_height_m high")
+    parapet_height_m: float | None = Field(None, description="the parapets' height above the floor")
 
 
 class SpaceProps(_Props):

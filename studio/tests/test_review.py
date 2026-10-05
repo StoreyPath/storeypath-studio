@@ -328,3 +328,32 @@ def test_the_editor_gets_the_lines_studio_divided_rooms_along(tmp_path):
     (line,) = lines[0]
     assert 1.5 <= LineString(line).length <= 2.5  # across the opening
     assert all(d["divider"] is None for d in doors if d["type"] == "door")
+
+
+def test_floor_heights_come_from_the_levels_on_the_sheet(studio, tmp_path):
+    import ezdxf
+
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Levels"})
+    code = created["code"]
+    write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),
+                                             (office_floor(1), (170.0, 52.5), "FIRST FLOOR PLAN")], area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "sheet.dxf")
+    for i, text in enumerate(["+0.00 GROUND FLOOR SLAB LVL.", "+3.40 FIRST FLOOR SLAB LVL.", "+6.80 ROOF SLAB LVL.",
+                              "+8.00 PARAPET LVL."]):
+        doc.modelspace().add_text(text, height=250).set_placement((400000, 50000 + 1000 * i))  # a section, aside
+    doc.saveas(tmp_path / "sheet.dxf")
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf", raw=(tmp_path / "sheet.dxf").read_bytes())
+    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
+    found = wait(base, job)
+    levels = found["levels"]
+    assert levels["heights"] == {"0": 3.4, "1": 3.4} and levels["roof"] == 2 and levels["parapet"] == 1.2
+    assert levels["summary"].startswith("ground floor ±0.00, first floor +3.40, roof +6.80")
+
+    chosen = [{"index": p["index"], "title": p["title"], "region": p["region"], "building": "HQ",
+               "ordinal": p["floor"], "height": 3.4, "parapet": 1.1} for p in found["plans"][:2]]
+    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "units": "mm", "plans": chosen})
+    wait(base, job)
+    floors = {f.ordinal: f for _, _, f, _ in Workspace.load(app.path(code)).iter_floors()}
+    assert {n: (f.elevation, f.height, f.parapet_height) for n, f in floors.items()} == {
+        0: (0.0, 3.4, 1.1), 1: (3.4, 3.4, 1.1)}

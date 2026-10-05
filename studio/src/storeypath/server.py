@@ -50,6 +50,7 @@ from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import read_title
 from .profile import AUTO, load_profile
+from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, read_level_marks
 from .reading import NOT_A_ROOM, read_units
 from .review import CONTENT_TYPES, NotFound, Review
 from .types import SpaceType
@@ -292,8 +293,14 @@ class Studio:
                 out.append({"index": v.index, "title": v.title, "kind": kind, "floor": floor,
                             "building": r.building if r else None, "size": v.size, "region": v.region,
                             "preview": v.preview})
+            # Floor heights and the roof's parapet, from the levels on its sections.
+            found = floor_levels(read_level_marks(doc, self.model if self.model.available() else None))
+            job.say(f"levels: {found.summary()}" if found.levels else "no floor levels on its sections")
+            levels = {"summary": found.summary() or None, "heights": {str(n): h for n, h in found.heights.items()},
+                      "height": found.typical_height(), "roof": found.roof, "parapet": found.parapet,
+                      "default_parapet": DEFAULT_PARAPET_M}
             return {"drawing": path.name, "units": used, "units_sure": sure, "units_reason": reason,
-                    "units_chosen": bool(units), "units_said": header_units(doc), "plans": out}
+                    "units_chosen": bool(units), "units_said": header_units(doc), "levels": levels, "plans": out}
 
         return self.jobs.submit(f"Reading the plans in {path.name}", run)
 
@@ -328,9 +335,13 @@ class Studio:
                         job.say(f"building {b_name} ({b_code})")
                     source = SourceDrawing(path=str(drawing.relative_to(ws_path.parent)), profile=AUTO,
                                            units=units, region=tuple(p["region"]), view=p.get("title"))
-                    f_id = ws.add_floor(b_id, ordinal, name=p.get("name") or None, source=source)
+                    f_id = ws.add_floor(b_id, ordinal, name=p.get("name") or None, source=source,
+                                        height=float(p.get("height") or DEFAULT_HEIGHT_M),
+                                        parapet_height=float(p["parapet"]) if p.get("parapet") else None)
                     added.setdefault(b_id, []).append(f_id)
                     job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}")
+                for b_id in added:
+                    ws.restack(b_id)  # elevations from the heights
                 ws.save(ws_path)
 
             doc = read_drawing(drawing)

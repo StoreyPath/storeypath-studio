@@ -39,6 +39,15 @@ const LABEL_STYLE = {
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
 const OPEN_SPAN = 2.6; // m: wider ways through are open-plan joins, with no wall above
+const OUTDOOR = new Set(["terrace", "balcony"]); // open to the sky, behind parapets
+const PARAPET = 1.1; // m, when the package gives no parapet height
+
+/** Distance from point ``p`` to the segment ``a``–``b`` (plan meters). */
+function distanceToSegment(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
 
 export class StoreyPathWorld extends EventTarget {
   #o;
@@ -427,15 +436,9 @@ export class StoreyPathWorld extends EventTarget {
       group.add(mesh);
     }
 
-    // the ceiling, seen only when walking (it casts no shadow: rooms stay sunlit)
-    const ceiling = outline.length ? new THREE.Mesh(this.#flat(outline, e + wallHeight), this.#materials.ceiling) : null;
-    if (ceiling) {
-      ceiling.visible = false;
-      group.add(ceiling);
-    }
-    built.ceiling = ceiling;
-
     // the rooms: floor finish, x-ray volume, highlight, label
+    const parapetHeight = Math.min(props.parapet_height_m || PARAPET, wallHeight);
+    const roofed = []; // under the ceiling: every room but terraces and balconies
     for (const space of this.#pkg.spacesOn(floor.id)) {
       const p = space.properties;
       const polys = this.#polygons(space.geometry);
@@ -447,7 +450,9 @@ export class StoreyPathWorld extends EventTarget {
         finish.userData.spaceId = space.id;
         group.add(finish);
       }
-      const volume = new THREE.Mesh(this.#extrude(polys, wallHeight - 0.05, e + 0.01),
+      const outdoor = OUTDOOR.has(p.type);
+      if (!outdoor) roofed.push(...polys);
+      const volume = new THREE.Mesh(this.#extrude(polys, (outdoor ? parapetHeight : wallHeight) - 0.05, e + 0.01),
         this.#materials.volume(TYPE_COLORS[p.type] || TYPE_COLORS.unspecified));
       volume.userData.spaceId = space.id;
       volume.renderOrder = 2;
@@ -471,6 +476,17 @@ export class StoreyPathWorld extends EventTarget {
       });
     }
 
+    // the ceiling, seen only when walking (it casts no shadow: rooms stay sunlit); none
+    // over terraces and balconies
+    const ceilingPolys = built.spaces.length ? roofed : outline;
+    const ceiling = ceilingPolys.length
+      ? new THREE.Mesh(this.#flat(ceilingPolys, e + wallHeight), this.#materials.ceiling) : null;
+    if (ceiling) {
+      ceiling.visible = false;
+      group.add(ceiling);
+    }
+    built.ceiling = ceiling;
+
     // the walls, full height and cut low; drawn along the rooms' edges when the
     // package has none (older packages, drawings without wall layers)
     let walls = this.#polygons(props.walls);
@@ -492,12 +508,25 @@ export class StoreyPathWorld extends EventTarget {
     const cut = this.#extrude(walls, o.cutHeight, e);
     built.wallsFull = full && new THREE.Mesh(full, [this.#materials.wallTop, this.#materials.wall]);
     built.wallsCut = cut && new THREE.Mesh(cut, [this.#materials.wallCut, this.#materials.wall]);
-    for (const m of [built.wallsFull, built.wallsCut]) {
+    // the parapets: the low walls around terraces, balconies and the roof
+    const parapets = this.#polygons(props.parapets);
+    const parapetsFull = this.#extrude(parapets, parapetHeight, e);
+    const parapetsCut = this.#extrude(parapets, Math.min(parapetHeight, o.cutHeight), e);
+    built.parapetsFull = parapetsFull && new THREE.Mesh(parapetsFull, [this.#materials.wallTop, this.#materials.wall]);
+    built.parapetsCut = parapetsCut && new THREE.Mesh(parapetsCut, [this.#materials.wallCut, this.#materials.wall]);
+    for (const m of [built.wallsFull, built.wallsCut, built.parapetsFull, built.parapetsCut]) {
       if (!m) continue;
       m.castShadow = m.receiveShadow = true;
       group.add(m);
     }
-    built.wallRings = walls.flat(1);
+    built.wallRings = walls.flat(1).concat(parapets.flat(1));
+    // Openings in a parapet (no full wall at either side) get no head, sill or glass.
+    const fullSegments = [];
+    for (const ring of walls.flat(1)) {
+      for (let i = 0; i + 1 < ring.length; i++) fullSegments.push([ring[i], ring[i + 1]]);
+    }
+    const inFullWall = ({ a, b }) => !parapets.length || fullSegments.some(([p, q]) =>
+      distanceToSegment([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], p, q) <= thickness + 0.3);
 
     // door heads, window sills, heads and glass
     const heads = [], sills = [], glass = [];
@@ -507,9 +536,10 @@ export class StoreyPathWorld extends EventTarget {
         segments.push([ring[i][0], -ring[i][1], ring[i + 1][0], -ring[i + 1][1]]);
       }
     }
-    for (const { a, b, type } of ways) {
+    for (const way of ways) {
+      const { a, b, type } = way;
       const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (len < 0.3) continue;
+      if (len < 0.3 || !inFullWall(way)) continue;
       const box = (y0, y1, depth) => {
         const g = new THREE.BoxGeometry(len, y1 - y0, depth);
         g.rotateY(Math.atan2(b[1] - a[1], b[0] - a[0]));
@@ -637,6 +667,8 @@ export class StoreyPathWorld extends EventTarget {
       const cut = !walking && this.#cutaway;
       if (f.wallsFull) f.wallsFull.visible = !cut;
       if (f.wallsCut) f.wallsCut.visible = cut;
+      if (f.parapetsFull) f.parapetsFull.visible = !cut;
+      if (f.parapetsCut) f.parapetsCut.visible = cut;
       if (f.heads) f.heads.visible = !cut;
       if (f.glass) f.glass.visible = !cut;
       if (f.ceiling) f.ceiling.visible = walking && f === wf;

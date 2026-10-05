@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.1
+# StoreyPath package format — version 0.2
 
 A StoreyPath package (`*.storeypath`) describes one project: its locations, buildings,
 floors, the spaces on each floor (offices, corridors, elevators, …) and the doors
@@ -73,8 +73,10 @@ null if no floor has been converted).
 **floor** — `code`, `name`, `building_id`, `ordinal` (0 = ground, negative = below
 ground), `elevation` (m above the ground floor), `height` (floor-to-floor, m),
 `walls` (the walls as drawn, with their door and window gaps: a Polygon or
-MultiPolygon, for drawing or modelling the floor) and `wall_thickness_m`.
-Geometry: floor outline (or null).
+MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
+`wall_thickness_m`, `parapets` (the low walls around terraces, balconies and roofs,
+`parapet_height_m` high: a Polygon or MultiPolygon, or null) and
+`parapet_height_m`. Geometry: floor outline (or null).
 
 **space** — `type`, `name`, `number`, `floor_id`, `area_m2`, `display_point` (a good
 spot for its label), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.

@@ -70,6 +70,7 @@ class Floor(BaseModel):
     ordinal: int
     elevation: float  # meters above the building's ground floor
     height: float = DEFAULT_FLOOR_HEIGHT
+    parapet_height: float | None = None  # meters, the low walls around its terraces and balconies
     source: SourceDrawing | None = None
     outline: dict[str, Any] | None = None  # GeoJSON geometry, local meters
     converted_at: datetime | None = None
@@ -254,6 +255,7 @@ class Workspace(BaseModel):
         name: str | None = None,
         elevation: float | None = None,
         height: float = DEFAULT_FLOOR_HEIGHT,
+        parapet_height: float | None = None,
         source: SourceDrawing | None = None,
     ) -> str:
         b = self.building(building_id)
@@ -269,10 +271,28 @@ class Workspace(BaseModel):
                 ordinal=ordinal,
                 elevation=ordinal * height if elevation is None else elevation,
                 height=height,
+                parapet_height=parapet_height,
                 source=source,
             )
         )
         return child_id(building_id, code)
+
+    def restack(self, building_id: str) -> None:
+        """Each floor's elevation from the heights of the floors below it (and above
+        it, below ground), with the ground floor at 0. A missing floor is taken to be
+        as high as the one below it."""
+        floors = sorted(self.building(building_id).floors, key=lambda f: f.ordinal)
+        above = [f for f in floors if f.ordinal >= 0]
+        below = [f for f in floors if f.ordinal < 0][::-1]
+        prev = None
+        for f in above:
+            f.elevation = round(f.ordinal * f.height if prev is None
+                                else prev.elevation + prev.height * (f.ordinal - prev.ordinal), 3)
+            prev = f
+        top = above[0] if above and above[0].ordinal == 0 else None
+        for f in below:
+            f.elevation = round((top.elevation if top else 0.0) - f.height * (top.ordinal - f.ordinal if top else -f.ordinal), 3)
+            top = f
 
     # ---- objects -----------------------------------------------------------
 

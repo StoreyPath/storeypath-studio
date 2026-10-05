@@ -155,3 +155,22 @@ def test_workspace_round_trip_and_save_as_new(converted, tmp_path):
     assert all(i.startswith(copy.id + "-") for i in copy.objects)
     assert all(c.startswith(copy.id + "-") for r in copy.objects.values() for c in r.connects)
     assert copy.exports == []
+
+
+def test_walls_around_a_roof_terrace_are_parapets():
+    # A 10 m square roof, a 4 m room in one corner, the rest a terrace.
+    from shapely.geometry import Point, box
+
+    from storeypath.export import _walls_and_parapets
+
+    edge = box(0, 0, 10, 10).difference(box(0.2, 0.2, 9.8, 9.8))
+    room_walls = box(4.0, 0.2, 4.2, 4.2).union(box(0.2, 4.0, 4.2, 4.2))
+    walls = edge.union(room_walls)
+    room = box(0.2, 0.2, 4.0, 4.0)
+    terrace = box(0.2, 0.2, 9.8, 9.8).difference(box(0.2, 0.2, 4.2, 4.2))
+    full, parapets = _walls_and_parapets(walls, [(room, "bedroom"), (terrace, "terrace")], 0.2)
+    assert parapets.contains(Point(7, 9.9)) and parapets.contains(Point(9.9, 7))  # the roof's edge
+    assert full.contains(Point(2, 0.1)) and full.contains(Point(0.1, 2))  # the room's outside walls
+    assert full.contains(Point(4.1, 2)) and full.contains(Point(2, 4.1))  # between the room and the terrace
+    assert abs(full.area + parapets.area - walls.area) < 1e-6
+    assert _walls_and_parapets(walls, [(room, "bedroom")], 0.2) == (walls, None)  # no terrace, no parapets
