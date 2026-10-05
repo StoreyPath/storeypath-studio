@@ -37,6 +37,17 @@ class NotFound(Exception):
     pass
 
 
+
+def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | None:
+    """Where Studio divided an open area (no wall drawn): the edge the two spaces
+    it joins share, as lines of points."""
+    if len(opening.connects) != 2 or not all(c in areas for c in opening.connects):
+        return None
+    a, b = (areas[c] for c in opening.connects)
+    edge = a.boundary.intersection(b.buffer(0.02))
+    lines = [g for g in getattr(edge, "geoms", [edge]) if isinstance(g, LineString) and g.length >= 0.05]
+    return [[[round(x, 3), round(y, 3)] for x, y in g.coords] for g in lines] or None
+
 class Review:
     """The editor's operations on one workspace file."""
 
@@ -88,6 +99,7 @@ class Review:
             ws = self._load()
             f = self._floor(ws, floor_id)
             objects = sorted(ws.floor_objects(floor_id), key=lambda r: r.id)
+            areas = {r.id: shape(r.geometry) for r in objects if r.kind == "space"}
             return {
                 "id": floor_id, "name": f.name, "ordinal": f.ordinal,
                 "source": Path(f.source.path).name if f.source else None,
@@ -95,7 +107,8 @@ class Review:
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
                 "spaces": [self._space(ws, r) for r in objects if r.kind == "space"],
                 "doors": [{"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
-                           "span": r.span, "width": r.width}
+                           "span": r.span, "width": r.width,
+                           "divider": _divider(r, areas) if r.type_source == "split" else None}
                           for r in objects if r.kind == "opening"],
             }
 

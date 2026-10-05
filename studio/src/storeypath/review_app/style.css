@@ -147,6 +147,8 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #spaces path.review { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 6 4; }
 #spaces path.dim { fill-opacity: .12; }
 #spaces path.selected { fill-opacity: .75; stroke: var(--select); stroke-width: 3; stroke-dasharray: none; }
+#doors .divider-gap { fill: none; stroke: var(--map-bg); stroke-width: 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+#doors .divider { fill: none; stroke: var(--draw-doors); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 #doors circle { fill: var(--panel); stroke: var(--draw-doors); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 #labels { pointer-events: none; }

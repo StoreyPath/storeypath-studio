@@ -9,6 +9,7 @@ import urllib.request
 import zipfile
 
 import pytest
+from shapely.geometry import LineString
 
 from storeypath.review import NotFound, Review
 from storeypath.samples import office_floor, write_sheet_dxf
@@ -302,3 +303,28 @@ def test_pages_have_unique_ids():
     for page in app.glob("*.html"):
         ids = re.findall(r'\sid="([^"]+)"', page.read_text(encoding="utf-8"))
         assert len(ids) == len(set(ids)), f"{page.name}: {sorted({i for i in ids if ids.count(i) > 1})}"
+
+
+def test_the_editor_gets_the_lines_studio_divided_rooms_along(tmp_path):
+    # An office opening 2 m wide onto the corridor, no door: Studio divides them there.
+    from dataclasses import replace
+
+    from storeypath.convert import convert_floor
+    from storeypath.samples import write_floor_dxf
+    from storeypath.workspace import SourceDrawing
+
+    cells = office_floor(1)
+    i = next(i for i, c in enumerate(cells) if c.number == "101")
+    cells[i] = replace(cells[i], door=replace(cells[i].door, block=False, width=2.0))
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False)
+    ws = Workspace.new("P")
+    f_id = ws.add_floor(ws.add_building(ws.add_location("SITE", "Site"), "HQ", "HQ"), 1,
+                        source=SourceDrawing(path="plan.dxf"))
+    convert_floor(ws, f_id, tmp_path)
+    ws.save(tmp_path / "p.spproj")
+    doors = Review(tmp_path / "p.spproj").floor(f_id)["doors"]
+    lines = [d["divider"] for d in doors if d["divider"]]
+    assert len(lines) == 1
+    (line,) = lines[0]
+    assert 1.5 <= LineString(line).length <= 2.5  # across the opening
+    assert all(d["divider"] is None for d in doors if d["type"] == "door")

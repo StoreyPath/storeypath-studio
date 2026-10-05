@@ -273,7 +273,12 @@ function renderPlan() {
     state.labels.set(s.id, label);
     styleSpace(s);
   }
+  // A line Studio drew to divide an open area (no wall in the drawing): dashed over a
+  // gap in the outlines, so it does not read as a wall.
+  const dividers = f.doors.flatMap((d) => d.divider || []).map((line) => line.map((p) => p.join(",")).join(" "));
   $("doors").replaceChildren(
+    ...dividers.map((points) => svg("polyline", { points, class: "divider-gap" })),
+    ...dividers.map((points) => svg("polyline", { points, class: "divider" })),
     ...f.doors.map((d) => svg("circle", { cx: d.point[0], cy: d.point[1], r: 0.12 })),
   );
   placeLabels();
