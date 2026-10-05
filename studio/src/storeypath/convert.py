@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from shapely import set_precision
+from shapely import STRtree, set_precision
 from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
@@ -183,9 +183,11 @@ def _retire(record: ObjectRecord, now, report: ConversionReport) -> None:
 def _match_spaces(existing: list[ObjectRecord], spaces: list[ExtractedSpace]) -> dict[int, ObjectRecord]:
     """One-to-one matching, best candidates first."""
     old_shapes = [shape(r.geometry) for r in existing]
+    tree = STRtree(old_shapes)  # only spaces that overlap can match: no all-against-all on big floors
     candidates = []
     for i, s in enumerate(spaces):
-        for j, r in enumerate(existing):
+        for j in sorted(int(k) for k in tree.query(s.polygon, predicate="intersects")):
+            r = existing[j]
             overlap = iou(s.polygon, old_shapes[j])
             same_number = bool(s.number) and s.number == r.number
             if overlap >= MATCH_MIN_IOU or (same_number and overlap >= MATCH_MIN_IOU_SAME_NUMBER):
@@ -235,11 +237,14 @@ def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now,
     ways through (doors, doorways) only with ways through."""
     existing = [r for r in ws.floor_objects(floor_id) if r.kind == "opening"]
     old_points = [shape(r.geometry) for r in existing]
+    tree = STRtree(old_points)
     used: set[int] = set()
     for door in ex.doors:
         kind = _opening_type(door.source)
         best, best_d = None, DOOR_MATCH_DISTANCE
-        for j, p in enumerate(old_points):
+        near = tree.query(door.point, predicate="dwithin", distance=DOOR_MATCH_DISTANCE)
+        for j in sorted(int(k) for k in near):
+            p = old_points[j]
             same_group = (existing[j].type == "window") == (kind == "window")
             d = door.point.distance(p)
             if j not in used and same_group and d <= best_d:

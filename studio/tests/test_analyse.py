@@ -336,3 +336,29 @@ def test_window_frames_as_thick_as_walls_are_windows_when_the_layer_says_so(tmp_
     assert {r.layer: r.roles for r in a.roles}[layer] == ["openings"]
     windows = [d for d in extract_floor(named, a.profile).doors if d.source == "window"]
     assert len(windows) == len(_windows(office_floor(1)))
+
+
+def _tiled(nx, ny, gap=6.0):
+    """The sample office floor repeated nx × ny times on one plan: wings or
+    buildings standing apart, with a lift car in each core."""
+    from dataclasses import replace
+
+    cells = []
+    for i in range(nx):
+        for j in range(ny):
+            dx, dy = i * (48 + gap), j * (20 + gap)
+            for c in office_floor(1):
+                door = replace(c.door, x=c.door.x + dx, y=c.door.y + dy) if c.door else None
+                cells.append(replace(c, x0=c.x0 + dx, y0=c.y0 + dy, x1=c.x1 + dx, y1=c.y1 + dy, door=door))
+    return cells
+
+
+def test_buildings_standing_apart_are_all_walls_and_lift_cars_are_not_rooms(tmp_path):
+    # Every wing has its own wall frame, not only the largest; and the lift cars,
+    # small closed boxes each holding the LIFT label, are not taken for room outlines.
+    write_floor_dxf(tmp_path / "plan.dxf", _tiled(2, 2), area_outlines=False)
+    doc = read_drawing(tmp_path / "plan.dxf")
+    a = analyse(doc, 0.001, None, rules_only)
+    roles = {r.layer: r.roles for r in a.roles}
+    assert roles["A-WALL"] == ["walls"] and "outlines" not in roles.get("A-EQPM-VERT", [])
+    assert len(extract_floor(doc, a.profile).spaces) == 4 * len(office_floor(1))

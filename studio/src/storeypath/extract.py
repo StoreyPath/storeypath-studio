@@ -539,9 +539,9 @@ def _merge_doors(doors: list[DoorShape]) -> list[DoorShape]:
         return doors
     merged = as_polygons(unary_union([d.box.buffer(DOOR_MERGE_M / 2, join_style="mitre") for d in doors]))
     out = [DoorShape(box(*p.buffer(-DOOR_MERGE_M / 2, join_style="mitre").bounds)) for p in merged]
+    tree = STRtree(merged)
     for d in doors:
-        target = next(o for o, p in zip(out, merged) if p.intersects(d.box))
-        target.swings += d.swings
+        out[min(int(k) for k in tree.query(d.box, predicate="intersects"))].swings += d.swings
     return out
 
 

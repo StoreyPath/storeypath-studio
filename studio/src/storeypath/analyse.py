@@ -49,6 +49,10 @@ STRUCTURE_JOIN_M = 0.6  # paired lines this close (across a doorway) belong to o
 WALL_MIN_THICKNESS_M = 0.09  # thinner pairs are glazing, handrails or frames
 WALL_MIN_STRUCTURE_M = 8.0  # a layer of walls holds at least this much connected wall
 WALL_SHARE_OF_MAIN = 0.2  # …and at least this share of the plan's main wall structure
+# A plan may hold several buildings or wings standing apart: every structure this
+# big is part of the frame, not only the largest. Cars and furniture stay far smaller.
+BUILDING_SHARE = 0.2  # of the largest structure…
+BUILDING_MIN_M = 4 * WALL_MIN_STRUCTURE_M  # …and at least this much paired wall line
 
 NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("window", re.compile(r"glaz|win(d|do)|(^|[^a-z])win([^a-z]|$)|fen[eê]t|fenster|ventana|نافذ|شباك|شبابيك", re.I)),
@@ -389,10 +393,11 @@ def _pair_arcs(arcs: list[_Arc], stats) -> list[tuple[str, object]]:
 
 def _main_frame(paired_lines, stats) -> float | None:
     """The plan's main wall frame: all solid paired lines, from every layer, joined
-    where they meet or are a doorway apart; the largest such structure. Walls are
-    often split over several layers, but they always form one frame, while cars,
-    furniture and equipment stay in small separate pieces. Records each layer's
-    share of the frame and returns the frame's wall thickness."""
+    where they meet or are a doorway apart; the largest such structure, and any
+    other nearly as big (wings or buildings standing apart). Walls are often split
+    over several layers, but they always form frames, while cars, furniture and
+    equipment stay in small separate pieces. Records each layer's share of the frame
+    and returns the frame's wall thickness."""
     lines = [(layer, geom, gap) for layer, geom, gap in paired_lines if gap >= WALL_MIN_THICKNESS_M]
     if not lines:
         return None
@@ -414,10 +419,11 @@ def _main_frame(paired_lines, stats) -> float | None:
     for i, g in enumerate(geoms):
         sizes[root(i)] += g.length
         root_of[id(g)] = root(i)
-    main = max(sizes, key=sizes.get)
+    largest = max(sizes.values())
+    mains = {r for r, size in sizes.items() if size == largest or size >= max(BUILDING_MIN_M, BUILDING_SHARE * largest)}
     gaps, weights, frame = [], [], []
     for i, (layer, g, gap) in enumerate(lines):
-        if root(i) == main:
+        if root(i) in mains:
             stats[layer].framed += g.length
             gaps.append(gap)
             weights.append(g.length)
@@ -425,7 +431,7 @@ def _main_frame(paired_lines, stats) -> float | None:
     # Glazing fills the gaps of the frame: on a wall's own line, within a window's
     # width of where the wall stops.
     others = [(layer, g) for layer, g, gap in paired_lines
-              if (gap < WALL_MIN_THICKNESS_M or root_of.get(id(g)) != main) and len(g.coords) == 2]
+              if (gap < WALL_MIN_THICKNESS_M or root_of.get(id(g)) not in mains) and len(g.coords) == 2]
     if others:
         inline = _in_line([g for _, g in others], [g for g in frame if len(g.coords) == 2])
         for (layer, g), ok in zip(others, inline):
@@ -436,7 +442,7 @@ def _main_frame(paired_lines, stats) -> float | None:
     thickness = float(np.array(gaps)[order][np.searchsorted(cumulative, cumulative[-1] / 2)])
     # Pairs much thinner than the walls but joined to the frame: glazing in its gaps.
     for i, (layer, g, gap) in enumerate(lines):
-        if root(i) == main and gap < 0.7 * thickness:
+        if root(i) in mains and gap < 0.7 * thickness:
             stats[layer].along_frame += g.length
     return thickness
 
@@ -486,14 +492,20 @@ def _decide_all(stats: dict[str, LayerStats], is_room_name, thickness: float | N
     return [_decide(st, is_room_name, frame, thickness, _one_room_each(st, points)) for st in stats.values()]
 
 
+OUTLINED_SHARE = 0.3  # room outlines hold at least this share of the plan's room names
+
+
 def _one_room_each(st: LayerStats, points) -> bool:
     """Whether a layer's closed shapes are room outlines: each holds at most one
-    room's name. The inside faces of a wall network also close, but door gaps join
-    rooms, so one shape holds several names."""
+    room's name, and together they hold a good share of the plan's names. The inside
+    faces of a wall network also close, but door gaps join rooms, so one shape holds
+    several names; lift cars or equipment boxes each hold a name too, but only of
+    the few rooms they stand in."""
     if st.closed_rooms < 3 or not len(points):
         return False
     counts = [int(np.sum(shapely.contains_xy(poly, points[:, 0], points[:, 1]))) for poly in st.room_shapes]
-    return sum(1 for c in counts if c <= 1) >= 0.8 * len(counts) and sum(1 for c in counts if c == 1) >= 2
+    named = sum(1 for c in counts if c == 1)
+    return sum(1 for c in counts if c <= 1) >= 0.8 * len(counts) and named >= max(2, OUTLINED_SHARE * len(points))
 
 
 NUMBER_OR_TAG = re.compile(r"^([a-z]{1,2}\s?-?\s?)?\d{1,4}[a-z]?$", re.IGNORECASE)  # 201, D1, W-10, 12A
