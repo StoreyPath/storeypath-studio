@@ -193,6 +193,13 @@ the way a person reads a plan:
   lines, by the closed position of their swing (both leaves of a double door).
 - Glazing and closed door leaves on door/window layers continue the wall across
   their gap; a cross marking a lift car does not.
+- Door and window tags (D4, W12, SD2) say which an opening is: a door tag makes a
+  door of an opening drawn as glazing or left open. Glazing between two rooms at a
+  door's width with no window tag is a sliding door, listed for review.
+- Blocks on door layers are doors only when they have a swing, a door's name, or a
+  sliding door's shape: basins, baths and cars put on a door layer are not doors.
+- A lift with no way in drawn is given a door, for review, on the wall it shares
+  with a hall, lobby or corridor.
 - Where a wall stops and another faces its end within `walls.max_doorway`, the gap
   is a doorway: closed, and recorded as an `opening` between the two rooms.
 - Wider gaps in the outside walls (up to `walls.max_opening`) are spanned by the

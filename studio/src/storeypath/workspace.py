@@ -113,6 +113,7 @@ class ObjectRecord(BaseModel):
     connects: list[str] = Field(default_factory=list)  # openings: the spaces they join
     span: list[list[float]] | None = None  # openings: jamb to jamb, local meters
     width: float | None = None  # openings: meters
+    tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
     issues: list[str] = Field(default_factory=list)  # found on conversion, for review
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)

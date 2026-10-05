@@ -16,7 +16,7 @@ from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
-from .extract import ExtractedSpace, FloorExtraction, extract_floor
+from .extract import ExtractedSpace, FloorExtraction, add_lift_doors, extract_floor
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -82,6 +82,7 @@ def convert_floor(
     sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
     type_rooms(extraction.spaces, spotted)
+    add_lift_doors(extraction)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
@@ -226,7 +227,7 @@ def _allocate_id(ws: Workspace, floor_id: str, building_id: str) -> str:
 
 
 def _opening_type(source: str) -> str:
-    return {"door": "door", "window": "window"}.get(source, "opening")
+    return {"door": "door", "glazing": "door", "assumed": "door", "window": "window"}.get(source, "opening")
 
 
 def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now, report) -> None:
@@ -253,6 +254,7 @@ def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now,
             record = existing[best]
             report.kept.append(record.id)
         record.type, record.type_source = kind, door.source
+        record.tag, record.issues = door.tag, list(door.issues)
         record.geometry = mapping(Point(round(door.point.x, 4), round(door.point.y, 4)))
         record.connects = [space_ids[i] for i in door.connects]
         record.span = [[round(x, 4), round(y, 4)] for x, y in door.span.coords] if door.span is not None else None

@@ -308,7 +308,7 @@ def test_handrails_and_steps_are_not_read_as_walls(tmp_path):
     assert "walls" not in roles.get("HAND RAIL", []) and "walls" not in roles.get("STEP", [])
 
 
-@pytest.mark.parametrize("layer", ["WIN", "A-WIN-FRAME", "WINDOWS"])
+@pytest.mark.parametrize("layer", ["WIN", "A-WIN-FRAME", "WINDOWS", "A-DOOR-FRAME"])
 def test_window_frames_as_thick_as_walls_are_windows_when_the_layer_says_so(tmp_path, layer):
     # Window frames drawn at the wall's faces are a pair of lines a wall's thickness
     # apart, in line with the walls, like the walls themselves. Unnamed, they cannot be

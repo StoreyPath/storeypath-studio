@@ -67,7 +67,12 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
 # much their lines look like them: handrails and window frames are pairs of lines
 # a wall's thickness apart, step outlines are small closed shapes like columns.
 # Windows are then read as glazing in the walls' gaps.
-NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing", "window"}
+NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing"}
+# A layer named for doors or windows holds their frames and leaves, which look like
+# walls too; it is read as walls only when it holds most of the plan's walls (the
+# drafter drew the walls on it).
+OPENINGS_NAMED = {"door", "window"}
+MOSTLY_WALLS = 0.5
 
 
 @dataclass
@@ -519,7 +524,8 @@ def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None,
         why.append("drawn dashed (hidden or centre lines)")
     elif st.ladder > st.paired:
         why.append(f"{st.ladder:.0f} m of evenly spaced lines (stairs or a pattern)")
-    elif "outlines" not in roles and in_frame and thick_enough and hint not in NOT_WALLS:
+    elif ("outlines" not in roles and in_frame and thick_enough and hint not in NOT_WALLS
+          and (hint not in OPENINGS_NAMED or st.framed >= MOSTLY_WALLS * frame)):
         roles.append("walls")
         why.append(f"{st.framed / 2:.0f} m of the wall frame, {own_gap:.2f} m thick")
     elif st.small_closed >= 4 and st.small_closed * 2 >= st.entities - len(st.texts) and hint in (None, "column", "wall"):

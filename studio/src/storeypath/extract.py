@@ -6,6 +6,7 @@ IDs are not assigned here (see convert.py).
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -36,6 +37,19 @@ LABEL_GROUP_M = 1.5  # label pieces closer than this belong to the same room
 DOOR_SWING_RADIUS_M = (0.35, 2.0)  # an arc on a door layer this size and…
 DOOR_SWING_SWEEP = (60.0, 120.0)  # …about a quarter turn is a door swing
 DOOR_MERGE_M = 0.1  # door swings this close are one door (double doors)
+# A block on a door layer with no swing drawn in it is a door only when its name
+# says so, or when it is shaped like a door leaf in a wall (a sliding door): this
+# long and no thicker. Basins, baths and cars put on door layers are not doors.
+DOOR_LEAF_M = (0.5, 3.0)
+DOOR_LEAF_THICK_M = 0.3
+DOOR_NAME = re.compile(r"door|d[oö]r|t[uü]r|porte|puerta|باب|ابواب|أبواب", re.I)
+# Door and window tags (D4, W-12, SD2): the key to the drawing's schedule of
+# openings, drawn beside each one. A tag says which an opening is.
+OPENING_TAG = re.compile(r"(?P<kind>[A-Z]{1,2})\s?-?\s?(?P<n>\d{1,3}[A-Z]?)")
+DOOR_TAGS = {"D", "DR", "SD", "GD", "FD", "MD"}
+WINDOW_TAGS = {"W", "WD", "WN", "FW", "SW"}
+TAG_REACH_M = 1.0  # a tag is drawn this close to its opening
+SLIDING_DOOR_M = (0.6, 2.6)  # glazing between two rooms this wide, with no window tag, is a sliding door
 
 
 @dataclass
@@ -62,10 +76,13 @@ class ExtractedDoor:
     point: Point
     connects: list[int]  # indexes into FloorExtraction.spaces
     # "door": drawn as a block or swing; "doorway": a gap in a wall with no door
-    # drawn; "split": where open-plan rooms meet; "window"
+    # drawn; "split": where open-plan rooms meet; "window"; "glazing": a sliding door,
+    # drawn like a window but between two rooms
     source: str = "door"
     span: LineString | None = None  # jamb to jamb, meters
     width: float | None = None
+    tag: str | None = None  # its tag in the drawing (D4, W12)
+    issues: list[str] = field(default_factory=list)  # for review
 
 
 @dataclass
@@ -221,6 +238,7 @@ def extract_floor(
     blocks: list[tuple[str, Point]] = []
     door_shapes: list[DoorShape] = []
     opening_lines: list[LineString] = []  # door/window linework: glazing, leaves, frames
+    tags: list[tuple[str, str, Point]] = []  # (tag, D or W, where): door and window tags
     layer_counts: Counter[str] = Counter()
     loose_door_entities = 0
 
@@ -231,6 +249,8 @@ def extract_floor(
         kind = e.dxftype()
         layer_counts[layer] += 1
         if kind in ("TEXT", "MTEXT", "ATTRIB"):
+            if (tag := _opening_tag(e)) is not None and (c := _center(e)):
+                tags.append((*tag, Point(c[0] * scale, c[1] * scale)))
             if profile.label_layers.fullmatch(layer):
                 lines, c = _text_lines(e), _center(e)
                 if skip_label is not None and lines and all(
@@ -345,6 +365,7 @@ def extract_floor(
             for d in _connect_doors(spaces, [w.buffer(0.15, cap_style="flat") for w in fabric.windows],
                                     profile.doors.reach, [], [(w, round(w.length, 3)) for w in fabric.windows])
         ]
+    _read_tags(doors, tags)
     if loose_door_entities and not door_shapes:
         warnings.append(
             f"{loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
@@ -367,6 +388,85 @@ def extract_floor(
         if outline is not None:  # drawn from the same walls: without the markers' pieces too
             outline = unary_union([p for p in as_polygons(outline) if p.distance(rooms) <= 0.1]) or outline
     return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls))
+
+
+def _opening_tag(e) -> tuple[str, str] | None:
+    """(tag, "D" or "W") for a door or window tag: one short text, a known prefix
+    and a number."""
+    lines = _text_lines(e)
+    if len(lines) != 1 or not (m := OPENING_TAG.fullmatch(lines[0].strip().upper())):
+        return None
+    prefix = m["kind"]
+    kind = "D" if prefix in DOOR_TAGS else "W" if prefix in WINDOW_TAGS else None
+    return (f"{prefix}{m['n']}", kind) if kind else None
+
+
+def _read_tags(doors: list[ExtractedDoor], tags) -> None:
+    """Each tag names the opening it is drawn by (the nearest within reach). A door
+    tag makes a door of an opening drawn as glazing or left open; glazing between two
+    rooms with no window tag is a sliding door too, for review. Doors drawn as doors
+    stay doors whatever the tag."""
+    taken: dict[int, float] = {}
+    for tag, kind, point in tags:
+        near = [(d.footprint.distance(point), i) for i, d in enumerate(doors)]
+        if not near:
+            break
+        dist, i = min(near)
+        if dist <= TAG_REACH_M and dist < taken.get(i, float("inf")):
+            taken[i] = dist
+            doors[i].tag = f"{tag}:{kind}"
+    for d in doors:
+        tag, _, kind = (d.tag or "").partition(":")
+        d.tag = tag or None
+        if d.source in ("window", "doorway", "split") and kind == "D":
+            d.source = "door"
+        elif d.source == "window" and len(d.connects) == 2 and kind != "W" and d.width is not None \
+                and SLIDING_DOOR_M[0] <= d.width <= SLIDING_DOOR_M[1]:
+            d.source = "glazing"
+            d.issues.append("drawn as glazing between two rooms, taken as a sliding door; check it")
+
+
+LIFT_DOOR_M = 0.9  # an assumed lift door's width
+# A lift opens onto circulation, never into a bathroom or another shaft.
+NOT_FOR_LIFT_DOORS = {SpaceType.ELEVATOR, SpaceType.STAIRS, SpaceType.ESCALATOR, SpaceType.SHAFT,
+                      SpaceType.RESTROOM, SpaceType.BATHROOM, SpaceType.STORAGE, SpaceType.UTILITY,
+                      SpaceType.OPEN_TO_BELOW}
+CIRCULATION = {SpaceType.CORRIDOR, SpaceType.LOBBY, SpaceType.OPEN_AREA, SpaceType.UNSPECIFIED}
+
+
+def add_lift_doors(ex: FloorExtraction, reach: float = 0.4) -> None:
+    """A lift with no way in drawn (its doors are often left out of plans) gets one,
+    for review, on the wall it shares with a hall, lobby or corridor, else with any
+    room it may open onto: the longest such wall."""
+    for i, s in enumerate(ex.spaces):
+        if s.type != SpaceType.ELEVATOR or any(i in d.connects for d in ex.doors if d.source != "window"):
+            continue
+        best = None
+        for j, other in enumerate(ex.spaces):
+            if j == i or other.type in NOT_FOR_LIFT_DOORS:
+                continue
+            shared = s.polygon.exterior.intersection(other.polygon.buffer(reach))
+            pieces = [p for p in getattr(shared, "geoms", [shared]) if p.length > 0]
+            if not pieces:
+                continue
+            piece = max(pieces, key=lambda p: p.length)
+            rank = (other.type in CIRCULATION, piece.length)
+            if piece.length >= LIFT_DOOR_M / 2 and (best is None or rank > best[0]):
+                best = (rank, j, piece)
+        if best is None:
+            continue
+        _, j, piece = best
+        mid = piece.interpolate(0.5, normalized=True)
+        half = min(LIFT_DOOR_M, piece.length) / 2
+        d = piece.project(mid)
+        span = LineString([piece.interpolate(max(0.0, d - half)), piece.interpolate(min(piece.length, d + half))])
+        other = ex.spaces[j]
+        ex.doors.append(ExtractedDoor(
+            footprint=span.buffer(0.15, cap_style="flat"), point=mid, connects=[i, j], source="assumed",
+            span=span, width=round(span.length, 3),
+            issues=[f"no door into the lift is drawn; one is assumed on the side facing "
+                    f"{other.name or other.type.value.replace('_', ' ')}; check it"],
+        ))
 
 
 def _attached(walls, rooms, touch: float = 0.1):
@@ -412,7 +512,8 @@ def _door_swing(e, scale: float) -> DoorShape | None:
 
 
 def _door_block(e, scale: float) -> DoorShape | None:
-    """A door block: its extent, and the swing arcs drawn in it."""
+    """A door block: its extent, and the swing arcs drawn in it. None for a block
+    that is no door (a basin or a car on a door layer)."""
     ext = ezdxf.bbox.extents([e], fast=True)
     if not ext.has_data:
         return None
@@ -423,8 +524,13 @@ def _door_block(e, scale: float) -> DoorShape | None:
                 swings += shape.swings
     except Exception:  # broken or unsupported block content
         pass
-    return DoorShape(box(ext.extmin.x * scale, ext.extmin.y * scale, ext.extmax.x * scale, ext.extmax.y * scale),
-                     swings)
+    footprint = box(ext.extmin.x * scale, ext.extmin.y * scale, ext.extmax.x * scale, ext.extmax.y * scale)
+    if not swings and not DOOR_NAME.search(e.dxf.name):
+        x0, y0, x1, y1 = footprint.bounds
+        long, thick = max(x1 - x0, y1 - y0), min(x1 - x0, y1 - y0)
+        if not (DOOR_LEAF_M[0] <= long <= DOOR_LEAF_M[1] and thick <= DOOR_LEAF_THICK_M):
+            return None
+    return DoorShape(footprint, swings)
 
 
 def _merge_doors(doors: list[DoorShape]) -> list[DoorShape]:
