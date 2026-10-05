@@ -4,11 +4,11 @@ import ezdxf
 import pytest
 
 from storeypath.analyse import analyse
-from storeypath.cad import infer_units, meters_per_unit, read_drawing
+from storeypath.cad import decide_units, infer_units, meters_per_unit, read_drawing
 from storeypath.extract import extract_floor
 from storeypath.llm import LocalModel
 from storeypath.profile import load_profile
-from storeypath.reading import NOT_A_ROOM, TextReader
+from storeypath.reading import NOT_A_ROOM, TextReader, read_units, unit_note
 from storeypath.samples import _windows, office_floor, write_floor_dxf, write_sheet_dxf
 from storeypath.sheets import find_views
 from storeypath.types import SpaceType
@@ -101,6 +101,88 @@ def test_units_are_read_from_the_doors(tmp_path, unit, factor):
     doc = read_drawing(tmp_path / "scaled.dxf")
     assert infer_units(doc) == unit
     assert abs(meters_per_unit(doc) - {"mm": 0.001, "m": 1.0, "cm": 0.01}[unit]) < 1e-12
+
+
+def _add_basins(doc, count):
+    """Wash basins with rounded corners: quarter arcs of 50.8 mm, which read as
+    inches would be the size of a door swing, but with no door leaf."""
+    basin = doc.blocks.new("BASIN")
+    w, h, r = 500, 400, 50.8
+    for (cx, cy), start in (((w - r, h - r), 0), ((r, h - r), 90), ((r, r), 180), ((w - r, r), 270)):
+        basin.add_arc((cx, cy), r, start, start + 90)
+    for a, b in (((r, 0), (w - r, 0)), ((w, r), (w, h - r)), ((w - r, h), (r, h)), ((0, h - r), (0, r))):
+        basin.add_line(a, b)
+    for i in range(count):
+        doc.modelspace().add_blockref("BASIN", (126000 + 600 * i, 49000))
+
+
+def test_basin_corners_are_not_taken_for_door_swings(tmp_path):
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    _add_basins(doc, 30)  # 120 corner arcs against the plan's door swings
+    doc.saveas(tmp_path / "basins.dxf")
+    decision = decide_units(read_drawing(tmp_path / "basins.dxf"))
+    assert decision.units == "mm" and decision.sure
+    assert decision.reason.startswith("Read in millimetres: the doors and the text sizes say so")
+
+
+def test_a_note_stating_the_units_is_read(tmp_path):
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    doc.modelspace().add_text("ALL DIMENSIONS ARE IN MM UNLESS OTHERWISE NOTED", height=250)
+    decision = read_units(doc)
+    assert decision.units == "mm" and decision.sure
+    assert 'the note "ALL DIMENSIONS ARE IN MM UNLESS OTHERWISE NOTED"' in decision.reason
+
+
+def test_unsure_when_a_note_and_the_doors_disagree(tmp_path):
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    doc.modelspace().add_text("ALL DIMENSIONS IN CENTIMETRES", height=250)
+    decision = read_units(doc)
+    assert decision.units == "mm" and not decision.sure  # the doors come first
+    assert "centimetres" in decision.reason and decision.reason.startswith("Not sure of the units")
+
+
+class UnitNotesModel(LocalModel):
+    """Reads unit notes from a fixed table; counts questions."""
+
+    def __init__(self, answers):
+        super().__init__(url="http://fake")
+        self.answers, self.asked = answers, []
+
+    def available(self):
+        return True
+
+    def ask(self, system, user, schema, max_tokens=1024):
+        note = user.removeprefix("Note: ")
+        self.asked.append(note)
+        return {"units": self.answers.get(note, "none")}
+
+
+def test_the_model_reads_unit_notes_the_rules_do_not_know():
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 0  # no unit setting: only the note shows the units
+    msp = doc.modelspace()
+    for text in ("جميع الأبعاد بالمليمتر", "20mm TILES", "OFFICE", "SCALE 1:100"):
+        msp.add_text(text, height=250)
+    msp.add_line((0, 0), (5000, 0))
+    model = UnitNotesModel({"جميع الأبعاد بالمليمتر": "millimetres"})
+    decision = read_units(doc, model)
+    assert model.asked == ["جميع الأبعاد بالمليمتر"]  # sizes of single things and titles are not asked about
+    assert decision.units == "mm" and decision.sure
+    assert decision.reason == 'Read in millimetres: the note "جميع الأبعاد بالمليمتر" says so.'
+    assert unit_note(doc, None) is None  # without a model, only the rules read notes
+
+
+def test_unsure_when_nothing_drawn_shows_the_units():
+    doc = ezdxf.new()
+    doc.units = ezdxf.units.CM
+    doc.modelspace().add_line((0, 0), (500, 0))
+    decision = decide_units(doc)
+    assert decision.units == "cm" and not decision.sure and decision.guessed
+    assert "as the drawing's unit setting says" in decision.reason
+    assert infer_units(doc) is None
 
 
 class FakeModel(LocalModel):

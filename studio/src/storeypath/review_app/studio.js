@@ -8,6 +8,7 @@ const KIND = {
   floor_plan: "Floor plan", roof_plan: "Roof plan", site_plan: "Site plan", elevation: "Elevation",
   section: "Section", detail: "Detail", schedule: "Schedule", other: "Other",
 };
+const UNITS = { mm: "millimetres (mm)", cm: "centimetres (cm)", m: "metres (m)", in: "inches (in)", ft: "feet (ft)" };
 const FLOOR_NAMES = { "-2": "Second basement", "-1": "Basement", 0: "Ground floor", 1: "First floor",
   2: "Second floor", 3: "Third floor", 4: "Fourth floor", 5: "Fifth floor" };
 
@@ -189,10 +190,11 @@ function drawingsCard(code, p, plansArea) {
   );
 }
 
-async function findPlans(code, drawing, area) {
+/** Find the plans in a drawing, read in ``units`` (or the units it shows), and offer them as floors. */
+async function findPlans(code, drawing, area, units) {
   let result;
   try {
-    result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, {}));
+    result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {}));
   } catch (e) {
     toast(e.message, true);
     return;
@@ -200,8 +202,9 @@ async function findPlans(code, drawing, area) {
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
   const cards = result.plans.map((plan) => planCard(plan, top));
-  const units = el("select", {},
-    ["", "mm", "cm", "m", "in", "ft"].map((u) => el("option", { value: u, selected: u === "" }, u ? u : `as read (${result.units})`)));
+  // The plans are found at the drawing's scale, so other units mean finding them again.
+  const unitChoice = el("select", { onchange: () => findPlans(code, drawing, area, unitChoice.value) },
+    Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
   const add = el("button", { class: "primary", type: "button" }, "Add the chosen plans as floors");
   const updateCount = () => {
     const n = cards.filter((c) => c.chosen()).length;
@@ -213,7 +216,7 @@ async function findPlans(code, drawing, area) {
   add.addEventListener("click", async () => {
     const plans = cards.filter((c) => c.chosen()).map((c) => c.value());
     try {
-      await runJob(api(`projects/${code}/floors`, { drawing, units: units.value || null, plans }));
+      await runJob(api(`projects/${code}/floors`, { drawing, units: result.units, plans }));
       toast("Floors added and converted");
       await projectPage(code);
     } catch (e) {
@@ -222,10 +225,10 @@ async function findPlans(code, drawing, area) {
   });
   area.replaceChildren(el("section", { class: "card" },
     el("h2", {}, `Plans in ${drawing}`),
-    el("p", { class: "muted small" }, `Read in ${result.units}`,
-      result.units_said && result.units_said !== result.units ? ` — the drawing says ${result.units_said}, but its doors are drawn in ${result.units}` : "",
-      ". Choose the plans that are floors; Studio lines them up and finds the rooms."),
-    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", units), el("span", { class: "grow" }), add),
+    el("p", { class: result.units_sure ? "muted small" : "unsure small" }, result.units_reason,
+      result.units_sure ? "" : " If the plans below look the wrong size, choose the units."),
+    el("p", { class: "muted small" }, "Choose the plans that are floors; Studio lines them up and finds the rooms."),
+    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), add),
     el("div", { class: "plans" }, cards.map((c) => c.node)),
   ));
   area.scrollIntoView({ behavior: "smooth" });

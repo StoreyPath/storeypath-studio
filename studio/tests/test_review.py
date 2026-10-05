@@ -180,7 +180,7 @@ def wait(base, job):
 
 
 def test_the_whole_workflow_in_the_browser(studio, tmp_path):
-    base, _ = studio
+    base, app = studio
     status, body = call(f"{base}/")
     assert status == 200 and b"StoreyPath Studio" in body
     _, s = call(f"{base}/api/status")
@@ -195,16 +195,27 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
 
     _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
     found = wait(base, job)
-    assert found["units"] == "mm"
+    assert found["units"] == "mm" and found["units_sure"] and not found["units_chosen"]
+    assert found["units_reason"].startswith("Read in millimetres: the doors")
+    # other units: the plans are found again, at that scale
+    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {"units": "cm"})
+    in_cm = wait(base, job)
+    assert in_cm["units"] == "cm" and in_cm["units_chosen"]
+    assert in_cm["units_reason"] == "Read in centimetres, as you chose."
+    status, error = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {"units": "furlongs"})
+    assert status == 400 and "unknown units" in error["error"]
     plans = [(p["title"], p["kind"], p["floor"]) for p in found["plans"]]
     assert plans == [("GROUND FLOOR PLAN", "floor_plan", 0), ("FIRST FLOOR PLAN", "floor_plan", 1)]
     assert found["plans"][0]["preview"]
 
     chosen = [{"index": p["index"], "title": p["title"], "region": p["region"], "building": "HQ",
                "ordinal": p["floor"], "name": p["title"].title()} for p in found["plans"]]
-    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": chosen})
+    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "units": found["units"],
+                                                         "plans": chosen})
     added = wait(base, job)
     assert len(added["floors"]) == 2
+    ws = Workspace.load(app.path(code))
+    assert [f.source.units for _, _, f, _ in ws.iter_floors()] == ["mm", "mm"]  # kept with each floor
     log = call(f"{base}/api/jobs/{job['id']}")[1]["log"]
     assert any("moved 70.0" in line for line in log)  # the first floor was drawn 70 m to the right
 

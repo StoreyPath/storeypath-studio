@@ -38,9 +38,11 @@ up. It looks at what is drawn:
   title read: *ground floor plan* is floor 0, *first floor plan* floor 1, the *roof
   deck* above them, *guard room plan* is another building. Elevations, sections,
   title blocks and sheet frames are recognised and left out.
-- **Works out the real units from the doors.** A door swing is about 0.85 m across,
-  whatever the drawing claims. "The drawing says millimetres, but its doors are
-  drawn in metres" — so it reads them in metres.
+- **Works out the real units from what is drawn.** In the right units a door swing
+  is about 0.85 m across, the dimensions are the size of rooms and the text is a size
+  someone can read, whatever the drawing's setting claims. Door swings are told from
+  a basin's rounded corners by their leaf, and a note such as *ALL DIMENSIONS IN MM*
+  is read in any language. When these disagree, Studio says so and you choose.
 - **Knows what each layer holds without its name.** Walls are long pairs of
   parallel lines a wall's thickness apart that join into one frame (straight,
   diagonal or curved); glazing is thin pairs in line with the walls; doors are

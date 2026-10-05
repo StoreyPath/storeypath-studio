@@ -79,9 +79,11 @@ def test_building_from_one_drawing(tmp_path):
     _two_floors(tmp_path / "all.dxf")
     run("new", ws_file, "--name", "Sheets")
     b = run("add-building", ws_file, run("add-location", ws_file, "SITE", "--name", "Site"), "HQ", "--name", "HQ")
-    assert "GROUND FLOOR PLAN" in run("views", tmp_path / "all.dxf")
+    views = run("views", tmp_path / "all.dxf")
+    assert views.startswith("Read in millimetres: the doors") and "GROUND FLOOR PLAN" in views
     run("add-floor", ws_file, b, tmp_path / "all.dxf", "--ordinal", "0", "--view", "ground")
     run("add-floor", ws_file, b, tmp_path / "all.dxf", "--ordinal", "1", "--view", "2")
+    assert {f.source.units for _, _, f, _ in Workspace.load(ws_file).iter_floors()} == {"mm"}  # kept with the floors
     assert "shifted 70.0" in run("align", ws_file, b)
     run("convert", ws_file)
     ws = Workspace.load(ws_file)
@@ -91,3 +93,21 @@ def test_building_from_one_drawing(tmp_path):
             elevators.setdefault(r.id.rsplit("-", 2)[1], set()).add(r.id.rsplit("-", 1)[1])
     # stacked correctly, the elevators on both floors share their object codes
     assert len(elevators) == 2 and elevators["F00"] == elevators["F01"]
+
+
+def test_adding_a_floor_warns_when_unsure_of_the_units(tmp_path):
+    import ezdxf
+
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(0))
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    doc.modelspace().add_text("ALL DIMENSIONS IN CENTIMETRES", height=250)  # the doors say millimetres
+    doc.saveas(tmp_path / "plan.dxf")
+    ws_file = tmp_path / "p.spproj"
+    run("new", ws_file, "--name", "Unsure")
+    b = run("add-building", ws_file, run("add-location", ws_file, "SITE", "--name", "Site"), "HQ", "--name", "HQ")
+    result = runner.invoke(app, ["add-floor", str(ws_file), b, str(tmp_path / "plan.dxf"), "--ordinal", "0", "--no-model"])
+    assert result.exit_code == 0 and result.stdout.strip().endswith("-F00")
+    assert "Not sure of the units" in result.stderr and "--units" in result.stderr
+    floor = next(f for _, _, f, _ in Workspace.load(ws_file).iter_floors())
+    assert floor.source.units == "mm"
+

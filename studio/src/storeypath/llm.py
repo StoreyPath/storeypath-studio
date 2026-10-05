@@ -332,6 +332,28 @@ def read_layer_names(model: LocalModel, names: list[str]) -> dict[str, str]:
     return out
 
 
+# Spelled out: small models mistake "in" (inches) for the word.
+UNIT_CHOICES = {"millimetres": "mm", "centimetres": "cm", "metres": "m", "inches": "in", "feet": "ft"}
+UNIT_NOTE_SYSTEM = (
+    "You read notes written on architectural drawings, in any language. Say whether the "
+    "note states the unit that all the drawing's dimensions or measurements are given in, "
+    "and which unit. The size or thickness of one thing (20mm TILES, 150 mm SLAB, سماكة 20 "
+    "مم) does not state it: answer none. Answer in compact JSON."
+)
+
+
+def read_unit_notes(model: LocalModel, notes: list[str]) -> dict[str, str | None]:
+    """Which notes state the units the drawing's dimensions are in ("ALL DIMENSIONS
+    ARE IN MM", in any language): the unit (mm, cm, m, in, ft), or None. One note per
+    question, as for room labels."""
+    schema = {"type": "object", "properties": {"units": {"enum": [*UNIT_CHOICES, "none"]}}, "required": ["units"]}
+    out = {}
+    for note in dict.fromkeys(n.strip() for n in notes if n.strip()):
+        answer = model.ask(UNIT_NOTE_SYSTEM, f"Note: {note}", schema, max_tokens=30).get("units")
+        out[note] = UNIT_CHOICES.get(answer)
+    return out
+
+
 _NOT_WORDS = re.compile(r"^[\W\d_]*$")
 
 

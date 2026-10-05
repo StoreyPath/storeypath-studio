@@ -97,8 +97,13 @@ storeypath align house.spproj K7Q2XM-HOME-VILLA
 storeypath convert house.spproj
 ```
 
-Units are read from the drawing's doors (a door swing is about 0.85 m), so a
-drawing whose unit setting is wrong is still read right; `--units` overrides.
+Units are read from what is drawn, so a drawing whose unit setting is wrong is
+still read right: door swings with their leaf (about 0.85 m), the typical dimension
+(the size of rooms and walls), the typical text height, and a note that states the
+units (*ALL DIMENSIONS ARE IN MM*, read by the language model in other languages).
+`views` says what it found; when the clues disagree or show too little it says it is
+not sure, and `add-floor` warns. `--units` overrides. The units are kept with each
+floor, in the web app too, so a project converts the same way again.
 
 ## Reading a drawing without being told its layers
 
@@ -115,7 +120,7 @@ profile (below) can still be given instead.
 
 Room names the rules don't know — abbreviations, misspellings, other languages —
 are read by a small language model running locally on the CPU with llama.cpp's
-`llama-server`; so are sheet titles when finding plans. Its answers are limited to
+`llama-server`; so are sheet titles when finding plans, and notes that state the units. Its answers are limited to
 StoreyPath's types by a JSON schema and are stored in the workspace (`readings`),
 so a project converts the same way again, with or without the model.
 
@@ -130,7 +135,7 @@ so a project converts the same way again, with or without the model.
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
 [Without Docker](../README.md#without-docker).
-[eval/](eval) scores a model on room labels, sheet titles and layer names
+[eval/](eval) scores a model on room labels, sheet titles, layer names and unit notes
 (`uv run python eval/run.py --model path/to/model.gguf`).
 
 `storeypath save-as-new` copies a workspace as a *different* project with its own

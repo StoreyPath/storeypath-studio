@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import re
 
-from .llm import LocalModel, ModelUnavailable, read_labels
+from ezdxf.document import Drawing
+
+from .cad import UnitClue, UnitsDecision, decide_units
+from .llm import LocalModel, ModelUnavailable, read_labels, read_unit_notes
 from .profile import Profile
 from .types import SpaceType
 from .workspace import Reading, Workspace
@@ -79,3 +82,67 @@ class TextReader:
         """The type the model gave a room name (rules are applied elsewhere)."""
         r = self.ws.readings.get(name.strip())
         return r.type if r is not None else None
+
+
+# ---- notes that state the units ---------------------------------------------------
+
+# "ALL DIMENSIONS ARE IN MM", "UNITS: METRES": read by rule. Other languages and
+# wordings go to the language model.
+UNIT_STATEMENT = re.compile(
+    r"\b(?:dim(?:ension)?s?|measurements?|units?)\b\.?\s*(?:are\s+)?(?:given\s+|shown\s+)?(?:in|:|=)\s*"
+    r"(?P<unit>mm|millimet(?:er|re)s?|cm|centimet(?:er|re)s?|met(?:er|re)s?|m|inch(?:es)?|in|feet|foot|ft)\b",
+    re.IGNORECASE,
+)
+# What the model is asked about: notes that talk about dimensions or units and name a
+# unit, in a few languages. Sizes of single things ("20mm TILES") do not qualify.
+NOTE_ABOUT_UNITS = re.compile(r"dim|unit|measur|cote|mesure|ma(?:ß|ss)e|medida|misur|afmeting|أبعاد|ابعاد|مقاس|قياس|وحد",
+                              re.IGNORECASE)
+NAMES_A_UNIT = re.compile(r"mm|cm|met(?:er|re|ro)|millim|centim|inch|feet|\bft\b|\bm\b|zoll|fu(?:ß|ss)|pulgad|pouce|"
+                          r"pied|ملم|مم|متر|سم|سنتي|بوصة|إنش|قدم", re.IGNORECASE)
+MAX_UNIT_NOTES = 8
+
+
+def read_units(doc: Drawing, model: LocalModel | None = None) -> UnitsDecision:
+    """The units to read a drawing in: what is drawn, and any note stating them."""
+    return decide_units(doc, unit_note(doc, model))
+
+
+def unit_note(doc: Drawing, model: LocalModel | None = None) -> UnitClue | None:
+    """A note on the drawing that states its units, read by rule, else by the
+    language model when there is one."""
+    notes = _notes(doc)
+    for note in notes:
+        m = UNIT_STATEMENT.search(note)
+        if m:
+            return UnitClue("note", [_unit_of(m["unit"])], note)
+    if model is None or not model.available():
+        return None
+    asked = [n for n in notes if NOTE_ABOUT_UNITS.search(n) and NAMES_A_UNIT.search(n)][:MAX_UNIT_NOTES]
+    if not asked:
+        return None
+    try:
+        answers = read_unit_notes(model, asked)
+    except ModelUnavailable:
+        return None
+    return next((UnitClue("note", [answers[n]], n) for n in asked if answers.get(n)), None)
+
+
+def _notes(doc: Drawing) -> list[str]:
+    texts = []
+    for layout in doc.layouts:
+        for t in layout.query("TEXT MTEXT"):
+            texts.append(t.plain_text() if t.dxftype() == "MTEXT" else t.dxf.text)
+    return [t for t in dict.fromkeys(" ".join(t.split()) for t in texts) if 4 <= len(t) <= 200]
+
+
+def _unit_of(word: str) -> str:
+    w = word.lower()
+    if w.startswith(("mm", "millim")):
+        return "mm"
+    if w.startswith(("cm", "centim")):
+        return "cm"
+    if w.startswith("m"):
+        return "m"
+    if w.startswith("in"):
+        return "in"
+    return "ft"

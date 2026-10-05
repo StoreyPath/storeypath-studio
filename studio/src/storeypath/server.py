@@ -13,7 +13,7 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/projects                         POST /api/projects {name}
     GET  /api/projects/<code>
     PUT  /api/projects/<code>/drawings/<name>  (the file as the body)
-    POST /api/projects/<code>/drawings/<name>/plans          → job: the plans in it
+    POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
@@ -46,11 +46,11 @@ from shapely.geometry import shape
 from shapely.ops import unary_union
 
 from .assets import asset_dir
-from .cad import DrawingError, drawing_units, header_units, infer_units, meters_per_unit, read_drawing
+from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import read_title
 from .profile import AUTO, load_profile
-from .reading import NOT_A_ROOM
+from .reading import NOT_A_ROOM, read_units
 from .review import CONTENT_TYPES, NotFound, Review
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
@@ -240,17 +240,25 @@ class Studio:
             raise NotFound(f"no drawing {name}")
         return path
 
-    def plans(self, code: str, name: str) -> Job:
+    def plans(self, code: str, name: str, units: str | None = None) -> Job:
+        """The plans in a drawing, read in ``units``, or in the units it shows."""
         path = self._drawing(code, name)
+        if units and units not in UNIT_NAMES:
+            raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
 
         def run(job: Job):
             from .sheets import find_views
 
             job.say(f"reading {path.name}")
             doc = read_drawing(path)
-            used, said = drawing_units(doc), header_units(doc)
-            job.say(f"units: {used}" + (f" (the drawing says {said}; its doors say {used})" if said and said != used
-                                        else ""))
+            if units:
+                used, sure, reason = units, True, f"Read in {UNIT_WORDS[units]}, as you chose."
+            else:
+                if self.model.available():
+                    job.say(f"looking for its units (notes read with {self.model.name})")
+                decision = read_units(doc, self.model if self.model.available() else None)
+                used, sure, reason = decision.units, decision.sure, decision.reason
+            job.say(reason)
             rules = load_profile(AUTO)
 
             def is_room_name(text):
@@ -259,7 +267,7 @@ class Studio:
                 return True if rules.classify(text, [], "")[0] != SpaceType.UNSPECIFIED else None
 
             job.say("looking for plans")
-            scale = meters_per_unit(doc)
+            scale = meters_per_unit(doc, used)
             views = find_views(doc, rules, scale, auto=True, is_room_name=is_room_name)
             job.say(f"found {len(views)} drawings")
             # Plain titles are read by rule; the model reads the rest (other languages,
@@ -284,14 +292,17 @@ class Studio:
                 out.append({"index": v.index, "title": v.title, "kind": kind, "floor": floor,
                             "building": r.building if r else None, "size": v.size, "region": v.region,
                             "preview": v.preview})
-            return {"drawing": path.name, "units": used, "units_said": said, "plans": out}
+            return {"drawing": path.name, "units": used, "units_sure": sure, "units_reason": reason,
+                    "units_chosen": bool(units), "units_said": header_units(doc), "plans": out}
 
         return self.jobs.submit(f"Reading the plans in {path.name}", run)
 
     def add_floors(self, code: str, body: dict) -> Job:
         ws_path = self.path(code)
         drawing = self._drawing(code, body.get("drawing", ""))
-        units = body.get("units") or None
+        units = body.get("units") or None  # the units the plans were found in: kept with each floor
+        if units and units not in UNIT_NAMES:
+            raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
         plans = body.get("plans") or []
         if not plans:
             raise ValueError("choose at least one plan")
@@ -563,7 +574,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             case "PUT", ["projects", code, "drawings", name]:
                 return studio.upload(code, name, body)
             case "POST", ["projects", code, "drawings", name, "plans"]:
-                return studio.plans(code, name)
+                return studio.plans(code, name, body.get("units") or None)
             case "POST", ["projects", code, "floors"]:
                 return studio.add_floors(code, body)
             case "POST", ["projects", code, "convert"]:

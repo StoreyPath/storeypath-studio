@@ -137,13 +137,21 @@ def add_floor(
         help="the plan to use when the drawing holds several: its number or part of its title (see `storeypath views`)")] = None,
     region: Annotated[Optional[str], typer.Option(
         help="the part of the drawing with this floor's plan: x0,y0,x1,y1 in drawing units")] = None,
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read notes that state the units with the local language model")] = True,
 ):
-    """Add a floor and its source drawing to a building."""
+    """Add a floor and its source drawing to a building. The units the drawing is
+    read in are kept with the floor: --units, or the units the drawing shows."""
     ws = _load(workspace)
     if not drawing.exists():
         _fail(f"{drawing} does not exist")
     prof = load_profile(profile)  # fail early on a bad profile
     profile_ref = _relative_to(Path(profile), workspace.parent) if Path(profile).suffix in (".yaml", ".yml") else profile
+    if units is None:
+        decision = _units(drawing, use_model)
+        units = decision.units
+        if not decision.sure:
+            typer.secho(f"{decision.reason} Re-add the floor with --units to choose.", fg="yellow", err=True)
     source = SourceDrawing(path=_relative_to(drawing, workspace.parent), profile=profile_ref, units=units)
     if region:
         try:
@@ -160,6 +168,24 @@ def add_floor(
         _fail(str(e))
     ws.save(workspace)
     typer.echo(f_id)
+
+
+def _units(drawing: Path, use_model: bool):
+    """The units a drawing shows (see reading.read_units)."""
+    from .cad import read_drawing
+    from .llm import LocalModel
+    from .reading import read_units
+
+    try:
+        doc = read_drawing(drawing)
+    except DrawingError as e:
+        _fail(str(e))
+    model = LocalModel() if use_model else None
+    try:
+        return read_units(doc, model)
+    finally:
+        if model is not None:
+            model.close()
 
 
 def _rule_reader(prof):
@@ -196,11 +222,18 @@ def views(
     profile: Annotated[str, typer.Option(help="auto, a built-in layer-mapping profile or a YAML path")] = "auto",
     units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
     all_views: Annotated[bool, typer.Option("--all", help="also list elevations, sections and details")] = False,
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read notes that state the units with the local language model")] = True,
 ):
-    """List the plans in a drawing that holds several side by side."""
+    """List the plans in a drawing that holds several side by side, and the units
+    it is read in."""
     from .cad import meters_per_unit, read_drawing
     from .sheets import find_views
 
+    if units is None:
+        decision = _units(drawing, use_model)
+        units = decision.units
+        typer.echo(decision.reason + ("" if decision.sure else " Choose with --units.") + "\n")
     try:
         doc = read_drawing(drawing)
     except DrawingError as e:

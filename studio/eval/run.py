@@ -3,7 +3,8 @@
     uv run python eval/run.py --url http://127.0.0.1:8090        # a running llama-server
     uv run python eval/run.py --model path/to/model.gguf           # start one
 
-Prints accuracy and time for room labels, sheet titles and layer names, with
+Prints accuracy and time for room labels, sheet titles, layer names and notes that
+state a drawing's units, with
 every miss, and the built-in rules' accuracy on the same labels for comparison.
 """
 
@@ -14,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from storeypath.llm import LocalModel, read_labels, read_layer_names, read_titles
+from storeypath.llm import LocalModel, read_labels, read_layer_names, read_titles, read_unit_notes
 from storeypath.profile import load_profile
 
 HERE = Path(__file__).parent
@@ -39,7 +40,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url")
     ap.add_argument("--model")
-    ap.add_argument("--only", choices=["labels", "titles", "layers"])
+    ap.add_argument("--only", choices=["labels", "titles", "layers", "units"])
     args = ap.parse_args()
     model = LocalModel(url=args.url, model=args.model)
 
@@ -91,6 +92,13 @@ def main() -> int:
         read = read_layer_names(model, [t for t, _ in layers])
         took = time.monotonic() - start
         score(f"{model.name}: layer names", [(t, want, read.get(t, "missing")) for t, want in layers], took)
+
+    if args.only in (None, "units"):
+        notes = rows("units.tsv")
+        start = time.monotonic()
+        read = read_unit_notes(model, [t for t, _ in notes])
+        took = time.monotonic() - start
+        score(f"{model.name}: notes stating the units", [(t, want, read.get(t) or "-") for t, want in notes], took)
 
     model.close()
     return 0
