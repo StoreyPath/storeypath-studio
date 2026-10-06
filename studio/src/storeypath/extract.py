@@ -335,7 +335,7 @@ def extract_floor(
             wall_lines, wall_fills, door_shapes, opening_lines, [lb.point for lb in labels], profile.walls,
             profile.spaces.min_area,
         )
-        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in found.polygons]
+        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in _without_spikes(found.polygons)]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
         outline, used = found.outline, "walls"
         outside = found.pockets
@@ -729,6 +729,102 @@ def _across_a_wall_gap(line: LineString, walls) -> bool:
     near = walls.buffer(0.05)
     return all(near.contains(Point(x + sign * ux * d, y + sign * uy * d))
                for (x, y), sign in (((x0, y0), -1), ((x1, y1), 1)) for d in GAP_REACH_M)
+
+
+SPIKE_M = 0.4  # no part of a room is narrower than this: a wedge between wall lines, a window's gap
+SPIKE_KEEP_M2 = 1.0  # what trimming leaves of a room counts as a body of it when this big
+
+
+def _without_spikes(polygons: list) -> list:
+    """Rooms without the slivers that run off them: a wedge between two wall lines,
+    the gap of a window left open, reached through a narrow neck. What is narrower
+    than SPIKE_M is trimmed off; the room itself never grows."""
+    half = SPIKE_M / 2
+    out = []
+    for poly in polygons:
+        opened = poly.buffer(-half, join_style="mitre").buffer(half, join_style="mitre").intersection(poly)
+        parts = [p for p in as_polygons(opened) if p.area >= SPIKE_KEEP_M2]
+        # one body left: that is the room; two (halves joined by a narrow neck) or
+        # none: leave it as found
+        out.append(parts[0] if len(parts) == 1 else poly)
+    return out
+
+
+TREAD_GAP_M = (0.2, 0.4)  # a stair's treads are drawn this far apart…
+TREAD_LEN_M = (0.7, 3.0)  # …this long…
+TREADS_MIN = 6  # …at least this many side by side
+STAIR_SHARE = 0.25  # a room this much covered by flights is a stair (a stair in a hall is not)
+
+
+def stair_flights(segments: list[LineString]) -> list[Polygon]:
+    """Flights of stairs as drawn: runs of at least TREADS_MIN like lines side by
+    side, evenly spaced (the treads). A grid (tiles), with a like run across it, is
+    not a flight. Returns the area of each flight."""
+    import math
+
+    def angle(seg):
+        (x0, y0), (x1, y1) = seg.coords[0], seg.coords[-1]
+        return math.atan2(y1 - y0, x1 - x0) % math.pi
+
+    segs = [g for g in segments if TREAD_LEN_M[0] <= g.length <= TREAD_LEN_M[1]]
+    groups: dict[int, list] = {}
+    for g in segs:
+        groups.setdefault(round(math.degrees(angle(g)) / 3) % 60, []).append(g)
+    runs = []
+    for key, gs in groups.items():
+        a = math.radians(key * 3)
+        nx, ny = -math.sin(a), math.cos(a)  # across the lines
+        tx, ty = math.cos(a), math.sin(a)  # along them
+        rows = [(g.centroid.x * nx + g.centroid.y * ny, g.centroid.x * tx + g.centroid.y * ty, g) for g in gs]
+        # Lines that line up end to end make a flight's treads; two flights side by
+        # side (a stair that turns) are two tracks.
+        rows.sort(key=lambda r: r[1])
+        tracks, track = [], []
+        for r in rows:
+            if track and r[1] - track[0][1] > 0.3 * track[0][2].length:
+                tracks.append(track)
+                track = []
+            track.append(r)
+        if track:
+            tracks.append(track)
+        for track in tracks:
+            track.sort(key=lambda r: r[0])
+            run = [track[0]]
+            for r in track[1:] + [None]:
+                last = run[-1]
+                if r is not None:
+                    gap = r[0] - last[0]
+                    if gap < 0.05:  # a tread drawn as two lines, or one line drawn twice
+                        continue
+                    if TREAD_GAP_M[0] <= gap <= TREAD_GAP_M[1] \
+                            and abs(r[2].length - last[2].length) <= 0.25 * last[2].length:
+                        run.append(r)
+                        continue
+                if len(run) >= TREADS_MIN:
+                    runs.append((key, unary_union([x[2] for x in run]).convex_hull))
+                run = [r] if r is not None else []
+    flights = []
+    for key, area in runs:  # a like run across it makes it a grid
+        if not any(abs(((k - key) % 60) - 30) <= 2 and other.intersection(area).area > 0.5 * min(other.area, area.area)
+                   for k, other in runs):
+            flights.append(area)
+    return flights
+
+
+def type_stairs(units, flights: list[Polygon]) -> None:
+    """Spaces and zones mostly taken up by flights of stairs are stairs, whatever a
+    model guessed; a name read from the drawing still decides."""
+    if not flights:
+        return
+    tree = STRtree(flights)
+    for u in units:
+        if u.name and u.type_source not in ("default", "vision"):
+            continue
+        covered = sum(flights[int(i)].intersection(u.polygon).area for i in tree.query(u.polygon))
+        if covered >= STAIR_SHARE * u.polygon.area and u.type != SpaceType.STAIRS:
+            u.type, u.type_source = SpaceType.STAIRS, "treads"
+            u.issues = [i for i in u.issues if not i.startswith("vision: typed")]
+            u.issues.append("typed stairs from the treads drawn in it; check it")
 
 
 def type_zoned_spaces(spaces, zones) -> None:

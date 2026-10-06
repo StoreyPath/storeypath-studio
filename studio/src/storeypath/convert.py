@@ -17,7 +17,7 @@ from shapely.geometry import Point, mapping, shape
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
 from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
-                      keep_to_the_building, type_zoned_spaces)
+                      keep_to_the_building, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -96,8 +96,11 @@ def convert_floor(
             units = extraction.units()
             look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say,
                           only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet)
+        type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
         type_zoned_spaces(extraction.spaces, extraction.zones)
         keep_to_the_building(extraction)
+    else:
+        type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
@@ -141,6 +144,23 @@ def _read_room_types(ex: FloorExtraction, reader: TextReader) -> None:
     for s in ex.units():
         if s.name and s.type == SpaceType.UNSPECIFIED and (t := reader.room_type(s.name)) is not None:
             s.type, s.type_source = t, "model"
+
+
+def _floor_segments(doc, src, scale: float) -> list:
+    """Every straight piece drawn on a floor (not text, dimensions or hatches), local meters."""
+    from shapely.geometry import box
+
+    from .vision import _segments_in
+
+    ox, oy = src.offset or (0.0, 0.0)
+    if src.region is not None:
+        region = box(*src.region)
+    else:
+        from ezdxf import bbox as ebbox
+
+        ext = ebbox.extents(doc.modelspace(), fast=True)
+        region = box(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
+    return _segments_in(doc, region, lambda x, y: ((x - ox) * scale, (y - oy) * scale))
 
 
 def _name_zones(ex: FloorExtraction, zones: list, profile, reader: TextReader, spotted) -> None:

@@ -45,7 +45,9 @@ SYSTEM = ("You read architectural floor plans (CAD drawings, as printed) the way
 ROOM_QUESTION = (
     "This is part of an architectural floor plan. The red outline marks an area that a program found as one "
     "room. Look at the walls, doors, windows, furniture, fixtures and labels. Is the red outline exactly one "
-    "room? And what kind of room is it?")
+    "room? And what kind of room is it? How plans draw things: stairs are a run of many parallel lines close "
+    "together (the treads), often with the steps numbered in order and an arrow or UP/DN; a lift is a small box "
+    "with a cross; a bathroom has a WC, a basin and a bath or shower; a bedroom has a bed.")
 NOT_A_ROOM = "not a room (outside, a garden, a sheet frame, a shaft, a gap or inside a wall)"
 MERGED = "two or more rooms merged together"
 OUTLINES = ["exactly one room", MERGED, "only part of a room", NOT_A_ROOM]

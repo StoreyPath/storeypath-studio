@@ -58,6 +58,10 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("window", re.compile(r"glaz|win(d|do)|(^|[^a-z])win([^a-z]|$)|fen[eê]t|fenster|ventana|نافذ|شباك|شبابيك", re.I)),
     ("door", re.compile(r"door|d[oö]r|(^|[^a-z])t[uü]r\b|porte|puerta|باب|أبواب|ابواب", re.I)),
     ("column", re.compile(r"col(s|umn)|s-cols|pilar|st[uü]tze|عمود|اعمدة|أعمدة", re.I)),
+    # air conditioning and other services: split units stand against walls and look
+    # like them (a pair of lines a wall's thickness apart)
+    ("equipment", re.compile(r"(^|[^a-z])(a/?c|sac|hvac|mech|fcu|ahu|duct|split|aircon|air.?cond)([^a-z]|$)"
+                             r"|تكييف|مكيف", re.I)),
     ("wall", re.compile(r"wall|wand|mur\b|muro|pared|جدار|جدران|حائط", re.I)),
     ("room_name", re.compile(r"room.?name|area.?iden|spce.?iden|anno.?room|room.?tag|اسماء|أسماء", re.I)),
     ("room_outline", re.compile(r"^a-area$|area.?bdry|spce$|^rooms?$", re.I)),
@@ -71,7 +75,7 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
 # much their lines look like them: handrails and window frames are pairs of lines
 # a wall's thickness apart, step outlines are small closed shapes like columns.
 # Windows are then read as glazing in the walls' gaps.
-NOT_WALLS = {"furniture", "dimension", "grid", "stairs", "railing"}
+NOT_WALLS = {"furniture", "equipment", "dimension", "grid", "stairs", "railing"}
 # A layer named for doors or windows holds their frames and leaves, which look like
 # walls too; it is read as walls only when it holds most of the plan's walls (the
 # drafter drew the walls on it).

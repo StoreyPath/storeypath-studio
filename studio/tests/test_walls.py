@@ -348,3 +348,16 @@ def test_the_outside_set_aside_takes_its_walls_out_of_the_building():
     keep_to_the_building(ex)
     assert abs(ex.outline.area - 10.4 ** 2) < 1  # the house, shaft and all
     assert ex.walls.distance(Point(-5.1, 5)) > 4 and ex.walls.distance(Point(-0.1, 5)) == 0
+
+
+def test_a_flight_of_stairs_is_found_by_its_treads():
+    from storeypath.extract import stair_flights
+
+    flight = [LineString([(x, 0), (x, 1.2)]) for x in [i * 0.3 for i in range(10)]]
+    pairs = [LineString([(x + 0.025, 0), (x + 0.025, 1.2)]) for x in [i * 0.3 for i in range(10)]]  # treads drawn double
+    beside = [LineString([(x, 1.6), (x, 2.8)]) for x in [i * 0.3 for i in range(8)]]  # the next flight, turned back
+    found = stair_flights(flight + pairs + beside)
+    assert len(found) == 2
+    tiles = [LineString([(x, 0), (x, 2.4)]) for x in [i * 0.3 for i in range(9)]] + \
+        [LineString([(0, y), (2.4, y)]) for y in [i * 0.3 for i in range(9)]]  # a tiled floor is a grid, not a stair
+    assert stair_flights(tiles) == []
