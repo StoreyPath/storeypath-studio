@@ -159,13 +159,42 @@ class RoomView:
     type: str
 
 
+def _print_config():
+    from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration
+
+    return Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.BLACK,
+                         lineweight_scaling=0.6, min_lineweight=0.25)
+
+
+def print_png(doc, bbox, width: int, height: int) -> bytes:
+    """A part of the drawing as printed, black on white: ``bbox`` (drawing units)
+    filling ``width`` × ``height`` pixels (the same shape). PNG."""
+    from ezdxf.addons.drawing import Frontend, RenderContext
+    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    x0, y0, x1, y1 = bbox
+    fig = Figure(figsize=(width / 100, height / 100), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes((0, 0, 1, 1))
+    pad = max(x1 - x0, y1 - y0) * 0.1  # blocks placed just outside reach in
+    entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
+    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
+    ax.set_xlim(x0, x1)
+    ax.set_ylim(y0, y1)
+    ax.axis("off")
+    out = io.BytesIO()
+    fig.savefig(out, format="png", dpi=100, facecolor="white")
+    return out.getvalue()
+
+
 def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters=()):
     """A square part of the drawing as printed (black on white), ``px`` pixels a
     side: a matplotlib figure, ``highlight`` (shapely geometries, drawing units)
     outlined in red, ``marks`` (lines) in blue and ``letters`` ((text, (x, y)))
     written in blue. ``pad`` (drawing units) brings in blocks placed just outside."""
     from ezdxf.addons.drawing import Frontend, RenderContext
-    from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration
     from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -175,9 +204,7 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
     entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
-    config = Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.BLACK,
-                           lineweight_scaling=0.6, min_lineweight=0.25)
-    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=config).draw_entities(entities)
+    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
     for g in highlight:
         for part in getattr(g, "geoms", [g]):
             xs, ys = getattr(part, "exterior", part).xy

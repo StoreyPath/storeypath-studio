@@ -19,6 +19,8 @@ const state = {
   labels: new Map(), // space id → <text>
   bounds: new Map(), // space id → [x0, y0, x1, y1]
   drawingBounds: null,
+  drawingMode: savedMode(), // "print", "lines" or "off"
+  underlay: { lines: null, print: null }, // the floor whose drawing each layer holds
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
   showHidden: false, // show spaces marked hidden or ignored
@@ -27,6 +29,15 @@ const state = {
 };
 
 // ---- helpers -------------------------------------------------------------
+
+function savedMode() {
+  try {
+    const mode = localStorage.getItem("storeypath.drawing");
+    return ["print", "lines", "off"].includes(mode) ? mode : "print";
+  } catch {
+    return "print";
+  }
+}
 
 async function request(path, body) {
   const init = body === undefined ? {} : {
@@ -167,6 +178,8 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   if (changed) {
     state.drawingBounds = null;
     $("drawing").replaceChildren(); // never show another floor's drawing underneath
+    $("print").replaceChildren();
+    state.underlay = { lines: null, print: null };
   }
   $("floor").value = id;
   renderFloorMeta();
@@ -175,7 +188,45 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   renderLegend();
   if (!keepView || changed) fit();
   select(spaceId && state.byId.has(spaceId) ? spaceId : null, { fly: Boolean(spaceId) });
-  loadDrawing(id);
+  showUnderlay();
+}
+
+// The drawing under the spaces: as printed (an image Studio draws once per drawing),
+// or its lines; each loaded when first shown.
+function showUnderlay() {
+  const mode = state.drawingMode;
+  $("print").classList.toggle("hidden", mode !== "print");
+  $("drawing").classList.toggle("hidden", mode !== "lines");
+  $("map").classList.toggle("printed", mode === "print");
+  const id = state.floor?.id;
+  if (!id || !state.floor.source) return;
+  if (mode === "print" && state.underlay.print !== id) loadPrint(id);
+  if (mode === "lines" && state.underlay.lines !== id) loadDrawing(id);
+}
+
+async function loadPrint(id) {
+  state.underlay.print = id;
+  $("status").textContent = "Drawing the print… (the first time for a floor can take a minute)";
+  try {
+    const info = await request(`${BASE}/floors/${id}/print`);
+    if (state.floor?.id !== id) return;
+    const [x0, y0, x1, y1] = info.bounds;
+    const image = svg("image", {
+      x: x0, y: y0, width: x1 - x0, height: y1 - y0, preserveAspectRatio: "none",
+      href: `/api/${BASE}/floors/${encodeURIComponent(id)}/print.png?k=${info.key}`,
+    });
+    // The world is drawn with y up; an image is drawn with y down: flip it about its middle.
+    const g = svg("g", { transform: `matrix(1 0 0 -1 0 ${y0 + y1})` });
+    g.append(image);
+    image.addEventListener("load", () => { if (state.floor?.id === id) $("status").textContent = ""; });
+    image.addEventListener("error", () => { if (state.floor?.id === id) $("status").textContent = "The print could not be shown"; });
+    $("print").replaceChildren(g);
+    if (!state.drawingBounds) state.drawingBounds = info.bounds;
+    if (!state.floor.spaces.length && !state.floor.outline) fit();
+  } catch (e) {
+    state.underlay.print = null;
+    if (state.floor?.id === id) $("status").textContent = `Print not shown: ${e.message}`;
+  }
 }
 
 function renderFloorMeta() {
@@ -187,6 +238,8 @@ function renderFloorMeta() {
   $("floor-meta").textContent = parts.join(" · ");
   $("convert").disabled = !f.source;
   $("walk3d").hidden = !f.converted_at;
+  $("open-print").hidden = !f.source;
+  $("open-print").href = `/api/${BASE}/floors/${encodeURIComponent(f.id)}/print.png`;
   $("walk3d").href = "/viewer/examples/world/index.html?" + new URLSearchParams({
     pkg: `/api/${BASE}/preview.storeypath`, floor: f.id }); // the project as it is now
 
@@ -198,6 +251,7 @@ function renderFloorMeta() {
 }
 
 async function loadDrawing(id) {
+  state.underlay.lines = id;
   $("status").textContent = "Loading drawing…";
   try {
     const drawing = await request(`${BASE}/floors/${id}/drawing`);
@@ -206,6 +260,7 @@ async function loadDrawing(id) {
     $("status").textContent = "";
     if (!state.floor.spaces.length && !state.floor.outline) fit();
   } catch (e) {
+    state.underlay.lines = null;
     if (state.floor?.id === id) $("status").textContent = `Drawing not shown: ${e.message}`;
   }
 }
@@ -457,7 +512,16 @@ function setupMap() {
   }).observe($("map"));
 
   $("fit").addEventListener("click", fit);
-  $("show-drawing").addEventListener("change", (e) => $("drawing").classList.toggle("hidden", !e.target.checked));
+  $("drawing-mode").value = state.drawingMode;
+  $("drawing-mode").addEventListener("change", (e) => {
+    state.drawingMode = e.target.value;
+    try {
+      localStorage.setItem("storeypath.drawing", state.drawingMode);
+    } catch {
+      // not remembered; fine
+    }
+    showUnderlay();
+  });
   $("show-labels").addEventListener("change", (e) => $("labels").classList.toggle("hidden", !e.target.checked));
   $("show-hidden").addEventListener("change", (e) => {
     state.showHidden = e.target.checked;

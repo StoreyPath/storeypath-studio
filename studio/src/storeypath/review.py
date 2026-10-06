@@ -8,14 +8,19 @@ command line can be used side by side. The web server is in server.py:
     GET  /api/projects/<code>/review              project, floors, space types
     GET  /api/projects/<code>/floors/<id>         a floor's spaces and doors, local meters
     GET  /api/projects/<code>/floors/<id>/drawing the floor's source drawing, as linework
+    GET  /api/projects/<code>/floors/<id>/print   the drawing as printed: where it lies, its size
+    GET  /api/projects/<code>/floors/<id>/print.png  the print (drawn once, kept until the drawing changes)
     POST /api/projects/<code>/floors/<id>/convert re-read the drawing (keeps IDs): a job
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true}
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from pathlib import Path
+from typing import NamedTuple
 
 from shapely.geometry import LineString, Point, shape
 
@@ -31,6 +36,19 @@ CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/j
                  ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2",
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
+PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
+PRINT_MAX_PX = 10000  # …within this many pixels a side
+PRINT_MARGIN_M = 3.0  # around the floor's spaces, when the floor has no region of its own
+PRINT_VERSION = 1  # changing how prints are drawn draws them again
+CACHE_DIR = ".storeypath-cache"  # beside the workspace file
+_PRINTING = threading.Lock()  # one print drawn at a time: rendering goes through ezdxf's caches
+
+
+class File(NamedTuple):
+    """A file the server sends as it is."""
+
+    data: bytes
+    content_type: str
 
 
 class NotFound(Exception):
@@ -194,6 +212,72 @@ class Review:
         return self._drawings[key]
 
 
+def _round_box(box) -> list[float]:
+    return [round(v, 3) for v in box]
+
+
+def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
+    """Where a floor's print and its placement are kept, drawing them first when the
+    drawing, the part of it read or the floor's spaces changed."""
+    with review._lock:
+        ws = review._load()
+        f = review._floor(ws, floor_id)
+        if f.source is None:
+            raise NotFound(f"floor {floor_id} has no drawing")
+        src = f.source
+        path = review.path.parent / src.path
+        if not path.exists():
+            raise DrawingError(f"drawing not found: {path}")
+        extent = None
+        if src.region is None:  # around what was found on the floor
+            geoms = [shape(r.geometry) for r in ws.floor_objects(floor_id) if r.kind == "space"]
+            if f.outline:
+                geoms.append(shape(f.outline))
+            if geoms:
+                xs0, ys0, xs1, ys1 = zip(*(g.bounds for g in geoms))
+                extent = _round_box((min(xs0) - PRINT_MARGIN_M, min(ys0) - PRINT_MARGIN_M,
+                                     max(xs1) + PRINT_MARGIN_M, max(ys1) + PRINT_MARGIN_M))
+    raw = json.dumps([PRINT_VERSION, str(path), path.stat().st_mtime_ns, src.units, src.region, src.offset, extent])
+    key = hashlib.sha1(raw.encode()).hexdigest()[:16]
+    folder = review.path.parent / CACHE_DIR / "prints"
+    png, info = folder / f"{floor_id}-{key}.png", folder / f"{floor_id}-{key}.json"
+    if png.exists() and info.exists():
+        return png, info
+    with _PRINTING:
+        if png.exists() and info.exists():
+            return png, info
+        from ezdxf import bbox as ebbox
+
+        from .vision import print_png
+
+        doc = read_drawing(path)
+        scale = meters_per_unit(doc, src.units)
+        ox, oy = src.offset or (0.0, 0.0)
+        if src.region is not None:
+            x0, y0, x1, y1 = src.region
+            local = ((x0 - ox) * scale, (y0 - oy) * scale, (x1 - ox) * scale, (y1 - oy) * scale)
+        elif extent is not None:
+            local = tuple(extent)
+        else:  # nothing found yet: the whole drawing
+            box = ebbox.extents(doc.modelspace(), fast=True)
+            local = ((box.extmin.x - ox) * scale, (box.extmin.y - oy) * scale,
+                     (box.extmax.x - ox) * scale, (box.extmax.y - oy) * scale)
+        x0, y0, x1, y1 = local
+        w, h = max(x1 - x0, 0.01), max(y1 - y0, 0.01)
+        per_m = min(PRINT_PX_PER_M, PRINT_MAX_PX / max(w, h))
+        width, height = max(1, round(w * per_m)), max(1, round(h * per_m))
+        drawing_box = (x0 / scale + ox, y0 / scale + oy, x1 / scale + ox, y1 / scale + oy)
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.glob(f"{floor_id}-*"):  # an earlier print of this floor
+            old.unlink(missing_ok=True)
+        part = png.with_suffix(".part")
+        part.write_bytes(print_png(doc, drawing_box, width, height))
+        part.replace(png)
+        info.write_text(json.dumps({"bounds": _round_box(local), "width": width, "height": height,
+                                    "px_per_m": round(per_m, 2), "key": key}))
+    return png, info
+
+
 def _room_at(geom, x: float, y: float) -> tuple[float, float]:
     """How much room a label at (x, y) has: the width and height of the space
     measured through that point."""
@@ -205,6 +289,15 @@ def _room_at(geom, x: float, y: float) -> tuple[float, float]:
         parts = getattr(cut, "geoms", [cut])
         out.append(min((p.length for p in parts if p.distance(point) < 1e-6), default=0.0))
     return out[0], out[1]
+
+
+def floor_print(review: "Review", floor_id: str) -> dict:
+    """A floor's drawing as printed: where it lies (local meters) and its size."""
+    return json.loads(_print_of(review, floor_id)[1].read_text())
+
+
+def floor_print_png(review: "Review", floor_id: str) -> File:
+    return File(_print_of(review, floor_id)[0].read_bytes(), "image/png")
 
 
 def drawing_linework(doc, profile: Profile, scale: float, region=None, offset=None) -> dict:

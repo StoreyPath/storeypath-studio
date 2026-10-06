@@ -137,6 +137,12 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #drawing .other { stroke: var(--draw-other); }
 #drawing text { fill: var(--draw-text); opacity: .8; font-family: system-ui, sans-serif; }
 #drawing.hidden { display: none; }
+#print.hidden { display: none; }
+#print image { image-rendering: auto; }
+/* Over the print the spaces are lighter, so what is drawn under them shows. */
+#map.printed #spaces path { fill-opacity: .28; }
+#map.printed #spaces path:hover { fill-opacity: .45; }
+#map.printed #spaces path.selected { fill-opacity: .5; }
 
 #outline { fill: none; stroke: var(--draw-outlines); stroke-width: 1; vector-effect: non-scaling-stroke; }
 #spaces path {

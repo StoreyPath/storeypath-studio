@@ -52,7 +52,9 @@ storeypath validate acme.storeypath
 ```
 
 `storeypath review` opens the review editor: each floor drawn over its original
-drawing, with the spaces that need a look listed first: no type, no name or
+drawing — *as printed* (the drawing rendered as on paper, a pixel a centimetre,
+drawn once and kept beside the workspace until the drawing changes; *Open print*
+shows it full size), or as its lines — with the spaces that need a look listed first: no type, no name or
 number, the labels of several rooms in one space (a doorway without a door
 block, or a missing wall), or a space open to the outside. Click a space to
 correct its type, name or number, accept it as it is, **ignore** it (not worth

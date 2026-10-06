@@ -142,6 +142,30 @@ def test_drawing_linework(review):
     assert any("OFFICE" in t[4] for t in labels)
 
 
+def test_a_floor_as_printed_lies_under_its_spaces(review):
+    from PIL import Image
+
+    from storeypath.review import floor_print, floor_print_png
+
+    r, path, f_id = review
+    info = floor_print(r, f_id)
+    x0, y0, x1, y1 = info["bounds"]
+    floor = r.floor(f_id)
+    for s in floor["spaces"]:  # every space is on the print
+        ring = s["geometry"]["coordinates"][0]
+        assert all(x0 <= x <= x1 and y0 <= y <= y1 for x, y in ring)
+    png = floor_print_png(r, f_id)
+    assert png.content_type == "image/png"
+    image = Image.open(io.BytesIO(png.data))
+    assert image.size == (info["width"], info["height"])
+    assert abs(info["width"] / info["height"] - (x1 - x0) / (y1 - y0)) < 0.01  # not stretched
+    assert info["px_per_m"] == 100
+    dark = sum(1 for p in image.convert("L").tobytes() if p < 128)
+    assert dark > 0.002 * info["width"] * info["height"]  # something is drawn on it
+    kept = list((path.parent / ".storeypath-cache" / "prints").glob(f"{f_id}-*.png"))
+    assert len(kept) == 1 and floor_print(r, f_id)["key"] == info["key"]  # drawn once, then kept
+
+
 # ---- over HTTP --------------------------------------------------------------------
 
 @pytest.fixture

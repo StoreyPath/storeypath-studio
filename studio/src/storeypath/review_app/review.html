@@ -23,6 +23,7 @@
       <div class="row">
         <button id="convert" type="button" title="Read the floor's drawing again; IDs and corrections are kept">Re-read drawing</button>
         <a id="walk3d" class="button" target="_blank" title="This floor in 3D, as it is now: orbit it or walk through it">Walk in 3D</a>
+        <a id="open-print" class="button" target="_blank" title="The floor's drawing as printed, full size, in a new tab">Open print</a>
       </div>
       <details id="warnings" hidden>
         <summary></summary>
@@ -87,6 +88,7 @@
   <main id="map">
     <svg id="svg" tabindex="0" aria-label="Floor plan">
       <g id="world">
+        <g id="print"></g>
         <g id="drawing"></g>
         <path id="outline"></path>
         <g id="spaces"></g>
@@ -96,7 +98,13 @@
     </svg>
     <div id="toolbar">
       <button id="fit" type="button" title="Show the whole floor (F)">Fit</button>
-      <label><input type="checkbox" id="show-drawing" checked> Drawing</label>
+      <label title="The floor's drawing under the spaces: as printed, or its lines">Drawing
+        <select id="drawing-mode">
+          <option value="print">as printed</option>
+          <option value="lines">lines</option>
+          <option value="off">off</option>
+        </select>
+      </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show spaces marked hidden or ignored"><input type="checkbox" id="show-hidden"> Hidden and ignored</label>
       <span id="status" class="meta"></span>

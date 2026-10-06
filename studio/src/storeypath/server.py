@@ -55,7 +55,7 @@ from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, read_leve
 from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
-from .review import CONTENT_TYPES, NotFound, Review
+from .review import CONTENT_TYPES, File, NotFound, Review, floor_print, floor_print_png
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
 
@@ -546,7 +546,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            if "Cache-Control" not in (extra or {}):
+                self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
@@ -610,6 +611,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             except Exception as e:
                 traceback.print_exc()
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            if isinstance(data, File):  # a file shown as it is (a floor's print)
+                return self._send(200, data.data, data.content_type, {"Cache-Control": "private, max-age=86400"})
             if isinstance(data, Path):  # a file to download
                 return self._send(200, data.read_bytes(), "application/zip",
                                   {"Content-Disposition": f'attachment; filename="{data.name}"'})
@@ -652,6 +655,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.review(code).floor(floor_id)
             case "GET", ["projects", code, "floors", floor_id, "drawing"]:
                 return studio.review(code).drawing(floor_id)
+            case "GET", ["projects", code, "floors", floor_id, "print"]:
+                return floor_print(studio.review(code), floor_id)
+            case "GET", ["projects", code, "floors", floor_id, "print.png"]:
+                return floor_print_png(studio.review(code), floor_id)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
                 return studio.convert(code, floor_id)
             case "POST", ["projects", code, "objects", object_id]:
