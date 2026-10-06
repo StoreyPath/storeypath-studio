@@ -408,3 +408,25 @@ def test_project_folders_are_named_by_code_not_by_name(studio):
         assert path == app.data / code / f"{code}.spproj"  # the name people type is only shown
         assert Workspace.load(path).project.name == name
     assert sorted(p.name for p in app.data.iterdir()) == sorted(codes)
+
+
+def test_pages_answer_while_a_job_changes_a_project(studio):
+    # converting takes minutes with vision: no page waits for it, the project's own
+    # included (it shows the project as last saved)
+    base, app = studio
+    codes = [call(f"{base}/api/projects", {"name": n})[1]["code"] for n in ("A", "B")]
+    held, done = threading.Event(), threading.Event()
+
+    def converting():
+        with app._changing(app.path(codes[0])):
+            held.set()
+            done.wait(10)
+
+    threading.Thread(target=converting, daemon=True).start()
+    held.wait(5)
+    try:
+        for code in codes:
+            with urllib.request.urlopen(f"{base}/api/projects/{code}", timeout=3) as res:
+                assert res.status == 200
+    finally:
+        done.set()

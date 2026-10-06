@@ -141,7 +141,10 @@ class Studio:
             # wait for 2–3 GB of weights to come off the disk.
             threading.Thread(target=self.model.warm, daemon=True).start()
         self._reviews: dict[Path, Review] = {}
-        self._lock = threading.RLock()
+        # One lock per project, held while a job changes it: converting one project
+        # (minutes, with vision) never holds up another, and pages only read files.
+        self._lock = threading.Lock()  # the two tables below
+        self._project_locks: dict[Path, threading.RLock] = {}
         for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
             left.unlink(missing_ok=True)
 
@@ -169,6 +172,11 @@ class Studio:
             if path not in self._reviews:
                 self._reviews[path] = Review(path)
             return self._reviews[path]
+
+    def _changing(self, ws_path: Path) -> threading.RLock:
+        """The lock held while a job changes this project."""
+        with self._lock:
+            return self._project_locks.setdefault(ws_path, threading.RLock())
 
     def status(self) -> dict:
         from shutil import which
@@ -365,7 +373,7 @@ class Studio:
             from .sheets import align, floor_walls
             from .analyse import analyse
 
-            with self._lock:
+            with self._changing(ws_path):
                 ws = Workspace.load(ws_path)
                 loc = ws.locations[0] if ws.locations else None
                 places = _floors_to_add(ws, plans)
@@ -410,7 +418,7 @@ class Studio:
                     off = ref.source.offset or (0.0, 0.0)
                     f.source.offset = (off[0] + tx / scale, off[1] + ty / scale)
                     job.say(f"  {f.name}: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} of walls line up")
-            with self._lock:
+            with self._changing(ws_path):
                 ws.save(ws_path)
             self._convert(ws_path, [f for fs in added.values() for f in fs], job)
             return {"floors": [f for fs in added.values() for f in fs]}
@@ -437,7 +445,7 @@ class Studio:
         if self.vision.available():
             job.say(f"looking at the rooms with {self.vision.name}")
         summaries = []
-        with self._lock:
+        with self._changing(ws_path):
             ws = Workspace.load(ws_path)
             for fid in floor_ids:
                 if ws.floor(fid).source is None:
@@ -454,7 +462,7 @@ class Studio:
 
     def place(self, code: str, building_id: str, body: dict) -> dict:
         ws_path = self.path(code)
-        with self._lock:
+        with self._changing(ws_path):
             ws = Workspace.load(ws_path)
             b = ws.building(building_id)
             lat, lon = float(body["lat"]), float(body["lon"])
@@ -472,7 +480,7 @@ class Studio:
             from .export import export_package
             from .validate import validate_package
 
-            with self._lock:
+            with self._changing(ws_path):
                 ws = Workspace.load(ws_path)
                 folder = ws_path.parent / "exports"
                 folder.mkdir(exist_ok=True)
@@ -499,8 +507,7 @@ class Studio:
         and not entered as an export."""
         from .export import export_package
 
-        with self._lock:
-            ws = Workspace.load(self.path(code))
+        ws = Workspace.load(self.path(code))  # saved whole (workspace.py): no lock to read it
         if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()

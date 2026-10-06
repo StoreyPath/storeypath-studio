@@ -10,6 +10,8 @@ Geometry is stored in local drawing coordinates, scaled to meters.
 from __future__ import annotations
 
 import json
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -181,8 +183,13 @@ class Workspace(BaseModel):
         return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
     def save(self, path: str | Path) -> None:
+        """Written beside it, then put in its place: a page reading the project while
+        a job saves it sees the old file or the new one, never half of one."""
+        path = Path(path)
         data = self.model_dump(mode="json", exclude_none=True)
-        Path(path).write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+        part = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.part")
+        part.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+        os.replace(part, path)
 
     def save_as_new_project(self, path: str | Path, name: str) -> Workspace:
         """A copy that is a *different* project: new project code, fresh history."""
