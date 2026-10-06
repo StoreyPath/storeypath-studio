@@ -40,11 +40,19 @@ TITLE_LABELS = re.compile(
     r"signature|registration|reg\.?\s*no|inquiry|enquiry|technical\s*manager|project\s*(no|name|title)?\s*:|"
     r"location\s*:|plot\s*(no|number)|"
     r"المالك|الاستشاري|المقاول|المشروع|رقم\s*المخطط|رقم\s*القطعة|التوقيع|الختم|رسم|تدقيق|اعتماد)")
+# A person's name with a title before it: "DR. KHALID", "ENG AHMED ALI", "د. أحمد". The
+# title before a room or a role ("DR. OFFICE", "ENG. ROOM") is a room's name, kept.
+ROLE_WORDS = (r"(office|offices|room|rooms|lounge|station|clinic|area|duty|on[- ]?call|rest|changing|toilet|wc|"
+              r"washroom|store|suite|cabin|desk|residence|residents|quarters|sleeping|lockers?|pantry|kitchen|"
+              r"library|studio|workshop|lab|laboratory|stat|entrance|corridor|waiting)\b")
+TITLED_NAME = re.compile(
+    r"(?i)(\b(mr|mrs|ms|miss|dr|eng|engr|sheikh|shaikh|h\.\s?h)\.?\s+(?!" + ROLE_WORDS + r")[^\W\d_]{2,}"
+    r"(\s+(al[- ])?[^\W\d_]{2,}){0,3}"
+    r"|(السيد|السيدة|الشيخ|المهندس|الدكتور|د\.)\s*[^\W\d_]{2,}(\s+[^\W\d_]{2,}){0,3})")
 PRIVATE_TEXT = re.compile(
-    r"(?i)(\b(mr|mrs|ms|miss|dr|eng|engr|sheikh|shaikh|h\.\s?h)\.?\s+[a-z]{2,}"
-    r"|السيد|السيدة|الشيخ|المهندس"
-    r"|[\w.+-]+@[\w-]+\.[\w.]+|\bwww\.|https?://|\b[\w-]+\.(com|net|org|ae|sa|qa|kw|om|bh)\b"
+    r"(?i)([\w.+-]+@[\w-]+\.[\w.]+|\bwww\.|https?://|\b[\w-]+\.(com|net|org|ae|sa|qa|kw|om|bh)\b"
     r"|(\+|00)\d[\d\s-]{6,}\d|\b(tel|phone|mob(ile)?|fax)\b\.?\s*[:.]?\s*\d|\bp\.?\s?o\.?\s*box\b"
+    r"|\bext(n|ension)?\b\.?\s*[:.]?\s*\d{2,5}\b"
     r"|\b(permit|licen[cs]e|plot|parcel|makani|reg(istration)?\.?)\s*(no|number|#)\b"
     r"|رخصة|رقم\s*القطعة|قطعة\s*رقم|هاتف|جوال|بريد)")
 PRIVATE_ATTRIBS = re.compile(r"(?i)client|owner|consult|drawn|designed|checked|approv|signat|stamp|phone|^tel|email|"
@@ -54,6 +62,9 @@ COLUMN_SHARE = 0.35  # a title column is at most this share of its height wide
 NEAR_SHARE = 0.05  # its labels start this close to the line that parts it off (share of the line)
 EXPLODE_DEPTH = 4  # blocks inside blocks, opened this deep to reach a title block
 BOX_LABEL_SHARE = 0.15  # a box is a title block when this share of its texts are title-block labels
+# a CAD program's own identifiers: a handle ("393E3"), a GUID
+IDENTIFIER = re.compile(r"[0-9A-Fa-f]{1,16}|\{?[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}?")
+KEPT_FOR_THEMSELVES = ("Extra data on entities (application: string)", "Stored records")  # where handles are
 HEADER_VARS = ("$LASTSAVEDBY", "$PROJECTNAME", "$HYPERLINKBASE", "$STYLESHEET")
 
 
@@ -104,13 +115,25 @@ def make_private(doc) -> PrivacyReport:
             layout.delete_entity(e)
             report.images += 1
         for e in list(layout.query("TEXT MTEXT ATTDEF")):
-            if PRIVATE_TEXT.search(_plain(e)):
+            text = _plain(e)
+            if PRIVATE_TEXT.search(text):
                 layout.delete_entity(e)
+                report.texts += 1
+            elif TITLED_NAME.search(text):
+                rest = " ".join(TITLED_NAME.sub(" ", text).split()).strip(" -:,.")
+                if rest:  # "CONSULTANT DR. KHALID": the room's name stays
+                    if e.dxftype() == "MTEXT":
+                        e.text = rest
+                    else:
+                        e.dxf.text = rest
+                else:
+                    layout.delete_entity(e)
                 report.texts += 1
         for insert in layout.query("INSERT"):
             for a in insert.attribs:
                 value = a.dxf.get("text", "")
-                if value and (PRIVATE_ATTRIBS.search(a.dxf.get("tag", "")) or PRIVATE_TEXT.search(value)):
+                if value and (PRIVATE_ATTRIBS.search(a.dxf.get("tag", "")) or PRIVATE_TEXT.search(value)
+                              or TITLED_NAME.search(value)):
                     a.dxf.text = ""
                     report.attributes += 1
     for d in list(doc.objects.query("IMAGEDEF")):  # the paths of the images
@@ -322,6 +345,17 @@ def _clear_hidden(doc, report: PrivacyReport) -> None:
             except AttributeError:
                 del root[key]
             report.hidden.append(key)
+    # Sheet setups name the printer (a computer or network name: "\\\\SERVER\\HP …") and the
+    # plot style (often after its owner: "ricky1.ctb")
+    setups = [layout.dxf_layout for layout in doc.layouts] + list(doc.objects.query("PLOTSETTINGS"))
+    plotted = False
+    for setup in setups:
+        for attr, blank in (("plot_configuration_file", "None"), ("current_style_sheet", ""), ("page_setup_name", "")):
+            if setup.dxf.get(attr) not in (None, "", blank):
+                setup.dxf.set(attr, blank)
+                plotted = True
+    if plotted:
+        report.hidden.append("printer and plot style names")
     for block in doc.blocks:  # external references: their paths name people's folders
         if block.block_record.is_xref if hasattr(block.block_record, "is_xref") else False:
             block.block.dxf.xref_path = ""
@@ -342,3 +376,99 @@ def _purge(doc, names: set[str]) -> None:
                 doc.blocks.delete_block(name, safe=False)
             except Exception:
                 pass
+
+
+def words(doc, title: str = "", cleaning: str | None = None) -> str:
+    """Every word and string left in a drawing, for a person to look through for
+    anything private left behind: what is written on the drawing (inside blocks
+    too), block attributes, the names of layers, blocks and styles, dimension text,
+    extra data on entities, sheet setups and file settings. Each different string
+    once, with how many times it is there."""
+    from collections import Counter
+
+    from .extract import _text_lines, _walk
+
+    found: dict[str, Counter] = {}
+    identifiers = Counter()  # handles and GUIDs: numbers CAD programs keep, not words
+
+    def add(section: str, value) -> None:
+        v = " ".join(str(value).split())
+        if not v:
+            return
+        bare = v.split(": ", 1)[-1]
+        if section in KEPT_FOR_THEMSELVES and IDENTIFIER.fullmatch(bare):
+            identifiers[section] += 1
+            return
+        found.setdefault(section, Counter())[v] += 1
+
+    for e, _ in _walk(doc.modelspace()):
+        kind = e.dxftype()
+        if kind in ("TEXT", "MTEXT", "ATTRIB"):
+            add("Written on the drawing", " ".join(_text_lines(e)))
+        elif kind == "DIMENSION" and e.dxf.get("text", "") not in ("", "<>", " "):
+            add("Dimension text", e.dxf.get("text"))
+        if kind == "INSERT":
+            for a in e.attribs:
+                add("Block attributes (tag: value)", f"{a.dxf.get('tag', '')}: {a.dxf.get('text', '')}")
+    for block in doc.blocks:
+        if block.name.lower().startswith(("*model", "*paper")):
+            continue
+        if not block.name.startswith("*"):
+            add("Block names", block.name)
+        for a in block.query("ATTDEF"):
+            add("Block attribute definitions (tag | prompt | default)",
+                f"{a.dxf.get('tag', '')} | {a.dxf.get('prompt', '')} | {a.dxf.get('text', '')}")
+    for layer in doc.layers:
+        add("Layer names", layer.dxf.name)
+        try:
+            add("Layer descriptions", layer.description)
+        except Exception:  # none, or kept in a way this reader does not know
+            pass
+    for style in doc.styles:
+        add("Text styles and fonts", " | ".join(v for v in (style.dxf.get("name", ""), style.dxf.get("font", ""),
+                                                            style.dxf.get("bigfont", "")) if v))
+    for lt in doc.linetypes:
+        add("Line types", f"{lt.dxf.name} {lt.dxf.get('description', '')}")
+    for ds in doc.dimstyles:
+        add("Dimension styles", ds.dxf.name)
+    for app in doc.appids:
+        add("Applications that left data", app.dxf.name)
+    for layout in [doc.modelspace(), *doc.blocks]:
+        for e in layout:
+            if not e.xdata:
+                continue
+            for app, tags in e.xdata.data.items():
+                for t in tags:
+                    if isinstance(t.value, str):
+                        add("Extra data on entities (application: string)", f"{app}: {t.value}")
+    for layout in doc.layouts:
+        d = layout.dxf_layout.dxf
+        add("Sheet setups (sheet | printer | plot style | setup)",
+            " | ".join(str(v) for v in (layout.name, d.get("plot_configuration_file", ""),
+                                        d.get("current_style_sheet", ""), d.get("page_setup_name", ""))))
+    for var in doc.header.varnames():
+        v = doc.header.get(var)
+        if isinstance(v, str) and v:
+            add("File settings", f"{var} = {v}")
+    try:
+        for k, v in doc.header.custom_vars:
+            add("File properties", f"{k} = {v}")
+    except (AttributeError, TypeError):
+        pass
+    for x in doc.objects.query("XRECORD"):
+        for t in x.tags:
+            if isinstance(t.value, str):
+                add("Stored records", t.value)
+
+    lines = [f"Words and strings in {title or 'the drawing'}, as the project keeps it.",
+             "Look through it for anything private left behind (names, phone numbers, the client, the",
+             "consultant, computer or network names) and report it, so it can be taken out too."]
+    if cleaning:
+        lines += ["", f"When it was added: {cleaning}."]
+    for section, counts in found.items():
+        lines += ["", f"== {section} ({len(counts)} different) =="]
+        lines += [f"{n:6}  {v}" for v, n in sorted(counts.items(), key=lambda kv: kv[0].lower())]
+    if identifiers:
+        lines += ["", "Left out: " + ", ".join(f"{n} handles and GUIDs in {s.lower()}" for s, n in identifiers.items())
+                  + " (numbers CAD programs keep for themselves, not words)."]
+    return "\n".join(lines) + "\n"

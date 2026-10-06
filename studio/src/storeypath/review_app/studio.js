@@ -154,7 +154,28 @@ async function projectPage(code) {
     plansArea,
     buildingsCard(code, p),
     exportCard(code, p),
+    deleteCard(code, p),
   );
+}
+
+/** Deleting a project: everything in it goes, once its name is typed. */
+function deleteCard(code, p) {
+  const remove = async () => {
+    const typed = prompt(`Delete ${p.project.name} and everything in it: its drawings, floors, corrections and exports? ` +
+      "This cannot be undone. Type the project's name to delete it:");
+    if (typed === null) return;
+    try {
+      await api(`projects/${code}/delete`, { confirm: typed });
+      toast(`${p.project.name} deleted`);
+      location.hash = "#/";
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+  return el("section", { class: "card danger-zone" },
+    el("h2", {}, "Delete project"),
+    el("p", { class: "muted small" }, "Its drawings, floors, corrections and exports all go. This cannot be undone."),
+    el("button", { type: "button", class: "danger", onclick: remove }, "Delete project…"));
 }
 
 // ---- drawings and plans ----------------------------------------------------------
@@ -180,7 +201,7 @@ function drawingsCard(code, p, plansArea) {
         if (cleaned) {
           const result = await runJob(sent);
           added.push(result.drawing);
-          toast(`${file.name} → ${result.drawing}: ${result.privacy.summary}`, false, 9000);
+          toast(`${file.name} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
         } else {
           added.push((await sent).drawing);
         }
@@ -203,6 +224,9 @@ function drawingsCard(code, p, plansArea) {
     privacy,
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
       el("li", {}, el("code", { class: "grow" }, d),
+        el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/drawings/${encodeURIComponent(d)}/words`,
+          target: "_blank", title: "Every word and string left in this drawing, to look through for anything private left behind" },
+          "Words"),
         el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,
           onclick: () => findPlans(code, d, plansArea) }, findingPlans === d ? "Finding plans…" : "Find plans")))) : null,
   );

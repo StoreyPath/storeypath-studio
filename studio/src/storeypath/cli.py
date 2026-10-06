@@ -278,6 +278,19 @@ def private(
 
 
 @app.command()
+def words(drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")]):
+    """Every word and string in a drawing (written on it, attributes, layer and block
+    names, sheet setups, file settings), to look through for anything private."""
+    from .cad import read_drawing
+    from .privacy import words as listed
+
+    try:
+        typer.echo(listed(read_drawing(drawing), drawing.name), nl=False)
+    except DrawingError as e:
+        _fail(str(e))
+
+
+@app.command()
 def align(
     workspace: WorkspaceArg,
     building_id: str,

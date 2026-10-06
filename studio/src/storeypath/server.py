@@ -13,10 +13,13 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/status
     GET  /api/projects                         POST /api/projects {name}
     GET  /api/projects/<code>
+    POST /api/projects/<code>/delete {confirm: its name}  the project and everything in it, gone
     PUT  /api/projects/<code>/drawings/<name>[?private=0]  (the file as the body)
                                                → job: the drawing kept without its
                                                private information, as drawing-N.dxf
                                                (privacy.py); with private=0 kept as sent
+    GET  /api/projects/<code>/drawings/<name>/words  every word and string left in it (text), to look
+                                               through for anything private left behind
     POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
@@ -58,6 +61,7 @@ from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, plan_leve
 from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
+from .privacy import words
 from .review import CONTENT_TYPES, File, NotFound, Review, floor_print, floor_print_png
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
@@ -65,6 +69,7 @@ from .workspace import Placement, SourceDrawing, Workspace
 MAX_UPLOAD = 512 * 1024 * 1024
 DRAWING_TYPES = (".dwg", ".dxf")
 INCOMING = ".incoming-"  # a drawing as sent, until its private copy is made
+WORDS = ".words.txt"  # beside a drawing: every word and string left in it
 DRAWING_NAME = re.compile(r"drawing-(\d+)\.dxf")
 
 
@@ -242,7 +247,8 @@ class Studio:
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings})
         drawings = sorted(p.name for p in (path.parent / "drawings").glob("*")
-                          if p.suffix.lower() in DRAWING_TYPES and not p.name.startswith(INCOMING)) \
+                          if p.suffix.lower() in DRAWING_TYPES and not p.name.startswith(INCOMING)
+                          and not p.name.endswith(WORDS)) \
             if (path.parent / "drawings").is_dir() else []
         exports = sorted((p.name for p in (path.parent / "exports").glob("*.storeypath")), reverse=True) \
             if (path.parent / "exports").is_dir() else []
@@ -282,11 +288,49 @@ class Studio:
                 out = folder / f"drawing-{max(taken, default=0) + 1}.dxf"
                 doc.saveas(out)
                 job.say(f"kept as {out.name}")
+                _words_of(out).write_text(words(doc, out.name, report.summary()), encoding="utf-8")
+                job.say(f"every word left in it: Words, beside {out.name}")
             finally:
                 incoming.unlink(missing_ok=True)
             return {"drawing": out.name, "privacy": report.view()}
 
         return self.jobs.submit("Adding a drawing without its private information", run)
+
+    def words(self, code: str, name: str) -> File:
+        """Every word and string left in a drawing, written when it was added (or now,
+        for one added before), as text."""
+        path = self._drawing(code, name)
+        kept = _words_of(path)
+        if not kept.exists() or kept.stat().st_mtime < path.stat().st_mtime:
+            from .cad import read_drawing
+
+            kept.write_text(words(read_drawing(path), path.name), encoding="utf-8")
+        return File(kept.read_bytes(), "text/plain; charset=utf-8")
+
+    def delete(self, code: str, body: dict) -> dict:
+        """A project and everything in it (drawings, floors, corrections, exports),
+        gone: only when its name is typed to confirm, no job is changing it, and it has
+        a folder of its own in the data folder."""
+        import shutil
+
+        path = self.path(code)
+        ws = Workspace.load(path)
+        if (body.get("confirm") or "").strip() != ws.project.name.strip():
+            raise ValueError("type the project's name to delete it")
+        folder = path.parent
+        if folder.resolve().parent != self.data.resolve() or folder.name != ws.id:
+            raise ValueError("this project is not in a folder of its own: remove it by hand")
+        lock = self._changing(path)
+        if not lock.acquire(blocking=False):
+            raise ValueError("a job is working on this project: delete it when the job is done")
+        try:
+            shutil.rmtree(folder)
+            with self._lock:
+                self._reviews.pop(path, None)
+                self._project_locks.pop(path, None)
+        finally:
+            lock.release()
+        return {"deleted": code, "name": ws.project.name}
 
     def _drawing(self, code: str, name: str) -> Path:
         path = self.path(code).parent / "drawings" / Path(name).name
@@ -562,6 +606,10 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[tuple[str, str, int
     return out
 
 
+def _words_of(drawing: Path) -> Path:
+    return drawing.with_name(drawing.name + WORDS)
+
+
 def _code(text: str) -> str:
     """A building code from its name: its first word ("Main building" → MAIN)."""
     words = re.findall(r"[A-Z0-9]+", text.upper())
@@ -684,6 +732,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.jobs.get(job_id)
             case "GET", ["projects", code]:
                 return studio.project(code)
+            case "POST", ["projects", code, "delete"]:
+                return studio.delete(code, body)
+            case "GET", ["projects", code, "drawings", name, "words"]:
+                return studio.words(code, name)
             case "PUT", ["projects", code, "drawings", name]:
                 return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0")
             case "POST", ["projects", code, "drawings", name, "plans"]:

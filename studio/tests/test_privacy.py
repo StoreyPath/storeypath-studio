@@ -91,3 +91,26 @@ def test_private_copy_from_the_command_line(tmp_path):
     assert result.exit_code == 0, result.output
     assert "1 title block(s)" in result.output
     assert "SALEM HOUSE" not in _texts(ezdxf.readfile(tmp_path / "out.dxf"))
+
+
+def test_rooms_named_for_a_role_stay_and_names_go(tmp_path):
+    # A large building's rooms: "DR. OFFICE" is a room, "DR. KHALID" a person; the printer
+    # and plot style a sheet was set up with name a computer and its owner.
+    from storeypath.privacy import words
+
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    for i, t in enumerate(["DR. OFFICE", "ENG. ROOM", "CONSULTANT DR. KHALID", "MR. JOHN SAMPLE", "EXT. 2345",
+                           "NURSE STATION"]):
+        msp.add_text(t, height=0.2).set_placement((0, i))
+    layout = doc.layouts.get("Layout1")
+    layout.dxf_layout.dxf.plot_configuration_file = "\\\\\\\\SERVER\\\\HP Officejet"
+    layout.dxf_layout.dxf.current_style_sheet = "ricky1.ctb"
+    report = make_private(doc)
+    texts = _texts(doc)
+    assert {"DR. OFFICE", "ENG. ROOM", "CONSULTANT", "NURSE STATION"} <= texts
+    assert not texts & {"CONSULTANT DR. KHALID", "MR. JOHN SAMPLE", "EXT. 2345"}
+    assert "printer and plot style names" in report.hidden
+    listed = words(doc, "test.dxf")
+    assert "NURSE STATION" in listed and "Layer names" in listed
+    assert "SERVER" not in listed and "ricky" not in listed

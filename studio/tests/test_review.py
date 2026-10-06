@@ -257,7 +257,12 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     assert status == 200
     added = wait(base, job)  # kept without its private information, under a plain name
     assert added["drawing"] == "drawing-1.dxf" and "$LASTSAVEDBY" in added["privacy"]["hidden"]
-    assert [p.name for p in (app.path(code).parent / "drawings").iterdir()] == ["drawing-1.dxf"]
+    assert sorted(p.name for p in (app.path(code).parent / "drawings").iterdir()) == ["drawing-1.dxf",
+                                                                                     "drawing-1.dxf.words.txt"]
+    status, words = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/words")
+    words = words.decode()
+    assert status == 200 and "OFFICE" in words and "someone" not in words  # what is left, and only that
+    assert "When it was added: removed" in words
     assert call(f"{base}/api/projects/{code}")[1]["drawings"] == ["drawing-1.dxf"]
     # as sent, when asked
     _, kept = call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=sheet.read_bytes())
@@ -507,3 +512,19 @@ def test_a_space_divided_by_a_line_drawn_in_review_has_two_zones(review):
     assert way["type"] == "opening" and len(way["connects"]) == 2
     r.edit(f_id, {"remove": {"at": [mid, (y0 + y1) / 2]}})  # the dividing line
     assert r.floor(f_id)["edits"]["dividers"] == []
+
+
+def test_a_project_is_deleted_only_when_its_name_is_typed(studio):
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Old site"})
+    code = created["code"]
+    folder = app.path(code).parent
+    status, error = call(f"{base}/api/projects/{code}/delete", {"confirm": "old"})
+    assert status == 400 and "type the project's name" in error["error"] and folder.exists()
+    with app._changing(app.path(code)):  # a job working on it
+        status, error = call(f"{base}/api/projects/{code}/delete", {"confirm": "Old site"})
+    assert status == 400 and "job" in error["error"] and folder.exists()
+    status, done = call(f"{base}/api/projects/{code}/delete", {"confirm": "Old site"})
+    assert status == 200 and done["deleted"] == code
+    assert not folder.exists() and code not in [p["code"] for p in call(f"{base}/api/projects")[1]]
+    assert call(f"{base}/api/projects/{code}")[0] == 404

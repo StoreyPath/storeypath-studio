@@ -112,3 +112,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .page { padding: 16px 16px 120px; }
   .placement { grid-template-columns: 1fr 1fr; }
 }
+
+.danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
+button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
