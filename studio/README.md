@@ -163,7 +163,15 @@ person makes at a glance:
 - an unnamed area that is not a room (the garden inside a plot wall, a sheet frame, a
   gap) is set aside: listed under "Hidden and ignored", for a person to restore;
 - a room with no type gets the one its furniture and fixtures show (a bed, a WC);
-- an outline holding several rooms, or only part of one, is listed for review.
+- an outline holding several rooms is divided where they meet: the lines that may
+  divide it (a line drawn across it, a wall carried on past where it stops) are shown
+  one at a time in blue, its two sides lettered, and the model says what each side
+  is. Where the sides differ, code cuts exactly along the line, then each piece is
+  looked at on its own: a cut stays only where both pieces are rooms, of different
+  kinds (a strip along the windows is part of the room it was cut from). The pieces
+  take the names of the labels in them, the doors go to the piece they stand by, and
+  an opening joins the pieces;
+- an outline that is only part of a room is listed for review.
 
 Every decision is marked `vision` and listed for a person to check. The answers are
 kept in the workspace by room shape, so converting again asks only about rooms that

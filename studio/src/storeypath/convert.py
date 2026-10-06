@@ -16,7 +16,8 @@ from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
-from .extract import ExtractedSpace, FloorExtraction, add_lift_doors, extract_floor, keep_to_the_building
+from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
+                      keep_to_the_building)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -24,7 +25,7 @@ from .profile import AUTO, load_profile, resolve_profile
 from .reading import TextReader
 from .symbols import MODEL as SYMBOLS_MODEL
 from .symbols import Symbol, SymbolSpotter, from_records, to_records, type_rooms
-from .vision import VisionModel, look_at_rooms
+from .vision import FloorPrint, VisionModel, look_at_rooms, split_merged
 from .types import VERTICAL_TYPES, SpaceType
 from .workspace import ObjectRecord, Workspace, utcnow
 
@@ -85,7 +86,13 @@ def convert_floor(
     type_rooms(extraction.spaces, spotted)
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
-        look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say)
+        sheet = FloorPrint(doc, extraction.scale)
+        merged = look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say,
+                               sheet=sheet)
+        if pieces := split_merged(extraction, doc, src, sha, vision, ws.vision, merged, say, sheet):
+            _name_pieces(extraction, pieces, profile, reader, spotted)
+            look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say,
+                          only=set(pieces), sheet=sheet)
         keep_to_the_building(extraction)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
@@ -130,6 +137,17 @@ def _read_room_types(ex: FloorExtraction, reader: TextReader) -> None:
     for s in ex.spaces:
         if s.name and s.type == SpaceType.UNSPECIFIED and (t := reader.room_type(s.name)) is not None:
             s.type, s.type_source = t, "model"
+
+
+def _name_pieces(ex: FloorExtraction, pieces: list[int], profile, reader: TextReader, spotted) -> None:
+    """Rooms divided by vision, named from the labels inside each piece and typed
+    as any room is."""
+    spaces = [ex.spaces[i] for i in pieces]
+    _assign_labels(spaces, ex.labels, profile, [])
+    for s in spaces:
+        s.type, s.type_source = profile.classify(s.name, s.blocks, s.layer)
+    _read_room_types(ex, reader)
+    type_rooms(spaces, spotted)
 
 
 def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> ConversionReport:
