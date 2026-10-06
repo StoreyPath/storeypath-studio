@@ -66,6 +66,20 @@ class SourceDrawing(BaseModel):
     sha256: str | None = None  # of the file last converted
 
 
+class DrawnOpening(BaseModel):
+    type: Literal["door", "window"]
+    span: list[list[float]]  # jamb to jamb, local meters
+
+
+class FloorEdits(BaseModel):
+    """What a person drew on a floor in review, kept through every conversion: walls
+    the drawing leaves out (they part spaces as drawn walls do), and doors and windows
+    it does not show."""
+
+    walls: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
+    openings: list[DrawnOpening] = Field(default_factory=list)
+
+
 class Floor(BaseModel):
     code: str
     name: str
@@ -85,6 +99,7 @@ class Floor(BaseModel):
     # they were spotted in: the drawing, region, offset and scale
     symbols: list[dict[str, Any]] | None = None
     symbols_key: str | None = None
+    edits: FloorEdits = Field(default_factory=FloorEdits)  # drawn by a person in review
 
 
 class Building(BaseModel):

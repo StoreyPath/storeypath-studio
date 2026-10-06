@@ -26,9 +26,14 @@ const state = {
   underlay: { lines: null, print: null }, // the floor whose drawing each layer holds
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
-  showHidden: false, // show spaces marked hidden or ignored
+  showHidden: false, // show what was deleted (or hidden)
   fitted: false,
   filter: "",
+  item: null, // a door, window or drawn wall chosen: {kind: "door", id} or {kind: "wall", at}
+  tool: null, // drawing: "wall", "door" or "window"
+  wallStart: null, // a wall being drawn: where it starts
+  busy: false, // an edit is being saved and the floor read again
+  segments: null, // the floor's wall edges, for snapping to
 };
 
 // ---- helpers -------------------------------------------------------------
@@ -191,6 +196,10 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   state.floor = floor;
   state.byId = new Map(floor.spaces.map((s) => [s.id, s]));
   state.selected = null;
+  state.item = null;
+  state.segments = null;
+  state.wallStart = null;
+  renderItemEditor();
   if (changed) {
     state.drawingBounds = null;
     $("drawing").replaceChildren(); // never show another floor's drawing underneath
@@ -372,14 +381,29 @@ function renderPlan() {
     const sweep = (q[0] - h[0]) * (shut[1] - h[1]) - (q[1] - h[1]) * (shut[0] - h[0]) > 0 ? 1 : 0;
     return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`, class: "swing" });
   };
+  const shown = f.doors.filter((d) => state.showHidden || !d.ignored); // deleted: left out
   $("doors").replaceChildren(
     ...dividers.map((points) => svg("polyline", { points, class: "divider" })),
-    ...f.doors.filter((d) => d.span && !swung.includes(d)).map((d) => svg("line", {
+    ...shown.filter((d) => d.span && !swung.includes(d)).map((d) => svg("line", {
       x1: d.span[0][0], y1: d.span[0][1], x2: d.span[1][0], y2: d.span[1][1], class: `span ${kind(d)}` })),
-    ...swung.flatMap((d) => d.swings.map((s) => leaf(d, s))),
-    ...f.doors.map((d) => svg("circle", {
-      cx: d.point[0], cy: d.point[1], r: d.type === "window" ? 0.07 : 0.16, class: kind(d) })),
+    ...swung.filter((d) => shown.includes(d)).flatMap((d) => d.swings.map((s) => leaf(d, s))),
+    ...shown.map((d) => {
+      const mark = svg("circle", { cx: d.point[0], cy: d.point[1], r: d.type === "window" ? 0.07 : 0.16,
+        class: `${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}` });
+      mark.dataset.door = d.id;
+      return mark;
+    }),
   );
+  // Walls drawn in review, over the rest: chosen by a click, to take them away
+  $("drawn").replaceChildren(...(f.edits?.walls || []).flatMap(([a, b]) => {
+    const at = `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}`;
+    const chosen = state.item?.kind === "wall" && state.item.at.join(",") === at;
+    return ["hit", chosen ? "selected" : ""].map((cls) => {
+      const line = svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: cls });
+      line.dataset.at = at;
+      return line;
+    });
+  }));
   placeLabels();
 }
 
@@ -615,6 +639,7 @@ function setupMap() {
   $("show-hidden").addEventListener("change", (e) => {
     state.showHidden = e.target.checked;
     if (!state.floor) return;
+    renderPlan();
     state.floor.spaces.forEach(styleSpace);
     placeLabels();
     renderLists();
@@ -637,6 +662,7 @@ function bindPane(pane) {
   pane.addEventListener("pointermove", (e) => {
     const [sx, sy] = local(e);
     showCursor(pane, sx, sy);
+    if (state.tool && !drag?.moved) preview(planPoint(sx, sy));
     if (!drag) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
@@ -652,13 +678,13 @@ function bindPane(pane) {
     drag = null;
     pane.classList.remove("dragging");
     if (moved) return;
-    if (pane === $("svg")) {
-      select(target?.dataset?.id || null);
-    } else { // on the print: the space drawn there
-      const [sx, sy] = local(e);
-      const { k, tx, ty } = state.view;
-      select(spaceAt((sx - tx) / k, (ty - sy) / k)?.id || null);
-    }
+    const p = planPoint(...local(e));
+    if (state.tool) return toolClick(p);
+    const door = target?.dataset?.door || (pane !== $("svg") ? doorAt(p)?.id : null);
+    if (door) return selectItem({ kind: "door", id: door });
+    if (target?.dataset?.at) return selectItem({ kind: "wall", at: target.dataset.at.split(",").map(Number) });
+    // on the plan, what was clicked; on the print, the space drawn there
+    select(pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null);
   };
   pane.addEventListener("pointerup", end);
   pane.addEventListener("pointercancel", () => {
@@ -688,11 +714,11 @@ function listItem(s, withReasons) {
   const li = el("li", { "data-id": s.id, class: tucked(s) ? "tucked" : "" },
     swatch(s.type),
     el("span", {}, title(s)),
-    el("span", { class: "sub" }, s.ignored ? "ignored" : s.hidden ? "hidden"
+    el("span", { class: "sub" }, s.ignored ? "deleted" : s.hidden ? "hidden"
       : `${s.kind === "zone" ? "zone · " : ""}${typeLabel(s.type)} · ${code(s.id)}`),
     withReasons ? el("span", { class: "why" }, s.reasons.join("; "),
-      el("span", { class: "quicks" }, quick("Ignore", "ignored", "Not worth anything: off the list, kept with its ID"),
-        quick("Hide", "hidden", "Real, but not shown unless asked for"))) : null,
+      el("span", { class: "quicks" }, quick("Delete", "ignored",
+        "Not there, or not worth anything: out of the plan and the package, kept with its ID"))) : null,
   );
   li.classList.toggle("selected", s.id === state.selected);
   li.addEventListener("click", () => select(s.id, { fly: true }));
@@ -714,7 +740,7 @@ function renderLists() {
   const shown = all.filter((s) => matches(s, state.filter));
   const tuckedCount = units().length - units().filter((s) => !tucked(s)).length;
   $("space-count").textContent = (state.filter ? `(${shown.length} of ${all.length})` : `(${all.length})`)
-    + (tuckedCount && !state.showHidden ? ` · ${tuckedCount} hidden or ignored` : "");
+    + (tuckedCount && !state.showHidden ? ` · ${tuckedCount} deleted` : "");
   const items = shown.slice(0, LIST_LIMIT).map((s) => listItem(s, false));
   if (shown.length > LIST_LIMIT) items.push(el("li", { class: "meta" }, `${shown.length - LIST_LIMIT} more…`));
   $("space-list").replaceChildren(...items);
@@ -738,6 +764,7 @@ function markListSelection() {
 // ---- selection and editing -----------------------------------------------
 
 function select(id, { fly = false } = {}) {
+  if (id && state.item) selectItem(null);
   const previous = state.byId.get(state.selected);
   state.selected = id && state.byId.has(id) ? id : null;
   if (previous) styleSpace(previous);
@@ -796,9 +823,8 @@ function updateEditorState() {
     save.disabled = false;
   }
   $("ed-reset").hidden = !s.correction;
-  $("ed-ignore").textContent = s.ignored ? "Don't ignore" : "Ignore";
-  $("ed-hide").textContent = s.hidden ? "Show" : "Hide";
-  $("ed-flags").textContent = s.ignored ? "Ignored" : s.hidden ? "Hidden" : "";
+  $("ed-delete").textContent = s.ignored ? "Restore" : "Delete";
+  $("ed-flags").textContent = s.ignored ? "Deleted" : s.hidden ? "Hidden" : "";
 }
 
 function renderEditor() {
@@ -842,7 +868,7 @@ async function saveSpace(body, id = state.selected) {
   floor.review = reviewSpaces().length;
   fillFloorSelect();
   const flagged = "hidden" in body ? (body.hidden ? "hidden" : "shown again")
-    : "ignored" in body ? (body.ignored ? "ignored" : "no longer ignored") : null;
+    : "ignored" in body ? (body.ignored ? "deleted" : "restored") : null;
   toast(flagged ? `${title(updated)}: ${flagged}` : body.reset ? "Corrections removed" : `Saved ${code(updated.id)}`);
   if (!visible(updated) && state.selected === updated.id) select(null);
 }
@@ -860,13 +886,7 @@ async function reconvert() {
   button.disabled = true;
   $("status").textContent = "Re-reading drawing…";
   try {
-    let job = await request(`${BASE}/floors/${id}/convert`, {});
-    while (job.state === "waiting" || job.state === "running") {
-      $("status").textContent = job.log.at(-1) || "Re-reading drawing…";
-      await new Promise((r) => setTimeout(r, 700));
-      job = await request(`jobs/${job.id}`);
-    }
-    if (job.state === "failed") throw new Error(job.error);
+    const job = await followJob(await request(`${BASE}/floors/${id}/convert`, {}), "Re-reading drawing…");
     toast(job.result.summaries.join("\n"));
     state.project = await request(`${BASE}/review`);
     fillFloorSelect();
@@ -876,6 +896,247 @@ async function reconvert() {
     $("status").textContent = "";
   } finally {
     button.disabled = false;
+  }
+}
+
+/** Wait for a server job, saying what it is doing; resolves with the job when done. */
+async function followJob(job, saying) {
+  while (job.state === "waiting" || job.state === "running") {
+    $("status").textContent = job.log.at(-1) || saying;
+    await new Promise((r) => setTimeout(r, 700));
+    job = await request(`jobs/${job.id}`);
+  }
+  $("status").textContent = "";
+  if (job.state === "failed") throw new Error(job.error);
+  return job;
+}
+
+// ---- drawing what the drawing leaves out ---------------------------------
+// A wall, a door or a window drawn here is kept with the floor and read with its
+// drawing every time (walls part spaces as drawn walls do); the floor is read again
+// at once. Plan coordinates are local meters, as the spaces are.
+
+const HINTS = {
+  wall: "Wall: click where it starts and where it ends (it snaps to walls). Esc to stop.",
+  door: "Door: click on a wall where it goes. Esc to stop.",
+  window: "Window: click on a wall where it goes. Esc to stop.",
+};
+
+function planPoint(sx, sy) {
+  const { k, tx, ty } = state.view;
+  return [(sx - tx) / k, (ty - sy) / k];
+}
+
+function setTool(tool) {
+  state.tool = tool && state.tool !== tool ? tool : null;
+  state.wallStart = null;
+  for (const b of document.querySelectorAll("[data-tool]")) b.classList.toggle("active", b.dataset.tool === state.tool);
+  const opening = state.tool === "door" || state.tool === "window";
+  $("tool-width-label").hidden = !opening;
+  if (opening) $("tool-width").value = state.tool === "door" ? "0.9" : "1.2";
+  $("map").classList.toggle("drawing-tool", Boolean(state.tool));
+  clearPreview();
+  if (state.tool) {
+    select(null);
+    selectItem(null);
+    toast(HINTS[state.tool]);
+  }
+}
+
+/** The floor's wall edges (and the walls drawn here), for snapping to. */
+function wallSegments() {
+  if (state.segments) return state.segments;
+  const list = [];
+  const add = (ring) => { for (let i = 0; i + 1 < ring.length; i++) list.push([ring[i], ring[i + 1]]); };
+  if (state.floor?.walls) rings(state.floor.walls).forEach(add);
+  (state.floor?.edits?.walls || []).forEach(add);
+  state.segments = list;
+  return list;
+}
+
+function nearestOnWalls(p, reach) {
+  let best = null;
+  for (const [a, b] of wallSegments()) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const q = [a[0] + t * dx, a[1] + t * dy];
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (d <= reach && (!best || d < best.d)) best = { q, d, seg: [a, b] };
+  }
+  return best;
+}
+
+function insideWalls(p) {
+  let inside = false;
+  for (const ring of state.floor?.walls ? rings(state.floor.walls) : []) {
+    for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
+      const [xj, yj] = ring[j], [xk, yk] = ring[k];
+      if ((yj > p[1]) !== (yk > p[1]) && p[0] < ((xk - xj) * (p[1] - yj)) / (yk - yj) + xj) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Where a wall end goes: a wall corner or edge within a few pixels, else straight
+ * across or along from where the wall starts when nearly so, else the point. */
+function snapWall(p) {
+  const reach = 10 / state.view.k;
+  let corner = null;
+  for (const [a, b] of wallSegments()) {
+    for (const v of [a, b]) {
+      const d = Math.hypot(p[0] - v[0], p[1] - v[1]);
+      if (d <= reach && (!corner || d < corner.d)) corner = { q: v, d };
+    }
+  }
+  if (corner) return corner.q;
+  const edge = nearestOnWalls(p, reach);
+  if (edge) return edge.q;
+  const s = state.wallStart;
+  if (s) {
+    const angle = Math.atan2(p[1] - s[1], p[0] - s[0]);
+    const square = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+    if (Math.abs(angle - square) < (7 * Math.PI) / 180) {
+      const len = Math.hypot(p[0] - s[0], p[1] - s[1]);
+      return [s[0] + len * Math.cos(square), s[1] + len * Math.sin(square)];
+    }
+  }
+  return p;
+}
+
+/** A door or window placed on the wall nearest the point: along it, in its middle. */
+function openingAt(p) {
+  const width = Math.min(Math.max(parseFloat($("tool-width").value) || 0.9, 0.3), 6);
+  const near = nearestOnWalls(p, Math.max(1.0, 12 / state.view.k));
+  if (!near) return null;
+  const [a, b] = near.seg;
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], n = [-u[1], u[0]];
+  const t = state.floor.wall_thickness || 0.2;
+  const into = insideWalls([near.q[0] + n[0] * 0.05, near.q[1] + n[1] * 0.05]) ? 1 : -1;
+  const c = [near.q[0] + n[0] * into * (t / 2), near.q[1] + n[1] * into * (t / 2)];
+  return [[c[0] - (u[0] * width) / 2, c[1] - (u[1] * width) / 2], [c[0] + (u[0] * width) / 2, c[1] + (u[1] * width) / 2]];
+}
+
+function clearPreview() {
+  for (const id of ["preview", "preview-print"]) $(id).replaceChildren();
+}
+
+function preview(p) {
+  if (state.busy) return;
+  const r = 5 / state.view.k;
+  let shapes = [];
+  if (state.tool === "wall") {
+    const end = snapWall(p);
+    shapes = state.wallStart
+      ? [() => svg("line", { x1: state.wallStart[0], y1: state.wallStart[1], x2: end[0], y2: end[1] }),
+        () => svg("circle", { cx: state.wallStart[0], cy: state.wallStart[1], r })]
+      : [];
+    shapes.push(() => svg("circle", { cx: end[0], cy: end[1], r }));
+  } else {
+    const span = openingAt(p);
+    if (span) shapes = [() => svg("line", { x1: span[0][0], y1: span[0][1], x2: span[1][0], y2: span[1][1], class: state.tool })];
+  }
+  for (const id of ["preview", "preview-print"]) $(id).replaceChildren(...shapes.map((make) => make()));
+}
+
+function toolClick(p) {
+  if (state.busy) return;
+  if (state.tool === "wall") {
+    const at = snapWall(p);
+    if (!state.wallStart) {
+      state.wallStart = at;
+      preview(p);
+      return;
+    }
+    const wall = [state.wallStart, at];
+    state.wallStart = null;
+    if (Math.hypot(at[0] - wall[0][0], at[1] - wall[0][1]) < 0.1) return;
+    submitEdit({ add: { wall } }, "Adding the wall…");
+  } else {
+    const span = openingAt(p);
+    if (!span) return toast("Click on a wall (or nearer one)", true);
+    submitEdit({ add: { opening: { type: state.tool, span } } }, `Adding the ${state.tool}…`);
+  }
+}
+
+async function submitEdit(body, saying) {
+  state.busy = true;
+  $("map").classList.add("busy");
+  try {
+    await followJob(await request(`${BASE}/floors/${state.floor.id}/edits`, body), saying);
+    state.project = await request(`${BASE}/review`);
+    fillFloorSelect();
+    await openFloor(state.floor.id, null, { keepView: true });
+    toast(body.remove ? "Taken away" : "Added; the floor was read again");
+  } catch (e) {
+    toast(`Not saved: ${e.message}`, true);
+  } finally {
+    state.busy = false;
+    $("map").classList.remove("busy");
+    clearPreview();
+  }
+}
+
+function doorAt(p) {
+  const reach = 10 / state.view.k;
+  let best = null;
+  for (const d of state.floor?.doors || []) {
+    if (d.ignored && !state.showHidden) continue;
+    const dist = Math.hypot(d.point[0] - p[0], d.point[1] - p[1]);
+    if (dist <= reach && (!best || dist < best.dist)) best = { d, dist };
+  }
+  return best?.d || null;
+}
+
+function selectItem(item) {
+  state.item = item;
+  if (item) select(null);
+  renderItemEditor();
+  if (state.floor) renderPlan();
+}
+
+function renderItemEditor() {
+  const item = state.item;
+  $("item-editor").hidden = !item;
+  if (!item) return;
+  if (item.kind === "wall") {
+    const w = (state.floor.edits?.walls || []).find(([a, b]) => `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}` === item.at.join(","));
+    $("it-title").textContent = "Wall drawn here";
+    $("it-id").textContent = "";
+    $("it-meta").textContent = w ? `${Math.hypot(w[1][0] - w[0][0], w[1][1] - w[0][1]).toFixed(2)} m long` : "";
+    $("it-delete").textContent = "Take away";
+    $("it-flags").textContent = "";
+    return;
+  }
+  const d = state.floor.doors.find((x) => x.id === item.id);
+  if (!d) return;
+  const name = d.type === "window" ? "Window" : d.type === "door" ? "Door" : "Way through";
+  $("it-title").textContent = d.tag ? `${name} ${d.tag}` : name;
+  $("it-id").textContent = d.id;
+  $("it-meta").textContent = [d.width && `${d.width.toFixed(2)} m wide`, d.sill != null && `sill ${d.sill.toFixed(2)} m`,
+    d.height != null && `${d.height.toFixed(2)} m high`, d.drawn && "drawn here"].filter(Boolean).join(" · ");
+  $("it-delete").textContent = d.drawn ? "Take away" : d.ignored ? "Restore" : "Delete";
+  $("it-flags").textContent = d.ignored ? "Deleted" : "";
+}
+
+async function deleteItem() {
+  const item = state.item;
+  if (!item || state.busy) return;
+  if (item.kind === "wall") return submitEdit({ remove: { at: item.at } }, "Taking the wall away…");
+  const d = state.floor.doors.find((x) => x.id === item.id);
+  if (!d) return;
+  if (d.drawn) {
+    const mid = [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2];
+    return submitEdit({ remove: { at: mid } }, "Taking it away…");
+  }
+  try {
+    const updated = await request(`${BASE}/objects/${d.id}`, { ignored: !d.ignored });
+    Object.assign(d, updated);
+    toast(`${$("it-title").textContent}: ${d.ignored ? "deleted" : "restored"}`);
+    if (d.ignored && !state.showHidden) selectItem(null);
+    else selectItem(item);
+  } catch (e) {
+    toast(`Not saved: ${e.message}`, true);
   }
 }
 
@@ -898,14 +1159,14 @@ function setupPanel() {
     if (s && !$("ed-save").disabled) saveSpace({ correction: formCorrection(s) });
   });
   $("ed-reset").addEventListener("click", () => saveSpace({ reset: true }));
-  $("ed-ignore").addEventListener("click", () => {
+  $("ed-delete").addEventListener("click", () => {
     const s = state.byId.get(state.selected);
     if (s) setFlag(s.id, "ignored", !s.ignored);
   });
-  $("ed-hide").addEventListener("click", () => {
-    const s = state.byId.get(state.selected);
-    if (s) setFlag(s.id, "hidden", !s.hidden);
-  });
+  $("it-close").addEventListener("click", () => selectItem(null));
+  $("it-delete").addEventListener("click", deleteItem);
+  for (const b of document.querySelectorAll("[data-tool]")) b.addEventListener("click", () => setTool(b.dataset.tool));
+  $("tool-width").addEventListener("input", () => clearPreview());
   for (const id of ["ed-type", "ed-name", "ed-number"]) $(id).addEventListener("input", updateEditorState);
   $("ed-type").addEventListener("change", (e) => (e.target.style.borderLeft = `6px solid ${color(e.target.value)}`));
   $("search").addEventListener("input", (e) => {
@@ -919,12 +1180,16 @@ function setupPanel() {
     const typing = e.target.closest?.("input, select, textarea");
     if (e.key === "Escape") {
       if (typing) e.target.blur();
+      else if (state.tool) setTool(null);
+      else if (state.item) selectItem(null);
       else select(null);
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === "n" || e.key === "N") nextToReview();
     else if (e.key === "f" || e.key === "F") fit();
+    else if (e.key === "w" || e.key === "W") setTool("wall");
+    else if (e.key === "d" || e.key === "D") setTool("door");
   });
 }
 

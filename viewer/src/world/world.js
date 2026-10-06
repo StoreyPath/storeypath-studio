@@ -538,7 +538,7 @@ export class StoreyPathWorld extends EventTarget {
     let ways;
     if (walls.length) {
       ways = this.#pkg.openings
-        .filter((x) => x.properties.floor_id === floor.id && x.properties.span)
+        .filter((x) => x.properties.floor_id === floor.id && x.properties.span && !x.properties.ignored) // deleted in review: left out
         .map((x) => {
           const [a, b] = x.properties.span.map((c) => this.#local(c));
           const leaves = (x.properties.swings || []).map((leaf) => leaf.map((c) => this.#local(c)));

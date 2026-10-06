@@ -48,6 +48,7 @@ DOOR_NAME = re.compile(r"door|d[oö]r|t[uü]r|porte|puerta|باب|ابواب|أ�
 OPENING_TAG = re.compile(r"(?P<kind>[A-Z]{1,2})\s?-?\s?(?P<n>\d{1,3}[A-Z]?)")
 DOOR_TAGS = {"D", "DR", "SD", "GD", "FD", "MD"}
 WINDOW_TAGS = {"W", "WD", "WN", "FW", "SW"}
+DRAWN_WALL_M = 0.2  # a wall a person draws in review
 TAG_REACH_M = 1.0  # a tag is drawn this close to its opening
 SLIDING_DOOR_M = (0.6, 2.6)  # glazing between two rooms this wide, with no window tag, is a sliding door
 
@@ -255,11 +256,13 @@ def extract_floor(
     region: tuple[float, float, float, float] | None = None,
     offset: tuple[float, float] | None = None,
     skip_label: Callable[[str], bool] | None = None,
+    drawn_walls: list | None = None,
 ) -> FloorExtraction:
     """Spaces, doors and outline of one floor, in meters. ``region`` limits the
     drawing to one floor's plan; ``offset`` (drawing units) is subtracted from every
     point so that floors drawn side by side line up. ``skip_label`` leaves out texts
-    on label layers that do not name rooms (levels, notes…)."""
+    on label layers that do not name rooms (levels, notes…). ``drawn_walls`` are
+    walls a person drew in review ([[x, y], [x, y]], local meters): walls like any."""
     scale = meters_per_unit(doc, units)
     tol = CURVE_TOLERANCE_M / scale
     warnings: list[str] = []
@@ -349,6 +352,10 @@ def extract_floor(
     if linework:
         for p in polygonize(unary_union(linework)):
             closed_shapes.append((p, "linework"))
+    dx, dy = (offset[0] * scale, offset[1] * scale) if offset else (0.0, 0.0)
+    for (x0, y0), (x1, y1) in drawn_walls or []:  # drawn in local meters: back where the drawing has them
+        wall_fills.append(LineString([(x0 + dx, y0 + dy), (x1 + dx, y1 + dy)])
+                          .buffer(DRAWN_WALL_M / 2, cap_style="square", join_style="mitre"))
 
     door_shapes = _merge_doors(door_shapes)
     doorways: list[Polygon] = []
@@ -372,6 +379,10 @@ def extract_floor(
                 f"{found.pockets} area(s) open to the outside were left out; "
                 "if one is a room, check that its doors are drawn on a door layer"
             )
+
+    if used == "outlines" and drawn_walls:  # rooms drawn as outlines: a drawn wall parts them too
+        spaces = _parted_by(spaces, [LineString([(x0 + dx, y0 + dy), (x1 + dx, y1 + dy)])
+                                     for (x0, y0), (x1, y1) in drawn_walls], profile.spaces.min_area)
 
     if not spaces:
         top = ", ".join(f"{name} ({n})" for name, n in layer_counts.most_common(15))
@@ -1027,6 +1038,20 @@ def _leaves(door: DoorShape) -> list[tuple[tuple[float, float], tuple[float, flo
         a, b = sw.ends
         open_end = a if door.span.distance(a) >= door.span.distance(b) else b
         out.append(((round(sw.hinge.x, 4), round(sw.hinge.y, 4)), (round(open_end.x, 4), round(open_end.y, 4))))
+    return out
+
+
+def _parted_by(spaces: list[ExtractedSpace], lines: list[LineString], min_area: float) -> list[ExtractedSpace]:
+    """Spaces parted by the walls a person drew across them."""
+    from shapely.ops import split
+
+    out = []
+    for s in spaces:
+        parts = [s.polygon]
+        for line in lines:
+            parts = [q for p in parts for q in (as_polygons(split(p, line)) if line.crosses(p) else [p])]
+        kept = [p for p in parts if p.area >= min_area]
+        out += [replace(s, polygon=p) for p in kept] if len(kept) > 1 else [s]
     return out
 
 

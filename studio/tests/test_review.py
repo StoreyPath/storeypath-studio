@@ -10,7 +10,7 @@ import zipfile
 
 import ezdxf
 import pytest
-from shapely.geometry import LineString
+from shapely.geometry import LineString, shape
 
 from storeypath.review import NotFound, Review
 from storeypath.samples import office_floor, write_sheet_dxf
@@ -122,8 +122,10 @@ def test_bad_corrections_are_refused(review):
     with pytest.raises(NotFound):
         r.correct(f_id + "-9999", {"correction": {}})
     door = r.floor(f_id)["doors"][0]
-    with pytest.raises(NotFound):
+    with pytest.raises(ValueError):  # a door has no type or name to correct…
         r.correct(door["id"], {"correction": {}})
+    assert r.correct(door["id"], {"ignored": True})["ignored"]  # …it can only be deleted
+    assert not r.correct(door["id"], {"ignored": False})["ignored"]
 
 
 def test_changes_made_elsewhere_are_picked_up(review):
@@ -430,3 +432,38 @@ def test_pages_answer_while_a_job_changes_a_project(studio):
                 assert res.status == 200
     finally:
         done.set()
+
+
+def test_walls_doors_and_windows_drawn_in_review_are_kept(review):
+    # A wall the drawing leaves out parts a room in two; a door added in it joins
+    # them again; both survive converting the floor again, and can be taken away.
+    from storeypath.convert import convert_floor
+    from storeypath.workspace import Workspace
+
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    room = max((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: s["area"])
+    x0, y0, x1, y1 = shape(room["geometry"]).bounds
+    mid = (x0 + x1) / 2
+    r.edit(f_id, {"add": {"wall": [[mid, y0 - 0.1], [mid, y1 + 0.1]]}})
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    ws.save(path)
+    after = r.floor(f_id)
+    halves = [s for s in after["spaces"] if s["kind"] == "space" and shape(s["geometry"]).intersects(shape(room["geometry"]))
+              and shape(s["geometry"]).intersection(shape(room["geometry"])).area > 1]
+    assert len(halves) == 2  # parted by the drawn wall
+    door_at = (mid, (y0 + y1) / 2)
+    r.edit(f_id, {"add": {"opening": {"type": "door", "span": [[mid, door_at[1] - 0.45], [mid, door_at[1] + 0.45]]}}})
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    ws.save(path)
+    drawn = [d for d in r.floor(f_id)["doors"] if d["drawn"]]
+    assert len(drawn) == 1 and drawn[0]["type"] == "door" and len(drawn[0]["connects"]) == 2
+    assert {h["id"] for h in halves} == set(drawn[0]["connects"])
+    r.edit(f_id, {"remove": {"at": [mid, y0 + 0.5]}})  # the wall; the door stays drawn
+    assert r.floor(f_id)["edits"]["walls"] == [] and len(r.floor(f_id)["edits"]["openings"]) == 1
+    with pytest.raises(NotFound):
+        r.edit(f_id, {"remove": {"at": [x0 - 50, y0 - 50]}})
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"add": {"opening": {"type": "hatch", "span": [[0, 0], [1, 0]]}}})

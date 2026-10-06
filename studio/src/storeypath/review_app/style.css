@@ -171,7 +171,22 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #spaces path.dim { fill-opacity: .12; }
 #spaces path.selected { fill-opacity: .75; stroke: var(--select); stroke-width: 3; stroke-dasharray: none; }
 #doors .divider { fill: none; stroke: var(--text); stroke-opacity: .75; stroke-width: 1.5; stroke-dasharray: 2 5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
-#doors circle { fill: var(--panel); stroke: var(--draw-doors); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+#doors circle { fill: var(--panel); stroke: var(--draw-doors); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
+#doors circle.deleted { opacity: .35; }
+#doors circle.selected { stroke: var(--select); stroke-width: 3; }
+#drawn line { stroke: #d6336c; stroke-width: 4; stroke-dasharray: 7 4; stroke-linecap: square; vector-effect: non-scaling-stroke; cursor: pointer; }
+#drawn line.hit { stroke: transparent; stroke-width: 14; stroke-dasharray: none; }
+#drawn line.selected { stroke: var(--select); }
+.preview { pointer-events: none; }
+.preview line { stroke: #d6336c; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.preview line.door { stroke: #f08c00; stroke-width: 6; }
+.preview line.window { stroke: #22b8cf; stroke-width: 5; }
+.preview circle { fill: #d6336c; }
+#map.drawing-tool .pane { cursor: crosshair; }
+#map.busy .pane { cursor: progress; }
+#toolbar .tools { display: inline-flex; gap: 4px; align-items: center; padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line); }
+#toolbar button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+#toolbar input[type="number"] { width: 4.5em; }
 #doors .span { stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 #doors .span.door, #doors .span.way { stroke: #f08c00; }
 #doors .span.way { stroke-dasharray: 4 5; stroke-linecap: butt; }

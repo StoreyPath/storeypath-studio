@@ -709,6 +709,9 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return floor_print(studio.review(code), floor_id)
             case "GET", ["projects", code, "floors", floor_id, "print.png"]:
                 return floor_print_png(studio.review(code), floor_id)
+            case "POST", ["projects", code, "floors", floor_id, "edits"]:
+                studio.review(code).edit(floor_id, body)
+                return studio.convert(code, floor_id)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
                 return studio.convert(code, floor_id)
             case "POST", ["projects", code, "objects", object_id]:

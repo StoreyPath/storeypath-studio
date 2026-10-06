@@ -81,7 +81,7 @@ def convert_floor(
     else:
         profile, floor.layers = base, []
     extraction = extract_floor(doc, profile, src.units, src.region, src.offset,
-                               skip_label=lambda t: reader.is_room_name(t) is False)
+                               skip_label=lambda t: reader.is_room_name(t) is False, drawn_walls=floor.edits.walls)
     _read_room_types(extraction, reader)
     sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
@@ -102,6 +102,7 @@ def convert_floor(
     else:
         type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
+    _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
@@ -316,7 +317,29 @@ def _allocate_id(ws: Workspace, floor_id: str, building_id: str) -> str:
 
 
 def _opening_type(source: str) -> str:
-    return {"door": "door", "glazing": "door", "assumed": "door", "window": "window"}.get(source, "opening")
+    return {"door": "door", "glazing": "door", "assumed": "door", "window": "window",
+            "drawn door": "door", "drawn window": "window"}.get(source, "opening")
+
+
+def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:
+    """The doors and windows a person added in review: openings like any, joined to
+    the spaces beside them, with their gap cut in the walls."""
+    from shapely.geometry import LineString
+
+    from .extract import _connect_doors
+
+    thickness = max(ex.wall_thickness or 0.2, 0.1)
+    for o in drawn:
+        span = LineString(o.span)
+        if span.length < 0.2:
+            continue
+        found = _connect_doors(ex.spaces, [span.buffer(thickness, cap_style="flat")], reach, [],
+                               [(span, round(span.length, 3))])
+        for d in found:
+            d.source = f"drawn {o.type}"
+            ex.doors.append(d)
+        if ex.walls is not None:
+            ex.walls = ex.walls.difference(span.buffer(thickness, cap_style="flat"))
 
 
 def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now, report) -> None:

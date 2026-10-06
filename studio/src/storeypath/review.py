@@ -11,7 +11,12 @@ command line can be used side by side. The web server is in server.py:
     GET  /api/projects/<code>/floors/<id>/print   the drawing as printed: where it lies, its size
     GET  /api/projects/<code>/floors/<id>/print.png  the print (drawn once, kept until the drawing changes)
     POST /api/projects/<code>/floors/<id>/convert re-read the drawing (keeps IDs): a job
-    POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true}
+    POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
+                                                  {"ignored": bool} deletes a space or an opening (or restores it)
+    POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}},
+                                                  {"add": {"opening": {"type", "span"}}} or {"remove": {"at": [x, y]}}:
+                                                  what a person draws, kept through every conversion; then
+                                                  the floor is read again (a job)
 """
 
 from __future__ import annotations
@@ -29,13 +34,14 @@ from .export import _label_point
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
-from .workspace import ObjectRecord, Override, Workspace
+from .workspace import DrawnOpening, ObjectRecord, Override, Workspace
 
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml",
                  ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2",
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
+REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
 PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
 PRINT_MAX_PX = 10000  # …within this many pixels a side
 PRINT_MARGIN_M = 3.0  # around the floor's spaces, when the floor has no region of its own
@@ -125,11 +131,50 @@ class Review:
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
                 # spaces and their zones; a space divided into zones is used through them
                 "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone")],
-                "doors": [{"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
-                           "span": r.span, "width": r.width, "swings": r.swings,
-                           "divider": _divider(r, areas) if r.type_source in ("split", "doorway") else None}
-                          for r in objects if r.kind == "opening"],
+                "doors": [self._door(ws, r, areas) for r in objects if r.kind == "opening"],
+                # for drawing walls and doors onto: the walls as found, and what was drawn
+                "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
             }
+
+    def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None) -> dict:
+        eff = ws.effective(r)
+        return {"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
+                "span": r.span, "width": r.width, "swings": r.swings, "tag": r.tag,
+                "sill": r.sill, "height": r.height, "drawn": (r.type_source or "").startswith("drawn"),
+                "ignored": eff["ignored"],
+                "divider": _divider(r, areas or {}) if r.type_source in ("split", "doorway") else None}
+
+    def edit(self, floor_id: str, body: dict) -> None:
+        """Add or remove what a person drew on a floor: a wall, a door or a window
+        (local meters). Removing takes the drawn wall or opening nearest a point."""
+        with self._lock:
+            ws = self._load()
+            f = self._floor(ws, floor_id)
+            if isinstance(body.get("add"), dict) and "wall" in body["add"]:
+                wall = _points(body["add"]["wall"], 2)
+                if LineString(wall).length < 0.1:
+                    raise ValueError("a wall is longer than 10 cm")
+                f.edits.walls.append(wall)
+            elif isinstance(body.get("add"), dict) and "opening" in body["add"]:
+                o = body["add"]["opening"]
+                if not isinstance(o, dict) or o.get("type") not in ("door", "window"):
+                    raise ValueError('an opening is {"type": "door" or "window", "span": [[x, y], [x, y]]}')
+                span = _points(o.get("span"), 2)
+                if not 0.3 <= LineString(span).length <= 6:
+                    raise ValueError("an opening is 0.3 to 6 m wide")
+                f.edits.openings.append(DrawnOpening(type=o["type"], span=span))
+            elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
+                at = Point(_points([body["remove"]["at"]], 1)[0])
+                drawn = [(LineString(w).distance(at), "wall", i) for i, w in enumerate(f.edits.walls)]
+                drawn += [(LineString(o.span).distance(at), "opening", i) for i, o in enumerate(f.edits.openings)]
+                near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
+                if not near:
+                    raise NotFound("nothing drawn there")
+                _, kind, i = min(near)
+                (f.edits.walls if kind == "wall" else f.edits.openings).pop(i)
+            else:
+                raise ValueError('send {"add": {"wall": …}}, {"add": {"opening": …}} or {"remove": {"at": [x, y]}}')
+            self._save(ws)
 
     def _space(self, ws: Workspace, r: ObjectRecord) -> dict:
         eff = ws.effective(r)
@@ -160,8 +205,10 @@ class Review:
         with self._lock:
             ws = self._load()
             r = ws.objects.get(object_id)
-            if r is None or r.status != "active" or r.kind not in ("space", "zone"):
-                raise NotFound(f"no active space or zone {object_id}")
+            if r is None or r.status != "active" or r.kind not in ("space", "zone", "opening"):
+                raise NotFound(f"no active space, zone or opening {object_id}")
+            if r.kind == "opening" and set(body) - {"ignored"}:
+                raise ValueError("an opening can only be deleted or restored")
             current = ws.overrides.get(object_id) or Override()
             flags = {"hidden": current.hidden, "ignored": current.ignored}
             for flag in ("hidden", "ignored"):
@@ -192,7 +239,7 @@ class Review:
             else:
                 ws.overrides[object_id] = override
             self._save(ws)
-            return self._space(ws, r)
+            return self._door(ws, r) if r.kind == "opening" else self._space(ws, r)
 
     def drawing(self, floor_id: str) -> dict:
         with self._lock:
@@ -212,6 +259,17 @@ class Review:
                 doc, profile, meters_per_unit(doc, src.units), src.region, src.offset
             )
         return self._drawings[key]
+
+
+def _points(value, n: int) -> list[list[float]]:
+    """``n`` points [x, y] (local meters) from a request."""
+    try:
+        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
+    except (TypeError, ValueError):
+        raise ValueError(f"expected {n} points [x, y]") from None
+    if len(pts) != n:
+        raise ValueError(f"expected {n} points [x, y]")
+    return pts
 
 
 def _round_box(box) -> list[float]:

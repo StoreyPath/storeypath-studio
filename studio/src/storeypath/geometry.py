@@ -23,5 +23,7 @@ def iou(a, b) -> float:
 
 
 def closing(geom, r: float):
-    """Fill gaps and slots narrower than 2·r while keeping square corners square."""
-    return geom.buffer(r, join_style="mitre").buffer(-r, join_style="mitre")
+    """Fill gaps and slots narrower than 2·r while keeping square corners square.
+    Square-cornered offsets can lose a thin piece that meets others at an angle: what
+    was there is always kept."""
+    return geom.buffer(r, join_style="mitre").buffer(-r, join_style="mitre").union(geom)
