@@ -174,23 +174,26 @@ def test_a_merged_room_is_divided_where_vision_says_two_rooms_meet(workspace):
 
     model = Divides(seen)
     convert_floor(ws, f_id, d, vision=model)
-    spaces = [r for r in ws.floor_objects(f_id) if r.kind == "space"]
-    pieces = sorted((r for r in spaces if whole.contains(_at(r).representative_point())), key=lambda r: _at(r).bounds)
-    assert [round(_at(r).bounds[0]) for r in pieces] == [133, 145]
-    assert [r.name for r in pieces] == [None, "CORRIDOR"]  # the label is in the eastern part
-    assert pieces[1].id == corridor.id  # the bigger part keeps the room's ID
-    assert all("vision: divided where two rooms meet; check the dividing line" in r.issues for r in pieces)
-    assert pieces[0].type == "corridor" and pieces[0].type_source == "vision"  # looked at again, on its own
+    # No wall along the line: one space still, divided into two zones there.
+    space = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and _at(r).equals_exact(whole, 0.01))
+    zones = sorted((r for r in ws.floor_objects(f_id) if r.kind == "zone"), key=lambda r: _at(r).bounds)
+    assert [round(_at(r).bounds[0]) for r in zones] == [133, 145]
+    assert all(r.parent == space.id for r in zones) and set(space.zones) == {z.id for z in zones}
+    assert [r.name for r in zones] == [None, "CORRIDOR"]  # the label is in the eastern part
+    assert zones[1].id == corridor.id  # what was used as the corridor keeps its ID
+    assert all("vision: a zone of an open space, divided where two uses meet (no wall); check the line" in r.issues
+               for r in zones)
+    assert zones[0].type == "corridor" and zones[0].type_source == "vision"  # looked at again, on its own
+    assert ws.review_reasons(space) == []  # reviewed through its zones
     openings = [r for r in ws.floor_objects(f_id) if r.kind == "opening"]
-    assert any(set(r.connects) == {p.id for p in pieces} for r in openings)
-    office = next(r for r in spaces if r.name == "OFFICE" and round(_at(r).bounds[0]) == 137)  # its door is in the west part
-    assert any(set(r.connects) == {office.id, pieces[0].id} for r in openings)
+    assert not any(set(r.connects) & {z.id for z in zones} for r in openings)  # zones need no openings
+    office = next(r for r in ws.floor_objects(f_id) if r.name == "OFFICE" and round(_at(r).bounds[0]) == 137)
+    assert any(set(r.connects) == {office.id, space.id} for r in openings)  # doors join spaces
     asked = model.asked
     convert_floor(ws, f_id, d, vision=model)
     assert model.asked == asked  # the same lines are not asked about again
     convert_floor(ws, f_id, d)  # nor needed: what was seen is kept
-    assert sorted(round(_at(r).bounds[0]) for r in ws.floor_objects(f_id)
-                  if r.kind == "space" and whole.contains(_at(r).representative_point())) == [133, 145]
+    assert sorted(round(_at(r).bounds[0]) for r in ws.floor_objects(f_id) if r.kind == "zone") == [133, 145]
 
 
 def test_what_vision_saw_is_used_when_the_model_does_not_answer(workspace):
@@ -221,5 +224,6 @@ def test_a_cut_is_undone_where_the_pieces_look_like_one_room(workspace):
                                    "type": "corridor or hall"} if whole.contains(p) else
                         {"outline": "exactly one room", "type": "office"})
     convert_floor(ws, f_id, d, vision=model)
-    inside = [r for r in ws.floor_objects(f_id) if r.kind == "space" and whole.contains(_at(r).representative_point())]
-    assert len(inside) == 1 and inside[0].name == "CORRIDOR"
+    inside = [r for r in ws.floor_objects(f_id) if r.kind in ("space", "zone")
+              and whole.contains(_at(r).representative_point())]
+    assert len(inside) == 1 and inside[0].name == "CORRIDOR" and inside[0].kind == "space"

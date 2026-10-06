@@ -163,6 +163,10 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
   stroke: var(--space-stroke); stroke-width: 1; vector-effect: non-scaling-stroke;
 }
 #spaces path:hover { fill-opacity: .7; }
+/* A space divided into zones: its walls, as a line; its zones are filled over it, their
+   edges (no wall) light and dashed. */
+#spaces path.divided { fill: none; stroke: var(--space-stroke); stroke-width: 2; pointer-events: none; }
+#spaces path.zone { stroke-dasharray: 2 4; stroke-opacity: .8; }
 #spaces path.review { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 6 4; }
 #spaces path.dim { fill-opacity: .12; }
 #spaces path.selected { fill-opacity: .75; stroke: var(--select); stroke-width: 3; stroke-dasharray: none; }

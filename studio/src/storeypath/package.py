@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.2.0"
+FORMAT_VERSION = "0.3.0"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -23,13 +23,14 @@ FILES = {
     "buildings": "buildings.geojson",
     "floors": "floors.geojson",
     "spaces": "spaces.geojson",
+    "zones": "zones.geojson",
     "openings": "openings.geojson",
     "objects": "objects.csv",
     "changes": "changes.json",
 }
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
-    "building_id", "floor_id", "floor_ordinal", "area_m2", "lon", "lat", "hidden", "ignored",
+    "building_id", "floor_id", "floor_ordinal", "area_m2", "lon", "lat", "hidden", "ignored", "space_id",
 ]
 
 LonLat = tuple[float, float]
@@ -101,8 +102,23 @@ class SpaceProps(_Props):
     floor_id: str
     area_m2: float
     display_point: LonLat
+    zones: list[str] = Field(default_factory=list, description=(
+        "IDs of the zones this space is divided into, with no wall between them (empty: one use)"))
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
+
+
+class ZoneProps(_Props):
+    kind: Literal["zone"]
+    type: SpaceType
+    name: str | None = None
+    number: str | None = None
+    space_id: str = Field(description="the space this zone is part of")
+    floor_id: str
+    area_m2: float
+    display_point: LonLat
+    hidden: bool = Field(False, description="real, but not shown unless asked for")
+    ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
 class OpeningProps(_Props):
@@ -199,6 +215,7 @@ COLLECTIONS: dict[str, type[_Props]] = {
     "buildings": BuildingProps,
     "floors": FloorProps,
     "spaces": SpaceProps,
+    "zones": ZoneProps,
     "openings": OpeningProps,
 }
 

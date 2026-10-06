@@ -97,7 +97,7 @@ class Review:
             ws = self._load()
             floors = []
             for loc, b, f, fid in ws.iter_floors():
-                spaces = [r for r in ws.floor_objects(fid) if r.kind == "space"]
+                spaces = [r for r in ws.floor_objects(fid) if r.kind in ("space", "zone") and not r.zones]
                 floors.append({
                     "id": fid, "name": f.name, "ordinal": f.ordinal,
                     "building": b.name, "building_id": fid.rsplit("-", 1)[0], "location": loc.name,
@@ -123,10 +123,11 @@ class Review:
                 "source": Path(f.source.path).name if f.source else None,
                 "converted_at": f.converted_at.isoformat() if f.converted_at else None,
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
-                "spaces": [self._space(ws, r) for r in objects if r.kind == "space"],
+                # spaces and their zones; a space divided into zones is used through them
+                "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone")],
                 "doors": [{"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
                            "span": r.span, "width": r.width,
-                           "divider": _divider(r, areas) if r.type_source == "split" else None}
+                           "divider": _divider(r, areas) if r.type_source in ("split", "doorway") else None}
                           for r in objects if r.kind == "opening"],
             }
 
@@ -137,7 +138,8 @@ class Review:
         x, y = _label_point(geom)
         width, height = _room_at(geom, x, y)
         return {
-            "id": r.id, "type": eff["type"], "name": eff["name"], "number": eff["number"],
+            "id": r.id, "kind": r.kind, "space_id": r.parent, "zones": list(r.zones),
+            "type": eff["type"], "name": eff["name"], "number": eff["number"],
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored"}) if o else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
@@ -158,8 +160,8 @@ class Review:
         with self._lock:
             ws = self._load()
             r = ws.objects.get(object_id)
-            if r is None or r.status != "active" or r.kind != "space":
-                raise NotFound(f"no active space {object_id}")
+            if r is None or r.status != "active" or r.kind not in ("space", "zone"):
+                raise NotFound(f"no active space or zone {object_id}")
             current = ws.overrides.get(object_id) or Override()
             flags = {"hidden": current.hidden, "ignored": current.ignored}
             for flag in ("hidden", "ignored"):

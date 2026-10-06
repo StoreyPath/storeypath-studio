@@ -35,7 +35,7 @@ from shapely.affinity import scale as scale_geom
 from shapely.affinity import translate
 from shapely.geometry import LineString, box
 
-from .extract import ExtractedDoor, ExtractedSpace, modelspace_entities
+from .extract import ExtractedSpace, ExtractedZone, modelspace_entities
 from .geometry import as_polygons
 from .types import SpaceType
 
@@ -448,7 +448,7 @@ MAX_CUTS = 8  # lines asked about per merged room
 MIN_PART_M2 = 2.0  # each side of a division is at least this big…
 MIN_PART_WIDTH_M = 0.8  # …and this wide (a counter's front edge is no division)
 TO_WALL_M = 0.6  # a drawn line counts when it ends this close to the room's edge
-SPLIT_NOTE = "vision: divided where two rooms meet; check the dividing line"
+SPLIT_NOTE = "vision: a zone of an open space, divided where two uses meet (no wall); check the line"
 CUT_GAP_M = 1.5  # a line alongside one already cut, closer than this, would leave a strip
 
 
@@ -643,16 +643,16 @@ def _checked(pieces: list, cuts: list, doc, src, scale, sha, model, answers, she
     return pieces, cuts, asked
 
 
-def split_merged(ex, doc, src, sha: str, model: VisionModel | None, answers: dict[str, dict],
-                 merged: list[int], say=None, sheet: FloorPrint | None = None) -> list[int]:
+def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None, answers: dict[str, dict],
+                 merged: list[int], say=None, sheet: FloorPrint | None = None) -> list:
     """Divide the rooms vision saw as several merged: each line that may divide one
     is shown to the model in blue, its sides lettered A and B; where it sees two
     different kinds of room on the two sides, the room is cut exactly along the
     line. Each piece is then looked at on its own, and a cut stays only where the
-    pieces on its two sides are different rooms. The doors that served the room go
-    to the piece they stand by, and an opening joins the pieces along each cut.
-    Answers are kept in ``answers`` as for the rooms. Returns the pieces' indexes
-    (the first keeps the room's)."""
+    pieces on its two sides are different rooms. There is no wall along the cuts:
+    the pieces are zones of the one space (``units`` are the zones and the spaces
+    with none, ``merged`` indexes into them). Answers are kept in ``answers`` as
+    for the rooms. Returns the zones made."""
     scale = ex.scale
     ox, oy = src.offset or (0.0, 0.0)
     usable = model is not None and model.available()
@@ -667,7 +667,7 @@ def split_merged(ex, doc, src, sha: str, model: VisionModel | None, answers: dic
 
     lines = []  # [room, cut, key, answer, cut as text]
     for k in merged:
-        polygon = ex.spaces[k].polygon
+        polygon = units[k].polygon
         shape_text = wkt.dumps(polygon, rounding_precision=2)
         for cut in candidate_cuts(polygon, _segments_in(doc, in_drawing(polygon.buffer(TO_WALL_M)), to_local)):
             text = shape_text + "|" + wkt.dumps(cut, rounding_precision=2)
@@ -679,7 +679,7 @@ def split_merged(ex, doc, src, sha: str, model: VisionModel | None, answers: dic
         sheet = sheet or FloorPrint(doc, scale)
         images = []
         for k, cut, *_ in todo:  # rendering one at a time, as for the rooms
-            polygon = ex.spaces[k].polygon
+            polygon = units[k].polygon
             inset = polygon.buffer(-0.12)
             region = in_drawing(polygon if inset.is_empty else inset)
             middle = cut.interpolate(0.5, normalized=True)
@@ -706,13 +706,13 @@ def split_merged(ex, doc, src, sha: str, model: VisionModel | None, answers: dic
                     line[3] = answers[line[2]] = {"a": got["a"], "b": got["b"], "model": name, "cut": line[4]}
                     asked += 1
 
-    out: list[int] = []
+    made: list = []
     rooms = looked = 0
     for k in merged:
-        space = ex.spaces[k]
+        unit = units[k]
         accepted = sorted((cut for kk, cut, _, seen, _ in lines if kk == k and seen and _two_rooms(seen)),
                           key=lambda c: c.length)
-        pieces, used = [space.polygon], []
+        pieces, used = [unit.polygon], []
         for cut in accepted:  # shortest first; each cuts the piece it runs through
             if any(cut.distance(u) < CUT_GAP_M and _parallel(cut, u) for u in used):
                 continue
@@ -728,27 +728,17 @@ def split_merged(ex, doc, src, sha: str, model: VisionModel | None, answers: dic
         if len(pieces) < 2:
             continue
         rooms += 1
-        keep = [i for i in space.issues if not i.startswith(("vision:", "has the labels of"))]
-        indexes = [k] + list(range(len(ex.spaces), len(ex.spaces) + len(pieces) - 1))
-        for idx, piece in zip(indexes, pieces):  # named and typed again by the caller
-            part = replace(space, polygon=piece, name=None, number=None, blocks=[], type=SpaceType.UNSPECIFIED,
-                           type_source="default", issues=[*keep, SPLIT_NOTE], ignored=False)
-            if idx == k:
-                ex.spaces[k] = part
-            else:
-                ex.spaces.append(part)
-        for door in ex.doors:  # each door now serves the piece it stands by
-            if k in door.connects:
-                best = min(indexes, key=lambda i: ex.spaces[i].polygon.distance(door.footprint))
-                door.connects = [best if c == k else c for c in door.connects]
-        for cut in used:  # the pieces open onto each other along the cut
-            middle = cut.interpolate(0.5, normalized=True)
-            sides = [i for i in indexes if ex.spaces[i].polygon.distance(middle) < 0.05]
-            if len(sides) == 2:
-                ex.doors.append(ExtractedDoor(footprint=cut.buffer(0.05), point=middle, connects=sides,
-                                              source="split", span=cut, width=round(cut.length, 3)))
-        out += indexes
+        keep = [i for i in unit.issues if not i.startswith(("vision:", "has the labels of"))]
+        if isinstance(unit, ExtractedZone):  # a zone divided further: its parts replace it
+            parent = unit.space
+            ex.zones = [z for z in ex.zones if z is not unit]
+        else:
+            parent = next(i for i, s in enumerate(ex.spaces) if s is unit)
+        zones = [ExtractedZone(polygon=p, layer=unit.layer, issues=[*keep, SPLIT_NOTE], space=parent)
+                 for p in pieces]
+        ex.zones.extend(zones)
+        made += zones
     if say is not None and merged:
         say(f"vision: asked about {asked} dividing lines and {looked} pieces; divided {rooms} of {len(merged)} "
-            f"merged rooms into {len(out)}")
-    return out
+            f"open areas into {len(made)} zones")
+    return made

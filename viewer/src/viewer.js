@@ -138,8 +138,8 @@ export class StoreyPathViewer extends EventTarget {
     this.#map.getSource("sp-buildings").setData(styled(pkg.buildings, () => ({})));
     this.#map.getSource("sp-floors").setData(styled(pkg.floors, (f) => ({ _elev: f.properties.elevation })));
     this.#map.getSource("sp-openings").setData(styled(pkg.openings, () => ({}), shown));
-    this.#map.getSource("sp-spaces").setData(
-      styled(pkg.spaces, (s) => {
+    this.#map.getSource("sp-spaces").setData( // what is used: zones, and spaces with none
+      styled(pkg.units, (s) => {
         const floor = floorInfo.get(s.properties.floor_id);
         return { _elev: floor.elevation, _fh: floor.height, _building: floor.building_id };
       }, shown),
@@ -337,7 +337,7 @@ export class StoreyPathViewer extends EventTarget {
     for (const m of this.#markers) m.remove();
     this.#markers = [];
     if (!this.#options.labels || this.#mode === "stack" || !this.#pkg) return;
-    for (const s of this.#pkg.spacesOn(this.#floor)) {
+    for (const s of this.#pkg.unitsOn(this.#floor)) {
       if (!this.#shown(s)) continue;
       const { name, number, display_point } = s.properties;
       if (!name && !number) continue;

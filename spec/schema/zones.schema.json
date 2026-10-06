@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "Feature_SpaceProps_": {
+    "Feature_ZoneProps_": {
       "properties": {
         "type": {
           "const": "Feature",
@@ -42,7 +42,7 @@
           "title": "Geometry"
         },
         "properties": {
-          "$ref": "#/$defs/SpaceProps"
+          "$ref": "#/$defs/ZoneProps"
         }
       },
       "required": [
@@ -50,7 +50,7 @@
         "geometry",
         "properties"
       ],
-      "title": "Feature[SpaceProps]",
+      "title": "Feature[ZoneProps]",
       "type": "object"
     },
     "MultiPolygonGeometry": {
@@ -155,94 +155,6 @@
       "title": "PolygonGeometry",
       "type": "object"
     },
-    "SpaceProps": {
-      "additionalProperties": true,
-      "properties": {
-        "kind": {
-          "const": "space",
-          "title": "Kind",
-          "type": "string"
-        },
-        "type": {
-          "$ref": "#/$defs/SpaceType"
-        },
-        "name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Name"
-        },
-        "number": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Number"
-        },
-        "floor_id": {
-          "title": "Floor Id",
-          "type": "string"
-        },
-        "area_m2": {
-          "title": "Area M2",
-          "type": "number"
-        },
-        "display_point": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Display Point",
-          "type": "array"
-        },
-        "zones": {
-          "description": "IDs of the zones this space is divided into, with no wall between them (empty: one use)",
-          "items": {
-            "type": "string"
-          },
-          "title": "Zones",
-          "type": "array"
-        },
-        "hidden": {
-          "default": false,
-          "description": "real, but not shown unless asked for (a shaft, a plant room)",
-          "title": "Hidden",
-          "type": "boolean"
-        },
-        "ignored": {
-          "default": false,
-          "description": "judged not worth anything by a person (a sliver, a pocket); leave it out",
-          "title": "Ignored",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "kind",
-        "type",
-        "floor_id",
-        "area_m2",
-        "display_point"
-      ],
-      "title": "SpaceProps",
-      "type": "object"
-    },
     "SpaceType": {
       "enum": [
         "office",
@@ -275,6 +187,92 @@
       ],
       "title": "SpaceType",
       "type": "string"
+    },
+    "ZoneProps": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "const": "zone",
+          "title": "Kind",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/SpaceType"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "number": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Number"
+        },
+        "space_id": {
+          "description": "the space this zone is part of",
+          "title": "Space Id",
+          "type": "string"
+        },
+        "floor_id": {
+          "title": "Floor Id",
+          "type": "string"
+        },
+        "area_m2": {
+          "title": "Area M2",
+          "type": "number"
+        },
+        "display_point": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Display Point",
+          "type": "array"
+        },
+        "hidden": {
+          "default": false,
+          "description": "real, but not shown unless asked for",
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "ignored": {
+          "default": false,
+          "description": "judged not worth anything by a person; leave it out",
+          "title": "Ignored",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "space_id",
+        "floor_id",
+        "area_m2",
+        "display_point"
+      ],
+      "title": "ZoneProps",
+      "type": "object"
     }
   },
   "properties": {
@@ -286,7 +284,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_SpaceProps_"
+        "$ref": "#/$defs/Feature_ZoneProps_"
       },
       "title": "Features",
       "type": "array"
@@ -295,6 +293,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[SpaceProps]",
+  "title": "FeatureCollection[ZoneProps]",
   "type": "object"
 }

@@ -339,9 +339,14 @@ function renderPlan() {
   state.paths.clear();
   state.labels.clear();
   state.bounds.clear();
-  for (const s of f.spaces) {
+  for (const s of f.spaces.filter(divided)) { // under its zones: just its outline, along the walls
+    spaces.append(svg("path", { d: pathData(s.geometry), class: "divided" }));
+    state.bounds.set(s.id, extent(s.geometry));
+  }
+  for (const s of units()) {
     const path = svg("path", { d: pathData(s.geometry) });
     path.dataset.id = s.id;
+    if (s.kind === "zone") path.classList.add("zone");
     spaces.append(path);
     state.paths.set(s.id, path);
     state.bounds.set(s.id, extent(s.geometry));
@@ -368,10 +373,13 @@ function matches(s, q) {
 
 const tucked = (s) => s.hidden || s.ignored;
 const visible = (s) => state.showHidden || !tucked(s);
+// A space divided into zones is drawn by its walls and used through its zones.
+const divided = (s) => (s.zones || []).length > 0;
+const units = () => (state.floor?.spaces || []).filter((s) => !divided(s));
 
 function styleSpace(s) {
   const path = state.paths.get(s.id);
-  if (!path) return;
+  if (!path || divided(s)) return;
   path.style.fill = color(s.type);
   path.style.display = visible(s) ? "" : "none";
   path.classList.toggle("tucked", tucked(s));
@@ -427,7 +435,7 @@ function arrange() {
 
 // The space under a point of the plan (world meters), topmost first.
 function spaceAt(x, y) {
-  const spaces = state.floor?.spaces || [];
+  const spaces = units();
   for (let i = spaces.length - 1; i >= 0; i--) {
     const s = spaces[i];
     const b = state.bounds.get(s.id);
@@ -466,8 +474,9 @@ function placeLabels() {
   labelFrame = requestAnimationFrame(() => {
     labelFrame = 0;
     const { k, tx, ty } = state.view;
-    for (const s of state.floor?.spaces || []) {
+    for (const s of units()) {
       const label = state.labels.get(s.id);
+      if (!label) continue;
       if (!visible(s)) {
         label.replaceChildren();
         continue;
@@ -661,7 +670,8 @@ function listItem(s, withReasons) {
   const li = el("li", { "data-id": s.id, class: tucked(s) ? "tucked" : "" },
     swatch(s.type),
     el("span", {}, title(s)),
-    el("span", { class: "sub" }, s.ignored ? "ignored" : s.hidden ? "hidden" : `${typeLabel(s.type)} · ${code(s.id)}`),
+    el("span", { class: "sub" }, s.ignored ? "ignored" : s.hidden ? "hidden"
+      : `${s.kind === "zone" ? "zone · " : ""}${typeLabel(s.type)} · ${code(s.id)}`),
     withReasons ? el("span", { class: "why" }, s.reasons.join("; "),
       el("span", { class: "quicks" }, quick("Ignore", "ignored", "Not worth anything: off the list, kept with its ID"),
         quick("Hide", "hidden", "Real, but not shown unless asked for"))) : null,
@@ -672,19 +682,19 @@ function listItem(s, withReasons) {
 }
 
 function reviewSpaces() {
-  return state.floor.spaces.filter((s) => s.reasons.length);
+  return units().filter((s) => s.reasons.length);
 }
 
 function renderLists() {
   const review = reviewSpaces();
   $("review-count").textContent = `(${review.length})`;
   $("review-list").replaceChildren(...review.map((s) => listItem(s, true)));
-  $("review-done").hidden = review.length > 0 || !state.floor.spaces.length;
+  $("review-done").hidden = review.length > 0 || !units().length;
   $("next").disabled = !review.length;
 
-  const all = state.floor.spaces.filter(visible);
+  const all = units().filter(visible);
   const shown = all.filter((s) => matches(s, state.filter));
-  const tuckedCount = state.floor.spaces.length - state.floor.spaces.filter((s) => !tucked(s)).length;
+  const tuckedCount = units().length - units().filter((s) => !tucked(s)).length;
   $("space-count").textContent = (state.filter ? `(${shown.length} of ${all.length})` : `(${all.length})`)
     + (tuckedCount && !state.showHidden ? ` · ${tuckedCount} hidden or ignored` : "");
   const items = shown.slice(0, LIST_LIMIT).map((s) => listItem(s, false));
@@ -694,7 +704,7 @@ function renderLists() {
 
 function renderLegend() {
   const counts = new Map();
-  for (const s of state.floor.spaces.filter(visible)) counts.set(s.type, (counts.get(s.type) || 0) + 1);
+  for (const s of units().filter(visible)) counts.set(s.type, (counts.get(s.type) || 0) + 1);
   const types = state.project.types.filter((t) => counts.has(t));
   $("legend").replaceChildren(...types.map((t) =>
     el("li", {}, swatch(t), typeLabel(t), el("span", { class: "count" }, String(counts.get(t)))),

@@ -17,7 +17,7 @@ from shapely.geometry import Point, mapping, shape
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing
 from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
-                      keep_to_the_building)
+                      keep_to_the_building, type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -83,16 +83,18 @@ def convert_floor(
     _read_room_types(extraction, reader)
     sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
-    type_rooms(extraction.spaces, spotted)
+    type_rooms(extraction.units(), spotted)
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
         sheet = FloorPrint(doc, extraction.scale)
-        merged = look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say,
-                               sheet=sheet)
-        if pieces := split_merged(extraction, doc, src, sha, vision, ws.vision, merged, say, sheet):
-            _name_pieces(extraction, pieces, profile, reader, spotted)
-            look_at_rooms(extraction.spaces, doc, src, extraction.scale, sha, vision, ws.vision, say,
-                          only=set(pieces), sheet=sheet)
+        units = extraction.units()
+        merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet)
+        if zones := split_merged(extraction, units, doc, src, sha, vision, ws.vision, merged, say, sheet):
+            _name_zones(extraction, zones, profile, reader, spotted)
+            units = extraction.units()
+            look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say,
+                          only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet)
+        type_zoned_spaces(extraction.spaces, extraction.zones)
         keep_to_the_building(extraction)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
@@ -132,22 +134,21 @@ def _spot_symbols(floor, doc, profile, spotter: SymbolSpotter | None, scale: flo
 
 def _read_room_types(ex: FloorExtraction, reader: TextReader) -> None:
     """Room names the rules do not know, typed by the language model."""
-    unknown = [s.name for s in ex.spaces if s.name and s.type == SpaceType.UNSPECIFIED]
+    unknown = [s.name for s in ex.units() if s.name and s.type == SpaceType.UNSPECIFIED]
     reader.learn(unknown, rooms_only=True)
-    for s in ex.spaces:
+    for s in ex.units():
         if s.name and s.type == SpaceType.UNSPECIFIED and (t := reader.room_type(s.name)) is not None:
             s.type, s.type_source = t, "model"
 
 
-def _name_pieces(ex: FloorExtraction, pieces: list[int], profile, reader: TextReader, spotted) -> None:
-    """Rooms divided by vision, named from the labels inside each piece and typed
-    as any room is."""
-    spaces = [ex.spaces[i] for i in pieces]
-    _assign_labels(spaces, ex.labels, profile, [])
-    for s in spaces:
-        s.type, s.type_source = profile.classify(s.name, s.blocks, s.layer)
+def _name_zones(ex: FloorExtraction, zones: list, profile, reader: TextReader, spotted) -> None:
+    """Zones vision divided an open space into, named from the labels inside each
+    and typed as any space is."""
+    _assign_labels(zones, ex.labels, profile, [])
+    for z in zones:
+        z.type, z.type_source = profile.classify(z.name, z.blocks, z.layer)
     _read_room_types(ex, reader)
-    type_rooms(spaces, spotted)
+    type_rooms(zones, spotted)
 
 
 def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> ConversionReport:
@@ -157,29 +158,47 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
     building_id = parse_id(floor_id).prefix("building")
     now = utcnow()
 
-    existing = [r for r in ws.floor_objects(floor_id) if r.kind == "space"]
-    pairs = _match_spaces(existing, ex.spaces)
+    existing = [r for r in ws.floor_objects(floor_id) if r.kind in ("space", "zone")]
+    # What is used keeps its ID first (zones, and spaces with none), so a space that
+    # an earlier conversion cut in two and that is now one space with two zones
+    # hands its IDs to the zones; then the spaces divided into zones.
+    zoned = {z.space for z in ex.zones}
+    units = [*ex.zones, *(s for i, s in enumerate(ex.spaces) if i not in zoned)]
+    containers = [s for i, s in enumerate(ex.spaces) if i in zoned]
+    unit_pairs = _match_spaces(existing, units)
+    taken = {r.id for r in unit_pairs.values()}
+    container_pairs = _match_spaces([r for r in existing if r.id not in taken], containers)
+    found = {id(units[i]): r for i, r in unit_pairs.items()} | {id(containers[i]): r for i, r in container_pairs.items()}
 
-    space_ids: list[str] = []
-    for i, space in enumerate(ex.spaces):
-        record = pairs.get(i)
+    def register(obj, kind: str) -> ObjectRecord:
+        record = found.get(id(obj))
         if record is None:
-            record_id = _new_space_id(ws, floor_id, building_id, space)
-            record = ObjectRecord(id=record_id, kind="space", type=space.type, geometry={})
+            record_id = _new_space_id(ws, floor_id, building_id, obj) if kind == "space" else \
+                _allocate_id(ws, floor_id, building_id)
+            record = ObjectRecord(id=record_id, kind=kind, type=obj.type, geometry={})
             ws.objects[record_id] = record
             report.added.append(record_id)
         else:
             report.kept.append(record.id)
-        record.type, record.type_source = space.type, space.type_source
-        record.name, record.number = space.name, space.number
-        record.issues = list(space.issues)
-        record.detected_ignored = space.ignored
-        record.geometry = _local(space.polygon)
-        space_ids.append(record.id)
-        if ws.effective(record)["type"] == "unspecified":
-            report.unspecified.append(record.id)
+        record.kind = kind
+        record.type, record.type_source = obj.type, obj.type_source
+        record.name, record.number = obj.name, obj.number
+        record.issues = list(obj.issues)
+        record.detected_ignored = obj.ignored
+        record.geometry = _local(obj.polygon)
+        record.parent, record.zones = None, []
+        return record
 
-    matched = {r.id for r in pairs.values()}
+    space_records = [register(s, "space") for s in ex.spaces]
+    space_ids = [r.id for r in space_records]
+    for z in ex.zones:
+        record = register(z, "zone")
+        record.parent = space_ids[z.space]
+        space_records[z.space].zones.append(record.id)
+    report.unspecified += [r.id for r in (*space_records, *(ws.objects[i] for s in space_records for i in s.zones))
+                           if not r.zones and ws.effective(r)["type"] == "unspecified"]
+
+    matched = set(report.kept)
     for r in existing:
         if r.id not in matched:
             _retire(r, now, report)

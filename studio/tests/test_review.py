@@ -331,7 +331,8 @@ def test_pages_have_unique_ids():
 
 
 def test_the_editor_gets_the_lines_studio_divided_rooms_along(tmp_path):
-    # An office opening 2 m wide onto the corridor, no door: Studio divides them there.
+    # An office opening 2 m wide onto the corridor, no door: Studio divides them across
+    # the gap in the wall, and the editor draws that line.
     from dataclasses import replace
 
     from storeypath.convert import convert_floor

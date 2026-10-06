@@ -468,41 +468,51 @@ export class StoreyPathWorld extends EventTarget {
     // the rooms: floor finish, x-ray volume, highlight, label
     const parapetHeight = Math.min(props.parapet_height_m || PARAPET, wallHeight);
     const roofed = []; // under the ceiling: every room but terraces and balconies
+    // One volume per space (walls stand on its edges); a space divided into zones is
+    // used through them: each has its own floor, highlight and label, and no wall.
+    built.rooms = [];
     for (const space of this.#pkg.spacesOn(floor.id)) {
-      const p = space.properties;
-      const polys = this.#polygons(space.geometry);
-      if (!polys.length) continue;
-      const finish = p.type === "open_to_below" ? null : new THREE.Mesh(this.#flat(polys, e + 0.004),
-        this.#materials.floor(p.type));
-      if (finish) {
-        finish.receiveShadow = true;
-        finish.userData.spaceId = space.id;
-        group.add(finish);
-      }
-      const outdoor = OUTDOOR.has(p.type);
-      if (!outdoor) roofed.push(...polys);
-      const volume = new THREE.Mesh(this.#extrude(polys, (outdoor ? parapetHeight : wallHeight) - 0.05, e + 0.01),
-        this.#materials.volume(TYPE_COLORS[p.type] || TYPE_COLORS.unspecified));
+      const sp = space.properties;
+      const spacePolys = this.#polygons(space.geometry);
+      if (!spacePolys.length) continue;
+      built.rooms.push({ id: space.id, rings: spacePolys });
+      const outdoor = OUTDOOR.has(sp.type);
+      if (!outdoor) roofed.push(...spacePolys);
+      const volume = new THREE.Mesh(this.#extrude(spacePolys, (outdoor ? parapetHeight : wallHeight) - 0.05, e + 0.01),
+        this.#materials.volume(TYPE_COLORS[sp.type] || TYPE_COLORS.unspecified));
       volume.userData.spaceId = space.id;
       volume.renderOrder = 2;
       group.add(volume);
-      const highlight = new THREE.Mesh(this.#flat(polys, e + 0.02), this.#materials.highlight);
-      highlight.visible = false;
-      highlight.renderOrder = 3;
-      group.add(highlight);
-      const [lx, ln] = p.display_point ? this.#local(p.display_point) : polys[0][0][0];
-      const label = this.#label(p);
-      label.position.set(lx, e + 0.25, -ln);
-      if (label.element.textContent) group.add(label);
-      let x0 = Infinity, n0 = Infinity, x1 = -Infinity, n1 = -Infinity;
-      for (const [x, n] of polys.flat(2)) {
-        x0 = Math.min(x0, x); n0 = Math.min(n0, n); x1 = Math.max(x1, x); n1 = Math.max(n1, n);
+      const zones = this.#pkg.zonesOf(space.id);
+      for (const unit of zones.length ? zones : [space]) {
+        const p = unit.properties;
+        const polys = unit === space ? spacePolys : this.#polygons(unit.geometry);
+        if (!polys.length) continue;
+        const finish = p.type === "open_to_below" ? null : new THREE.Mesh(this.#flat(polys, e + 0.004),
+          this.#materials.floor(p.type));
+        if (finish) {
+          finish.receiveShadow = true;
+          finish.userData.spaceId = unit.id;
+          group.add(finish);
+        }
+        const highlight = new THREE.Mesh(this.#flat(polys, e + 0.02), this.#materials.highlight);
+        highlight.visible = false;
+        highlight.renderOrder = 3;
+        group.add(highlight);
+        const [lx, ln] = p.display_point ? this.#local(p.display_point) : polys[0][0][0];
+        const label = this.#label(p);
+        label.position.set(lx, e + 0.25, -ln);
+        if (label.element.textContent) group.add(label);
+        let x0 = Infinity, n0 = Infinity, x1 = -Infinity, n1 = -Infinity;
+        for (const [x, n] of polys.flat(2)) {
+          x0 = Math.min(x0, x); n0 = Math.min(n0, n); x1 = Math.max(x1, x); n1 = Math.max(n1, n);
+        }
+        built.spaces.push({
+          id: unit.id, type: p.type, name: p.name, number: p.number, tucked: p.hidden || p.ignored,
+          rings: polys, finish, volume, highlight, label,
+          centre: { x: lx, z: -ln }, size: Math.max(x1 - x0, n1 - n0, 2),
+        });
       }
-      built.spaces.push({
-        id: space.id, type: p.type, name: p.name, number: p.number, tucked: p.hidden || p.ignored,
-        rings: polys, finish, volume, highlight, label,
-        centre: { x: lx, z: -ln }, size: Math.max(x1 - x0, n1 - n0, 2),
-      });
     }
 
     // the ceiling, seen only when walking (it casts no shadow: rooms stay sunlit); none
@@ -529,7 +539,7 @@ export class StoreyPathWorld extends EventTarget {
         });
     } else {
       thickness = props.wall_thickness_m || 0.12;
-      const fallback = this.#roomWalls(floor.id, built.spaces, thickness);
+      const fallback = this.#roomWalls(floor.id, built.rooms, thickness); // spaces, not zones: no wall between zones
       walls = fallback.walls;
       ways = fallback.gaps;
     }

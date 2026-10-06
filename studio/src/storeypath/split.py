@@ -24,6 +24,7 @@ from shapely.ops import split as split_by_line
 
 from .geometry import as_polygons
 
+MESH_STEP_M = 0.5
 SIMPLIFY_M = 0.05  # curves are simplified this much before triangulating
 STRAIGHTER = 1.2  # a straight cut across the room may be this much longer than the shortest
 
@@ -56,14 +57,20 @@ def _straighter(poly: Polygon, cut: list[LineString], gs_in, gs_out, max_cut: fl
     """A person divides a room straight across, square to its walls, not along the
     shortest diagonal between two wall corners: a straight cut through the same
     place (either end of the shortest, or its middle), along or across the room's
-    walls, that still separates the labels and is not much longer."""
+    walls, that still separates the labels and is not much longer. Where the room
+    does not narrow, as many cuts are as short: then the one halfway between the
+    labels of the two sides."""
     if len(cut) != 1 or cut[0].length == 0:
         return None
     line = cut[0]
     angle = _wall_direction(poly)
     reach = math.dist(poly.bounds[:2], poly.bounds[2:])
     best = None
-    for through in (Point(line.coords[0]), Point(line.coords[-1]), line.interpolate(0.5, normalized=True)):
+    a_side = [p for g in gs_in for p in g]
+    b_side = [p for g in gs_out for p in g]
+    midway = Point((sum(p.x for p in a_side) / len(a_side) + sum(p.x for p in b_side) / len(b_side)) / 2,
+                   (sum(p.y for p in a_side) / len(a_side) + sum(p.y for p in b_side) / len(b_side)) / 2)
+    for through in (midway, Point(line.coords[0]), Point(line.coords[-1]), line.interpolate(0.5, normalized=True)):
         for a in (angle, angle + math.pi / 2):
             dx, dy = math.cos(a) * reach, math.sin(a) * reach
             across = LineString([(through.x - dx, through.y - dy), (through.x + dx, through.y + dy)])
@@ -72,7 +79,7 @@ def _straighter(poly: Polygon, cut: list[LineString], gs_in, gs_out, max_cut: fl
             if not pieces:
                 continue
             piece = min(pieces, key=lambda g: g.distance(through))
-            if piece.length > min(STRAIGHTER * line.length, max_cut) or (best and piece.length >= best[0]):
+            if piece.length > min(STRAIGHTER * line.length, max_cut) or (best and piece.length >= best[0] - 1e-6):
                 continue
             # A line that ends on the boundary may not cut it (rounding): reach past it a little.
             (x0, y0), (x1, y1) = piece.coords[0], piece.coords[-1]
@@ -103,7 +110,9 @@ def _within(group: list[Point], poly: Polygon) -> bool:
 
 
 def _cheapest_separation(poly: Polygon, groups, max_cut, min_area):
-    mesh = _Mesh(poly.simplify(SIMPLIFY_M))
+    # Points along the walls every MESH_STEP_M, so a cut can cross anywhere: a plain
+    # rectangle is otherwise two triangles, and its only cut the diagonal.
+    mesh = _Mesh(shapely.segmentize(poly.simplify(SIMPLIFY_M), MESH_STEP_M))
     if mesh.n < 2:
         return None
     seeds = [mesh.seeds(g) for g in groups]

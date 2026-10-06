@@ -104,13 +104,15 @@ class ObjectRecord(BaseModel):
     """One registered object. Retired records are kept so IDs are never reused."""
 
     id: str
-    kind: Literal["space", "opening"]
+    kind: Literal["space", "zone", "opening"]
     type: str  # detected type; a correction in Workspace.overrides wins over it
     type_source: str = "default"  # which rule produced the type
     name: str | None = None
     number: str | None = None
     geometry: dict[str, Any]  # GeoJSON geometry, local meters
     connects: list[str] = Field(default_factory=list)  # openings: the spaces they join
+    parent: str | None = None  # zones: the space they are part of
+    zones: list[str] = Field(default_factory=list)  # spaces: the zones they are divided into
     span: list[list[float]] | None = None  # openings: jamb to jamb, local meters
     width: float | None = None  # openings: meters
     tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
@@ -193,7 +195,8 @@ class Workspace(BaseModel):
         copy.project = Project(code=new, name=name)
         copy.objects = {
             recode(i): r.model_copy(
-                update={"id": recode(i), "connects": [recode(c) for c in r.connects]}
+                update={"id": recode(i), "connects": [recode(c) for c in r.connects],
+                        "parent": recode(r.parent) if r.parent else None, "zones": [recode(z) for z in r.zones]}
             )
             for i, r in copy.objects.items()
         }
@@ -334,7 +337,9 @@ class Workspace(BaseModel):
         """Why a space needs a person to look at it; empty when it does not. Once
         corrected or accepted, only a missing type keeps it on the list; hidden and
         ignored spaces are off it."""
-        if record.kind != "space" or record.status != "active":
+        if record.kind not in ("space", "zone") or record.status != "active":
+            return []
+        if record.zones:  # a space divided into zones is reviewed through them
             return []
         eff = self.effective(record)
         if eff["hidden"] or eff["ignored"]:

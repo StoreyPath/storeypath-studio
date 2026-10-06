@@ -89,16 +89,42 @@ def _wide_opening(cells):
     return office
 
 
-def test_wide_opening_is_split_between_the_labels(tmp_path):
+def test_a_doorway_with_no_door_divides_two_spaces(tmp_path):
+    # An office open onto the corridor through a 2 m gap in its wall, no door drawn:
+    # the wall goes on in line beyond the gap, so they are two spaces joined there.
     cells = office_floor(1)
     office = _wide_opening(cells)
     ex = _extract(tmp_path, cells, area_outlines=False)
-    assert len(ex.spaces) == len(cells)
+    assert len(ex.spaces) == len(cells) and ex.zones == []
     room = next(s for s in ex.spaces if s.number == "101")
     assert room.name == "OFFICE" and iou(room.polygon, _room(cells[office])) > 0.95
-    assert any("no wall is drawn" in i for i in room.issues)
-    opening = next(d for d in ex.doors if d.source == "split")
+    assert any("gap in the wall" in i for i in room.issues)
+    opening = next(d for d in ex.doors if d.source == "doorway" and room in [ex.spaces[i] for i in d.connects])
     assert {ex.spaces[i].name for i in opening.connects} == {"OFFICE", "CORRIDOR"}
+
+
+def test_an_open_hall_with_two_uses_is_one_space_with_two_zones(tmp_path):
+    # A majlis and a dining area in one hall, no wall between them: one space, divided
+    # into two zones between their labels; the zones carry the names.
+    import ezdxf
+
+    doc = ezdxf.new("R2018")
+    doc.units = ezdxf.units.M
+    for layer in ("A-WALL", "A-AREA-IDEN"):
+        doc.layers.add(layer)
+    msp = doc.modelspace()
+    for a, b, c, d in ((-0.2, -0.2, 10.2, 5.2), (0, 0, 10, 5)):
+        msp.add_lwpolyline([(a, b), (c, b), (c, d), (a, d)], close=True, dxfattribs={"layer": "A-WALL"})
+    for text, x in (("MAJLIS", 2.5), ("DINING", 7.5)):
+        msp.add_text(text, height=0.25, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement((x, 2.5))
+    doc.saveas(tmp_path / "hall.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "hall.dxf"), load_profile("ncs"))
+    assert len(ex.spaces) == 1 and ex.spaces[0].name is None
+    assert sorted(z.name for z in ex.zones) == ["DINING", "MAJLIS"]
+    assert all(z.space == 0 for z in ex.zones)
+    assert abs(sum(z.polygon.area for z in ex.zones) - ex.spaces[0].polygon.area) < 0.01  # they divide it
+    assert not any(d.source == "doorway" for d in ex.doors)
+    assert {u.name for u in ex.units()} == {"MAJLIS", "DINING"}
 
 
 

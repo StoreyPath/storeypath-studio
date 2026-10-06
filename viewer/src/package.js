@@ -7,6 +7,7 @@ export const FORMAT = "storeypath-package";
 export const SUPPORTED_MAJOR_VERSION = 0;
 
 const COLLECTIONS = ["location", "buildings", "floors", "spaces", "openings"];
+const SINCE_0_3 = ["zones"]; // parts of open spaces; none in older packages
 
 /**
  * Load a package from a URL, Blob, File or ArrayBuffer.
@@ -34,22 +35,28 @@ export async function loadPackage(source) {
   }
   const collections = {};
   for (const role of COLLECTIONS) collections[role] = (await read(manifest.files[role])).features;
+  for (const role of SINCE_0_3) collections[role] = manifest.files[role] ? (await read(manifest.files[role])).features : [];
   return new StoreyPathPackage(manifest, collections);
 }
 
 export class StoreyPathPackage {
-  constructor(manifest, { location, buildings, floors, spaces, openings }) {
+  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [] }) {
     this.manifest = manifest;
     this.locations = location;
     this.buildings = buildings;
     this.floors = floors;
-    this.spaces = spaces;
+    this.spaces = spaces; // what walls and doors enclose
+    this.zones = zones; // the parts of open spaces, with no wall between them
     this.openings = openings;
 
     this.byId = new Map();
-    for (const list of [location, buildings, floors, spaces, openings]) {
+    for (const list of [location, buildings, floors, spaces, zones, openings]) {
       for (const f of list) this.byId.set(f.id, f);
     }
+    this._zonesBySpace = groupBy(zones, (z) => z.properties.space_id);
+    // what is used: the zones of a space that has them, otherwise the space
+    this.units = [...zones, ...spaces.filter((s) => !this._zonesBySpace.has(s.id))];
+    this._unitsByFloor = groupBy(this.units, (u) => u.properties.floor_id);
     this._floorsByBuilding = groupBy(floors, (f) => f.properties.building_id);
     for (const list of this._floorsByBuilding.values()) {
       list.sort((a, b) => a.properties.ordinal - b.properties.ordinal);
@@ -80,6 +87,16 @@ export class StoreyPathPackage {
 
   spacesOn(floorId) {
     return this._spacesByFloor.get(floorId) ?? [];
+  }
+
+  /** The zones a space is divided into (none when it is used as a whole). */
+  zonesOf(spaceId) {
+    return this._zonesBySpace.get(spaceId) ?? [];
+  }
+
+  /** What is used on a floor: the zones of spaces divided into zones, and the other spaces. */
+  unitsOn(floorId) {
+    return this._unitsByFloor.get(floorId) ?? [];
   }
 
   /** The ground floor of a building (ordinal 0), or its lowest floor. */
@@ -113,13 +130,13 @@ export class StoreyPathPackage {
   }
 
   /**
-   * Find spaces by name, number, ID or type. Options: type (exact type),
-   * buildingId, floorId, limit.
+   * Find spaces and zones (what is used) by name, number, ID or type. Options: type
+   * (exact type), buildingId, floorId, limit.
    */
   search(query = "", { type, buildingId, floorId, limit = 50 } = {}) {
     const q = query.trim().toLowerCase();
     const hits = [];
-    for (const s of this.spaces) {
+    for (const s of this.units) {
       const p = s.properties;
       if (type && p.type !== type) continue;
       if (floorId && p.floor_id !== floorId) continue;

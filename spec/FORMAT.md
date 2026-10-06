@@ -1,8 +1,8 @@
-# StoreyPath package format — version 0.2
+# StoreyPath package format — version 0.3
 
 A StoreyPath package (`*.storeypath`) describes one project: its locations, buildings,
-floors, the spaces on each floor (offices, corridors, elevators, …) and the doors
-between them. It is a ZIP archive of plain JSON, GeoJSON and CSV files, so any
+floors, the spaces on each floor (offices, corridors, elevators, …), the zones that
+divide open spaces, and the doors between spaces. It is a ZIP archive of plain JSON, GeoJSON and CSV files, so any
 system can read it without special software.
 
 A copy of this document is included in every package.
@@ -15,7 +15,8 @@ A copy of this document is included in every package.
 | `location.geojson` | Locations (sites, campuses) |
 | `buildings.geojson` | Buildings, with their footprint |
 | `floors.geojson` | Floors, with their outline, order, elevation and height |
-| `spaces.geojson` | Rooms, offices, corridors, elevators, stairs, … |
+| `spaces.geojson` | Rooms, offices, corridors, elevators, stairs, …: what walls and doors enclose |
+| `zones.geojson` | The parts of an open space with no wall between them (a majlis and a dining area in one hall) |
 | `openings.geojson` | Doors and other ways through, and which spaces each one connects |
 | `objects.csv` | Every ID in one flat table, with its parent IDs — for building ID mappings |
 | `changes.json` | IDs added, changed and retired since the previous export |
@@ -79,7 +80,21 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 `parapet_height_m`. Geometry: floor outline (or null).
 
 **space** — `type`, `name`, `number`, `floor_id`, `area_m2`, `display_point` (a good
-spot for its label), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
+spot for its label), `zones`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
+A space is what walls, doors and windows enclose: walls stand on its edges.
+
+**zone** — `type`, `name`, `number`, `space_id`, `floor_id`, `area_m2`,
+`display_point`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon. A zone is a
+part of a space used for one thing, with no wall between it and the rest of the
+space: a majlis and a dining area in one hall, a passage running into a living room,
+team areas in an open office. The zones of a space divide it exactly (together they
+cover it, without overlapping) and are listed in its `zones`; a space used for one
+thing has none. Zone edges are not walls: draw them as light lines, and walk across
+them freely.
+
+**Which to use.** A space with zones is used through its zones; a space without
+zones is used as a whole. Systems that place people or things in rooms should use
+the zones of a space that has them, and the space itself otherwise.
 
 **opening** — `type`, `floor_id`, `connects` (IDs of the one or two spaces it joins),
 `exterior` (true when it leads outside), `width_m` and `span` (jamb to jamb, when
@@ -98,8 +113,10 @@ Space types: `office`, `room`, `meeting_room`, `corridor`, `lobby`, `elevator`,
 (private; public toilets are `restroom`), `dressing_room`, `laundry`, `prayer_room`,
 `parking`, `balcony`, `terrace`, `open_to_below` (a void over the floor below).
 
-Opening types: `door`, `opening` (a way through with no door: a doorway, or where
-open-plan rooms meet).
+Opening types: `door`, `opening` (a way through a wall with no door: a doorway).
+Openings join spaces; the zones of a space need none.
+
+Zones use the space types.
 
 Type names are never renamed or removed; new types may be added in later versions,
 and `manifest.json → types` lists the ones this package may use. `unspecified`
@@ -110,11 +127,12 @@ means the converter could not decide and nobody has corrected it yet.
 One row per ID, including the project itself:
 
 `id, kind, type, name, number, project_id, location_id, building_id, floor_id,
-floor_ordinal, area_m2, lon, lat`
+floor_ordinal, area_m2, lon, lat, hidden, ignored, space_id`
 
-`kind` is `project`, `location`, `building`, `floor`, `space` or `opening`. Parent
-columns are empty where they do not apply. `lon`/`lat` is the label point (spaces,
-buildings, locations) or the door position (openings).
+`kind` is `project`, `location`, `building`, `floor`, `space`, `zone` or `opening`.
+Parent columns are empty where they do not apply; `space_id` is a zone's space.
+`lon`/`lat` is the label point (spaces, zones, buildings, locations) or the door
+position (openings).
 
 ## changes.json
 
@@ -130,6 +148,14 @@ buildings, locations) or the door position (openings).
 ```
 
 A system that skipped an export can use `all_retired` to clean up its mappings.
+
+## Changes from 0.2
+
+- `zones.geojson` and the `zone` kind: open areas are one space divided into zones,
+  where 0.2 cut them into separate spaces joined by an `opening` with no wall.
+- `space.zones`; `objects.csv` gains `space_id` (and documents `hidden`, `ignored`).
+- An object's kind may change between exports when it is the same place in use:
+  a 0.2 space that becomes a zone keeps its ID.
 
 ## Versioning
 

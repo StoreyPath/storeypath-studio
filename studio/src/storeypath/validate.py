@@ -14,7 +14,7 @@ from .ids import LEVELS, parse_id
 from .package import COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, Changes, FeatureCollection, Manifest
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
-              "space": "object", "opening": "object"}
+              "space": "object", "zone": "object", "opening": "object"}
 
 
 def validate_package(path: str | Path) -> list[str]:
@@ -88,6 +88,18 @@ def validate_package(path: str | Path) -> list[str]:
             expect_parent(f.id, f.properties.building_id, "building")
         for f in collections.get("spaces", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
+        zones_of = {f.id: set(f.properties.zones) for f in collections.get("spaces", [])}
+        for f in collections.get("zones", []):
+            expect_parent(f.id, f.properties.floor_id, "floor")
+            space = f.properties.space_id
+            if ids.get(space) != "space":
+                errors.append(f"{f.id}: zone of unknown space {space}")
+            elif f.id not in zones_of.get(space, set()):
+                errors.append(f"{f.id}: not listed in the zones of its space {space}")
+        for space, zs in zones_of.items():
+            for z in zs:
+                if ids.get(z) != "zone":
+                    errors.append(f"{space}: lists unknown zone {z}")
         for f in collections.get("openings", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
             for s in f.properties.connects:

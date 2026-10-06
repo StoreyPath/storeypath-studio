@@ -72,6 +72,14 @@ class ExtractedSpace:
 
 
 @dataclass
+class ExtractedZone(ExtractedSpace):
+    """A part of a space used for one thing, with no wall between it and the rest
+    (a majlis and a dining area in one hall). The zones of a space divide it."""
+
+    space: int = -1  # index into FloorExtraction.spaces
+
+
+@dataclass
 class ExtractedDoor:
     footprint: Polygon
     point: Point
@@ -97,6 +105,12 @@ class FloorExtraction:
     walls: object = None  # the walls as drawn, with their door and window gaps
     wall_thickness: float | None = None
     labels: list[Label] = field(default_factory=list)  # the room names and numbers as placed
+    zones: list[ExtractedZone] = field(default_factory=list)  # parts of open spaces, by space index
+
+    def units(self) -> list[ExtractedSpace]:
+        """What is named, typed and used: the zones, and the spaces that have none."""
+        zoned = {z.space for z in self.zones}
+        return [*self.zones, *(s for i, s in enumerate(self.spaces) if i not in zoned)]
 
 
 def _walk(entities, parent_layer: str | None = None, depth: int = 0,
@@ -338,15 +352,19 @@ def extract_floor(
         where = " or ".join(v for k, v in looked.items() if method in (k, "auto"))
         warnings.append(f"no spaces found from {where}; busiest layers in this drawing: {top}")
 
-    cuts: list[LineString] = []
+    zones: list[ExtractedZone] = []
+    gaps: list[LineString] = []
     if used == "walls":
-        spaces, cuts = _split_open_areas(spaces, labels, profile)
+        spaces, zones, gaps = _divide_open_areas(spaces, labels, profile, fabric.walls if fabric else None)
         for s in spaces:
             s.issues += open_issue(s.polygon, open_edges)
-    _assign_labels(spaces, labels, profile, warnings)
-    _assign_blocks(spaces, blocks)
-    for s in spaces:
+    zoned = {z.space for z in zones}
+    units = [*zones, *(s for i, s in enumerate(spaces) if i not in zoned)]
+    _assign_labels(units, labels, profile, warnings)
+    _assign_blocks(units, blocks)
+    for s in units:
         s.type, s.type_source = profile.classify(s.name, s.blocks, s.layer)
+    type_zoned_spaces(spaces, zones)
 
     if fabric is None and (wall_lines or wall_fills):
         fabric = read_fabric(wall_lines, wall_fills, door_shapes, opening_lines, profile.walls)
@@ -359,17 +377,17 @@ def extract_floor(
         for d in _connect_doors(spaces, doorways, profile.doors.reach, [])
         if len(d.connects) == 2
     ]
-    doors += [
-        replace(d, source="split")
-        for d in _connect_doors(spaces, [c.buffer(0.05) for c in cuts], profile.doors.reach, [])
-        if len(d.connects) == 2
-    ]
     if fabric is not None:
         doors += [
             replace(d, source="window")
             for d in _connect_doors(spaces, [w.buffer(0.15, cap_style="flat") for w in fabric.windows],
                                     profile.doors.reach, [], [(w, round(w.length, 3)) for w in fabric.windows])
         ]
+    doors += [  # across a gap in a wall with no door drawn, where two labelled rooms meet
+        replace(d, source="doorway")
+        for d in _connect_doors(spaces, [g.buffer(0.05) for g in gaps], profile.doors.reach, [])
+        if len(d.connects) == 2
+    ]
     _read_tags(doors, tags)
     if loose_door_entities and not door_shapes:
         warnings.append(
@@ -377,7 +395,7 @@ def extract_floor(
         )
     if offset:
         dx, dy = -offset[0] * scale, -offset[1] * scale
-        for s in spaces:
+        for s in [*spaces, *zones]:
             s.polygon = translate(s.polygon, dx, dy)
         for d in doors:
             d.footprint, d.point = translate(d.footprint, dx, dy), translate(d.point, dx, dy)
@@ -395,7 +413,7 @@ def extract_floor(
             outline = unary_union([p for p in as_polygons(outline) if p.distance(rooms) <= 0.1]) or outline
         if outline is not None and outside:  # areas left out as the outside: the walls round them too
             outline, walls = _to_the_building(outline, walls, rooms)
-    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels)
+    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels, zones)
 
 
 def _opening_tag(e) -> tuple[str, str] | None:
@@ -664,33 +682,66 @@ def _merge_doors(doors: list[DoorShape]) -> list[DoorShape]:
     return out
 
 
-def _split_open_areas(spaces, labels, profile) -> tuple[list[ExtractedSpace], list[LineString]]:
-    """Spaces holding the labels of several rooms, split between them where they
-    are narrowest (see split.py)."""
+ZONE_NOTE = "a zone of an open space, divided where its labels are (no wall); check the line"
+GAP_NOTE = "divided from a neighbouring room across a gap in the wall with no door drawn; check it"
+GAP_REACH_M = (0.3, 0.8)  # a wall going on this far beyond each end of a dividing line, in line with it
+
+
+def _divide_open_areas(spaces, labels, profile, walls) -> tuple[list, list[ExtractedZone], list[LineString]]:
+    """Spaces holding the labels of several rooms, divided between them where they
+    are narrowest (see split.py). Across a gap in a wall (a doorway with no door
+    drawn) they become separate spaces, joined there; across open floor, with no
+    wall at all, the space stays whole and is divided into zones. Returns the spaces,
+    the zones (by index into those spaces) and the gaps divided across."""
     if not spaces or not labels:
-        return spaces, []
+        return spaces, [], []
     tree = STRtree([s.polygon for s in spaces])
     per_space: dict[int, list[Label]] = {}
     for label in labels:
         i = _containing_space(tree, spaces, label.point)
         if i is not None:
             per_space.setdefault(i, []).append(label)
-    out, cuts = [], []
+    out, zones, gaps = [], [], []
     for i, s in enumerate(spaces):
         groups = _label_groups(per_space.get(i, []))
-        if len(groups) < 2:
-            out.append(s)
-            continue
-        parts, lines = split_by_labels(
-            s.polygon, [[lb.point for lb in g] for g in groups], profile.spaces.max_split, profile.spaces.min_area
-        )
+        parts, lines = (split_by_labels(s.polygon, [[lb.point for lb in g] for g in groups],
+                                        profile.spaces.max_split, profile.spaces.min_area)
+                        if len(groups) >= 2 else ([s.polygon], []))
         if len(parts) == 1:
             out.append(s)
-            continue
-        cuts += lines
-        note = "separated from a neighbouring room where no wall is drawn; check the dividing line"
-        out += [replace(s, polygon=p, issues=[*s.issues, note]) for p in parts]
-    return out, cuts
+        elif lines and all(_across_a_wall_gap(line, walls) for line in lines):
+            out += [replace(s, polygon=p, issues=[*s.issues, GAP_NOTE]) for p in parts]
+            gaps += lines
+        else:
+            out.append(s)
+            zones += [ExtractedZone(polygon=p, layer=s.layer, issues=[ZONE_NOTE], space=len(out) - 1) for p in parts]
+    return out, zones, gaps
+
+
+def _across_a_wall_gap(line: LineString, walls) -> bool:
+    """Whether a dividing line closes a gap in a straight wall: the wall goes on
+    beyond both of its ends, in line with it. A line across open floor runs from
+    wall to wall instead, and beyond its ends lie other rooms or the outside."""
+    if walls is None or walls.is_empty or line.length == 0:
+        return False
+    (x0, y0), (x1, y1) = line.coords[0], line.coords[-1]
+    ux, uy = (x1 - x0) / line.length, (y1 - y0) / line.length
+    near = walls.buffer(0.05)
+    return all(near.contains(Point(x + sign * ux * d, y + sign * uy * d))
+               for (x, y), sign in (((x0, y0), -1), ((x1, y1), 1)) for d in GAP_REACH_M)
+
+
+def type_zoned_spaces(spaces, zones) -> None:
+    """A space divided into zones is named by them; it takes its largest zone's type."""
+    largest: dict[int, ExtractedZone] = {}
+    for z in zones:
+        if z.space not in largest or z.polygon.area > largest[z.space].polygon.area:
+            largest[z.space] = z
+    for i, z in largest.items():
+        s = spaces[i]
+        s.name = s.number = None
+        s.type, s.type_source = z.type, "zones"
+        s.issues = [i for i in s.issues if not i.startswith("has the labels of")]
 
 
 def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:

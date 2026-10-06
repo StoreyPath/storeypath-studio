@@ -134,7 +134,7 @@ def _walls_and_parapets(walls, spaces, thickness: float | None):
 
 def build_features(ws: Workspace) -> dict[str, list[dict]]:
     placed = placements(ws)
-    out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "openings")}
+    out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "zones", "openings")}
     for loc in ws.locations:
         loc_id = make_id(ws.id, loc.code)
         footprints = []
@@ -172,6 +172,19 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                 _geo(geom, g),
                                 {"kind": "space", "type": eff["type"], "name": eff["name"],
                                  "number": eff["number"], "floor_id": f_id,
+                                 "area_m2": round(geom.area, 2),
+                                 "display_point": _lonlat(g, _label_point(geom)),
+                                 "zones": list(r.zones),
+                                 "hidden": eff["hidden"], "ignored": eff["ignored"]},
+                            )
+                        )
+                    elif r.kind == "zone":
+                        out["zones"].append(
+                            _feature(
+                                r.id,
+                                _geo(geom, g),
+                                {"kind": "zone", "type": eff["type"], "name": eff["name"],
+                                 "number": eff["number"], "space_id": r.parent, "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
@@ -224,7 +237,7 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
     w.writeheader()
     w.writerow({"id": ws.id, "kind": "project", "name": ws.project.name, "project_id": ws.id})
     ordinals = {f["id"]: f["properties"]["ordinal"] for f in features["floors"]}
-    for role in ("location", "buildings", "floors", "spaces", "openings"):
+    for role in ("location", "buildings", "floors", "spaces", "zones", "openings"):
         for f in features[role]:
             p = f["properties"]
             segs = f["id"].split("-")
@@ -239,6 +252,7 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
                 "area_m2": p.get("area_m2", ""),
                 "lon": pt[0] if pt else "", "lat": pt[1] if pt else "",
                 "hidden": "true" if p.get("hidden") else "", "ignored": "true" if p.get("ignored") else "",
+                "space_id": p.get("space_id") or "",
             })
     return buf.getvalue()
 
@@ -270,7 +284,8 @@ def export_package(ws: Workspace, out_path, *, record: bool = True) -> Manifest:
         export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
         files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
-        types={"space": [t.value for t in SpaceType], "opening": [t.value for t in OpeningType]},
+        types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
+               "opening": [t.value for t in OpeningType]},
         sources=[
             SourceInfo(floor_id=fid, file=Path(f.source.path).name, sha256=f.source.sha256)
             for _, _, f, fid in ws.iter_floors() if f.source
