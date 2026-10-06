@@ -104,6 +104,14 @@ def read_drawing(path: str | Path) -> Drawing:
     return doc
 
 
+def read_drawing_to_change(path: str | Path) -> Drawing:
+    """A drawing parsed afresh and not kept: for a caller that changes it (privacy.py)."""
+    path = Path(path)
+    if not path.exists():
+        raise DrawingError(f"drawing not found: {path}")
+    return _parse(path)
+
+
 def _parse(path: Path) -> Drawing:
     suffix = path.suffix.lower()
     if suffix == ".dxf":

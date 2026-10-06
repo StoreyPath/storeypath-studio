@@ -255,6 +255,29 @@ def views(
 
 
 @app.command()
+def private(
+    drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")],
+    output: Annotated[Path, typer.Argument(help="the copy to write (.dxf)")],
+):
+    """Copy a drawing without its private information: each sheet's title block
+    (client, owner, consultant, who drew it, stamps, logos), names, phone numbers
+    and emails elsewhere, images, paper-space sheets and the file's hidden data.
+    Studio does this to every drawing it is given unless told not to."""
+    from .cad import read_drawing_to_change
+    from .privacy import make_private
+
+    if output.suffix.lower() != ".dxf":
+        _fail("the copy is written as DXF: name it *.dxf")
+    try:
+        doc = read_drawing_to_change(drawing)
+    except DrawingError as e:
+        _fail(str(e))
+    report = make_private(doc)
+    doc.saveas(output)
+    typer.echo(f"{report.summary()}; written to {output}")
+
+
+@app.command()
 def align(
     workspace: WorkspaceArg,
     building_id: str,

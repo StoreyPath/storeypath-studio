@@ -13,7 +13,10 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/status
     GET  /api/projects                         POST /api/projects {name}
     GET  /api/projects/<code>
-    PUT  /api/projects/<code>/drawings/<name>  (the file as the body)
+    PUT  /api/projects/<code>/drawings/<name>[?private=0]  (the file as the body)
+                                               → job: the drawing kept without its
+                                               private information, as drawing-N.dxf
+                                               (privacy.py); with private=0 kept as sent
     POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
@@ -61,6 +64,8 @@ from .workspace import Placement, SourceDrawing, Workspace
 
 MAX_UPLOAD = 512 * 1024 * 1024
 DRAWING_TYPES = (".dwg", ".dxf")
+INCOMING = ".incoming-"  # a drawing as sent, until its private copy is made
+DRAWING_NAME = re.compile(r"drawing-(\d+)\.dxf")
 
 
 # ---- jobs ------------------------------------------------------------------------
@@ -137,6 +142,8 @@ class Studio:
             threading.Thread(target=self.model.warm, daemon=True).start()
         self._reviews: dict[Path, Review] = {}
         self._lock = threading.RLock()
+        for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
+            left.unlink(missing_ok=True)
 
     # ---- projects ---------------------------------------------------------------
 
@@ -226,7 +233,8 @@ class Studio:
                                for f in sorted(b.floors, key=lambda f: f.ordinal)],
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings})
-        drawings = sorted(p.name for p in (path.parent / "drawings").glob("*") if p.suffix.lower() in DRAWING_TYPES) \
+        drawings = sorted(p.name for p in (path.parent / "drawings").glob("*")
+                          if p.suffix.lower() in DRAWING_TYPES and not p.name.startswith(INCOMING)) \
             if (path.parent / "drawings").is_dir() else []
         exports = sorted((p.name for p in (path.parent / "exports").glob("*.storeypath")), reverse=True) \
             if (path.parent / "exports").is_dir() else []
@@ -235,14 +243,42 @@ class Studio:
 
     # ---- drawings ---------------------------------------------------------------
 
-    def upload(self, code: str, name: str, body: bytes) -> dict:
+    def upload(self, code: str, name: str, body: bytes, private: bool = True) -> dict | Job:
+        """A drawing added to the project. Kept private (the default), a job takes out
+        what names the people and the project — title blocks, names, contacts, hidden
+        file data (privacy.py) — and only that copy is kept, as drawing-N.dxf: the
+        file as sent, and its name, are not. Otherwise it is kept as sent."""
         name = Path(name).name
-        if Path(name).suffix.lower() not in DRAWING_TYPES:
+        suffix = Path(name).suffix.lower()
+        if suffix not in DRAWING_TYPES:
             raise ValueError("drawings are .dwg or .dxf files")
         folder = self.path(code).parent / "drawings"
         folder.mkdir(exist_ok=True)
-        (folder / name).write_bytes(body)
-        return {"drawing": name, "bytes": len(body)}
+        if not private:
+            (folder / name).write_bytes(body)
+            return {"drawing": name, "bytes": len(body)}
+        incoming = folder / f"{INCOMING}{uuid.uuid4().hex[:12]}{suffix}"
+        incoming.write_bytes(body)
+
+        def run(job: Job):
+            from .cad import read_drawing_to_change
+            from .privacy import make_private
+
+            try:
+                job.say("reading the drawing")
+                doc = read_drawing_to_change(incoming)
+                job.say("taking out the title blocks, names, contacts and hidden file data")
+                report = make_private(doc)
+                job.say(report.summary())
+                taken = [int(m.group(1)) for p in folder.glob("drawing-*.dxf") if (m := DRAWING_NAME.fullmatch(p.name))]
+                out = folder / f"drawing-{max(taken, default=0) + 1}.dxf"
+                doc.saveas(out)
+                job.say(f"kept as {out.name}")
+            finally:
+                incoming.unlink(missing_ok=True)
+            return {"drawing": out.name, "privacy": report.view()}
+
+        return self.jobs.submit("Adding a drawing without its private information", run)
 
     def _drawing(self, code: str, name: str) -> Path:
         path = self.path(code).parent / "drawings" / Path(name).name
@@ -580,7 +616,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
         def do_PUT(self):
             if not self._allowed():
                 return self._json(403, {"error": "forbidden"})
-            parts = unquote(urlparse(self.path).path).split("/")[2:]
+            url = urlparse(self.path)
+            parts = unquote(url.path).split("/")[2:]
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_UPLOAD:
                 return self._json(413, {"error": "the file is too large"})
@@ -589,7 +626,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             if self.headers.get("X-StoreyPath") != "1":
                 return self._json(403, {"error": "forbidden"})
             body = self.rfile.read(length)
-            self._api("PUT", parts, body, {})
+            self._api("PUT", parts, body, parse_qs(url.query))
 
         def do_POST(self):
             if not self._allowed() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -603,7 +640,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
 
         def _api(self, method: str, parts: list[str], body, query) -> None:
             try:
-                data = route(method, parts, body)
+                data = route(method, parts, body, query)
             except NotFound as e:
                 return self._json(404, {"error": str(e)})
             except (DrawingError, ValueError, KeyError, ModelUnavailable) as e:
@@ -622,7 +659,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 data = data.view()
             self._json(200, data)
 
-    def route(method: str, parts: list[str], body):
+    def route(method: str, parts: list[str], body, query: dict):
         match method, parts:
             case "GET", ["status"]:
                 return studio.status()
@@ -635,7 +672,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             case "GET", ["projects", code]:
                 return studio.project(code)
             case "PUT", ["projects", code, "drawings", name]:
-                return studio.upload(code, name, body)
+                return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0")
             case "POST", ["projects", code, "drawings", name, "plans"]:
                 return studio.plans(code, name, body.get("units") or None)
             case "POST", ["projects", code, "floors"]:

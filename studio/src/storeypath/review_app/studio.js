@@ -46,13 +46,13 @@ function el(tag, attrs = {}, ...children) {
 }
 
 let toastTimer;
-function toast(message, error = false) {
+function toast(message, error = false, ms = undefined) {
   const t = $("toast");
   t.textContent = message;
   t.classList.toggle("error", error);
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), error ? 9000 : 3000);
+  toastTimer = setTimeout(() => (t.hidden = true), ms ?? (error ? 9000 : 3000));
 }
 
 /** Run a server job, showing its progress; resolves with its result. */
@@ -163,18 +163,34 @@ function drawingsCard(code, p, plansArea) {
   const input = el("input", { type: "file", accept: ".dwg,.dxf", hidden: true, multiple: true });
   const drop = el("label", { class: "drop" }, input,
     el("strong", {}, "Add drawings"), el("br"), "Drop DWG or DXF files here, or click to choose them.");
+  // On by default: the project keeps only a copy without the title blocks (client,
+  // owner, consultant, who drew it), names, contacts, logos and hidden file data.
+  const keepPrivate = el("input", { type: "checkbox", checked: true });
+  const privacy = el("label", { class: "check",
+    title: "Removes each sheet's title block (client, owner, consultant, project, plot and permit numbers, who drew and checked it, stamps, logos), names, phone numbers and emails elsewhere, and the file's hidden data. Only the cleaned copy is kept, named drawing-1.dxf, drawing-2.dxf…; the file you add and its name are not." },
+    keepPrivate, "Remove private information (title blocks, owner, names, contacts) as drawings are added");
   const upload = async (files) => {
+    const cleaned = keepPrivate.checked;
+    const added = [];
     for (const file of files) {
       try {
         toast(`Uploading ${file.name}…`);
-        await api(`projects/${code}/drawings/${encodeURIComponent(file.name)}`, undefined, { raw: file });
+        const sent = api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
+          undefined, { raw: file });
+        if (cleaned) {
+          const result = await runJob(sent);
+          added.push(result.drawing);
+          toast(`${file.name} → ${result.drawing}: ${result.privacy.summary}`, false, 9000);
+        } else {
+          added.push((await sent).drawing);
+        }
       } catch (e) {
         toast(`${file.name}: ${e.message}`, true);
-        return;
+        break;
       }
     }
     await projectPage(code);
-    if (files.length === 1) findPlans(code, files[0].name, $("plans-area"));
+    if (files.length === 1 && added.length === 1) findPlans(code, added[0], $("plans-area"));
   };
   input.addEventListener("change", () => upload([...input.files]));
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
@@ -184,6 +200,7 @@ function drawingsCard(code, p, plansArea) {
   return el("section", { class: "card" },
     el("h2", {}, "Drawings"),
     drop,
+    privacy,
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
       el("li", {}, el("code", { class: "grow" }, d),
         el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,

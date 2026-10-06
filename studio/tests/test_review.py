@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import ezdxf
 import pytest
 from shapely.geometry import LineString
 
@@ -212,7 +213,7 @@ def test_two_plans_as_one_floor_are_refused_before_anything_changes(studio, tmp_
     code = created["code"]
     write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),
                                              (office_floor(0), (170.0, 50.0), "GROUND FLOOR PLAN")], area_outlines=False)
-    call(f"{base}/api/projects/{code}/drawings/sheet.dxf", raw=(tmp_path / "sheet.dxf").read_bytes())
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=(tmp_path / "sheet.dxf").read_bytes())
     _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
     house, annex = wait(base, job)["plans"]
 
@@ -246,19 +247,31 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     code = created["code"]
     write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),
                                              (office_floor(1), (170.0, 52.5), "FIRST FLOOR PLAN")], area_outlines=False)
-    status, _ = call(f"{base}/api/projects/{code}/drawings/sheet.dxf", raw=(tmp_path / "sheet.dxf").read_bytes())
+    sheet = tmp_path / "sheet.dxf"
+    doc = ezdxf.readfile(sheet)
+    doc.header["$LASTSAVEDBY"] = "someone"
+    doc.saveas(sheet)
+    status, job = call(f"{base}/api/projects/{code}/drawings/Owner%20Name%20villa.dxf", raw=sheet.read_bytes())
     assert status == 200
+    added = wait(base, job)  # kept without its private information, under a plain name
+    assert added["drawing"] == "drawing-1.dxf" and "$LASTSAVEDBY" in added["privacy"]["hidden"]
+    assert [p.name for p in (app.path(code).parent / "drawings").iterdir()] == ["drawing-1.dxf"]
+    assert call(f"{base}/api/projects/{code}")[1]["drawings"] == ["drawing-1.dxf"]
+    # as sent, when asked
+    _, kept = call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=sheet.read_bytes())
+    assert kept["drawing"] == "sheet.dxf"
+    (app.path(code).parent / "drawings" / "sheet.dxf").unlink()
 
-    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
+    _, job = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/plans", {})
     found = wait(base, job)
     assert found["units"] == "mm" and found["units_sure"] and not found["units_chosen"]
     assert found["units_reason"].startswith("Read in millimetres: the doors")
     # other units: the plans are found again, at that scale
-    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {"units": "cm"})
+    _, job = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/plans", {"units": "cm"})
     in_cm = wait(base, job)
     assert in_cm["units"] == "cm" and in_cm["units_chosen"]
     assert in_cm["units_reason"] == "Read in centimetres, as you chose."
-    status, error = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {"units": "furlongs"})
+    status, error = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/plans", {"units": "furlongs"})
     assert status == 400 and "unknown units" in error["error"]
     plans = [(p["title"], p["kind"], p["floor"]) for p in found["plans"]]
     assert plans == [("GROUND FLOOR PLAN", "floor_plan", 0), ("FIRST FLOOR PLAN", "floor_plan", 1)]
@@ -266,7 +279,7 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
 
     chosen = [{"index": p["index"], "title": p["title"], "region": p["region"], "building": "HQ",
                "ordinal": p["floor"], "name": p["title"].title()} for p in found["plans"]]
-    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "units": found["units"],
+    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "drawing-1.dxf", "units": found["units"],
                                                          "plans": chosen})
     added = wait(base, job)
     assert len(added["floors"]) == 2
@@ -369,7 +382,7 @@ def test_floor_heights_come_from_the_levels_on_the_sheet(studio, tmp_path):
                               "+8.00 PARAPET LVL."]):
         doc.modelspace().add_text(text, height=250).set_placement((400000, 50000 + 1000 * i))  # a section, aside
     doc.saveas(tmp_path / "sheet.dxf")
-    call(f"{base}/api/projects/{code}/drawings/sheet.dxf", raw=(tmp_path / "sheet.dxf").read_bytes())
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=(tmp_path / "sheet.dxf").read_bytes())
     _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
     found = wait(base, job)
     levels = found["levels"]
