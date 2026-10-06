@@ -305,22 +305,24 @@ def _connectors(mass, lines: list, max_length: float) -> list:
     return out
 
 
+IN_LINE_EDGE_M = 0.08  # a wall face this long near a line's end shows which way the wall runs there
+
+
 def _in_line(mass, point, direction, tolerance_deg: float = 25.0) -> bool:
     """Whether a line leaving ``point`` along ``direction`` continues the wall there:
-    parallel to the longest wall edge within reach of the point."""
+    parallel to a face of the wall within reach of the point. Beside a window the
+    wall may be a short stub whose end face, across the wall, is its longest edge
+    there; its faces along the wall still show the way it runs."""
     x, y = point
     edges = shapely.clip_by_rect(mass.boundary, x - 0.3, y - 0.3, x + 0.3, y + 0.3)
-    best, best_len = None, 0.0
+    norm = float(np.hypot(*direction)) or 1.0
     for part in shapely.get_parts(edges):
         c = np.asarray(part.coords)
         for p, q in zip(c[:-1], c[1:]):
             length = float(np.hypot(*(q - p)))
-            if length > best_len:
-                best, best_len = q - p, length
-    if best is None or best_len < 0.05:
-        return False
-    cos = abs(np.dot(best, direction)) / (best_len * float(np.hypot(*direction)) or 1.0)
-    return cos >= np.cos(np.radians(tolerance_deg))
+            if length >= IN_LINE_EDGE_M and abs(np.dot(q - p, direction)) / (length * norm) >= np.cos(np.radians(tolerance_deg)):
+                return True
+    return False
 
 
 def _door_bars(door: DoorShape, mass) -> list[Polygon]:
