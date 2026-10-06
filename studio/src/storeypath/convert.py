@@ -65,6 +65,8 @@ def convert_floor(
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
+    if vision is not None:
+        vision.failed = None  # only what goes wrong converting this floor is reported with it
     src = floor.source
     path = Path(workspace_dir) / src.path
     doc = read_drawing(path)
