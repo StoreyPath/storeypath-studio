@@ -138,6 +138,17 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #drawing text { fill: var(--draw-text); opacity: .8; font-family: system-ui, sans-serif; }
 #drawing.hidden { display: none; }
 #print.hidden { display: none; }
+/* Side by side: the print on the left, the spaces on the right, one view. */
+#svg-print {
+  position: absolute; left: 0; top: 0; width: 50%; height: 100%; display: block; background: #fff;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  border-right: 2px solid var(--line); box-sizing: border-box;
+}
+#svg-print.dragging { cursor: grabbing; }
+#map.side #svg { position: absolute; left: 50%; top: 0; width: 50%; }
+#print-selected { fill: none; stroke: var(--select); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.cursor { pointer-events: none; }
+.cursor line, .cursor circle { stroke: var(--danger); stroke-width: 1.5; fill: none; }
 #print image { image-rendering: auto; }
 /* Over the print the spaces are lighter, so what is drawn under them shows. */
 #map.printed #spaces path { fill-opacity: .28; }

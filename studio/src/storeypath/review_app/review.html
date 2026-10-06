@@ -86,7 +86,14 @@
   </aside>
 
   <main id="map">
-    <svg id="svg" tabindex="0" aria-label="Floor plan">
+    <svg id="svg-print" class="pane" aria-label="The floor's drawing as printed" hidden>
+      <g id="world-print">
+        <g id="print-copy"></g>
+        <path id="print-selected"></path>
+      </g>
+      <g id="cursor-print" class="cursor"></g>
+    </svg>
+    <svg id="svg" class="pane" tabindex="0" aria-label="Floor plan">
       <g id="world">
         <g id="print"></g>
         <g id="drawing"></g>
@@ -95,10 +102,12 @@
         <g id="doors"></g>
       </g>
       <g id="labels"></g>
+      <g id="cursor-main" class="cursor"></g>
     </svg>
     <div id="toolbar">
       <button id="fit" type="button" title="Show the whole floor (F)">Fit</button>
-      <label title="The floor's drawing under the spaces: as printed, or its lines">Drawing
+      <label title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
+      <label id="drawing-label" title="The floor's drawing under the spaces: as printed, or its lines">Drawing
         <select id="drawing-mode">
           <option value="print">as printed</option>
           <option value="lines">lines</option>

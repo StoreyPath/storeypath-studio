@@ -20,6 +20,7 @@ const state = {
   bounds: new Map(), // space id → [x0, y0, x1, y1]
   drawingBounds: null,
   drawingMode: savedMode(), // "print", "lines" or "off"
+  side: saved("storeypath.side") === "1", // the print beside the spaces, not under them
   underlay: { lines: null, print: null }, // the floor whose drawing each layer holds
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
@@ -30,13 +31,26 @@ const state = {
 
 // ---- helpers -------------------------------------------------------------
 
-function savedMode() {
+// Per-browser conveniences (how the drawing is shown); never needed to work.
+function saved(key) {
   try {
-    const mode = localStorage.getItem("storeypath.drawing");
-    return ["print", "lines", "off"].includes(mode) ? mode : "print";
+    return localStorage.getItem(key);
   } catch {
-    return "print";
+    return null;
   }
+}
+
+function save(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // not remembered; fine
+  }
+}
+
+function savedMode() {
+  const mode = saved("storeypath.drawing");
+  return ["print", "lines", "off"].includes(mode) ? mode : "print";
 }
 
 async function request(path, body) {
@@ -179,6 +193,7 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
     state.drawingBounds = null;
     $("drawing").replaceChildren(); // never show another floor's drawing underneath
     $("print").replaceChildren();
+    $("print-copy").replaceChildren();
     state.underlay = { lines: null, print: null };
   }
   $("floor").value = id;
@@ -193,14 +208,18 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
 
 // The drawing under the spaces: as printed (an image Studio draws once per drawing),
 // or its lines; each loaded when first shown.
+// Side by side, the print is on the left and the spaces alone on the right.
 function showUnderlay() {
-  const mode = state.drawingMode;
+  const mode = state.side ? "off" : state.drawingMode;
   $("print").classList.toggle("hidden", mode !== "print");
   $("drawing").classList.toggle("hidden", mode !== "lines");
   $("map").classList.toggle("printed", mode === "print");
+  $("map").classList.toggle("side", state.side);
+  $("svg-print").toggleAttribute("hidden", !state.side); // an <svg> has no .hidden
+  $("drawing-label").hidden = state.side;
   const id = state.floor?.id;
   if (!id || !state.floor.source) return;
-  if (mode === "print" && state.underlay.print !== id) loadPrint(id);
+  if ((mode === "print" || state.side) && state.underlay.print !== id) loadPrint(id);
   if (mode === "lines" && state.underlay.lines !== id) loadDrawing(id);
 }
 
@@ -221,6 +240,7 @@ async function loadPrint(id) {
     image.addEventListener("load", () => { if (state.floor?.id === id) $("status").textContent = ""; });
     image.addEventListener("error", () => { if (state.floor?.id === id) $("status").textContent = "The print could not be shown"; });
     $("print").replaceChildren(g);
+    $("print-copy").replaceChildren(g.cloneNode(true));
     if (!state.drawingBounds) state.drawingBounds = info.bounds;
     if (!state.floor.spaces.length && !state.floor.outline) fit();
   } catch (e) {
@@ -367,7 +387,43 @@ function styleSpace(s) {
 function updateView() {
   const { k, tx, ty } = state.view;
   $("world").setAttribute("transform", `matrix(${k} 0 0 ${-k} ${tx} ${ty})`);
+  $("world-print").setAttribute("transform", `matrix(${k} 0 0 ${-k} ${tx} ${ty})`); // the same view, side by side
   placeLabels();
+}
+
+// The space under a point of the plan (world meters), topmost first.
+function spaceAt(x, y) {
+  const spaces = state.floor?.spaces || [];
+  for (let i = spaces.length - 1; i >= 0; i--) {
+    const s = spaces[i];
+    const b = state.bounds.get(s.id);
+    if (!visible(s) || !b || x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
+    let inside = false;
+    for (const ring of rings(s.geometry)) {
+      for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
+        const [xj, yj] = ring[j];
+        const [xk, yk] = ring[k];
+        if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj) inside = !inside;
+      }
+    }
+    if (inside) return s;
+  }
+  return null;
+}
+
+// Side by side, a cross on one side shows where the pointer is on the other.
+function showCursor(pane, sx, sy) {
+  const other = $(pane === $("svg") ? "cursor-print" : "cursor-main");
+  $(pane === $("svg") ? "cursor-main" : "cursor-print").replaceChildren();
+  if (!state.side || sx === null) {
+    other.replaceChildren();
+    return;
+  }
+  other.replaceChildren(
+    svg("line", { x1: sx - 14, y1: sy, x2: sx + 14, y2: sy }),
+    svg("line", { x1: sx, y1: sy - 14, x2: sx, y2: sy + 14 }),
+    svg("circle", { cx: sx, cy: sy, r: 4 }),
+  );
 }
 
 let labelFrame = 0;
@@ -464,42 +520,9 @@ function zoomAt(sx, sy, factor) {
 }
 
 function setupMap() {
-  const map = $("svg");
-  let drag = null;
-  map.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target };
-    map.setPointerCapture(e.pointerId);
-  });
-  map.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-    drag.moved = true;
-    map.classList.add("dragging");
-    state.view = { ...state.view, tx: drag.tx + dx, ty: drag.ty + dy };
-    updateView();
-  });
-  const end = () => {
-    if (!drag) return;
-    const { moved, target } = drag;
-    drag = null;
-    map.classList.remove("dragging");
-    if (!moved) select(target?.dataset?.id || null);
-  };
-  map.addEventListener("pointerup", end);
-  map.addEventListener("pointercancel", () => {
-    drag = null;
-    map.classList.remove("dragging");
-  });
-  map.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const { left, top } = viewport();
-    const speed = e.deltaMode === 1 ? 0.05 : 0.0015;
-    zoomAt(e.clientX - left, e.clientY - top, Math.exp(-e.deltaY * speed));
-  }, { passive: false });
-  // Keep the middle of the plan in the middle when the window changes size.
+  for (const pane of [$("svg"), $("svg-print")]) bindPane(pane);
+  // Keep the middle of the plan in the middle when the window changes size, or
+  // the view is split side by side.
   let size = null;
   new ResizeObserver(() => {
     const { w, h } = viewport();
@@ -509,17 +532,21 @@ function setupMap() {
       updateView();
     }
     size = { w, h };
-  }).observe($("map"));
+  }).observe($("svg"));
+
+  $("side-by-side").checked = state.side;
+  $("side-by-side").addEventListener("change", (e) => {
+    state.side = e.target.checked;
+    save("storeypath.side", state.side ? "1" : "0");
+    showCursor($("svg"), null, null);
+    showUnderlay();
+  });
 
   $("fit").addEventListener("click", fit);
   $("drawing-mode").value = state.drawingMode;
   $("drawing-mode").addEventListener("change", (e) => {
     state.drawingMode = e.target.value;
-    try {
-      localStorage.setItem("storeypath.drawing", state.drawingMode);
-    } catch {
-      // not remembered; fine
-    }
+    save("storeypath.drawing", state.drawingMode);
     showUnderlay();
   });
   $("show-labels").addEventListener("change", (e) => $("labels").classList.toggle("hidden", !e.target.checked));
@@ -531,6 +558,58 @@ function setupMap() {
     renderLists();
     renderLegend();
   });
+}
+
+// Dragging pans, the wheel zooms, a click selects: the same on both sides.
+function bindPane(pane) {
+  const local = (e) => {
+    const r = pane.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  let drag = null;
+  pane.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target };
+    pane.setPointerCapture(e.pointerId);
+  });
+  pane.addEventListener("pointermove", (e) => {
+    const [sx, sy] = local(e);
+    showCursor(pane, sx, sy);
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    pane.classList.add("dragging");
+    state.view = { ...state.view, tx: drag.tx + dx, ty: drag.ty + dy };
+    updateView();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const { moved, target } = drag;
+    drag = null;
+    pane.classList.remove("dragging");
+    if (moved) return;
+    if (pane === $("svg")) {
+      select(target?.dataset?.id || null);
+    } else { // on the print: the space drawn there
+      const [sx, sy] = local(e);
+      const { k, tx, ty } = state.view;
+      select(spaceAt((sx - tx) / k, (ty - sy) / k)?.id || null);
+    }
+  };
+  pane.addEventListener("pointerup", end);
+  pane.addEventListener("pointercancel", () => {
+    drag = null;
+    pane.classList.remove("dragging");
+  });
+  pane.addEventListener("pointerleave", () => showCursor(pane, null, null));
+  pane.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const [sx, sy] = local(e);
+    const speed = e.deltaMode === 1 ? 0.05 : 0.0015;
+    zoomAt(sx, sy, Math.exp(-e.deltaY * speed));
+  }, { passive: false });
 }
 
 // ---- lists and legend ----------------------------------------------------
@@ -600,6 +679,7 @@ function select(id, { fly = false } = {}) {
   state.selected = id && state.byId.has(id) ? id : null;
   if (previous) styleSpace(previous);
   const s = state.byId.get(state.selected);
+  $("print-selected").setAttribute("d", s ? pathData(s.geometry) : ""); // and on the print beside it
   if (s) {
     styleSpace(s);
     $("spaces").append(state.paths.get(s.id)); // on top, so its outline shows
