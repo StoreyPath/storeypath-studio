@@ -255,6 +255,14 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     doc.saveas(sheet)
     status, job = call(f"{base}/api/projects/{code}/drawings/Owner%20Name%20villa.dxf", raw=sheet.read_bytes())
     assert status == 200
+    found = wait(base, job)  # what is private in it, for a person to choose what to keep
+    assert any(f["id"] == "hidden $LASTSAVEDBY" and "someone" in f["label"] for f in found["found"])
+    # sent again and not added: nothing of it is kept
+    _, again = call(f"{base}/api/projects/{code}/drawings/Owner%20Name%20villa.dxf", raw=sheet.read_bytes())
+    pending = wait(base, again)["pending"]
+    assert call(f"{base}/api/projects/{code}/incoming/{pending}/cancel", {})[0] == 200
+    assert call(f"{base}/api/projects/{code}/incoming/{pending}", {"keep": []})[0] == 404
+    _, job = call(f"{base}/api/projects/{code}/incoming/{found['pending']}", {"keep": []})
     added = wait(base, job)  # kept without its private information, under a plain name
     assert added["drawing"] == "drawing-1.dxf" and "$LASTSAVEDBY" in added["privacy"]["hidden"]
     assert sorted(p.name for p in (app.path(code).parent / "drawings").iterdir()) == ["drawing-1.dxf",

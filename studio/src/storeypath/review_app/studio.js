@@ -199,7 +199,16 @@ function drawingsCard(code, p, plansArea) {
         const sent = api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
           undefined, { raw: file });
         if (cleaned) {
-          const result = await runJob(sent);
+          let result = await runJob(sent);
+          if (result.pending) { // a person says what of it to keep
+            const keep = await choosePrivate(file.name, result);
+            if (keep === null) {
+              await api(`projects/${code}/incoming/${result.pending}/cancel`, {});
+              toast(`${file.name}: not added`);
+              continue;
+            }
+            result = await runJob(api(`projects/${code}/incoming/${result.pending}`, { keep }));
+          }
           added.push(result.drawing);
           toast(`${file.name} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
         } else {
@@ -230,6 +239,71 @@ function drawingsCard(code, p, plansArea) {
         el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,
           onclick: () => findPlans(code, d, plansArea) }, findingPlans === d ? "Finding plans…" : "Find plans")))) : null,
   );
+}
+
+// What a drawing holds that is private, found as it is added: each goes unless it is
+// unticked (a child's name on their room, kept on purpose). Resolves with the ids
+// kept, or null to not add the drawing at all.
+const PRIVATE_GROUPS = [
+  ["title block", "Title blocks", "the client, owner, consultant, who drew it, stamps"],
+  ["name", "Names with a title", "Mr, Dr, Eng, Sheikh, السيد …: the name goes, the rest of the text stays"],
+  ["contact", "Contacts and numbers", "phone, email, web, P.O. box, permit, plot and licence numbers"],
+  ["attribute", "Block attributes", "values filled in on blocks"],
+  ["person", "People, read by the language model", "the name goes, the rest of the text stays"],
+  ["company", "Companies, read by the language model", ""],
+  ["address", "Addresses and places, read by the language model", ""],
+  ["id number", "Numbers and dates, read by the language model", ""],
+  ["other", "Other, read by the language model", ""],
+  ["images", "Images", ""],
+  ["sheets", "Paper sheets", ""],
+  ["file data", "Hidden file data", "who saved it, printers, properties"],
+];
+
+function choosePrivate(fileName, found) {
+  return new Promise((resolve) => {
+    const boxes = [];
+    const groups = PRIVATE_GROUPS.map(([kind, title, about]) => {
+      const items = found.found.filter((f) => f.kind === kind);
+      if (!items.length) return null;
+      return el("section", { class: "private-group" },
+        el("h3", {}, title, about ? el("span", { class: "muted small" }, ` · ${about}`) : null),
+        el("ul", {}, items.map((f) => {
+          const box = el("input", { type: "checkbox", checked: true });
+          box.dataset.id = f.id;
+          boxes.push(box);
+          const parts = f.kind === "title block" ? f.detail.join(" · ")
+            : f.detail.length ? `takes out: ${f.detail.join(", ")}` : "";
+          return el("li", {}, el("label", {}, box,
+            el("span", { class: "grow" }, el("span", {}, f.label), parts ? el("span", { class: "muted small detail" }, parts) : null),
+            f.count > 1 ? el("span", { class: "muted small" }, `×${f.count}`) : null));
+        })));
+    }).filter(Boolean);
+    const dialog = el("dialog", { class: "private-review" });
+    const close = (keep) => {
+      dialog.close();
+      dialog.remove();
+      resolve(keep);
+    };
+    const all = (on) => boxes.forEach((b) => (b.checked = on));
+    dialog.append(
+      el("h2", {}, `Private information in ${fileName}`),
+      el("p", { class: "muted" }, "Ticked things are taken out before the drawing is kept; untick what you want to keep ",
+        "(a child's name on their room, say). Nothing is kept until you choose."),
+      el("div", { class: "row" },
+        el("button", { type: "button", onclick: () => all(true) }, "Tick all"),
+        el("button", { type: "button", onclick: () => all(false) }, "Untick all"),
+        el("span", { class: "muted small grow" }, found.reader ? `Texts read by ${found.reader} as well as by rule.`
+          : "No language model running: found by rule only.")),
+      el("div", { class: "private-list" }, groups),
+      el("div", { class: "row end" },
+        el("button", { type: "button", onclick: () => close(null) }, "Don't add it"),
+        el("button", { type: "button", class: "primary",
+          onclick: () => close(boxes.filter((b) => !b.checked).map((b) => b.dataset.id)) },
+          "Take out the ticked and add it")));
+    dialog.addEventListener("cancel", (e) => { e.preventDefault(); close(null); });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
 }
 
 // The drawing whose plans are being found: one at a time (an upload starts it), and

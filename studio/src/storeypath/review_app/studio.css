@@ -116,3 +116,20 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+dialog.private-review { width: min(780px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px 22px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text);
+  display: flex; flex-direction: column; gap: 10px; }
+dialog.private-review::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.private-review h2 { margin: 0; font-size: 18px; }
+dialog.private-review p { margin: 0; }
+.private-list { overflow-y: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 4px 0; }
+.private-group h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.private-group h3 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.private-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.private-group label { display: flex; gap: 10px; align-items: flex-start; padding: 5px 6px; border-radius: 8px; cursor: pointer; }
+.private-group label:hover { background: var(--hover); }
+.private-group label .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.private-group input { margin-top: 3px; accent-color: var(--accent); }
+.row.end { justify-content: flex-end; }
+

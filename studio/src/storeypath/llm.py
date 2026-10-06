@@ -428,6 +428,41 @@ def read_schedule_row(model: LocalModel, headers: list[str], tag: str, cells: li
     return {"width": got.get("width"), "height": got.get("height"), "sill": got.get("sill_height")}
 
 
+PRIVATE_KINDS = ["person", "company", "contact", "address", "id number", "other"]
+PRIVATE_BATCH = 30  # texts per question
+PRIVATE_SYSTEM = (
+    "You check texts taken from an architectural drawing of a building for private information before the "
+    "drawing is shared. Private: a person's name (with or without a title), a company, consultancy, contractor "
+    "or developer name, a phone, fax or extension number, an email or web address, a street address, a plot, "
+    "permit, licence, registration or ID number, a signature. Not private: room and space names (even 'DR. OFFICE' "
+    "or 'MANAGER'), floor and drawing titles, building parts, materials, notes, dimensions, levels, grid labels, "
+    "door and window tags, and words like CLIENT, OWNER or CONSULTANT on their own. For each private text give its "
+    "number and the private part exactly as written in it."
+)
+
+
+def find_private(model: LocalModel, texts: list[str], say=None) -> dict[str, list[tuple[str, str]]]:
+    """The private parts of texts from a drawing, as the model reads them: text →
+    [(the part, as written in it; its kind)]. A part not found in its text is not
+    taken: the model must point at it."""
+    schema = {"type": "object", "properties": {"private": {"type": "array", "items": {
+        "type": "object", "properties": {"n": {"type": "integer"}, "part": {"type": "string"},
+                                         "kind": {"enum": PRIVATE_KINDS}},
+        "required": ["n", "part", "kind"]}}}, "required": ["private"]}
+    out: dict[str, list[tuple[str, str]]] = {}
+    for start in range(0, len(texts), PRIVATE_BATCH):
+        batch = texts[start:start + PRIVATE_BATCH]
+        numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(batch))
+        answer = model.ask(PRIVATE_SYSTEM, f"Texts:\n{numbered}", schema, max_tokens=60 + 30 * len(batch))
+        for p in answer.get("private", []):
+            n, part = p.get("n"), (p.get("part") or "").strip()
+            if isinstance(n, int) and 1 <= n <= len(batch) and len(part) >= 2 and part.lower() in batch[n - 1].lower():
+                out.setdefault(batch[n - 1], []).append((part, p.get("kind") if p.get("kind") in PRIVATE_KINDS else "other"))
+        if say:
+            say(f"read {min(start + PRIVATE_BATCH, len(texts))} of {len(texts)} texts for private information")
+    return out
+
+
 _NOT_WORDS = re.compile(r"^[\W\d_]*$")
 
 

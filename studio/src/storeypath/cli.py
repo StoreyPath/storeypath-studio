@@ -258,6 +258,8 @@ def views(
 def private(
     drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")],
     output: Annotated[Path, typer.Argument(help="the copy to write (.dxf)")],
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read the texts left with the local language model too")] = True,
 ):
     """Copy a drawing without its private information: each sheet's title block
     (client, owner, consultant, who drew it, stamps, logos), names, phone numbers
@@ -272,7 +274,14 @@ def private(
         doc = read_drawing_to_change(drawing)
     except DrawingError as e:
         _fail(str(e))
-    report = make_private(doc)
+    from .llm import LocalModel
+
+    model = LocalModel() if use_model else None
+    try:
+        report = make_private(doc, model, lambda line: typer.echo(line, err=True))
+    finally:
+        if model is not None:
+            model.close()
     doc.saveas(output)
     typer.echo(f"{report.summary()}; written to {output}")
 

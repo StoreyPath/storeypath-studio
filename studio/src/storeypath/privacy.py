@@ -21,7 +21,11 @@ What goes:
 - images and embedded objects (logos, signatures, scans) and the paper-space
   sheets (Studio reads the model space only);
 - the file's hidden data: last saved by, project name, plot style, custom
-  properties, hyperlinks, the paths of images and external references.
+  properties, hyperlinks, the paths of images and external references;
+- with a language model, whatever else it reads as private in the texts left: a
+  name without a title, a company, an address. The model points at the private
+  part of each text and only that goes ("OFFICE - KHALID" keeps "OFFICE"); a text
+  the room rules read as a room's name is never removed whole.
 
 Plans, sections (for floor heights), room labels, dimensions and schedules stay.
 """
@@ -65,6 +69,7 @@ BOX_LABEL_SHARE = 0.15  # a box is a title block when this share of its texts ar
 # a CAD program's own identifiers: a handle ("393E3"), a GUID
 IDENTIFIER = re.compile(r"[0-9A-Fa-f]{1,16}|\{?[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}?")
 KEPT_FOR_THEMSELVES = ("Extra data on entities (application: string)", "Stored records")  # where handles are
+PLOT_NAMES = (("plot_configuration_file", "None"), ("current_style_sheet", ""), ("page_setup_name", ""))
 HEADER_VARS = ("$LASTSAVEDBY", "$PROJECTNAME", "$HYPERLINKBASE", "$STYLESHEET")
 
 
@@ -77,6 +82,9 @@ class PrivacyReport:
     images: int = 0  # images and embedded objects
     sheets: int = 0  # paper-space layouts emptied
     hidden: list[str] = field(default_factory=list)  # hidden data cleared
+    by_model: int = 0  # texts the language model found private (part or whole)
+    model: str | None = None  # the model that read the texts, if one did
+    kinds: dict[str, int] = field(default_factory=dict)  # what it found: person, company, …
 
     def summary(self) -> str:
         parts = [f"{self.title_blocks} title block(s) ({self.entities} items)" if self.title_blocks else "",
@@ -84,65 +92,213 @@ class PrivacyReport:
                  f"{self.attributes} attribute value(s)" if self.attributes else "",
                  f"{self.images} image(s)" if self.images else "",
                  f"{self.sheets} paper sheet(s)" if self.sheets else "",
-                 "hidden file data" if self.hidden else ""]
+                 "hidden file data" if self.hidden else "",
+                 (f"{self.by_model} more private text(s) the language model found ("
+                  + ", ".join(f"{n} {k}" for k, n in sorted(self.kinds.items())) + ")") if self.by_model else ""]
         said = ", ".join(p for p in parts if p)
-        return f"removed {said}" if said else "nothing private found"
+        read = f"; texts read by {self.model}" if self.model else "; no language model: rules only"
+        return (f"removed {said}" if said else "nothing private found") + read
 
     def view(self) -> dict:
         return {**self.__dict__, "summary": self.summary()}
 
 
-def make_private(doc) -> PrivacyReport:
-    """Take the private information out of ``doc`` (an ezdxf document), in place."""
+class Choices:
+    """What was found to take out, and whether each goes: all of it (the default),
+    or all but what a person chose to keep. Found things are grouped so a person
+    decides once for each: a title block, a text (wherever it is written), the
+    images, the paper sheets, an item of hidden file data. The language model's
+    reading is kept, so applying a choice does not ask it again."""
+
+    def __init__(self, keep: set[str] | None = None, model_found: dict | None = None):
+        self.keep = set(keep or ())
+        self.found: dict[str, dict] = {}  # id → {id, kind, label, count, detail}
+        self.model_found = model_found  # text → [(part, kind)], from finding
+
+    def take(self, key: str, kind: str, label: str, detail: list[str] | None = None) -> bool:
+        """Record a thing found; True when it goes."""
+        f = self.found.setdefault(key, {"id": key, "kind": kind, "label": label, "count": 0, "detail": detail or [],
+                                        "order": len(self.found)})
+        f["count"] += 1
+        return key not in self.keep
+
+    def listed(self) -> list[dict]:
+        order = {k: i for i, k in enumerate(("title block", "name", "contact", "attribute", "person", "company",
+                                              "address", "id number", "other", "images", "sheets", "file data"))}
+        return sorted(self.found.values(), key=lambda f: (order.get(f["kind"], 99), f["order"]))
+
+
+def make_private(doc, reader=None, say=None, choices: Choices | None = None) -> PrivacyReport:
+    """Take the private information out of ``doc`` (an ezdxf document), in place;
+    with ``reader`` (a language model, as llm.LocalModel), the texts left read by it
+    too. ``choices`` records what was found and keeps what a person chose to keep."""
+    choices = choices if choices is not None else Choices()
     report = PrivacyReport()
     msp = doc.modelspace()
     removed_blocks: set[str] = set()
-    for layout in doc.layouts:
-        if layout.name != "Model" and len(layout):
+    sheets = [layout for layout in doc.layouts if layout.name != "Model" and len(layout)]
+    for layout in sheets:
+        if choices.take("sheets", "sheets", "Paper-space sheets (Studio reads the model space only)"):
             layout.delete_all_entities()
             report.sheets += 1
     panels = _title_panels(doc)
     if panels:
-        report.title_blocks = len(panels)
-        report.entities = sum(_remove_within(doc, msp, panels, removed_blocks))
-    links = 0
+        # One choice for them all (a drawing repeats its title block on every sheet),
+        # shown by what is filled in beside their labels: the client, the consultant,
+        # who drew it, the project
+        texts = list(_texts(doc))
+        values: list[str] = []
+        for panel in panels:
+            inside = [(t, p) for t, p in texts if panel.contains(p)]
+            labels = [p for t, p in inside if TITLE_LABELS.search(t)]
+            filled = [(t, p) for t, p in inside
+                      if not TITLE_LABELS.search(t) and not t.rstrip().endswith(":") and 2 < len(t) <= 50
+                      and re.search(r"[^\W\d_]{2,}", t)]
+            for at in labels:
+                if filled:
+                    values.append(min(filled, key=lambda tp: tp[1].distance(at))[0])
+        values = list(dict.fromkeys(values))
+        chosen = []
+        for panel in panels:
+            if choices.take("title blocks", "title block", f"Title blocks ({len(panels)} sheet{'s' if len(panels) > 1 else ''})",
+                            values[:16]):
+                chosen.append(panel)
+        if chosen:
+            report.title_blocks = len(chosen)
+            report.entities = sum(_remove_within(doc, msp, chosen, removed_blocks))
+    links, images = 0, 0
     for layout in [msp, *(b for b in doc.blocks if not b.name.lower().startswith(("*model", "*paper")))]:
         for e in layout:  # hyperlinks: web addresses and the paths of people's files
-            if e.has_xdata("PE_URL"):
+            if e.has_xdata("PE_URL") and choices.take("links", "file data", "Hyperlinks on things drawn"):
                 e.discard_xdata("PE_URL")
                 links += 1
         for e in list(layout.query("IMAGE OLE2FRAME")):
-            layout.delete_entity(e)
-            report.images += 1
+            if choices.take("images", "images", "Images and embedded objects (logos, signatures, scans)"):
+                layout.delete_entity(e)
+                report.images += 1
+                images += 1
         for e in list(layout.query("TEXT MTEXT ATTDEF")):
             text = _plain(e)
+            said = " ".join(text.split())
             if PRIVATE_TEXT.search(text):
-                layout.delete_entity(e)
-                report.texts += 1
-            elif TITLED_NAME.search(text):
-                rest = " ".join(TITLED_NAME.sub(" ", text).split()).strip(" -:,.")
-                if rest:  # "CONSULTANT DR. KHALID": the room's name stays
-                    if e.dxftype() == "MTEXT":
-                        e.text = rest
-                    else:
-                        e.dxf.text = rest
-                else:
+                if choices.take(f"text {said}", "contact", said):
                     layout.delete_entity(e)
-                report.texts += 1
+                    report.texts += 1
+            elif TITLED_NAME.search(text):
+                names = [m.group(0).strip() for m in TITLED_NAME.finditer(text)]
+                if choices.take(f"name {said}", "name", said, names):
+                    rest = " ".join(TITLED_NAME.sub(" ", text).split()).strip(" -:,.")
+                    if rest:  # "CONSULTANT DR. KHALID": the room's name stays
+                        if e.dxftype() == "MTEXT":
+                            e.text = rest
+                        else:
+                            e.dxf.text = rest
+                    else:
+                        layout.delete_entity(e)
+                    report.texts += 1
         for insert in layout.query("INSERT"):
             for a in insert.attribs:
-                value = a.dxf.get("text", "")
-                if value and (PRIVATE_ATTRIBS.search(a.dxf.get("tag", "")) or PRIVATE_TEXT.search(value)
-                              or TITLED_NAME.search(value)):
-                    a.dxf.text = ""
-                    report.attributes += 1
-    for d in list(doc.objects.query("IMAGEDEF")):  # the paths of the images
-        doc.objects.delete_entity(d)
+                value, tag = a.dxf.get("text", ""), a.dxf.get("tag", "")
+                if value and (PRIVATE_ATTRIBS.search(tag) or PRIVATE_TEXT.search(value) or TITLED_NAME.search(value)):
+                    if choices.take(f"attribute {tag} {value}", "attribute", f"{tag}: {value}"):
+                        a.dxf.text = ""
+                        report.attributes += 1
+    if "images" not in choices.keep:  # the paths of the images, unless they are kept
+        for d in list(doc.objects.query("IMAGEDEF")):
+            doc.objects.delete_entity(d)
     if links:
         report.hidden.append(f"{links} hyperlink(s)")
-    _clear_hidden(doc, report)
+    _clear_hidden(doc, report, choices)
     _purge(doc, removed_blocks)
+    if reader is not None and (choices.model_found is not None or reader.available()):
+        _read_by_model(doc, reader, report, say, choices)
     return report
+
+
+def _read_by_model(doc, reader, report: PrivacyReport, say=None, choices: Choices | None = None) -> None:
+    """The texts left, read by a language model for what the rules cannot know: a
+    name without a title, a company, an address. Only the part it points at goes; a
+    text the room rules read as a room's name is never removed whole."""
+    from .extract import OPENING_TAG
+    from .llm import ModelUnavailable, find_private
+    from .profile import AUTO, load_profile
+    from .types import SpaceType
+
+    choices = choices if choices is not None else Choices()
+    rooms = load_profile(AUTO)
+    msp = doc.modelspace()
+    written = []  # (layout or None for an attribute, entity, text)
+    for layout in [msp, *(b for b in doc.blocks if not b.name.lower().startswith(("*model", "*paper")))]:
+        for e in layout.query("TEXT MTEXT ATTDEF"):
+            written.append((layout, e, _plain(e)))
+        for insert in layout.query("INSERT"):
+            written += [(None, a, a.dxf.get("text", "")) for a in insert.attribs]
+
+    def worth_asking(t: str) -> bool:  # words, not numbers, levels or tags
+        t = t.strip()
+        return len(t) >= 3 and bool(re.search(r"[^\W\d_]{2,}", t)) and not OPENING_TAG.fullmatch(t.upper()) \
+            and not re.match(r"^\s*(%%[pP]|±|\+|-)?\s*\d", t)
+
+    found = choices.model_found
+    if found is None:
+        texts = sorted({" ".join(t.split()) for _, _, t in written if worth_asking(t)})
+        if say:
+            say(f"reading {len(texts)} texts with {reader.name} for private information")
+        try:
+            found = find_private(reader, texts, say)
+        except ModelUnavailable as e:
+            if say:
+                say(f"the language model was not used: {e}")
+            return
+        choices.model_found = found
+    report.model = getattr(reader, "name", None)
+    for layout, e, text in written:
+        said = " ".join(text.split())
+        parts = found.get(said)
+        if not parts:
+            continue
+        rest = text
+        for part, _ in parts:
+            rest = re.sub(re.escape(part), " ", rest, flags=re.IGNORECASE)
+        rest = " ".join(rest.split()).strip(" -:,.()")
+        if not re.search(r"[^\W_]", rest):
+            if rooms.classify(text, [], "")[0] != SpaceType.UNSPECIFIED or _names_a_room(text):
+                continue  # a room's name, whatever the model thought of it
+            rest = ""
+        kind = parts[0][1]
+        if not choices.take(f"model {said}", kind, said, [p for p, _ in parts]):
+            continue
+        for _, k in parts:
+            report.kinds[k] = report.kinds.get(k, 0) + 1
+        if e.dxftype() == "ATTRIB":
+            e.dxf.text = rest
+        elif not rest:
+            layout.delete_entity(e)
+        elif e.dxftype() == "MTEXT":
+            e.text = rest
+        else:
+            e.dxf.text = rest
+        report.by_model += 1
+
+
+_ROOM_WORDS: set[str] | None = None
+ROOM_SHORT = {"rm", "wc", "elec", "mech", "lav", "stor", "str", "kit", "bed", "liv", "din", "pwr", "ups", "ahu", "fcu",
+              "mep", "comms", "srv", "lab", "maid", "guest", "pantry", "toilet", "bath", "dress", "foyer", "hall"}
+_NOT_ROOM_WORDS = {"room", "rooms", "any", "other", "the", "and", "with", "for", "its", "that", "none", "types", "above",
+                   "fits", "only", "number", "also", "written", "over", "below", "floor", "space", "area", "private",
+                   "bath", "shower", "washing", "ironing", "clothes", "technical", "electrical", "distribution", "board"}
+
+
+def _names_a_room(text: str) -> bool:
+    """Whether a text has a word that names a kind of room (majlis, bedroom, pantry,
+    مجلس …), from the words Studio gives the language model for room types."""
+    global _ROOM_WORDS
+    if _ROOM_WORDS is None:
+        from .llm import TYPE_GUIDE
+
+        _ROOM_WORDS = {w for guide in TYPE_GUIDE.values() for w in re.findall(r"[^\W\d_]{3,}", guide.lower())}
+        _ROOM_WORDS -= _NOT_ROOM_WORDS
+    return any(w in _ROOM_WORDS or w in ROOM_SHORT for w in re.findall(r"[^\W\d_]{2,}", text.lower()))
 
 
 def _plain(e) -> str:
@@ -326,20 +482,26 @@ def _reindex(doc) -> None:
             delattr(doc, attr)
 
 
-def _clear_hidden(doc, report: PrivacyReport) -> None:
+def _clear_hidden(doc, report: PrivacyReport, choices: "Choices | None" = None) -> None:
+    choices = choices if choices is not None else Choices()
+    names = {"$LASTSAVEDBY": "Last saved by", "$PROJECTNAME": "Project name", "$HYPERLINKBASE": "Hyperlink base",
+             "$STYLESHEET": "Plot style"}
     for var in HEADER_VARS:
-        if doc.header.get(var):
+        value = doc.header.get(var)
+        if value and choices.take(f"hidden {var}", "file data", f"{names.get(var, var)}: {value}"):
             doc.header[var] = ""
             report.hidden.append(var)
     try:
-        if len(doc.header.custom_vars):
+        props = list(doc.header.custom_vars)
+        if props and choices.take("hidden properties", "file data", "File properties",
+                                  [f"{k}: {v}" for k, v in props][:12]):
             doc.header.custom_vars.clear()
             report.hidden.append("custom properties")
-    except AttributeError:
+    except (AttributeError, TypeError):
         pass
     root = doc.rootdict
     for key in ("DWGPROPS",):
-        if key in root:
+        if key in root and choices.take("hidden DWGPROPS", "file data", "Drawing properties (author, title, comments)"):
             try:
                 root.discard(key)
             except AttributeError:
@@ -348,18 +510,19 @@ def _clear_hidden(doc, report: PrivacyReport) -> None:
     # Sheet setups name the printer (a computer or network name: "\\\\SERVER\\HP …") and the
     # plot style (often after its owner: "ricky1.ctb")
     setups = [layout.dxf_layout for layout in doc.layouts] + list(doc.objects.query("PLOTSETTINGS"))
-    plotted = False
-    for setup in setups:
-        for attr, blank in (("plot_configuration_file", "None"), ("current_style_sheet", ""), ("page_setup_name", "")):
-            if setup.dxf.get(attr) not in (None, "", blank):
-                setup.dxf.set(attr, blank)
-                plotted = True
-    if plotted:
+    named = sorted({v for s in setups for a, blank in PLOT_NAMES
+                    if (v := s.dxf.get(a)) not in (None, "", blank)})
+    if named and choices.take("hidden plot", "file data", "Printer and plot style names", named):
+        for setup in setups:
+            for attr, blank in PLOT_NAMES:
+                if setup.dxf.get(attr) not in (None, "", blank):
+                    setup.dxf.set(attr, blank)
         report.hidden.append("printer and plot style names")
     for block in doc.blocks:  # external references: their paths name people's folders
-        if block.block_record.is_xref if hasattr(block.block_record, "is_xref") else False:
-            block.block.dxf.xref_path = ""
-            report.hidden.append(f"xref {block.name}")
+        if getattr(block.block_record, "is_xref", False) and block.block.dxf.get("xref_path"):
+            if choices.take(f"hidden xref {block.name}", "file data", f"External reference path: {block.block.dxf.xref_path}"):
+                block.block.dxf.xref_path = ""
+                report.hidden.append(f"xref {block.name}")
 
 
 def _purge(doc, names: set[str]) -> None:

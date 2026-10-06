@@ -114,3 +114,49 @@ def test_rooms_named_for_a_role_stay_and_names_go(tmp_path):
     listed = words(doc, "test.dxf")
     assert "NURSE STATION" in listed and "Layer names" in listed
     assert "SERVER" not in listed and "ricky" not in listed
+
+
+class Reader:
+    """A language model that reads names with no title in them."""
+    name = "fake reader"
+
+    def available(self):
+        return True
+
+    def ask(self, system, user, schema, max_tokens=0):
+        texts = [line.split(". ", 1)[1] for line in user.splitlines()[1:]]
+        private = []
+        for n, t in enumerate(texts, 1):
+            for part, kind in (("KHALID AL-MANSOORI", "person"), ("NORTH STAR DESIGN", "company"), ("MAJLIS", "person")):
+                if part in t:
+                    private.append({"n": n, "part": part, "kind": kind})
+        return {"private": private}
+
+
+def test_the_language_model_finds_names_with_no_title_and_a_person_chooses(tmp_path):
+    from storeypath.privacy import Choices
+
+    def drawing():
+        doc = ezdxf.new()
+        for i, t in enumerate(["OFFICE - KHALID AL-MANSOORI", "NORTH STAR DESIGN", "MAJLIS", "SARA'S ROOM", "BEDROOM"]):
+            doc.modelspace().add_text(t, height=0.2).set_placement((0, i))
+        return doc
+
+    doc, choices = drawing(), Choices()
+    report = make_private(doc, Reader(), choices=choices)
+    texts = _texts(doc)
+    assert {"OFFICE", "MAJLIS", "SARA'S ROOM", "BEDROOM"} <= texts  # a room's name stays whatever the model said
+    assert not texts & {"OFFICE - KHALID AL-MANSOORI", "NORTH STAR DESIGN"}
+    assert report.by_model == 2 and report.kinds == {"person": 1, "company": 1} and report.model == "fake reader"
+    found = {f["id"]: f for f in choices.listed()}
+    assert found["model OFFICE - KHALID AL-MANSOORI"]["detail"] == ["KHALID AL-MANSOORI"]
+    # what a person keeps stays, and the model is not asked again
+    doc = drawing()
+    kept = Choices({"model NORTH STAR DESIGN"}, choices.model_found)
+
+    class Silent(Reader):
+        def ask(self, *a, **k):
+            raise AssertionError("asked again")
+
+    make_private(doc, Silent(), choices=kept)
+    assert "NORTH STAR DESIGN" in _texts(doc) and "OFFICE" in _texts(doc)

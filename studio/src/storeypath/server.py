@@ -15,9 +15,12 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/projects/<code>
     POST /api/projects/<code>/delete {confirm: its name}  the project and everything in it, gone
     PUT  /api/projects/<code>/drawings/<name>[?private=0]  (the file as the body)
-                                               → job: the drawing kept without its
-                                               private information, as drawing-N.dxf
-                                               (privacy.py); with private=0 kept as sent
+                                               → job: what it holds that is private
+                                               (privacy.py), {pending, found}; with
+                                               private=0 kept as sent
+    POST /api/projects/<code>/incoming/<id> {keep: [found ids]}  → job: kept without the
+                                               rest of it, as drawing-N.dxf
+    POST /api/projects/<code>/incoming/<id>/cancel   not added; the file as sent is gone
     GET  /api/projects/<code>/drawings/<name>/words  every word and string left in it (text), to look
                                                through for anything private left behind
     POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
@@ -148,8 +151,9 @@ class Studio:
         self._reviews: dict[Path, Review] = {}
         # One lock per project, held while a job changes it: converting one project
         # (minutes, with vision) never holds up another, and pages only read files.
-        self._lock = threading.Lock()  # the two tables below
+        self._lock = threading.Lock()  # the tables below
         self._project_locks: dict[Path, threading.RLock] = {}
+        self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
             left.unlink(missing_ok=True)
 
@@ -258,10 +262,12 @@ class Studio:
     # ---- drawings ---------------------------------------------------------------
 
     def upload(self, code: str, name: str, body: bytes, private: bool = True) -> dict | Job:
-        """A drawing added to the project. Kept private (the default), a job takes out
-        what names the people and the project — title blocks, names, contacts, hidden
-        file data (privacy.py) — and only that copy is kept, as drawing-N.dxf: the
-        file as sent, and its name, are not. Otherwise it is kept as sent."""
+        """A drawing added to the project. Kept private (the default), a job finds what
+        names the people and the project — title blocks, names, contacts, hidden file
+        data, what the language model reads as private (privacy.py) — and a person
+        chooses what of it to keep (keep_private); only that copy is kept, as
+        drawing-N.dxf: the file as sent, and its name, are not. Otherwise it is kept
+        as sent."""
         name = Path(name).name
         suffix = Path(name).suffix.lower()
         if suffix not in DRAWING_TYPES:
@@ -271,30 +277,87 @@ class Studio:
         if not private:
             (folder / name).write_bytes(body)
             return {"drawing": name, "bytes": len(body)}
-        incoming = folder / f"{INCOMING}{uuid.uuid4().hex[:12]}{suffix}"
+        token = uuid.uuid4().hex[:12]
+        incoming = folder / f"{INCOMING}{token}{suffix}"
         incoming.write_bytes(body)
 
         def run(job: Job):
             from .cad import read_drawing_to_change
-            from .privacy import make_private
+            from .privacy import Choices, make_private
+            from .vision import InWords
 
             try:
                 job.say("reading the drawing")
                 doc = read_drawing_to_change(incoming)
-                job.say("taking out the title blocks, names, contacts and hidden file data")
-                report = make_private(doc)
-                job.say(report.summary())
-                taken = [int(m.group(1)) for p in folder.glob("drawing-*.dxf") if (m := DRAWING_NAME.fullmatch(p.name))]
-                out = folder / f"drawing-{max(taken, default=0) + 1}.dxf"
-                doc.saveas(out)
-                job.say(f"kept as {out.name}")
-                _words_of(out).write_text(words(doc, out.name, report.summary()), encoding="utf-8")
-                job.say(f"every word left in it: Words, beside {out.name}")
-            finally:
+                job.say("looking for title blocks, names, contacts and hidden file data")
+                reader = InWords(self.vision) if self.vision.available() else \
+                    self.model if self.model.available() else None
+                choices = Choices()
+                report = make_private(doc, reader, job.say, choices)
+            except Exception:
                 incoming.unlink(missing_ok=True)
-            return {"drawing": out.name, "privacy": report.view()}
+                raise
+            if not choices.found:  # nothing to choose: kept as it is
+                return self._keep_private(folder, incoming, doc, report, job)
+            # what was found goes once a person says what to keep; the cleaned copy
+            # waits, as it is what keeping nothing gives
+            with self._lock:
+                self._pending[token] = {"code": code, "folder": folder, "incoming": incoming, "name": name,
+                                        "doc": doc, "report": report, "choices": choices, "reader": reader}
+            job.say(f"found {len(choices.found)} things to take out: choose what to keep")
+            return {"pending": token, "name": name, "found": choices.listed(), "reader": report.model}
 
-        return self.jobs.submit("Adding a drawing without its private information", run)
+        return self.jobs.submit(f"Looking for private information in {name}", run)
+
+    def keep_private(self, code: str, token: str, body: dict) -> Job:
+        """A drawing sent, kept without the private information found in it, all but
+        what a person chose to keep (``keep``: ids of found things)."""
+        with self._lock:
+            p = self._pending.get(token)
+            if p is None or p["code"] != code:
+                raise NotFound("no drawing waiting to be added: send it again")
+            del self._pending[token]
+        keep = set(body.get("keep") or [])
+
+        def run(job: Job):
+            from .cad import read_drawing_to_change
+            from .privacy import Choices, make_private
+
+            doc, report = p["doc"], p["report"]
+            if keep:  # read again, taking out all but what is kept
+                job.say(f"taking out all but the {len(keep)} kept")
+                try:
+                    doc = read_drawing_to_change(p["incoming"])
+                    choices = Choices(keep, p["choices"].model_found)
+                    report = make_private(doc, p["reader"], job.say, choices)
+                except Exception:
+                    p["incoming"].unlink(missing_ok=True)
+                    raise
+            return self._keep_private(p["folder"], p["incoming"], doc, report, job)
+
+        return self.jobs.submit(f"Adding {p['name']} without its private information", run)
+
+    def cancel_private(self, code: str, token: str) -> dict:
+        with self._lock:
+            p = self._pending.pop(token, None)
+        if p is None or p["code"] != code:
+            raise NotFound("no drawing waiting to be added")
+        p["incoming"].unlink(missing_ok=True)
+        return {"cancelled": p["name"]}
+
+    def _keep_private(self, folder: Path, incoming: Path, doc, report, job: Job) -> dict:
+        """The cleaned drawing kept as drawing-N.dxf, with its words; the file as sent gone."""
+        try:
+            job.say(report.summary())
+            taken = [int(m.group(1)) for p in folder.glob("drawing-*.dxf") if (m := DRAWING_NAME.fullmatch(p.name))]
+            out = folder / f"drawing-{max(taken, default=0) + 1}.dxf"
+            doc.saveas(out)
+            job.say(f"kept as {out.name}")
+            _words_of(out).write_text(words(doc, out.name, report.summary()), encoding="utf-8")
+            job.say(f"every word left in it: Words, beside {out.name}")
+        finally:
+            incoming.unlink(missing_ok=True)
+        return {"drawing": out.name, "privacy": report.view()}
 
     def words(self, code: str, name: str) -> File:
         """Every word and string left in a drawing, written when it was added (or now,
@@ -736,6 +799,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.delete(code, body)
             case "GET", ["projects", code, "drawings", name, "words"]:
                 return studio.words(code, name)
+            case "POST", ["projects", code, "incoming", token]:
+                return studio.keep_private(code, token, body)
+            case "POST", ["projects", code, "incoming", token, "cancel"]:
+                return studio.cancel_private(code, token)
             case "PUT", ["projects", code, "drawings", name]:
                 return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0")
             case "POST", ["projects", code, "drawings", name, "plans"]:
