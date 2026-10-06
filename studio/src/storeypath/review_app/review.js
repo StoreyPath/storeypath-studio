@@ -21,6 +21,8 @@ const state = {
   drawingBounds: null,
   drawingMode: savedMode(), // "print", "lines" or "off"
   side: saved("storeypath.side") === "1", // the print beside the spaces, not under them
+  layout: "single", // "single", or side by side in "cols" (left | right) or "rows" (top / bottom)
+  refit: false, // the layout changed: fit the floor again
   underlay: { lines: null, print: null }, // the floor whose drawing each layer holds
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
@@ -214,9 +216,9 @@ function showUnderlay() {
   $("print").classList.toggle("hidden", mode !== "print");
   $("drawing").classList.toggle("hidden", mode !== "lines");
   $("map").classList.toggle("printed", mode === "print");
-  $("map").classList.toggle("side", state.side);
   $("svg-print").toggleAttribute("hidden", !state.side); // an <svg> has no .hidden
   $("drawing-label").hidden = state.side;
+  arrange();
   const id = state.floor?.id;
   if (!id || !state.floor.source) return;
   if ((mode === "print" || state.side) && state.underlay.print !== id) loadPrint(id);
@@ -391,6 +393,38 @@ function updateView() {
   placeLabels();
 }
 
+// Side by side, the floor is split the way it shows larger: a wide floor above and
+// below, a tall one left and right. When the split changes, the floor is fitted again.
+function arrange() {
+  let layout = "single";
+  const b = floorBounds();
+  if (state.side) {
+    layout = "cols";
+    const r = $("map").getBoundingClientRect();
+    if (b && r.width && r.height) {
+      const w = Math.max(b[2] - b[0], 0.5);
+      const h = Math.max(b[3] - b[1], 0.5);
+      const cols = Math.min(r.width / 2 / w, r.height / h);
+      const rows = Math.min(r.width / w, r.height / 2 / h);
+      if (rows > cols) layout = "rows";
+    }
+  }
+  const map = $("map");
+  map.classList.toggle("side", layout !== "single");
+  map.classList.toggle("rows", layout === "rows");
+  map.classList.toggle("cols", layout === "cols");
+  if (layout !== state.layout) {
+    state.layout = layout;
+    // Fitted again once the panes have their new size; until then a resize fits too,
+    // rather than keeping the old middle.
+    state.refit = true;
+    requestAnimationFrame(() => {
+      fit();
+      requestAnimationFrame(() => { state.refit = false; });
+    });
+  }
+}
+
 // The space under a point of the plan (world meters), topmost first.
 function spaceAt(x, y) {
   const spaces = state.floor?.spaces || [];
@@ -526,13 +560,14 @@ function setupMap() {
   let size = null;
   new ResizeObserver(() => {
     const { w, h } = viewport();
-    if (!state.fitted) fit();
+    if (!state.fitted || state.refit) fit();
     else if (size) {
       state.view = { ...state.view, tx: state.view.tx + (w - size.w) / 2, ty: state.view.ty + (h - size.h) / 2 };
       updateView();
     }
     size = { w, h };
   }).observe($("svg"));
+  new ResizeObserver(() => { if (state.side) arrange(); }).observe($("map")); // a wider or taller window
 
   $("side-by-side").checked = state.side;
   $("side-by-side").addEventListener("change", (e) => {
