@@ -259,6 +259,41 @@ be published (see [studio/README.md](studio/README.md#symbols-drawn-in-a-plan-op
 Releases are built the same way by [the release workflow](.github/workflows/release.yml),
 natively for amd64 and arm64.
 
+### With a GPU: vision included
+
+[docker/Dockerfile.gpu](docker/Dockerfile.gpu) builds one image that also reads the
+plans with a vision model ([how](studio/README.md#looking-at-the-plans-vision)):
+Studio, Gemma 4 31B (4-bit) served by llama.cpp built for CUDA, and the language
+model, all inside. About 24 GB; nothing is downloaded when it runs.
+
+| | |
+|---|---|
+| GPU | NVIDIA, 32 GB free on one card: A100, H100 (and, with `CUDA_ARCHITECTURES`, A10/A40, L4/L40, RTX 30/40, Blackwell) |
+| Software | Linux, Docker, the NVIDIA Container Toolkit, NVIDIA driver 525 or newer |
+
+Build it on any machine with internet (an Apple Silicon Mac builds it too, through
+Docker Desktop's x86 emulation, in an hour or two), then carry the file over:
+
+```sh
+docker/fetch-models.sh && docker/fetch-vision.sh          # once: 2.7 GB + 19 GB, checksum-verified
+docker build --platform linux/amd64 -f docker/Dockerfile.gpu -t storeypath/studio:gpu .
+docker save storeypath/studio:gpu | gzip -1 > storeypath-studio-gpu.tar.gz
+```
+
+On the GPU machine:
+
+```sh
+docker load -i storeypath-studio-gpu.tar.gz
+docker run -d --name storeypath --gpus all -p 8080:8080 -v storeypath:/data storeypath/studio:gpu
+docker logs -f storeypath        # "vision model ready", then Studio's address
+```
+
+Loading the model takes a minute or two after each start. Pick a card with
+`--gpus '"device=1"'`; `-e STOREYPATH_VISION=off` runs without vision; the model
+server's log is `/tmp/vision.log` in the container. The build compiles llama.cpp
+for A100 and H100 and newer by default (`--build-arg
+CUDA_ARCHITECTURES="80-real;90-real"` for just those two: a shorter build).
+
 ## The language model
 
 Small enough for any CPU, measured on [studio/eval](studio/eval) — 137 room labels

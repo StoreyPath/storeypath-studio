@@ -9,4 +9,6 @@ studio/**/__pycache__
 studio/src/storeypath/_bundled
 studio/eval
 docker/models/eval
+docker/models/vision
+docker/models/9b
 **/.DS_Store

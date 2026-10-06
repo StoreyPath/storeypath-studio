@@ -14,6 +14,7 @@ Configuration, from the environment:
 ``STOREYPATH_MODEL_URL``     an already running llama-server to use instead
 ``STOREYPATH_THREADS``       CPU threads for the model (default: all)
 ``STOREYPATH_PARALLEL``      questions answered at once (default: 1; more needs more memory)
+``STOREYPATH_GPU_LAYERS``    layers to put on the GPU, with a GPU build of llama-server (e.g. 99: all)
 
 Without a model Studio works on its rules alone.
 """
@@ -92,6 +93,8 @@ class LocalModel:
                     # Repacking copies the weights for faster maths: ~2.6 GB more memory for the
                     # 4B model, and no measurable gain on Studio's short questions.
                     "--no-repack"]
+            if layers := os.environ.get("STOREYPATH_GPU_LAYERS"):
+                args += ["-ngl", layers]
             self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                           errors="replace")
             # Its log is read as it is written: a pipe nobody reads fills up (64 KB) and

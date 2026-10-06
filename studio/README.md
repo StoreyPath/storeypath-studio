@@ -141,6 +141,7 @@ so a project converts the same way again, with or without the model.
 | `STOREYPATH_LLAMA_SERVER` | the `llama-server` program (default: from `PATH`) |
 | `STOREYPATH_MODEL_URL` | use an already running `llama-server` instead |
 | `STOREYPATH_THREADS` | CPU threads for the model (default: all) |
+| `STOREYPATH_GPU_LAYERS` | layers on the GPU, with a CUDA build of `llama-server` (e.g. `99`: all; the GPU image sets it) |
 
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
