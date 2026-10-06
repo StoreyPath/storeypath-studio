@@ -49,6 +49,7 @@ OPENING_TAG = re.compile(r"(?P<kind>[A-Z]{1,2})\s?-?\s?(?P<n>\d{1,3}[A-Z]?)")
 DOOR_TAGS = {"D", "DR", "SD", "GD", "FD", "MD"}
 WINDOW_TAGS = {"W", "WD", "WN", "FW", "SW"}
 DRAWN_WALL_M = 0.2  # a wall a person draws in review
+DRAWN_REACH_M = 0.3  # a line drawn in review reaches this far past its ends
 TAG_REACH_M = 1.0  # a tag is drawn this close to its opening
 SLIDING_DOOR_M = (0.6, 2.6)  # glazing between two rooms this wide, with no window tag, is a sliding door
 
@@ -257,12 +258,14 @@ def extract_floor(
     offset: tuple[float, float] | None = None,
     skip_label: Callable[[str], bool] | None = None,
     drawn_walls: list | None = None,
+    drawn_dividers: list | None = None,
 ) -> FloorExtraction:
     """Spaces, doors and outline of one floor, in meters. ``region`` limits the
     drawing to one floor's plan; ``offset`` (drawing units) is subtracted from every
     point so that floors drawn side by side line up. ``skip_label`` leaves out texts
     on label layers that do not name rooms (levels, notes…). ``drawn_walls`` are
-    walls a person drew in review ([[x, y], [x, y]], local meters): walls like any."""
+    walls a person drew in review ([[x, y], [x, y]], local meters): walls like any;
+    ``drawn_dividers`` divide the spaces they cross into zones, with no wall."""
     scale = meters_per_unit(doc, units)
     tol = CURVE_TOLERANCE_M / scale
     warnings: list[str] = []
@@ -381,8 +384,7 @@ def extract_floor(
             )
 
     if used == "outlines" and drawn_walls:  # rooms drawn as outlines: a drawn wall parts them too
-        spaces = _parted_by(spaces, [LineString([(x0 + dx, y0 + dy), (x1 + dx, y1 + dy)])
-                                     for (x0, y0), (x1, y1) in drawn_walls], profile.spaces.min_area)
+        spaces = _parted_by(spaces, [_drawn_line(w, dx, dy) for w in drawn_walls], profile.spaces.min_area)
 
     if not spaces:
         top = ", ".join(f"{name} ({n})" for name, n in layer_counts.most_common(15))
@@ -397,6 +399,9 @@ def extract_floor(
         spaces, zones, gaps = _divide_open_areas(spaces, labels, profile, fabric.walls if fabric else None)
         for s in spaces:
             s.issues += open_issue(s.polygon, open_edges)
+    if drawn_dividers:
+        zones = _divided_by_drawn(spaces, zones, [_drawn_line(d, dx, dy) for d in drawn_dividers],
+                                  profile.spaces.min_area)
     zoned = {z.space for z in zones}
     units = [*zones, *(s for i, s in enumerate(spaces) if i not in zoned)]
     _assign_labels(units, labels, profile, warnings)
@@ -1041,18 +1046,53 @@ def _leaves(door: DoorShape) -> list[tuple[tuple[float, float], tuple[float, flo
     return out
 
 
-def _parted_by(spaces: list[ExtractedSpace], lines: list[LineString], min_area: float) -> list[ExtractedSpace]:
-    """Spaces parted by the walls a person drew across them."""
+def _drawn_line(points, dx: float, dy: float) -> LineString:
+    """A line drawn in review (local meters), where the drawing has it, a little past
+    each end: a click just short of a wall still reaches it."""
+    (x0, y0), (x1, y1) = points
+    length = max(((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5, 1e-9)
+    ux, uy = (x1 - x0) / length * DRAWN_REACH_M, (y1 - y0) / length * DRAWN_REACH_M
+    return LineString([(x0 + dx - ux, y0 + dy - uy), (x1 + dx + ux, y1 + dy + uy)])
+
+
+def _halves(polygon, line: LineString, min_area: float) -> list | None:
+    """The parts a line cuts a polygon into, when it cuts right across."""
     from shapely.ops import split
 
+    if not line.crosses(polygon):
+        return None
+    parts = [p for p in as_polygons(split(polygon, line)) if p.area >= min_area]
+    return parts if len(parts) > 1 else None
+
+
+def _parted_by(spaces: list[ExtractedSpace], lines: list[LineString], min_area: float) -> list[ExtractedSpace]:
+    """Spaces parted by the walls a person drew across them."""
     out = []
     for s in spaces:
         parts = [s.polygon]
         for line in lines:
-            parts = [q for p in parts for q in (as_polygons(split(p, line)) if line.crosses(p) else [p])]
-        kept = [p for p in parts if p.area >= min_area]
-        out += [replace(s, polygon=p) for p in kept] if len(kept) > 1 else [s]
+            parts = [q for p in parts for q in (_halves(p, line, min_area) or [p])]
+        out += [replace(s, polygon=p) for p in parts] if len(parts) > 1 else [s]
     return out
+
+
+def _divided_by_drawn(spaces: list[ExtractedSpace], zones: list, lines: list[LineString],
+                      min_area: float) -> list:
+    """Zones from the lines a person drew across spaces in review: a space used for
+    two things with no wall between. A space already divided has the zone the line
+    crosses divided again."""
+    zones = list(zones)
+    for line in lines:
+        zoned = {z.space for z in zones}
+        out = []
+        for z in zones:
+            parts = _halves(z.polygon, line, min_area)
+            out += [replace(z, polygon=p, issues=[]) for p in parts] if parts else [z]
+        for i, s in enumerate(spaces):
+            if i not in zoned and (parts := _halves(s.polygon, line, min_area)):
+                out += [ExtractedZone(polygon=p, layer=s.layer, space=i) for p in parts]
+        zones = out
+    return zones
 
 
 def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[ExtractedDoor]:

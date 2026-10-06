@@ -176,11 +176,14 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #doors circle.selected { stroke: var(--select); stroke-width: 3; }
 #drawn line { stroke: #d6336c; stroke-width: 4; stroke-dasharray: 7 4; stroke-linecap: square; vector-effect: non-scaling-stroke; cursor: pointer; }
 #drawn line.hit { stroke: transparent; stroke-width: 14; stroke-dasharray: none; }
+#drawn line.divide { stroke: #0ca678; stroke-width: 3; stroke-dasharray: 3 4; }
 #drawn line.selected { stroke: var(--select); }
 .preview { pointer-events: none; }
 .preview line { stroke: #d6336c; stroke-width: 3; vector-effect: non-scaling-stroke; }
 .preview line.door { stroke: #f08c00; stroke-width: 6; }
 .preview line.window { stroke: #22b8cf; stroke-width: 5; }
+.preview line.opening { stroke: #f08c00; stroke-width: 6; stroke-dasharray: 5 4; }
+.preview line.divide { stroke: #0ca678; stroke-dasharray: 3 4; }
 .preview circle { fill: #d6336c; }
 #map.drawing-tool .pane { cursor: crosshair; }
 #map.busy .pane { cursor: progress; }

@@ -13,7 +13,7 @@ command line can be used side by side. The web server is in server.py:
     POST /api/projects/<code>/floors/<id>/convert re-read the drawing (keeps IDs): a job
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
                                                   {"ignored": bool} deletes a space or an opening (or restores it)
-    POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}},
+    POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}}, {"add": {"divider": …}},
                                                   {"add": {"opening": {"type", "span"}}} or {"remove": {"at": [x, y]}}:
                                                   what a person draws, kept through every conversion; then
                                                   the floor is read again (a job)
@@ -145,35 +145,40 @@ class Review:
                 "divider": _divider(r, areas or {}) if r.type_source in ("split", "doorway") else None}
 
     def edit(self, floor_id: str, body: dict) -> None:
-        """Add or remove what a person drew on a floor: a wall, a door or a window
-        (local meters). Removing takes the drawn wall or opening nearest a point."""
+        """Add or remove what a person drew on a floor: a wall, a line dividing a space
+        (no wall: its zones), a door, a window or an opening (local meters). Removing
+        takes what was drawn nearest a point."""
         with self._lock:
             ws = self._load()
             f = self._floor(ws, floor_id)
-            if isinstance(body.get("add"), dict) and "wall" in body["add"]:
-                wall = _points(body["add"]["wall"], 2)
-                if LineString(wall).length < 0.1:
-                    raise ValueError("a wall is longer than 10 cm")
-                f.edits.walls.append(wall)
+            add = body.get("add") if isinstance(body.get("add"), dict) else {}
+            if "wall" in add or "divider" in add:
+                kind = "wall" if "wall" in add else "divider"
+                line = _points(add[kind], 2)
+                if LineString(line).length < 0.1:
+                    raise ValueError(f"a {kind} is longer than 10 cm")
+                (f.edits.walls if kind == "wall" else f.edits.dividers).append(line)
             elif isinstance(body.get("add"), dict) and "opening" in body["add"]:
                 o = body["add"]["opening"]
-                if not isinstance(o, dict) or o.get("type") not in ("door", "window"):
-                    raise ValueError('an opening is {"type": "door" or "window", "span": [[x, y], [x, y]]}')
+                if not isinstance(o, dict) or o.get("type") not in ("door", "window", "opening"):
+                    raise ValueError('an opening is {"type": "door", "window" or "opening", "span": [[x, y], [x, y]]}')
                 span = _points(o.get("span"), 2)
                 if not 0.3 <= LineString(span).length <= 6:
                     raise ValueError("an opening is 0.3 to 6 m wide")
                 f.edits.openings.append(DrawnOpening(type=o["type"], span=span))
             elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
                 at = Point(_points([body["remove"]["at"]], 1)[0])
-                drawn = [(LineString(w).distance(at), "wall", i) for i, w in enumerate(f.edits.walls)]
-                drawn += [(LineString(o.span).distance(at), "opening", i) for i, o in enumerate(f.edits.openings)]
+                lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings}
+                drawn = [(LineString(x.span if kind == "opening" else x).distance(at), kind, i)
+                         for kind, items in lists.items() for i, x in enumerate(items)]
                 near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
                 if not near:
                     raise NotFound("nothing drawn there")
                 _, kind, i = min(near)
-                (f.edits.walls if kind == "wall" else f.edits.openings).pop(i)
+                lists[kind].pop(i)
             else:
-                raise ValueError('send {"add": {"wall": …}}, {"add": {"opening": …}} or {"remove": {"at": [x, y]}}')
+                raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}} '
+                                 'or {"remove": {"at": [x, y]}}')
             self._save(ws)
 
     def _space(self, ws: Workspace, r: ObjectRecord) -> dict:

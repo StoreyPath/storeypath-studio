@@ -29,9 +29,9 @@ const state = {
   showHidden: false, // show what was deleted (or hidden)
   fitted: false,
   filter: "",
-  item: null, // a door, window or drawn wall chosen: {kind: "door", id} or {kind: "wall", at}
-  tool: null, // drawing: "wall", "door" or "window"
-  wallStart: null, // a wall being drawn: where it starts
+  item: null, // a door, window or drawn line chosen: {kind: "door", id}, or {kind: "wall" or "divider", at}
+  tool: null, // drawing: "wall", "divide", "door", "window" or "opening"
+  wallStart: null, // a wall or dividing line being drawn: where it starts
   busy: false, // an edit is being saved and the floor read again
   segments: null, // the floor's wall edges, for snapping to
 };
@@ -394,13 +394,16 @@ function renderPlan() {
       return mark;
     }),
   );
-  // Walls drawn in review, over the rest: chosen by a click, to take them away
-  $("drawn").replaceChildren(...(f.edits?.walls || []).flatMap(([a, b]) => {
+  // Walls and dividing lines drawn in review, over the rest: chosen by a click, to
+  // take them away
+  const drawn = [...(f.edits?.walls || []).map((w) => ["wall", w]), ...(f.edits?.dividers || []).map((d) => ["divider", d])];
+  $("drawn").replaceChildren(...drawn.flatMap(([kind, [a, b]]) => {
     const at = `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}`;
-    const chosen = state.item?.kind === "wall" && state.item.at.join(",") === at;
-    return ["hit", chosen ? "selected" : ""].map((cls) => {
+    const chosen = state.item?.kind === kind && state.item.at.join(",") === at;
+    return ["hit", `${kind === "divider" ? "divide" : ""}${chosen ? " selected" : ""}`].map((cls) => {
       const line = svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: cls });
       line.dataset.at = at;
+      line.dataset.kind = kind;
       return line;
     });
   }));
@@ -682,7 +685,7 @@ function bindPane(pane) {
     if (state.tool) return toolClick(p);
     const door = target?.dataset?.door || (pane !== $("svg") ? doorAt(p)?.id : null);
     if (door) return selectItem({ kind: "door", id: door });
-    if (target?.dataset?.at) return selectItem({ kind: "wall", at: target.dataset.at.split(",").map(Number) });
+    if (target?.dataset?.at) return selectItem({ kind: target.dataset.kind || "wall", at: target.dataset.at.split(",").map(Number) });
     // on the plan, what was clicked; on the print, the space drawn there
     select(pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null);
   };
@@ -918,9 +921,13 @@ async function followJob(job, saying) {
 
 const HINTS = {
   wall: "Wall: click where it starts and where it ends (it snaps to walls). Esc to stop.",
+  divide: "Divide: click the line's two ends, right across the space (no wall: it becomes two zones). Esc to stop.",
   door: "Door: click on a wall where it goes. Esc to stop.",
   window: "Window: click on a wall where it goes. Esc to stop.",
+  opening: "Opening (a way through, no door): click on a wall where it goes. Esc to stop.",
 };
+const WIDTHS = { door: "0.9", window: "1.2", opening: "1.0" };
+const LINES = { wall: "wall", divide: "divider" }; // the tools that draw a line, and what it is
 
 function planPoint(sx, sy) {
   const { k, tx, ty } = state.view;
@@ -931,9 +938,9 @@ function setTool(tool) {
   state.tool = tool && state.tool !== tool ? tool : null;
   state.wallStart = null;
   for (const b of document.querySelectorAll("[data-tool]")) b.classList.toggle("active", b.dataset.tool === state.tool);
-  const opening = state.tool === "door" || state.tool === "window";
+  const opening = state.tool in WIDTHS;
   $("tool-width-label").hidden = !opening;
-  if (opening) $("tool-width").value = state.tool === "door" ? "0.9" : "1.2";
+  if (opening) $("tool-width").value = WIDTHS[state.tool];
   $("map").classList.toggle("drawing-tool", Boolean(state.tool));
   clearPreview();
   if (state.tool) {
@@ -1025,10 +1032,10 @@ function preview(p) {
   if (state.busy) return;
   const r = 5 / state.view.k;
   let shapes = [];
-  if (state.tool === "wall") {
+  if (state.tool in LINES) {
     const end = snapWall(p);
     shapes = state.wallStart
-      ? [() => svg("line", { x1: state.wallStart[0], y1: state.wallStart[1], x2: end[0], y2: end[1] }),
+      ? [() => svg("line", { x1: state.wallStart[0], y1: state.wallStart[1], x2: end[0], y2: end[1], class: state.tool }),
         () => svg("circle", { cx: state.wallStart[0], cy: state.wallStart[1], r })]
       : [];
     shapes.push(() => svg("circle", { cx: end[0], cy: end[1], r }));
@@ -1041,17 +1048,18 @@ function preview(p) {
 
 function toolClick(p) {
   if (state.busy) return;
-  if (state.tool === "wall") {
+  if (state.tool in LINES) {
     const at = snapWall(p);
     if (!state.wallStart) {
       state.wallStart = at;
       preview(p);
       return;
     }
-    const wall = [state.wallStart, at];
+    const line = [state.wallStart, at];
     state.wallStart = null;
-    if (Math.hypot(at[0] - wall[0][0], at[1] - wall[0][1]) < 0.1) return;
-    submitEdit({ add: { wall } }, "Adding the wall…");
+    if (Math.hypot(at[0] - line[0][0], at[1] - line[0][1]) < 0.1) return;
+    const kind = LINES[state.tool];
+    submitEdit({ add: { [kind]: line } }, kind === "wall" ? "Adding the wall…" : "Dividing the space…");
   } else {
     const span = openingAt(p);
     if (!span) return toast("Click on a wall (or nearer one)", true);
@@ -1099,11 +1107,13 @@ function renderItemEditor() {
   const item = state.item;
   $("item-editor").hidden = !item;
   if (!item) return;
-  if (item.kind === "wall") {
-    const w = (state.floor.edits?.walls || []).find(([a, b]) => `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}` === item.at.join(","));
-    $("it-title").textContent = "Wall drawn here";
+  if (item.kind === "wall" || item.kind === "divider") {
+    const list = item.kind === "wall" ? state.floor.edits?.walls : state.floor.edits?.dividers;
+    const w = (list || []).find(([a, b]) => `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}` === item.at.join(","));
+    $("it-title").textContent = item.kind === "wall" ? "Wall drawn here" : "Dividing line drawn here";
     $("it-id").textContent = "";
-    $("it-meta").textContent = w ? `${Math.hypot(w[1][0] - w[0][0], w[1][1] - w[0][1]).toFixed(2)} m long` : "";
+    $("it-meta").textContent = (w ? `${Math.hypot(w[1][0] - w[0][0], w[1][1] - w[0][1]).toFixed(2)} m long` : "")
+      + (item.kind === "divider" ? " · no wall: the space's zones" : "");
     $("it-delete").textContent = "Take away";
     $("it-flags").textContent = "";
     return;
@@ -1122,7 +1132,7 @@ function renderItemEditor() {
 async function deleteItem() {
   const item = state.item;
   if (!item || state.busy) return;
-  if (item.kind === "wall") return submitEdit({ remove: { at: item.at } }, "Taking the wall away…");
+  if (item.kind === "wall" || item.kind === "divider") return submitEdit({ remove: { at: item.at } }, "Taking it away…");
   const d = state.floor.doors.find((x) => x.id === item.id);
   if (!d) return;
   if (d.drawn) {
@@ -1189,7 +1199,9 @@ function setupPanel() {
     if (e.key === "n" || e.key === "N") nextToReview();
     else if (e.key === "f" || e.key === "F") fit();
     else if (e.key === "w" || e.key === "W") setTool("wall");
+    else if (e.key === "v" || e.key === "V") setTool("divide");
     else if (e.key === "d" || e.key === "D") setTool("door");
+    else if (e.key === "o" || e.key === "O") setTool("opening");
   });
 }
 

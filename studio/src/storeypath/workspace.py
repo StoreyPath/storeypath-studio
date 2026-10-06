@@ -67,17 +67,19 @@ class SourceDrawing(BaseModel):
 
 
 class DrawnOpening(BaseModel):
-    type: Literal["door", "window"]
+    type: Literal["door", "window", "opening"]  # opening: a way through with no door
     span: list[list[float]]  # jamb to jamb, local meters
 
 
 class FloorEdits(BaseModel):
     """What a person drew on a floor in review, kept through every conversion: walls
-    the drawing leaves out (they part spaces as drawn walls do), and doors and windows
-    it does not show."""
+    the drawing leaves out (they part spaces as drawn walls do), doors, windows and
+    openings it does not show, and lines dividing a space where there is no wall (its
+    zones)."""
 
     walls: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
     openings: list[DrawnOpening] = Field(default_factory=list)
+    dividers: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
 
 
 class Floor(BaseModel):

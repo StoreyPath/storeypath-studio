@@ -467,3 +467,43 @@ def test_walls_doors_and_windows_drawn_in_review_are_kept(review):
         r.edit(f_id, {"remove": {"at": [x0 - 50, y0 - 50]}})
     with pytest.raises(ValueError):
         r.edit(f_id, {"add": {"opening": {"type": "hatch", "span": [[0, 0], [1, 0]]}}})
+
+
+def test_a_space_divided_by_a_line_drawn_in_review_has_two_zones(review):
+    # No wall: one space used for two things; an opening drawn in a wall joins two
+    # spaces as a way through with no door.
+    from storeypath.convert import convert_floor
+    from storeypath.workspace import Workspace
+
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    room = max((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: s["area"])
+    x0, y0, x1, y1 = shape(room["geometry"]).bounds
+    mid = (x0 + x1) / 2
+    r.edit(f_id, {"add": {"divider": [[mid, y0 + 0.2], [mid, y1 - 0.2]]}})  # short of the walls: it reaches them
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    ws.save(path)
+    after = r.floor(f_id)
+    divided = next(s for s in after["spaces"] if s["kind"] == "space" and s["zones"]
+                   and abs(s["area"] - room["area"]) < 0.5)
+    zones = [s for s in after["spaces"] if s["id"] in divided["zones"]]
+    assert len(zones) == 2 and all(z["kind"] == "zone" and z["space_id"] == divided["id"] for z in zones)
+    assert abs(sum(z["area"] for z in zones) - room["area"]) < 0.5
+    assert room["id"] in divided["zones"]  # what was used keeps its ID: a part of it, now a zone
+    assert Workspace.load(path).floor(f_id).edits.walls == []  # no wall
+    # an opening in the wall between two rooms
+    rooms = sorted((s for s in after["spaces"] if s["kind"] == "space"), key=lambda s: -s["area"])
+    a, b = rooms[0], next(s for s in rooms[1:] if shape(s["geometry"]).distance(shape(rooms[0]["geometry"])) < 0.5)
+    between = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3))
+    c = between.centroid
+    vertical = (between.bounds[3] - between.bounds[1]) > (between.bounds[2] - between.bounds[0])
+    span = [[c.x, c.y - 0.5], [c.x, c.y + 0.5]] if vertical else [[c.x - 0.5, c.y], [c.x + 0.5, c.y]]
+    r.edit(f_id, {"add": {"opening": {"type": "opening", "span": span}}})
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    ws.save(path)
+    way = next(d for d in r.floor(f_id)["doors"] if d["drawn"])
+    assert way["type"] == "opening" and len(way["connects"]) == 2
+    r.edit(f_id, {"remove": {"at": [mid, (y0 + y1) / 2]}})  # the dividing line
+    assert r.floor(f_id)["edits"]["dividers"] == []
