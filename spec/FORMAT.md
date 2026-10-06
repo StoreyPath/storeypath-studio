@@ -80,7 +80,9 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 `parapet_height_m`. Geometry: floor outline (or null).
 
 **space** — `type`, `name`, `number`, `floor_id`, `area_m2`, `display_point` (a good
-spot for its label), `zones`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
+spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
+windows of its own; a glazed veranda is not), `hidden`, `ignored`. Geometry: Polygon
+or MultiPolygon.
 A space is what walls, doors and windows enclose: walls stand on its edges.
 
 **zone** — `type`, `name`, `number`, `space_id`, `floor_id`, `area_m2`,
@@ -100,7 +102,9 @@ the zones of a space that has them, and the space itself otherwise.
 `exterior` (true when it leads outside), `width_m` and `span` (jamb to jamb, when
 known), `swings` (a door's leaves as the plan draws them, each `[hinge, free edge
 when open]`, when known: which side it hinges on and which way it opens; two for a
-double door), `hidden`, `ignored`. Geometry: Point in the wall.
+double door), `sill_m` and `height_m` (how high above the floor it starts, and how
+tall it is, from the drawing's schedule of openings, when known), `hidden`, `ignored`.
+Geometry: Point in the wall.
 
 `hidden` and `ignored` are set by a person in review. A hidden object is real but
 not shown unless asked for (a shaft, a plant room); an ignored one was judged not
@@ -159,7 +163,7 @@ A system that skipped an export can use `all_retired` to clean up its mappings.
 - An object's kind may change between exports when it is the same place in use:
   a 0.2 space that becomes a zone keeps its ID.
 
-0.3.1 adds the openings' `swings`.
+0.3.1 adds the openings' `swings`, `sill_m` and `height_m`, and the spaces' `outdoor`.
 
 ## Versioning
 

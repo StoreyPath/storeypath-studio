@@ -187,6 +187,32 @@
           "description": "a door's leaves as the plan draws them: each [hinge, its free edge when open]",
           "title": "Swings"
         },
+        "sill_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "how high above the floor it starts, from the drawing's schedule",
+          "title": "Sill M"
+        },
+        "height_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "its height, from the drawing's schedule",
+          "title": "Height M"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for",

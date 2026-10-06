@@ -288,8 +288,8 @@ async function findPlans(code, drawing, area, units) {
     el("p", { class: result.units_sure ? "muted small" : "unsure small" }, result.units_reason,
       result.units_sure ? "" : " If the plans below look the wrong size, choose the units."),
     el("p", { class: "muted small" }, result.levels.summary
-      ? `Levels on its sections: ${result.levels.summary}. Each floor's height and parapet are set from them.`
-      : `No floor levels on its sections: floors are ${result.levels.height} m high unless you change them.`),
+      ? `Levels in the drawing: ${result.levels.summary}. Each floor's height and parapet are set from them.`
+      : `No floor levels on its sections or plans: floors are ${result.levels.height} m high unless you change them.`),
     el("p", { class: "muted small" }, "Choose the plans that are floors; Studio lines them up and finds the rooms."),
     el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), add),
     el("div", { class: "plans" }, cards.map((c) => c.node)),

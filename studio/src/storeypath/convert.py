@@ -101,6 +101,7 @@ def convert_floor(
         keep_to_the_building(extraction)
     else:
         type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
+    _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
@@ -235,6 +236,26 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
     return report
 
 
+def _sizes_from_the_schedule(ex: FloorExtraction, doc, region, vision, model, say) -> None:
+    """Each tagged door's and window's sill and height, from the drawing's schedule of
+    openings (schedule.py), its rows read by the strongest model that runs."""
+    from .schedule import sizes_near
+    from .vision import InWords
+
+    if vision is not None and vision.available():
+        reader = InWords(vision)
+    else:
+        reader = model if model is not None and model.available() else None
+    sizes = sizes_near(doc, region, reader)
+    sized = 0
+    for d in ex.doors:
+        if d.tag and (size := sizes.get(d.tag)) is not None:
+            d.sill, d.height = size.sill, size.height
+            sized += 1
+    if sized and say:
+        say(f"{sized} doors and windows sized from the schedule of openings")
+
+
 def _local(geom) -> dict:
     """GeoJSON geometry in local meters, rounded to 0.1 mm."""
     return mapping(set_precision(geom, 1e-4))
@@ -331,6 +352,7 @@ def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now,
         record.span = [[round(x, 4), round(y, 4)] for x, y in door.span.coords] if door.span is not None else None
         record.width = door.width
         record.swings = [[[round(x, 4), round(y, 4)] for x, y in leaf] for leaf in door.swings] or None
+        record.sill, record.height = door.sill, door.height
     for j, r in enumerate(existing):
         if j not in used:
             _retire(r, now, report)

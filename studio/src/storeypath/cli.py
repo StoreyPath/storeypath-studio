@@ -340,9 +340,10 @@ def levels(
                                             help="read level labels in other languages with the local language model")] = True,
 ):
     """Set the floors' heights from the level labels on the building's drawings
-    (+3.65 FIRST FLOOR SLAB LVL on sections and elevations), and the roof's parapet."""
+    (+3.65 FIRST FLOOR SLAB LVL on sections and elevations, or the +0.45 FFL each
+    floor's plan marks), and the roof's parapet."""
     from .cad import read_drawing
-    from .levels import floor_levels, read_level_marks
+    from .levels import floor_levels, plan_level, read_level_marks
     from .llm import LocalModel
 
     ws = _load(workspace)
@@ -354,18 +355,24 @@ def levels(
     if not paths:
         _fail(f"{building_id} has no floors with drawings")
     model = LocalModel() if use_model else None
-    marks = []
+    marks, marked = [], {}
     try:
         for path in paths:
-            marks += read_level_marks(read_drawing(workspace.parent / path), model)
+            doc = read_drawing(workspace.parent / path)
+            marks += read_level_marks(doc, model)
+            for f in b.floors:  # the level each floor's plan marks ("+0.45 FFL")
+                if f.source and f.source.path == path:
+                    marked[f.ordinal] = plan_level(doc, f.source.region)
     except DrawingError as e:
         _fail(str(e))
     finally:
         if model is not None:
             model.close()
     found = floor_levels(marks)
-    if not found.levels:
-        _fail("no level labels found (such as +3.65 FIRST FLOOR SLAB LVL); set heights with add-floor --height")
+    found.add_plans(marked)
+    if not found.heights and not found.levels:
+        _fail("no level labels found (such as +3.65 FIRST FLOOR SLAB LVL, or +0.45 FFL on the plans); "
+              "set heights with add-floor --height")
     typer.echo(f"levels: {found.summary()}")
     for f in b.floors:
         f.height = found.height(f.ordinal)

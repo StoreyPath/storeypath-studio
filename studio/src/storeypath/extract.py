@@ -93,6 +93,8 @@ class ExtractedDoor:
     # its leaves as the swings are drawn: (hinge, free edge when open), meters
     swings: list[tuple[tuple[float, float], tuple[float, float]]] = field(default_factory=list)
     tag: str | None = None  # its tag in the drawing (D4, W12)
+    sill: float | None = None  # metres above the floor, and its height: from the schedule (schedule.py)
+    height: float | None = None
     issues: list[str] = field(default_factory=list)  # for review
 
 

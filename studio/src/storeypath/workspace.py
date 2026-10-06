@@ -118,6 +118,8 @@ class ObjectRecord(BaseModel):
     span: list[list[float]] | None = None  # openings: jamb to jamb, local meters
     width: float | None = None  # openings: meters
     swings: list[list[list[float]]] | None = None  # doors: each leaf [hinge, free edge when open], local meters
+    sill: float | None = None  # openings: meters above the floor, from the drawing's schedule
+    height: float | None = None  # openings: meters, from the drawing's schedule
     tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
     issues: list[str] = Field(default_factory=list)  # found on conversion, for review
     detected_ignored: bool = False  # judged not a room on conversion (vision); a correction wins

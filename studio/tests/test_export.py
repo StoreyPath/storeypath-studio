@@ -169,13 +169,15 @@ def test_walls_around_a_roof_terrace_are_parapets():
     walls = edge.union(room_walls).union(pier)
     room = box(0.2, 0.2, 4.0, 4.0)
     terrace = box(0.2, 0.2, 9.8, 9.8).difference(box(0.2, 0.2, 4.2, 4.2))
-    full, parapets = _walls_and_parapets(walls, [(room, "bedroom"), (terrace, "terrace")], 0.2)
+    full, parapets = _walls_and_parapets(walls, [(room, False), (terrace, True)], 0.2)  # (shape, open to the sky)
     assert parapets.contains(Point(7, 9.9)) and parapets.contains(Point(9.9, 7))  # the roof's edge
     assert parapets.contains(Point(10.3, 6.2))  # and what is built onto it
     assert full.contains(Point(2, 0.1)) and full.contains(Point(0.1, 2))  # the room's outside walls
     assert full.contains(Point(4.1, 2)) and full.contains(Point(2, 4.1))  # between the room and the terrace
     assert abs(full.area + parapets.area - walls.area) < 1e-6
-    assert _walls_and_parapets(walls, [(room, "bedroom")], 0.2) == (walls, None)  # no terrace, no parapets
+    assert _walls_and_parapets(walls, [(room, False)], 0.2) == (walls, None)  # no terrace, no parapets
+    # a glazed veranda is enclosed: its walls stay full height
+    assert _walls_and_parapets(walls, [(room, False), (terrace, False)], 0.2) == (walls, None)
 
 
 def test_doors_keep_their_swings(package):

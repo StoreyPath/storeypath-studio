@@ -104,6 +104,8 @@ class SpaceProps(_Props):
     display_point: LonLat
     zones: list[str] = Field(default_factory=list, description=(
         "IDs of the zones this space is divided into, with no wall between them (empty: one use)"))
+    outdoor: bool = Field(False, description=(
+        "open to the sky: a terrace or balcony with no windows of its own (a glazed veranda is not)"))
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 
@@ -131,6 +133,8 @@ class OpeningProps(_Props):
     span: list[LonLat] | None = Field(None, description="the opening across the wall, jamb to jamb")
     swings: list[list[LonLat]] | None = Field(
         None, description="a door's leaves as the plan draws them: each [hinge, its free edge when open]")
+    sill_m: float | None = Field(None, description="how high above the floor it starts, from the drawing's schedule")
+    height_m: float | None = Field(None, description="its height, from the drawing's schedule")
     hidden: bool = Field(False, description="real, but not shown unless asked for")
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 

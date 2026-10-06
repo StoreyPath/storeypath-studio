@@ -407,6 +407,27 @@ def read_level_labels(model: LocalModel, labels: list[str]) -> dict[str, tuple[s
         out[label] = (kind, floor if isinstance(floor, int) else None)
     return out
 
+SCHEDULE_SYSTEM = (
+    "You read one row of a door and window schedule from an architectural drawing: its cells, each with the "
+    "header of the column it stands in. Answer with the opening's width, height and sill_height (how high above "
+    "the floor the window starts), as numbers in the table's own units, or null when the row has none. "
+    "Read it as a person would. The sill height is usually under SILL, but if a number that can only be a sill "
+    "height (hundreds of millimetres, or more than 0.3 m) stands under a column that cannot hold it, such as a "
+    "count of leaves, it is the sill height. A count of leaves (1, 2, 4) is never a size. A height written in two "
+    "parts such as '1200+' and 'R=600' (an arched top) is the two added. A dash is null."
+)
+
+
+def read_schedule_row(model: LocalModel, headers: list[str], tag: str, cells: list[tuple[str, str]]) -> dict:
+    """An opening type's width, height and sill as the schedule's row gives them (in
+    the table's units, None where it gives none)."""
+    schema = {"type": "object", "properties": {k: {"type": ["number", "null"]} for k in ("width", "height", "sill_height")},
+              "required": ["width", "height", "sill_height"]}
+    row = "; ".join(f"{h}: {c}" for h, c in cells)
+    got = model.ask(SCHEDULE_SYSTEM, f"Headers: {' | '.join(headers)}\nRow {tag} — {row}", schema, max_tokens=60)
+    return {"width": got.get("width"), "height": got.get("height"), "sill": got.get("sill_height")}
+
+
 _NOT_WORDS = re.compile(r"^[\W\d_]*$")
 
 

@@ -116,15 +116,25 @@ def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
 OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value}
 
 
+def open_to_the_sky(ws: Workspace, floor_id: str) -> set[str]:
+    """The terraces and balconies that are open to the sky: those with no window of
+    their own. A window in a terrace's own outer wall (one that joins it to nothing
+    else) encloses it, as a glazed veranda; a room's window looking onto it does not."""
+    objects = ws.floor_objects(floor_id)
+    enclosed = {r.connects[0] for r in objects if r.kind == "opening" and r.type == "window" and len(r.connects) == 1}
+    return {r.id for r in objects if r.kind == "space" and ws.effective(r)["type"] in OUTDOOR and r.id not in enclosed}
+
+
 def _walls_and_parapets(walls, spaces, thickness: float | None):
     """A floor's walls, split into those that rise to the ceiling and the parapets. On
-    a floor with a terrace or balcony, a wall that encloses no room is low: the wall
-    around a roof, and anything built onto it (a pier, a box for a pipe). A room's
-    own walls stay full height, terrace or not beside them."""
-    if walls is None or walls.is_empty or not any(t in OUTDOOR for _, t in spaces):
+    a floor with a terrace or balcony open to the sky, a wall that encloses no room is
+    low: the wall around a roof, and anything built onto it (a pier, a box for a
+    pipe). A room's own walls stay full height, terrace or not beside them.
+    ``spaces``: (shape, open to the sky)."""
+    if walls is None or walls.is_empty or not any(sky for _, sky in spaces):
         return walls, None
     reach = 1.5 * max(thickness or 0.2, 0.1) + 0.05  # across a wall, to the space on its far side
-    rooms = unary_union([s for s, t in spaces if t not in OUTDOOR]).buffer(reach)
+    rooms = unary_union([s for s, sky in spaces if not sky]).buffer(reach)
     low = walls.difference(rooms)
     low = unary_union([p for p in as_polygons(low) if p.area >= 0.01])
     if low.is_empty:
@@ -147,8 +157,8 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                 outline = shape(f.outline) if f.outline else None
                 if outline is not None:
                     outlines.append(outline)
-                spaces = [(shape(r.geometry), ws.effective(r)["type"]) for r in ws.floor_objects(f_id)
-                          if r.kind == "space"]
+                sky = open_to_the_sky(ws, f_id)
+                spaces = [(shape(r.geometry), r.id in sky) for r in ws.floor_objects(f_id) if r.kind == "space"]
                 walls, parapets = _walls_and_parapets(shape(f.walls) if f.walls else None, spaces, f.wall_thickness)
                 out["floors"].append(
                     _feature(
@@ -174,7 +184,7 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                  "number": eff["number"], "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
-                                 "zones": list(r.zones),
+                                 "zones": list(r.zones), "outdoor": r.id in sky,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
@@ -200,6 +210,7 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                  "width_m": r.width,
                                  "span": [_lonlat(g, p) for p in r.span] if r.span else None,
                                  "swings": [[_lonlat(g, p) for p in leaf] for leaf in r.swings] if r.swings else None,
+                                 "sill_m": r.sill, "height_m": r.height,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )

@@ -220,6 +220,12 @@
           "title": "Zones",
           "type": "array"
         },
+        "outdoor": {
+          "default": false,
+          "description": "open to the sky: a terrace or balcony with no windows of its own (a glazed veranda is not)",
+          "title": "Outdoor",
+          "type": "boolean"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for (a shaft, a plant room)",

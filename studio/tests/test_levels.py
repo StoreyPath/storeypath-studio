@@ -71,3 +71,38 @@ def test_floors_are_stacked_on_the_heights_below_them():
     ws.restack(b)
     got = {f.ordinal: f.elevation for f in ws.building(b).floors}
     assert got == {-1: -3.0, 0: 0.0, 1: 3.3, 2: 6.6, 4: pytest.approx(13.8)}  # floor 3, missing: as high as 2
+
+
+def test_each_plan_marks_its_own_floor_level():
+    # Plans side by side, each marking its rooms' finished level its own way: as text
+    # either way round, or in a level symbol's attributes. The ground outside (FGL) and
+    # the slab under the finish (SSL) are not the floor's level.
+    from storeypath.levels import plan_heights, plan_level
+
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    symbol = doc.blocks.new("LEVEL_SYMBOL")
+    symbol.add_lwpolyline([(0, 0), (-0.15, 0.25), (0.15, 0.25)], close=True)  # the marker
+    symbol.add_attdef("LEVEL", (0, 0.3))
+    symbol.add_attdef("KIND", (0, 0))
+    plans = {0: (0, 0), 1: (30, 0), 2: (60, 0)}
+    for floor, (x, y) in plans.items():
+        level = {0: 0.45, 1: 5.57, 2: 9.43}[floor]
+        for i in range(3):
+            at = (x + 2 + 5 * i, y + 5)
+            if floor == 0:
+                msp.add_text(f"+{level:.2f} FFL", height=0.2).set_placement(at)
+            elif floor == 1:
+                msp.add_text(f"FFL+{level:.2f}", height=0.2).set_placement(at)
+            else:
+                msp.add_blockref("LEVEL_SYMBOL", at).add_auto_attribs({"LEVEL": f"+{level:.2f}", "KIND": "FFL"})
+            msp.add_text(f"SSL+{level - 0.1:.2f}", height=0.2).set_placement((at[0], at[1] - 1))
+        msp.add_text("%%p0.00 FGL", height=0.2).set_placement((x + 1, y - 2))
+        msp.add_line((x, y - 3), (x + 20, y + 15))  # something drawn, so the plan has extents
+    levels = {n: plan_level(doc, (x - 1, y - 4, x + 21, y + 16)) for n, (x, y) in plans.items()}
+    assert levels == {0: 0.45, 1: 5.57, 2: 9.43}
+    assert plan_heights(levels) == {0: 5.12, 1: 3.86}
+    # sections that name the levels win where they say
+    found = floor_levels(read_level_marks(_drawing(VILLA)))
+    found.add_plans(levels)
+    assert found.heights[0] == 3.3 and found.heights[1] == 3.3

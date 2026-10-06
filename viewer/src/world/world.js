@@ -482,7 +482,7 @@ export class StoreyPathWorld extends EventTarget {
       const spacePolys = this.#polygons(space.geometry);
       if (!spacePolys.length) continue;
       built.rooms.push({ id: space.id, rings: spacePolys });
-      const outdoor = OUTDOOR.has(sp.type);
+      const outdoor = sp.outdoor ?? OUTDOOR.has(sp.type); // a glazed veranda is not: older packages say by type
       if (!outdoor) roofed.push(...spacePolys);
       const volume = new THREE.Mesh(this.#extrude(spacePolys, (outdoor ? parapetHeight : wallHeight) - 0.05, e + 0.01),
         this.#materials.volume(TYPE_COLORS[sp.type] || TYPE_COLORS.unspecified));
@@ -542,7 +542,8 @@ export class StoreyPathWorld extends EventTarget {
         .map((x) => {
           const [a, b] = x.properties.span.map((c) => this.#local(c));
           const leaves = (x.properties.swings || []).map((leaf) => leaf.map((c) => this.#local(c)));
-          return { a, b, type: x.properties.type, connects: x.properties.connects || [], leaves };
+          return { a, b, type: x.properties.type, connects: x.properties.connects || [], leaves,
+            sill: x.properties.sill_m ?? null, height: x.properties.height_m ?? null };
         });
     } else {
       thickness = props.wall_thickness_m || 0.12;
@@ -602,26 +603,32 @@ export class StoreyPathWorld extends EventTarget {
       };
       const ux = (b[0] - a[0]) / len, un = (b[1] - a[1]) / len;
       const at = (t) => [a[0] + ux * t, a[1] + un * t];
+      // sizes from the drawing's schedule where it gives them; a window taller than the
+      // floor (through two storeys) stops at this floor's ceiling
+      const ceiling = wallHeight - 0.02;
       if (type === "window") {
-        sills.push(box(0, o.windowSill, thickness));
-        heads.push(box(o.windowHead, wallHeight, thickness));
-        glass.push(box(o.windowSill, o.windowHead, 0.02));
+        const sill = Math.min(Math.max(way.sill ?? o.windowSill, 0), ceiling - 0.2);
+        const head = Math.min(way.height !== null && way.height !== undefined ? sill + way.height : o.windowHead, ceiling);
+        if (sill > 0.01) sills.push(box(0, sill, thickness));
+        if (head < wallHeight - 0.01) heads.push(box(head, wallHeight, thickness));
+        glass.push(box(sill, head, 0.02));
         // the frame: along the sill and the head, at each side, and a mullion about
         // every metre between
         const f = WINDOW_FRAME, depth = Math.min(thickness, 0.09);
-        frames.push(piece(a, b, o.windowSill, o.windowSill + f, depth), piece(a, b, o.windowHead - f, o.windowHead, depth));
+        frames.push(piece(a, b, sill, sill + f, depth), piece(a, b, head - f, head, depth));
         const panes = Math.max(1, Math.round(len / PANE));
         for (let k = 0; k <= panes; k++) {
           const t = Math.min(Math.max((k * len) / panes, f / 2), len - f / 2);
-          frames.push(piece(at(t - f / 2), at(t + f / 2), o.windowSill, o.windowHead, depth));
+          frames.push(piece(at(t - f / 2), at(t + f / 2), sill, head, depth));
         }
         segments.push([a[0], -a[1], b[0], -b[1]]); // you cannot walk through a window
       } else if (type === "door") {
-        heads.push(box(o.doorHead, wallHeight, thickness));
+        const top = Math.min(way.height ?? o.doorHead, ceiling);
+        if (top < wallHeight - 0.01) heads.push(box(top, wallHeight, thickness));
         // the frame: a jamb each side and a head, standing a little proud of the wall
         const c = Math.min(CASING, len / 4), depth = thickness + 0.03;
-        casings.push(piece(a, at(c), 0, o.doorHead, depth), piece(at(len - c), b, 0, o.doorHead, depth),
-          piece(a, b, o.doorHead - c, o.doorHead, depth));
+        casings.push(piece(a, at(c), 0, top, depth), piece(at(len - c), b, 0, top, depth),
+          piece(a, b, top - c, top, depth));
         // the leaves, open as the plan draws them; without the swings, open into the
         // room it serves, one leaf or two
         let open = way.leaves || [];
@@ -641,7 +648,7 @@ export class StoreyPathWorld extends EventTarget {
           if (reach < 0.3) continue;
           const w = Math.min(reach, len) - c, dx = (q[0] - h[0]) / reach, dn = (q[1] - h[1]) / reach;
           const from = [h[0] + dx * c, h[1] + dn * c], to = [h[0] + dx * (c + w), h[1] + dn * (c + w)];
-          leaves.push(piece(from, to, 0.01, o.doorHead - c, LEAF));
+          leaves.push(piece(from, to, 0.01, top - c, LEAF));
           segments.push([from[0], -from[1], to[0], -to[1]]); // an open leaf stands in the way
         }
       } else if (len <= OPEN_SPAN) { // a doorway: a way through with no door

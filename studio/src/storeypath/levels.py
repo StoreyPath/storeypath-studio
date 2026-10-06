@@ -6,6 +6,10 @@ LVL.", "+6.95 ROOF SLAB LVL.", "+8.65 PARAPET LVL.". Read together they give eac
 floor's height (the levels of consecutive floors) and the parapet around the roof.
 A level that sheets repeat counts once, at its most common value. Plain English is
 read by rule; other languages and wordings by the language model.
+
+A floor plan marks its own level in its rooms too ("+0.45 FFL", "FFL+5.57", a level
+symbol reading "+5.57" and "FFL"): consecutive floors' levels give their heights
+where the sections do not.
 """
 
 from __future__ import annotations
@@ -25,6 +29,10 @@ DEFAULT_PARAPET_M = 1.1  # a guard around a terrace or balcony, when nothing sho
 HEIGHT_M = (2.2, 8.0)  # floor-to-floor heights outside this are misread
 PARAPET_M = (0.3, 2.5)
 MAX_ASKED = 16
+# a level marked on a plan: a signed number with the kind of level beside it
+MARKED = re.compile(r"(?P<sign>%%[pP]|±|\+|-)\s*(?P<value>\d+(?:[.,]\d+)?)")
+FINISHED = re.compile(r"\b(f\.?\s?f\.?\s?l\b\.?|fin(ish(ed)?)?\.?\s+floor\s+(level|lvl))", re.IGNORECASE)
+STRUCTURAL = re.compile(r"\b(s\.?\s?s\.?\s?l\b\.?|t\.?\s?o\.?\s?s\b\.?|slab\s+(level|lvl))", re.IGNORECASE)
 
 # "+3.65 FIRST FLOOR SLAB LVL.", "%%p0.00 GROUND LVL." (%%p is AutoCAD's ±), "+3650 FFL"
 LEVEL = re.compile(r"^\s*(?P<sign>%%[pP]|±|\+|-)?\s*(?P<value>\d+(?:[.,]\d+)?)\s*(?:m\b\.?)?\s*(?P<rest>.*?)\s*$")
@@ -54,6 +62,13 @@ class FloorLevels:
     roof: int | None = None  # the floor on the roof (one above the highest named floor)
     parapet: float | None = None  # the roof's parapet, above the roof slab (m)
     marks: list[LevelMark] = field(default_factory=list)
+    on_plans: dict[int, float] = field(default_factory=dict)  # floor → the level its plan marks
+
+    def add_plans(self, marked: dict[int, float]) -> None:
+        """The levels the floors' plans mark: they give the heights the sections do not."""
+        self.on_plans = {n: v for n, v in marked.items() if v is not None}
+        for n, h in plan_heights(self.on_plans).items():
+            self.heights.setdefault(n, h)
 
     def height(self, ordinal: int) -> float:
         """A floor's height: from the drawing, else the building's typical one."""
@@ -70,6 +85,8 @@ class FloorLevels:
         names = {-1: "basement", 0: "ground floor", 1: "first floor", 2: "second floor", 3: "third floor"}
         parts = [f"{names.get(n, f'floor {n}') if n != self.roof else 'roof'} {_signed(v)}"
                  for n, v in sorted(self.levels.items())]
+        if not parts and self.on_plans:
+            parts = [f"{names.get(n, f'floor {n}')} {_signed(v)} (on its plan)" for n, v in sorted(self.on_plans.items())]
         top = _mode([m.level for m in self.marks if m.what == "top"])
         if top is not None:
             parts.append(f"stair roof {_signed(top)}")
@@ -131,6 +148,40 @@ def floor_levels(marks: list[LevelMark]) -> FloorLevels:
     if roof is not None and parapet is not None and _within(parapet - roof, PARAPET_M):
         out.parapet = round(parapet - roof, 2)
     return out
+
+
+def plan_level(doc: Drawing, region) -> float | None:
+    """A floor's level as its plan marks it in its rooms: the most common finished
+    floor level ("+0.45 FFL"), else the structural one ("+0.35 SSL"). The ground
+    outside ("±0.00 FGL") is not the floor's."""
+    from .extract import _text_lines, _walk, modelspace_entities
+
+    finished, structural = [], []
+    for e, _ in _walk(modelspace_entities(doc, region)):
+        kind = e.dxftype()
+        if kind == "INSERT":  # a level symbol: its attributes read together
+            text = " ".join(a.dxf.get("text", "") for a in e.attribs)
+        elif kind in ("TEXT", "MTEXT"):
+            text = " ".join(_text_lines(e))
+        else:
+            continue
+        m = MARKED.search(text)
+        if not m or NATURAL_GROUND.search(text):
+            continue
+        level = _metres(m["sign"], m["value"])
+        if level is None:
+            continue
+        if FINISHED.search(text):
+            finished.append(level)
+        elif STRUCTURAL.search(text):
+            structural.append(level)
+    return _mode(finished) if finished else _mode(structural)
+
+
+def plan_heights(levels: dict[int, float]) -> dict[int, float]:
+    """Floor-to-floor heights from the levels the plans mark (floor → level)."""
+    return {n: round(levels[n + 1] - v, 2) for n, v in levels.items()
+            if n + 1 in levels and _within(levels[n + 1] - v, HEIGHT_M)}
 
 
 def _by_rule(text: str, rest: str, level: float) -> LevelMark | None:

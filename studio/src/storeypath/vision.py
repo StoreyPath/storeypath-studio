@@ -155,6 +155,37 @@ class VisionModel:
         return {f: answer[f] for f in fields if answer.get(f) in fields[f]}
 
 
+class InWords:
+    """The vision model asked in words only, as llm.LocalModel is asked: the stronger
+    reader of tables and notes where it runs."""
+
+    def __init__(self, vision: VisionModel):
+        self.vision = vision
+
+    @property
+    def name(self) -> str:
+        return self.vision.name
+
+    def available(self) -> bool:
+        return self.vision.available()
+
+    def ask(self, system: str, user: str, schema: dict, max_tokens: int = 1024) -> dict:
+        from .llm import ModelUnavailable
+
+        body = {
+            "model": self.vision.model, "temperature": 0, "max_tokens": max_tokens,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        try:
+            with urllib.request.urlopen(self.vision._request("/chat/completions", body), timeout=self.vision.timeout) as r:
+                out = json.load(r)
+            return json.loads(out["choices"][0]["message"]["content"])
+        except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
+            raise ModelUnavailable(f"{self.name}: {e}") from e
+
+
 @dataclass
 class RoomView:
     outline: str

@@ -54,7 +54,7 @@ from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import read_title
 from .profile import AUTO, load_profile
-from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, read_level_marks
+from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, plan_level, read_level_marks
 from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
@@ -346,9 +346,15 @@ class Studio:
                 out.append({"index": v.index, "title": v.title, "kind": kind, "floor": floor,
                             "building": r.building if r else None, "size": v.size, "region": v.region,
                             "preview": v.preview})
-            # Floor heights and the roof's parapet, from the levels on its sections.
+            # Floor heights and the roof's parapet, from the levels on its sections, and
+            # where they give none, from the level each floor's plan marks.
             found = floor_levels(read_level_marks(doc, self.model if self.model.available() else None))
-            job.say(f"levels: {found.summary()}" if found.levels else "no floor levels on its sections")
+            marked = {}
+            for v, o in zip(views, out):
+                if o["kind"] in ("floor_plan", "roof_plan") and o["floor"] is not None and o["floor"] not in marked:
+                    o["level"] = marked[o["floor"]] = plan_level(doc, v.region)
+            found.add_plans(marked)
+            job.say(f"levels: {found.summary()}" if found.summary() else "no floor levels on its sections or plans")
             levels = {"summary": found.summary() or None, "heights": {str(n): h for n, h in found.heights.items()},
                       "height": found.typical_height(), "roof": found.roof, "parapet": found.parapet,
                       "default_parapet": DEFAULT_PARAPET_M}
