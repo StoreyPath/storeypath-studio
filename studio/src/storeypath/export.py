@@ -199,6 +199,7 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                  "connects": r.connects, "exterior": len(r.connects) == 1,
                                  "width_m": r.width,
                                  "span": [_lonlat(g, p) for p in r.span] if r.span else None,
+                                 "swings": [[_lonlat(g, p) for p in leaf] for leaf in r.swings] if r.swings else None,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )

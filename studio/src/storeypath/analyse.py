@@ -26,7 +26,7 @@ import numpy as np
 import shapely
 from ezdxf.document import Drawing
 
-from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
+from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, dashed_lines, modelspace_entities
 from .profile import (
     BlocksConfig,
     DoorsConfig,
@@ -201,8 +201,7 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
     small: list[tuple[str, tuple[float, float, float, float]]] = []  # column-sized shapes
     text_points: list[tuple[float, float]] = []
     tol = CURVE_TOLERANCE_M / scale
-    dashed_types = _dashed_linetypes(doc)
-    layer_types = {layer.dxf.name: layer.dxf.get("linetype", "Continuous").upper() for layer in doc.layers}
+    is_dashed = dashed_lines(doc)
 
     for e, layer in _walk(modelspace_entities(doc, region)):
         st = stats.setdefault(layer, LayerStats(layer))
@@ -220,8 +219,7 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
             continue
         if kind in ("HATCH", "DIMENSION", "POINT"):
             continue
-        lt = e.dxf.get("linetype", "BYLAYER").upper()
-        dashed = (layer_types.get(layer, "CONTINUOUS") if lt == "BYLAYER" else lt) in dashed_types
+        dashed = is_dashed(e, layer)
         if kind == "ARC":
             c = e.ocs().to_wcs(e.dxf.center)
             arcs.append(_Arc(layer, c.x * scale, c.y * scale, e.dxf.radius * scale, e.dxf.start_angle,
@@ -276,19 +274,6 @@ def plan_texts(doc: Drawing, region=None, per_layer: int | None = None, unknown=
             texts = [t for t in texts if unknown is None or unknown(t)][:per_layer]
         out += texts
     return list(dict.fromkeys(out))
-
-
-def _dashed_linetypes(doc) -> set[str]:
-    """Names of the drawing's linetypes that have gaps in them."""
-    out = set()
-    for lt in doc.linetypes:
-        try:
-            pattern = lt.simplified_line_pattern()
-        except Exception:
-            pattern = ()
-        if len(pattern) > 1:
-            out.add(lt.dxf.name.upper())
-    return out
 
 
 def _shoelace(pts) -> float:

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.3.0"
+FORMAT_VERSION = "0.3.1"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -129,6 +129,8 @@ class OpeningProps(_Props):
     exterior: bool = Field(description="true when it leads outside the floor")
     width_m: float | None = Field(None, description="clear width, jamb to jamb")
     span: list[LonLat] | None = Field(None, description="the opening across the wall, jamb to jamb")
+    swings: list[list[LonLat]] | None = Field(
+        None, description="a door's leaves as the plan draws them: each [hinge, its free edge when open]")
     hidden: bool = Field(False, description="real, but not shown unless asked for")
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 

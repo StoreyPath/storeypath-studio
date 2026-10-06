@@ -278,6 +278,28 @@ def test_an_x_across_a_room_does_not_cut_it(tmp_path):
     assert iou(found.polygon, _room(room)) > 0.95
 
 
+def test_a_dashed_line_on_the_wall_layer_is_not_a_wall(tmp_path):
+    # A dome or a void overhead is drawn dashed, often on the wall layer: a ring of
+    # doubled lines like a round wall, but nothing stands there.
+    import ezdxf
+
+    cells = office_floor(1)
+    room = next(c for c in cells if c.number == "101")
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False, walls="lines")
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    ox, oy = ORIGIN
+    middle = ((ox + (room.x0 + room.x1) / 2) * 1000, (oy + (room.y0 + room.y1) / 2) * 1000)
+    radius = min(room.x1 - room.x0, room.y1 - room.y0) / 3 * 1000
+    for r in (radius, radius - WALL * 1000):
+        doc.modelspace().add_circle(middle, r, dxfattribs={"layer": "A-WALL", "linetype": "DASHED"})
+    doc.saveas(tmp_path / "plan.dxf")
+    ex = extract_floor(read_drawing(tmp_path / "plan.dxf"), load_profile("ncs"))
+    assert len(ex.spaces) == len(cells)
+    found = next(s for s in ex.spaces if s.number == "101")
+    assert iou(found.polygon, _room(room)) > 0.95
+    assert not ex.walls.intersects(Point(middle[0] / 1000 + radius / 1000 - WALL / 2, middle[1] / 1000).buffer(0.05))
+
+
 def test_the_garden_inside_a_plot_wall_is_not_a_room(tmp_path):
     # A plot wall drawn around the house with the same walls: the yard between them
     # holds every room in its hole. A person sees the outside, not a room.

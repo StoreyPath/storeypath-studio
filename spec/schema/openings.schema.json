@@ -158,6 +158,35 @@
           "description": "the opening across the wall, jamb to jamb",
           "title": "Span"
         },
+        "swings": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "a door's leaves as the plan draws them: each [hinge, its free edge when open]",
+          "title": "Swings"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for",

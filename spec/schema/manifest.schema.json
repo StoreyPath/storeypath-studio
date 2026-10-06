@@ -153,7 +153,7 @@
       "type": "string"
     },
     "format_version": {
-      "default": "0.3.0",
+      "default": "0.3.1",
       "title": "Format Version",
       "type": "string"
     },

@@ -176,6 +176,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #doors .span.door, #doors .span.way { stroke: #f08c00; }
 #doors .span.way { stroke-dasharray: 4 5; stroke-linecap: butt; }
 #doors .span.window { stroke: #22b8cf; stroke-width: 3; }
+#doors .swing { fill: none; stroke: #f08c00; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 #doors circle.door, #doors circle.way { fill: #f08c00; stroke: #fff; stroke-width: 1.5; }
 #doors circle.window { fill: #22b8cf; stroke: none; }
 

@@ -98,7 +98,9 @@ the zones of a space that has them, and the space itself otherwise.
 
 **opening** — `type`, `floor_id`, `connects` (IDs of the one or two spaces it joins),
 `exterior` (true when it leads outside), `width_m` and `span` (jamb to jamb, when
-known), `hidden`, `ignored`. Geometry: Point in the wall.
+known), `swings` (a door's leaves as the plan draws them, each `[hinge, free edge
+when open]`, when known: which side it hinges on and which way it opens; two for a
+double door), `hidden`, `ignored`. Geometry: Point in the wall.
 
 `hidden` and `ignored` are set by a person in review. A hidden object is real but
 not shown unless asked for (a shaft, a plant room); an ignored one was judged not
@@ -156,6 +158,8 @@ A system that skipped an export can use `all_retired` to clean up its mappings.
 - `space.zones`; `objects.csv` gains `space_id` (and documents `hidden`, `ignored`).
 - An object's kind may change between exports when it is the same place in use:
   a 0.2 space that becomes a zone keeps its ID.
+
+0.3.1 adds the openings' `swings`.
 
 ## Versioning
 

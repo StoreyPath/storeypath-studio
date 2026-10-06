@@ -360,11 +360,23 @@ function renderPlan() {
   const dividers = f.doors.flatMap((d) => d.divider || []).map((line) => line.map((p) => p.join(",")).join(" "));
   // Doors as a bar across their opening, jamb to jamb (dashed: a doorway with no door;
   // thin: a window), with a mark in the middle; where the span is not known, the mark.
+  // A door whose swing was drawn is shown as plans show it: the leaf open, and the arc
+  // it sweeps to shut.
   const kind = (d) => (d.type === "door" ? "door" : d.type === "window" ? "window" : "way");
+  const swung = f.doors.filter((d) => d.type === "door" && d.span && d.swings?.length);
+  const leaf = (d, [h, q]) => {
+    const from = (p) => Math.hypot(p[0] - h[0], p[1] - h[1]);
+    const jamb = from(d.span[0]) > from(d.span[1]) ? d.span[0] : d.span[1]; // the other side
+    const r = from(q), k = r / (from(jamb) || 1);
+    const shut = [h[0] + (jamb[0] - h[0]) * k, h[1] + (jamb[1] - h[1]) * k];
+    const sweep = (q[0] - h[0]) * (shut[1] - h[1]) - (q[1] - h[1]) * (shut[0] - h[0]) > 0 ? 1 : 0;
+    return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`, class: "swing" });
+  };
   $("doors").replaceChildren(
     ...dividers.map((points) => svg("polyline", { points, class: "divider" })),
-    ...f.doors.filter((d) => d.span).map((d) => svg("line", {
+    ...f.doors.filter((d) => d.span && !swung.includes(d)).map((d) => svg("line", {
       x1: d.span[0][0], y1: d.span[0][1], x2: d.span[1][0], y2: d.span[1][1], class: `span ${kind(d)}` })),
+    ...swung.flatMap((d) => d.swings.map((s) => leaf(d, s))),
     ...f.doors.map((d) => svg("circle", {
       cx: d.point[0], cy: d.point[1], r: d.type === "window" ? 0.07 : 0.16, class: kind(d) })),
   );

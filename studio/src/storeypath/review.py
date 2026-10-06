@@ -126,7 +126,7 @@ class Review:
                 # spaces and their zones; a space divided into zones is used through them
                 "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone")],
                 "doors": [{"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
-                           "span": r.span, "width": r.width,
+                           "span": r.span, "width": r.width, "swings": r.swings,
                            "divider": _divider(r, areas) if r.type_source in ("split", "doorway") else None}
                           for r in objects if r.kind == "opening"],
             }

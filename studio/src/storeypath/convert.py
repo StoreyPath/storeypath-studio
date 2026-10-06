@@ -330,6 +330,7 @@ def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now,
         record.connects = [space_ids[i] for i in door.connects]
         record.span = [[round(x, 4), round(y, 4)] for x, y in door.span.coords] if door.span is not None else None
         record.width = door.width
+        record.swings = [[[round(x, 4), round(y, 4)] for x, y in leaf] for leaf in door.swings] or None
     for j, r in enumerate(existing):
         if j not in used:
             _retire(r, now, report)

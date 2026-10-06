@@ -179,7 +179,10 @@ export class Materials {
       color: 0xbcd6e4, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.28,
       envMapIntensity: 1.2, depthWrite: false,
     });
+    // Window frames: aluminium. Doors: a wooden leaf in a darker wooden frame.
     this.frame = new THREE.MeshStandardMaterial({ color: 0x5b5f66, roughness: 0.45, metalness: 0.35 });
+    this.door = new THREE.MeshStandardMaterial({ color: 0x9a7350, roughness: 0.55 });
+    this.doorFrame = new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 0.6 });
     this.highlight = new THREE.MeshStandardMaterial({
       color: 0xff8a00, emissive: 0xff8a00, emissiveIntensity: 0.35, transparent: true, opacity: 0.35, depthWrite: false,
     });

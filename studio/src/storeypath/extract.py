@@ -90,6 +90,8 @@ class ExtractedDoor:
     source: str = "door"
     span: LineString | None = None  # jamb to jamb, meters
     width: float | None = None
+    # its leaves as the swings are drawn: (hinge, free edge when open), meters
+    swings: list[tuple[tuple[float, float], tuple[float, float]]] = field(default_factory=list)
     tag: str | None = None  # its tag in the drawing (D4, W12)
     issues: list[str] = field(default_factory=list)  # for review
 
@@ -223,6 +225,27 @@ def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | 
     return (" ".join(dict.fromkeys(names)) or None), number  # ROOF at both ends: one ROOF
 
 
+def dashed_lines(doc: Drawing) -> Callable[[DXFGraphic, str], bool]:
+    """Whether an entity, on its layer (as ``_walk`` gives it), is drawn dashed:
+    hidden and centre lines, the edges of what is overhead (a dome, a void, the
+    floor above) or below. They are never walls."""
+    types = set()
+    for lt in doc.linetypes:
+        try:
+            pattern = lt.simplified_line_pattern()
+        except Exception:
+            pattern = ()
+        if len(pattern) > 1:
+            types.add(lt.dxf.name.upper())
+    layers = {layer.dxf.name: layer.dxf.get("linetype", "Continuous").upper() for layer in doc.layers}
+
+    def dashed(e: DXFGraphic, layer: str) -> bool:
+        lt = e.dxf.get("linetype", "BYLAYER").upper()
+        return (layers.get(layer, "CONTINUOUS") if lt == "BYLAYER" else lt) in types
+
+    return dashed
+
+
 def extract_floor(
     doc: Drawing,
     profile: Profile,
@@ -261,6 +284,8 @@ def extract_floor(
     def expand(insert, layer) -> bool:  # a door block is read whole, not its lines
         return not profile.door_layers.fullmatch(layer)
 
+    is_dashed = dashed_lines(doc)
+
     for e, layer in _walk(modelspace_entities(doc, region), expand=expand):
         kind = e.dxftype()
         layer_counts[layer] += 1
@@ -291,7 +316,8 @@ def extract_floor(
             elif (flat := _flatten(e, tol)) is not None:
                 loose_door_entities += 1
                 opening_lines.append(LineString([(x * scale, y * scale) for x, y in flat[0]]))
-        on_walls = bool(profile.wall_layers.fullmatch(layer))  # walls are kept in every case
+        # walls are kept in every case; a dashed line on a wall layer is overhead
+        on_walls = bool(profile.wall_layers.fullmatch(layer)) and (kind == "HATCH" or not is_dashed(e, layer))
         on_spaces = method != "walls" and bool(profile.space_layers.fullmatch(layer))
         if not (on_walls or on_spaces):
             continue
@@ -369,7 +395,7 @@ def extract_floor(
     if fabric is None and (wall_lines or wall_fills):
         fabric = read_fabric(wall_lines, wall_fills, door_shapes, opening_lines, profile.walls)
     doors = _connect_doors(spaces, [d.box for d in door_shapes], profile.doors.reach, warnings,
-                           [(d.span, d.width) for d in door_shapes])
+                           [(d.span, d.width, _leaves(d)) for d in door_shapes])
     # Openings closed with no door drawn count as doors between two spaces; on the
     # outside they are most likely windows.
     doors += [
@@ -400,6 +426,7 @@ def extract_floor(
         for d in doors:
             d.footprint, d.point = translate(d.footprint, dx, dy), translate(d.point, dx, dy)
             d.span = translate(d.span, dx, dy) if d.span is not None else None
+            d.swings = [((h[0] + dx, h[1] + dy), (q[0] + dx, q[1] + dy)) for h, q in d.swings]
         outline = translate(outline, dx, dy) if outline is not None else None
         labels = [Label(lb.lines, translate(lb.point, dx, dy)) for lb in labels]
         if fabric is not None:
@@ -988,9 +1015,22 @@ def _assign_blocks(spaces, blocks) -> None:
             spaces[i].blocks.append(name)
 
 
+def _leaves(door: DoorShape) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """A door's leaves, as its swings are drawn: each (hinge, free edge when open).
+    Of a swing's two ends, the open one stands off the span; the other lies on it."""
+    if door.span is None:
+        return []
+    out = []
+    for sw in door.swings:
+        a, b = sw.ends
+        open_end = a if door.span.distance(a) >= door.span.distance(b) else b
+        out.append(((round(sw.hinge.x, 4), round(sw.hinge.y, 4)), (round(open_end.x, 4), round(open_end.y, 4))))
+    return out
+
+
 def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[ExtractedDoor]:
     """Doors (by their extents) and the one or two spaces each joins. ``spans`` gives
-    each door's (span, width) when known."""
+    each door's (span, width) when known, and its leaves after them."""
     if not spaces:
         return []
     polys = [s.polygon for s in spaces]
@@ -1014,8 +1054,9 @@ def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[Extr
         for i in connects:
             wall = wall.intersection(polys[i].buffer(reach)).difference(polys[i])
         point = wall.centroid if not wall.is_empty else fp.centroid
-        span, width = spans[k] if spans else (None, None)
-        doors.append(ExtractedDoor(footprint=fp, point=point, connects=connects, span=span, width=width))
+        span, width, *leaves = spans[k] if spans else (None, None)
+        doors.append(ExtractedDoor(footprint=fp, point=point, connects=connects, span=span, width=width,
+                                   swings=leaves[0] if leaves else []))
     if unconnected:
         warnings.append(f"{unconnected} door(s) are not next to any space and were skipped")
     return doors

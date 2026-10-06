@@ -176,3 +176,22 @@ def test_walls_around_a_roof_terrace_are_parapets():
     assert full.contains(Point(4.1, 2)) and full.contains(Point(2, 4.1))  # between the room and the terrace
     assert abs(full.area + parapets.area - walls.area) < 1e-6
     assert _walls_and_parapets(walls, [(room, "bedroom")], 0.2) == (walls, None)  # no terrace, no parapets
+
+
+def test_doors_keep_their_swings(package):
+    # which side a door hinges on and which way it opens, as drawn: for the 3D view
+    ws, _, f_id, pkg = package
+    cells = [c for c in office_floor(2) if c.door and c.door.block]
+    doors = [r for r in ws.floor_objects(f_id) if r.kind == "opening" and r.type == "door" and r.swings]
+    assert len(doors) >= len(cells) - 1
+    ox, oy = 125.0, 48.0  # where the sample plan is drawn
+    for c in cells:
+        d = c.door
+        at = (ox + d.x, oy + d.y)
+        r = min(doors, key=lambda r: (r.geometry["coordinates"][0] - at[0]) ** 2 + (r.geometry["coordinates"][1] - at[1]) ** 2)
+        (hx, hy), (qx, qy) = r.swings[0]
+        assert min(abs(hx - p[0]) + abs(hy - p[1]) for p in r.span) < 0.15  # hinged at a jamb
+        across = (qy - at[1]) if d.axis == "h" else (qx - at[0])
+        assert abs(abs(across) - d.width) < 0.15 and across * d.swing > 0  # open, to the side drawn
+    openings = _read(pkg, "openings.geojson")["features"]
+    assert any(len(o["properties"].get("swings") or []) == 1 for o in openings if o["properties"]["type"] == "door")

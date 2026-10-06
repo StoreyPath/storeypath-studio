@@ -5,9 +5,10 @@
 //   await world.open("/campus.storeypath");
 //   world.setMode("walk");
 //
-// Walls, door and window openings come from the package (format 0.1: the floor's
-// `walls`, the openings' `span`), floor finishes follow each space's type, and
-// everything is drawn here: no textures or models are downloaded.
+// Walls, door and window openings come from the package (the floor's `walls`, the
+// openings' `span`, and a door's `swings`: its leaves, open as the plan draws them),
+// floor finishes follow each space's type, and everything is drawn here: no
+// textures or models are downloaded.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -39,6 +40,11 @@ const LABEL_STYLE = {
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
 const OPEN_SPAN = 2.6; // m: wider ways through are open-plan joins, with no wall above
+const LEAF = 0.045; // m, a door leaf's thickness
+const CASING = 0.06; // m, the frame round a door
+const WINDOW_FRAME = 0.05; // m, the frame round the glass
+const PANE = 1.0; // m: a mullion about this often across a window
+const DOUBLE_DOOR = 1.3; // m: a door wider than this, drawn without its swings, has two leaves
 const OUTDOOR = new Set(["terrace", "balcony"]); // open to the sky, behind parapets
 const PARAPET = 1.1; // m, when the package gives no parapet height
 
@@ -535,7 +541,8 @@ export class StoreyPathWorld extends EventTarget {
         .filter((x) => x.properties.floor_id === floor.id && x.properties.span)
         .map((x) => {
           const [a, b] = x.properties.span.map((c) => this.#local(c));
-          return { a, b, type: x.properties.type };
+          const leaves = (x.properties.swings || []).map((leaf) => leaf.map((c) => this.#local(c)));
+          return { a, b, type: x.properties.type, connects: x.properties.connects || [], leaves };
         });
     } else {
       thickness = props.wall_thickness_m || 0.12;
@@ -559,16 +566,24 @@ export class StoreyPathWorld extends EventTarget {
       group.add(m);
     }
     built.wallRings = walls.flat(1).concat(parapets.flat(1));
-    // Openings in a parapet (no full wall at either side) get no head, sill or glass.
+    // Openings in a parapet (no full wall at either side) get no head, sill or glass:
+    // a full wall ends at one of its jambs (its middle is far from any wall when wide).
     const fullSegments = [];
     for (const ring of walls.flat(1)) {
       for (let i = 0; i + 1 < ring.length; i++) fullSegments.push([ring[i], ring[i + 1]]);
     }
-    const inFullWall = ({ a, b }) => !parapets.length || fullSegments.some(([p, q]) =>
-      distanceToSegment([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], p, q) <= thickness + 0.3);
+    const inFullWall = ({ a, b }) => !parapets.length || [a, b].some((jamb) => fullSegments.some(([p, q]) =>
+      distanceToSegment(jamb, p, q) <= thickness + 0.3));
 
-    // door heads, window sills, heads and glass
-    const heads = [], sills = [], glass = [];
+    // door heads, frames and leaves; window sills, heads, frames and glass
+    const heads = [], sills = [], glass = [], frames = [], casings = [], leaves = [];
+    // a box from plan point p to q, y0 to y1 above the floor, depth across
+    const piece = (p, q, y0, y1, depth) => {
+      const g = new THREE.BoxGeometry(Math.hypot(q[0] - p[0], q[1] - p[1]), y1 - y0, depth);
+      g.rotateY(Math.atan2(q[1] - p[1], q[0] - p[0]));
+      g.translate((p[0] + q[0]) / 2, e + (y0 + y1) / 2, -(p[1] + q[1]) / 2);
+      return g;
+    };
     const segments = [];
     for (const ring of built.wallRings) {
       for (let i = 0; i + 1 < ring.length; i++) {
@@ -585,12 +600,51 @@ export class StoreyPathWorld extends EventTarget {
         g.translate((a[0] + b[0]) / 2, e + (y0 + y1) / 2, -(a[1] + b[1]) / 2);
         return g;
       };
+      const ux = (b[0] - a[0]) / len, un = (b[1] - a[1]) / len;
+      const at = (t) => [a[0] + ux * t, a[1] + un * t];
       if (type === "window") {
         sills.push(box(0, o.windowSill, thickness));
         heads.push(box(o.windowHead, wallHeight, thickness));
-        glass.push(box(o.windowSill, o.windowHead, 0.03));
+        glass.push(box(o.windowSill, o.windowHead, 0.02));
+        // the frame: along the sill and the head, at each side, and a mullion about
+        // every metre between
+        const f = WINDOW_FRAME, depth = Math.min(thickness, 0.09);
+        frames.push(piece(a, b, o.windowSill, o.windowSill + f, depth), piece(a, b, o.windowHead - f, o.windowHead, depth));
+        const panes = Math.max(1, Math.round(len / PANE));
+        for (let k = 0; k <= panes; k++) {
+          const t = Math.min(Math.max((k * len) / panes, f / 2), len - f / 2);
+          frames.push(piece(at(t - f / 2), at(t + f / 2), o.windowSill, o.windowHead, depth));
+        }
         segments.push([a[0], -a[1], b[0], -b[1]]); // you cannot walk through a window
-      } else if (len <= OPEN_SPAN) {
+      } else if (type === "door") {
+        heads.push(box(o.doorHead, wallHeight, thickness));
+        // the frame: a jamb each side and a head, standing a little proud of the wall
+        const c = Math.min(CASING, len / 4), depth = thickness + 0.03;
+        casings.push(piece(a, at(c), 0, o.doorHead, depth), piece(at(len - c), b, 0, o.doorHead, depth),
+          piece(a, b, o.doorHead - c, o.doorHead, depth));
+        // the leaves, open as the plan draws them; without the swings, open into the
+        // room it serves, one leaf or two
+        let open = way.leaves || [];
+        if (!open.length) {
+          const mid = at(len / 2), side = [-un, ux];
+          const into = built.spaces.filter((s) => way.connects?.includes(s.id))
+            .some((s) => s.rings.some((r) => inside(r[0], mid[0] + side[0] * 0.5, mid[1] + side[1] * 0.5)));
+          const k = into ? 1 : -1;
+          const hinges = len > DOUBLE_DOOR ? [[0, len / 2], [len, len / 2]] : [[0, len]];
+          open = hinges.map(([t, w]) => {
+            const h = at(t);
+            return [h, [h[0] + side[0] * k * w, h[1] + side[1] * k * w]];
+          });
+        }
+        for (const [h, q] of open) {
+          const reach = Math.hypot(q[0] - h[0], q[1] - h[1]);
+          if (reach < 0.3) continue;
+          const w = Math.min(reach, len) - c, dx = (q[0] - h[0]) / reach, dn = (q[1] - h[1]) / reach;
+          const from = [h[0] + dx * c, h[1] + dn * c], to = [h[0] + dx * (c + w), h[1] + dn * (c + w)];
+          leaves.push(piece(from, to, 0.01, o.doorHead - c, LEAF));
+          segments.push([from[0], -from[1], to[0], -to[1]]); // an open leaf stands in the way
+        }
+      } else if (len <= OPEN_SPAN) { // a doorway: a way through with no door
         heads.push(box(o.doorHead, wallHeight, thickness));
       }
     }
@@ -606,6 +660,9 @@ export class StoreyPathWorld extends EventTarget {
     built.heads = add(heads, this.#materials.wallPlain, "heads");
     built.sills = add(sills, this.#materials.wallPlain, "sills");
     built.glass = add(glass, this.#materials.glass, "glass");
+    built.frames = add(frames, this.#materials.frame, "window frames");
+    built.casings = add(casings, this.#materials.doorFrame, "door frames");
+    built.leaves = add(leaves, this.#materials.door, "doors");
     if (built.glass) {
       built.glass.castShadow = false;
       built.glass.renderOrder = 4;
@@ -708,8 +765,7 @@ export class StoreyPathWorld extends EventTarget {
       if (f.wallsCut) f.wallsCut.visible = cut;
       if (f.parapetsFull) f.parapetsFull.visible = !cut;
       if (f.parapetsCut) f.parapetsCut.visible = cut;
-      if (f.heads) f.heads.visible = !cut;
-      if (f.glass) f.glass.visible = !cut;
+      for (const m of [f.heads, f.glass, f.frames, f.casings, f.leaves]) if (m) m.visible = !cut;
       if (f.ceiling) f.ceiling.visible = walking && f === wf;
       for (const s of f.spaces) {
         const visible = this.#o.showHidden || !s.tucked;
@@ -720,7 +776,8 @@ export class StoreyPathWorld extends EventTarget {
       }
     }
     const see = this.#xray ? 0.22 : 1;
-    for (const m of [this.#materials.wall, this.#materials.wallPlain, this.#materials.wallTop, this.#materials.wallCut]) {
+    const m8 = this.#materials;
+    for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door]) {
       m.transparent = this.#xray;
       m.opacity = see;
       m.depthWrite = !this.#xray;
