@@ -20,6 +20,8 @@ const F = 1 / 298.257223563;
 const B = A * (1 - F);
 const rad = (d: number): number => (d * Math.PI) / 180;
 const deg = (r: number): number => (r * 180) / Math.PI;
+/** A longitude, or a difference of two, in (-180, 180]: across the antimeridian, the short way. */
+const wrap = (lon: number): number => lon - 360 * Math.ceil((lon - 180) / 360);
 
 export class LocalFrame {
   readonly placement: Placement;
@@ -50,14 +52,14 @@ export class LocalFrame {
     const east = dx * this.cos + dy * this.sin;
     const north = -dx * this.sin + dy * this.cos;
     const dist = Math.hypot(east, north);
-    if (dist === 0) return [p.lon, p.lat];
+    if (dist === 0) return [wrap(p.lon), p.lat];
     const [lat, lon] = direct(p.lat, p.lon, Math.atan2(east, north), dist);
-    return [lon, lat];
+    return [wrap(lon), lat];
   }
 }
 
 function inverse(lat1: number, lon1: number, lat2: number, lon2: number): [number, number] {
-  const L = rad(lon2 - lon1);
+  const L = rad(wrap(lon2 - lon1));
   const U1 = Math.atan((1 - F) * Math.tan(rad(lat1)));
   const U2 = Math.atan((1 - F) * Math.tan(rad(lat2)));
   const sinU1 = Math.sin(U1), cosU1 = Math.cos(U1), sinU2 = Math.sin(U2), cosU2 = Math.cos(U2);

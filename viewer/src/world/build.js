@@ -14,7 +14,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { toLonLat } from "./frame.js";
+import { toLonLat, wrapLongitude } from "./frame.js";
 
 /** This builder's version: a floor pre-built by another (before 2, without its
  * items) is built again. */
@@ -93,24 +93,28 @@ export function inside(ring, x, n) {
 }
 
 /** A building's local origin: the middle of its floors (or of the building, with
- * none), and the metres in a degree of longitude and latitude there. */
+ * none), and the metres in a degree of longitude and latitude there. Its
+ * longitudes are taken within 180° of its first: one across the antimeridian is
+ * a building's width, not the world's. */
 export function originOf(pkg, buildingId) {
   const floors = pkg.floorsOf(buildingId);
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  let ref = null, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const visit = (c) => {
     if (typeof c[0] === "number") {
-      x0 = Math.min(x0, c[0]); y0 = Math.min(y0, c[1]); x1 = Math.max(x1, c[0]); y1 = Math.max(y1, c[1]);
+      ref ??= c[0];
+      const x = wrapLongitude(c[0], ref);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, c[1]); x1 = Math.max(x1, x); y1 = Math.max(y1, c[1]);
     } else c.forEach(visit);
   };
   for (const f of floors.length ? floors : [pkg.get(buildingId)]) if (f?.geometry) visit(f.geometry.coordinates);
-  const lon = Number.isFinite(x0) ? (x0 + x1) / 2 : 0;
+  const lon = Number.isFinite(x0) ? wrapLongitude((x0 + x1) / 2) : 0;
   const lat = Number.isFinite(y0) ? (y0 + y1) / 2 : 0;
   return { lon, lat, kx: 111320 * Math.cos((lat * Math.PI) / 180), ky: 110540 };
 }
 
-/** Longitude/latitude → local meters [x east, n north]. */
+/** Longitude/latitude → local meters [x east, n north] (across the antimeridian, the short way). */
 export function toLocal(origin, [lon, lat]) {
-  return [(lon - origin.lon) * origin.kx, (lat - origin.lat) * origin.ky];
+  return [wrapLongitude(lon - origin.lon) * origin.kx, (lat - origin.lat) * origin.ky];
 }
 
 /** A GeoJSON (Multi)Polygon → polygons as rings of [x, n] in local meters. */

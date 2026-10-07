@@ -11,7 +11,7 @@ import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { launch, repack, serve } from "../../svg/test/harness.mjs";
+import { launch, movedEast, repack, serve, wrapped } from "../../svg/test/harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -147,9 +147,25 @@ test("a building's frame goes on the map as Studio's does, to a millimetre", () 
   }
 });
 
+test("across the antimeridian a building's frame is as anywhere: longitudes in (-180, 180]", () => {
+  const { tolerance_m: tolerance, vectors } = JSON.parse(readFileSync(join(packages, "../localframe.json"), "utf8"));
+  let across = 0;
+  for (const v of vectors) {
+    for (const at of [179.9999, -179.9999]) { // the same building turned round the earth to stand there
+      const [lon, lat] = toLonLat({ ...v.placement, lon: at }, v.local);
+      truly(lon > -180 && lon <= 180, `${v.local} at ${at}°: longitude ${lon}`);
+      const want = [wrapped(v.lonlat[0] + at - v.placement.lon), v.lonlat[1]];
+      const metres = [wrapped(lon - want[0]) * 111320 * Math.cos((lat * Math.PI) / 180), (lat - want[1]) * 110574];
+      truly(Math.hypot(...metres) <= tolerance, `${v.local} at ${at}°: ${metres} m off`);
+      if (Math.sign(lon) !== Math.sign(at)) across++;
+    }
+  }
+  truly(across > 0, "no point across the antimeridian");
+});
+
 // format 0.7: a package a building, each item placed in its building (`local`);
 // campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
-const HQ = (await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")))).buildings[0].id; // remade samples are new projects
+const HQ =(await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")))).buildings[0].id; // remade samples are new projects
 /** Each item of a package's building as the world plans it, with what the package says of it. */
 const planned = async (name) => {
   const pkg = await loadPackage(readFileSync(join(packages, `${name}.storeypath`)));
@@ -219,6 +235,41 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
         `${it.id}: ${JSON.stringify([it.x, it.n, it.fx, it.fn])} vs ${JSON.stringify([want.x, want.n, want.fx, want.fn])}`);
     }
   }
+});
+
+/** The same, numbers to a tolerance; or where they differ. */
+const unlike = (a, b, tolerance, where = "") => {
+  if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) <= tolerance ? null : `${where}: ${a} vs ${b}`;
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    if (Object.keys(a).join() !== Object.keys(b).join()) return `${where}: ${Object.keys(a)} vs ${Object.keys(b)}`;
+    for (const k of Object.keys(a)) {
+      const d = unlike(a[k], b[k], tolerance, `${where}.${k}`);
+      if (d) return d;
+    }
+    return null;
+  }
+  return a === b ? null : `${where}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`;
+};
+
+test("a building across the antimeridian is built as anywhere else, a building's width across", async () => {
+  const path = join(packages, "campus-hq.storeypath");
+  const hq = await loadPackage(readFileSync(path)), origin = originOf(hq, HQ);
+  const across = await loadPackage(movedEast(path, 180 - origin.lon)); // its middle at 180°
+  const there = originOf(across, HQ);
+  const lons = [];
+  const visit = (c) => (typeof c[0] === "number" ? lons.push(c[0]) : c.forEach(visit));
+  for (const f of across.floorsOf(HQ)) visit(f.geometry.coordinates);
+  truly(lons.some((lon) => lon > 179.999) && lons.some((lon) => lon < -179.999), "across it");
+  truly(Math.abs(wrapped(there.lon - 180)) < 1e-9 && there.lon > -180 && there.lon <= 180 && there.lat === origin.lat
+    && there.kx === origin.kx, `its origin: ${JSON.stringify(there)}, here ${JSON.stringify(origin)}`);
+  let items = 0;
+  for (const floor of hq.floorsOf(HQ)) {
+    const plan = planFloor(across, across.get(floor.id), there), want = planFloor(hq, floor, origin);
+    const d = unlike(plan, want, 1e-6, floor.id);
+    truly(!d, `${floor.id} is built elsewhere ${d}`);
+    items += plan.items.length;
+  }
+  truly(items === hq.items.length, `its items: ${items} of ${hq.items.length}`);
 });
 
 // ---- in Chrome ----------------------------------------------------------------

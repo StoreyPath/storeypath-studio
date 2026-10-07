@@ -74,6 +74,28 @@ export function repack(path, change) {
   return zip(files);
 }
 
+/** A longitude in (-180, 180]. */
+export const wrapped = (lon) => lon - 360 * Math.ceil((lon - 180) / 360);
+
+/** A package file moved round the earth, every longitude ``east`` degrees east (in
+ * (-180, 180]): its buildings the same, as the earth is the same all round. */
+export function movedEast(path, east) {
+  const move = (c) => (typeof c[0] === "number" ? [wrapped(c[0] + east), ...c.slice(1)] : c.map(move));
+  const walk = (o) => {
+    if (Array.isArray(o)) o.forEach(walk);
+    else if (o && typeof o === "object") {
+      for (const [k, v] of Object.entries(o)) {
+        if (["coordinates", "display_point", "span", "swings"].includes(k) && Array.isArray(v)) o[k] = move(v);
+        else walk(v);
+      }
+    }
+  };
+  return repack(path, (files) => {
+    for (const p of Object.values(files.get("manifest.json").placements ?? {})) p.lon = wrapped(p.lon + east);
+    for (const [name, doc] of files) if (name.endsWith(".geojson")) walk(doc);
+  });
+}
+
 /** A package (its file, or its bytes) as floorFromPackage takes it, found through its manifest. */
 export function readPackage(path) {
   const files = unzip(Buffer.isBuffer(path) ? path : readFileSync(path));

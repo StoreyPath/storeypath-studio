@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launch, readPackage, repack, serve } from "./harness.mjs";
+import { launch, movedEast, readPackage, repack, serve, wrapped } from "./harness.mjs";
 import { LocalFrame } from "../dist/frame.js";
 import { floorFromPackage } from "../dist/package.js";
 import { inside } from "../dist/geometry.js";
@@ -31,6 +31,15 @@ const equal = (a, b, what) => {
 const truly = (v, what) => {
   if (!v) throw new Error(what);
 };
+/** The same, numbers to a tolerance. */
+const alike = (a, b, tolerance, what) => {
+  if (typeof a === "number" && typeof b === "number") {
+    if (!(Math.abs(a - b) <= tolerance)) throw new Error(`${what}: ${a} vs ${b}`);
+  } else if (a && b && typeof a === "object" && typeof b === "object") {
+    equal(Object.keys(a), Object.keys(b), `${what}: its parts`);
+    for (const k of Object.keys(a)) alike(a[k], b[k], tolerance, `${what}.${k}`);
+  } else equal(a, b, what);
+};
 
 // ---- in Node ------------------------------------------------------------------
 
@@ -45,6 +54,24 @@ test("the local frame agrees with Studio's to a millimetre", () => {
     const metres = [(lon - v.lonlat[0]) * 111320 * Math.cos((lat * Math.PI) / 180), (lat - v.lonlat[1]) * 110574];
     near(metres, [0, 0], tolerance, "to longitude and latitude");
   }
+});
+
+test("across the antimeridian the frame is as anywhere: longitudes in (-180, 180]", () => {
+  const { tolerance_m: tolerance, vectors } = JSON.parse(readFileSync(join(conformance, "localframe.json"), "utf8"));
+  let across = 0;
+  for (const v of vectors) {
+    for (const at of [179.9999, -179.9999]) { // the same building turned round the earth to stand there
+      const frame = new LocalFrame({ ...v.placement, lon: at });
+      const want = [wrapped(v.lonlat[0] + at - v.placement.lon), v.lonlat[1]];
+      near(frame.toLocal(want), v.local, tolerance, `to local at ${at}°`);
+      const [lon, lat] = frame.toLonLat(v.local);
+      truly(lon > -180 && lon <= 180, `${v.local} at ${at}°: longitude ${lon}`);
+      const metres = [wrapped(lon - want[0]) * 111320 * Math.cos((lat * Math.PI) / 180), (lat - want[1]) * 110574];
+      near(metres, [0, 0], tolerance, `to longitude and latitude at ${at}°`);
+      if (Math.sign(lon) !== Math.sign(at)) across++;
+    }
+  }
+  truly(across > 0, "no point across the antimeridian");
 });
 
 test("a floor of a package: zones for a divided space, the space itself otherwise", () => {
@@ -210,6 +237,27 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
       near(it.at, want[k].at, 0.01, `${it.id}: there, to its point's rounding`);
       near(it.front, want[k].front, 1e-9, `${it.id}: facing the same way`);
     });
+  }
+});
+
+test("a building across the antimeridian: its plan as anywhere else, its points back on the map in (-180, 180]", () => {
+  const path = join(conformance, "packages/campus-hq.storeypath");
+  const longitudes = (features) => {
+    const lons = [];
+    const visit = (c) => (typeof c[0] === "number" ? lons.push(c[0]) : c.forEach(visit));
+    for (const f of features) visit(f.geometry.coordinates);
+    return lons;
+  };
+  const lons = longitudes(hq.floors);
+  const across = readPackage(movedEast(path, 180 - (Math.min(...lons) + Math.max(...lons)) / 2)); // its middle at 180°
+  const moved = longitudes(across.floors);
+  truly(moved.some((lon) => lon > 179.999) && moved.some((lon) => lon < -179.999), "across it");
+  for (const floor of hq.floors) alike(floorFromPackage(across, floor.id), floorFromPackage(hq, floor.id), 1e-6, floor.id);
+  const frame = new LocalFrame(across.manifest.placements[HQ]);
+  for (const s of [...across.spaces, ...across.zones]) {
+    const [lon, lat] = frame.toLonLat(frame.toLocal(s.properties.display_point));
+    truly(lon > -180 && lon <= 180, `${s.id}: longitude ${lon}`);
+    near([lon, lat], s.properties.display_point, 1e-9, `${s.id}: its label point back on the map`);
   }
 });
 

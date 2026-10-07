@@ -12,6 +12,13 @@ const B = A * (1 - F);
 const rad = (d) => (d * Math.PI) / 180;
 const deg = (r) => (r * 180) / Math.PI;
 
+/** A longitude turned round the earth by whole turns to within 180° of ``ref``'s, in
+ * (ref − 180, ref + 180]: by default in (−180, 180]. Across the antimeridian, the
+ * short way; a longitude already there is returned as it is. */
+export function wrapLongitude(lon, ref = 0) {
+  return lon - 360 * Math.ceil((lon - ref - 180) / 360);
+}
+
 /** A point [x, y] of a building's drawings on earth, [lon, lat], by its placement
  * (manifest.json → placements: { lon, lat, x, y, bearing }). */
 export function toLonLat(placement, [x, y]) {
@@ -21,9 +28,9 @@ export function toLonLat(placement, [x, y]) {
   const east = dx * Math.cos(b) + dy * Math.sin(b);
   const north = -dx * Math.sin(b) + dy * Math.cos(b);
   const dist = Math.hypot(east, north);
-  if (dist === 0) return [p.lon, p.lat];
+  if (dist === 0) return [wrapLongitude(p.lon), p.lat];
   const [lat, lon] = direct(p.lat, p.lon, Math.atan2(east, north), dist);
-  return [lon, lat];
+  return [wrapLongitude(lon), lat];
 }
 
 function direct(lat1, lon1, azimuth, dist) {
