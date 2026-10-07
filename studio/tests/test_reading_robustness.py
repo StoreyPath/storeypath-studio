@@ -170,6 +170,94 @@ def test_a_room_vision_cannot_answer_about_costs_that_room_only(tmp_path, monkey
     assert any(w.startswith("vision:") and "no answer" in w for w in report.warnings)
 
 
+def _missing_door_block(doc):
+    doc.modelspace().add_blockref("NO_SUCH_BLOCK", (130000, 50000), dxfattribs={"layer": "A-DOOR"})
+
+
+def _missing_block(doc):  # an unbound xref, a purged block
+    doc.modelspace().add_blockref("NO_SUCH_BLOCK2", (130000, 50000), dxfattribs={"layer": "A-FLOR-STRS"})
+
+
+def _spline_of_one_point(doc):
+    s = doc.modelspace().add_spline(dxfattribs={"layer": "A-WALL"})
+    s.control_points = [(130000, 50000, 0)]
+    s.dxf.degree = 3
+
+
+def _hatch_with_a_broken_edge(doc):
+    h = doc.modelspace().add_hatch(dxfattribs={"layer": "A-WALL"})
+    h.paths.add_edge_path().add_spline(control_points=[(130000, 50000)], degree=3)
+
+
+def _polyline_through_nan(doc):
+    doc.modelspace().add_lwpolyline([(130000, 50000), (float("nan"), 50000), (131000, 51000)],
+                                    dxfattribs={"layer": "A-WALL"})
+
+
+def _line_from_nan(doc):
+    doc.modelspace().add_line((float("nan"), float("nan")), (130000, 50000), dxfattribs={"layer": "A-WALL"})
+
+
+def _arc_round_nan(doc):
+    doc.modelspace().add_arc((float("nan"), 50000), 900, 0, 90, dxfattribs={"layer": "A-DOOR"})
+
+
+def _arc_of_huge_radius(doc):  # flattening it would never end
+    doc.modelspace().add_arc((130000, 50000), 1e300, 0, 90, dxfattribs={"layer": "A-WALL"})
+
+
+BROKEN = {f.__name__.strip("_").replace("_", " "): f for f in (
+    _missing_door_block, _missing_block, _spline_of_one_point, _hatch_with_a_broken_edge, _polyline_through_nan,
+    _line_from_nan, _arc_round_nan, _arc_of_huge_radius)}
+
+
+@pytest.fixture(scope="module")
+def plain_office(tmp_path_factory):
+    """The sample office drawn with walls only, and how many objects each profile reads in it."""
+    d = tmp_path_factory.mktemp("plain")
+    write_floor_dxf(d / "base.dxf", simple_office(), area_outlines=False)
+    counts = {}
+    for profile in ("ncs", "auto"):
+        ws, f = _project(d, "base.dxf", profile=profile, ordinal=0)
+        counts[profile] = len(convert_floor(ws, f, d).added)
+    return d, counts
+
+
+@pytest.mark.parametrize("profile", ["ncs", "auto"])
+@pytest.mark.parametrize("breakage", BROKEN.values(), ids=BROKEN.keys())
+def test_a_broken_entity_is_left_out_not_the_floor(plain_office, breakage, profile, tmp_path):
+    d, counts = plain_office
+    doc = ezdxf.readfile(d / "base.dxf")
+    breakage(doc)
+    doc.saveas(tmp_path / "broken.dxf")
+    ws, f = _project(tmp_path, "broken.dxf", profile=profile, ordinal=0)
+    report = convert_floor(ws, f, tmp_path)
+    assert len(report.added) == counts[profile]
+
+
+def test_what_the_auditor_takes_out_is_said(plain_office, tmp_path):
+    d, _ = plain_office
+    doc = ezdxf.readfile(d / "base.dxf")
+    _missing_block(doc)
+    doc.saveas(tmp_path / "broken.dxf")
+    ws, f = _project(tmp_path, "broken.dxf", ordinal=0)
+    report = convert_floor(ws, f, tmp_path)
+    assert any("1 broken entities were left out" in w and "BLOCK" in w for w in report.warnings)
+
+
+@pytest.mark.parametrize("breakage", [_missing_door_block, _missing_block, _hatch_with_a_broken_edge])
+def test_a_broken_entity_the_auditor_misses_is_left_out_too(plain_office, breakage, monkeypatch, tmp_path):
+    import storeypath.cad as cad
+
+    monkeypatch.setattr(cad, "_audited", lambda doc: doc)
+    d, counts = plain_office
+    doc = ezdxf.readfile(d / "base.dxf")
+    breakage(doc)
+    doc.saveas(tmp_path / "broken.dxf")
+    ws, f = _project(tmp_path, "broken.dxf", ordinal=0)
+    assert len(convert_floor(ws, f, tmp_path).added) == counts["ncs"]
+
+
 def test_a_room_that_cannot_be_drawn_costs_that_room_only():
     kept = []
 

@@ -6,6 +6,7 @@ IDs are not assigned here (see convert.py).
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from collections.abc import Callable
@@ -158,7 +159,8 @@ def modelspace_entities(doc: Drawing, region: tuple[float, float, float, float] 
 
 def _entity_index(doc: Drawing):
     """The middle of every top-level entity, measured once per drawing: picking one
-    plan out of a sheet set is then a lookup, not a pass over every entity."""
+    plan out of a sheet set is then a lookup, not a pass over every entity. An
+    entity whose extents cannot be measured, or are not finite, is left out."""
     index = getattr(doc, "_storeypath_index", None)
     if index is None:
         entities, centres = [], []
@@ -168,7 +170,7 @@ def _entity_index(doc: Drawing):
                 ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
             except Exception:
                 continue
-            if ext.has_data:
+            if ext.has_data and _finite(ext.center.x, ext.center.y):
                 entities.append(e)
                 centres.append((ext.center.x, ext.center.y))
         index = (entities, np.array(centres, dtype=float).reshape(-1, 2))
@@ -176,19 +178,57 @@ def _entity_index(doc: Drawing):
     return index
 
 
+def _finite(*values: float) -> bool:
+    return all(math.isfinite(v) for v in values)
+
+
+def drawing_extents(doc: Drawing) -> tuple[float, float, float, float] | None:
+    """Where the drawing's entities lie (x0, y0, x1, y1, drawing units), measured one
+    entity at a time: a broken entity is left out instead of failing the whole."""
+    x0 = y0 = math.inf
+    x1 = y1 = -math.inf
+    cache = ezdxf.bbox.Cache()
+    for e in doc.modelspace():
+        try:
+            ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
+        except Exception:
+            continue
+        if ext.has_data and _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
+            x0, y0 = min(x0, ext.extmin.x), min(y0, ext.extmin.y)
+            x1, y1 = max(x1, ext.extmax.x), max(y1, ext.extmax.y)
+    return (x0, y0, x1, y1) if x0 <= x1 else None
+
+
 def _flatten(e: DXFGraphic, tolerance: float) -> tuple[list[tuple[float, float]], bool] | None:
-    """Points along an entity and whether it is closed."""
+    """Points along an entity and whether it is closed. None for an entity that
+    cannot be read as a line: a broken one (a spline with too few points, a point
+    at infinity or not a number) is left out, not the floor."""
     try:
-        path = ezdxf.path.make_path(e)
-    except (TypeError, ValueError):
+        pts = _points(ezdxf.path.make_path(e), tolerance)
+    except Exception:  # broken or unsupported geometry
         return None
-    pts = [(v.x, v.y) for v in path.flattening(tolerance)]
-    if len(pts) < 2:
+    if pts is None or len(pts) < 2:
         return None
     closed = bool(getattr(e, "closed", False)) or e.dxftype() in ("CIRCLE",)
     if not closed and len(pts) > 3:
         closed = Point(pts[0]).distance(Point(pts[-1])) <= tolerance
     return pts, closed
+
+
+MAX_CURVE_STEPS = 1e7  # a curve this many times the flattening tolerance across is no drawing's
+
+
+def _points(path, tolerance: float) -> list[tuple[float, float]] | None:
+    """A path's points, its curves flattened. None for a path with a point that is
+    not finite, or a curve too large to flatten (flattening those never ends)."""
+    vertices = path.control_vertices()
+    if not all(_finite(v.x, v.y) for v in vertices):
+        return None
+    if path.has_curves and vertices:
+        xs, ys = [v.x for v in vertices], [v.y for v in vertices]
+        if max(max(xs) - min(xs), max(ys) - min(ys)) > MAX_CURVE_STEPS * tolerance:
+            return None
+    return [(v.x, v.y) for v in path.flattening(tolerance)]
 
 
 def _text_lines(e: DXFGraphic) -> list[str]:
@@ -205,13 +245,12 @@ def _text_lines(e: DXFGraphic) -> list[str]:
 def _center(e: DXFGraphic) -> tuple[float, float] | None:
     try:
         ext = ezdxf.bbox.extents([e], fast=True)
-        if ext.has_data:
-            c = ext.center
-            return c.x, c.y
+        if ext.has_data and _finite(ext.center.x, ext.center.y):
+            return ext.center.x, ext.center.y
     except Exception:
         pass
     insert = e.dxf.get("insert")
-    return (insert.x, insert.y) if insert is not None else None
+    return (insert.x, insert.y) if insert is not None and _finite(insert.x, insert.y) else None
 
 
 def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | None]:
@@ -697,9 +736,12 @@ def _door_swing(e, scale: float) -> DoorShape | None:
 
 def _door_block(e, scale: float) -> DoorShape | None:
     """A door block: its extent, and the swing arcs drawn in it. None for a block
-    that is no door (a basin or a car on a door layer)."""
-    ext = ezdxf.bbox.extents([e], fast=True)
-    if not ext.has_data:
+    that is no door (a basin or a car on a door layer), or one that cannot be read."""
+    try:
+        ext = ezdxf.bbox.extents([e], fast=True)
+    except Exception:  # a block the drawing does not define, broken content
+        return None
+    if not ext.has_data or not _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
         return None
     swings = []
     try:
@@ -889,11 +931,20 @@ def type_zoned_spaces(spaces, zones) -> None:
 
 def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
     """A hatch on a wall layer: a filled wall area if small or thin, otherwise just
-    its boundary (a hatch covering a whole floor must not turn it into wall)."""
-    for path in ezdxf.path.from_hatch(e):
-        pts = [(v.x * scale, v.y * scale) for v in path.flattening(tol)]
-        if len(pts) < 3:
+    its boundary (a hatch covering a whole floor must not turn it into wall). A
+    boundary that cannot be read is left out."""
+    try:
+        paths = list(ezdxf.path.from_hatch(e))
+    except Exception:  # a broken boundary
+        return
+    for path in paths:
+        try:
+            pts = _points(path, tol)
+        except Exception:
             continue
+        if pts is None or len(pts) < 3:
+            continue
+        pts = [(x * scale, y * scale) for x, y in pts]
         for poly in as_polygons(make_valid(Polygon(pts))):
             if poly.area <= HATCH_FILL_MAX_M2 or poly.buffer(-max_thickness / 2).is_empty:
                 fills.append(poly)

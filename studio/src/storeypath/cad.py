@@ -116,12 +116,31 @@ def _parse(path: Path) -> Drawing:
     suffix = path.suffix.lower()
     if suffix == ".dxf":
         try:
-            return ezdxf.readfile(path)
+            return _audited(ezdxf.readfile(path))
         except (OSError, ezdxf.DXFStructureError) as e:
             raise DrawingError(f"cannot read {path.name}: {e}") from e
     if suffix == ".dwg":
-        return _read_dwg(path)
+        return _audited(_read_dwg(path))
     raise DrawingError(f"unsupported file type {suffix!r}: expected .dwg or .dxf")
+
+
+def _audited(doc: Drawing) -> Drawing:
+    """The drawing as ezdxf's auditor leaves it: what it finds broken is fixed or
+    taken out (an insert of a block the drawing does not define, a spline with too
+    few points, a hatch with a broken boundary), as CAD programs do on opening, so
+    one broken entity does not stop the reading of a floor. What was taken out is
+    kept on the drawing (``broken_entities``) for the conversion report."""
+    try:
+        auditor = doc.audit()
+    except Exception:  # the auditor itself fails on it: read as it is
+        return doc
+    doc._storeypath_removed = [f.message for f in auditor.fixes if f.message.startswith(("Deleted", "Removed"))]
+    return doc
+
+
+def broken_entities(doc: Drawing) -> list[str]:
+    """What was taken out of a drawing as broken when it was read (see _audited)."""
+    return getattr(doc, "_storeypath_removed", [])
 
 
 def _read_dwg(path: Path) -> Drawing:
@@ -330,9 +349,9 @@ class _Leaves:
 
     def hinge_of(self, arc) -> bool:
         """Whether a segment about as long as the radius starts at the arc's centre."""
-        if self.tree is None:
-            return False
         c, r = arc.dxf.center, arc.dxf.radius
+        if self.tree is None or not all(math.isfinite(v) for v in (c.x, c.y, r)):
+            return False
         near = self.tree.query(Point(c.x, c.y), predicate="dwithin", distance=0.1 * r)
         return any(0.85 * r <= self.lengths[i] <= 1.15 * r for i in near)
 

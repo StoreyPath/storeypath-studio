@@ -222,8 +222,9 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
         dashed = is_dashed(e, layer)
         if kind == "ARC":
             c = e.ocs().to_wcs(e.dxf.center)
-            arcs.append(_Arc(layer, c.x * scale, c.y * scale, e.dxf.radius * scale, e.dxf.start_angle,
-                             (e.dxf.end_angle - e.dxf.start_angle) % 360, dashed))
+            if all(math.isfinite(v) for v in (c.x, c.y, e.dxf.radius, e.dxf.start_angle, e.dxf.end_angle)):
+                arcs.append(_Arc(layer, c.x * scale, c.y * scale, e.dxf.radius * scale, e.dxf.start_angle,
+                                 (e.dxf.end_angle - e.dxf.start_angle) % 360, dashed))
             continue
         flat = _flatten(e, tol)
         if flat is None:

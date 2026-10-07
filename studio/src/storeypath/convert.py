@@ -15,7 +15,7 @@ from shapely import STRtree, set_precision
 from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
-from .cad import file_sha256, meters_per_unit, read_drawing
+from .cad import broken_entities, file_sha256, meters_per_unit, read_drawing
 from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
                       keep_to_the_building, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
@@ -121,6 +121,10 @@ def convert_floor(
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = analysis.summary() if analysis is not None else []
         floor.source.sha256 = sha
+    if removed := broken_entities(doc):
+        more = f" (and {len(removed) - 1} more)" if len(removed) > 1 else ""
+        report.warnings.append(f"{len(removed)} broken entities were left out of the drawing as it was read: "
+                               f"{removed[0]}{more}")
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
     if spot_failed:
@@ -170,15 +174,13 @@ def _floor_segments(doc, src, scale: float) -> list:
 
     from .vision import _segments_in
 
-    ox, oy = src.offset or (0.0, 0.0)
-    if src.region is not None:
-        region = box(*src.region)
-    else:
-        from ezdxf import bbox as ebbox
+    from .extract import drawing_extents
 
-        ext = ebbox.extents(doc.modelspace(), fast=True)
-        region = box(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y)
-    return _segments_in(doc, region, lambda x, y: ((x - ox) * scale, (y - oy) * scale))
+    ox, oy = src.offset or (0.0, 0.0)
+    extent = src.region if src.region is not None else drawing_extents(doc)
+    if extent is None:
+        return []
+    return _segments_in(doc, box(*extent), lambda x, y: ((x - ox) * scale, (y - oy) * scale))
 
 
 def _name_zones(ex: FloorExtraction, zones: list, profile, reader: TextReader, spotted) -> None:
