@@ -61,6 +61,10 @@
           <input id="ed-number" type="text" placeholder="no number">
           <span class="detected" id="ed-number-detected"></span>
         </label>
+        <label class="field" title="How many people it is meant to seat: saved when changed. Left empty, its desks say (each seats one)">Capacity
+          <input id="ed-capacity" type="number" min="0" max="10000" step="1" inputmode="numeric">
+          <span class="detected" id="ed-capacity-from"></span>
+        </label>
         <div class="meta" id="ed-area"></div>
         <div class="row">
           <button id="ed-save" type="submit" class="primary">Save</button>

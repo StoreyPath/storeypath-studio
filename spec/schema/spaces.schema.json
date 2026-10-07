@@ -239,6 +239,59 @@
           "title": "Outdoor",
           "type": "boolean"
         },
+        "capacity": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "how many people it is meant to seat (format 0.7): set in review, else the workplaces of the items standing in it (a desk: one); null when neither says",
+          "title": "Capacity"
+        },
+        "capacity_from": {
+          "anyOf": [
+            {
+              "enum": [
+                "review",
+                "items"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what says so: review (a person set it) or items (its desks); null with no capacity",
+          "title": "Capacity From"
+        },
+        "grade": {
+          "anyOf": [
+            {
+              "enum": [
+                "president",
+                "c_level",
+                "director",
+                "manager",
+                "section_head",
+                "senior",
+                "junior"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "who it is laid out for (format 0.7): the highest grade among the desks standing in it (president, c_level, director, manager, section_head, senior, junior); null without one",
+          "title": "Grade"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for (a shaft, a plant room)",

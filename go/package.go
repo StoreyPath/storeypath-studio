@@ -528,20 +528,18 @@ func (p *Package) UnitsOn(floorID string) []Unit {
 		if len(zones) == 0 {
 			out = append(out, Unit{ID: s.ID, Kind: "space", Space: s, Type: s.Type, Name: s.Name, Number: s.Number,
 				Area: s.Area, Label: s.Label, Geometry: s.Geometry, Hidden: s.Hidden, Ignored: s.Ignored,
-				DrawingLabel: s.DrawingLabel})
+				DrawingLabel: s.DrawingLabel, Seating: s.Seating})
 			continue
 		}
 		for _, z := range zones {
 			out = append(out, Unit{ID: z.ID, Kind: "zone", Space: s, Zone: z, Type: z.Type, Name: z.Name,
 				Number: z.Number, Area: z.Area, Label: z.Label, Geometry: z.Geometry, Hidden: z.Hidden,
-				Ignored: z.Ignored, DrawingLabel: z.DrawingLabel})
+				Ignored: z.Ignored, DrawingLabel: z.DrawingLabel, Seating: z.Seating})
 		}
 	}
 	return out
 }
 
-// Frame is the local frame of a building: its placement, to turn lon/lat back
-// into the drawing metres Studio works in.
 // ItemLocal is where an item stands in its building's own frame: its Local as the
 // package has it (format 0.7), or for an older package worked out from its map
 // position and heading through the building's placement (to about a centimetre).
@@ -558,6 +556,8 @@ func (p *Package) ItemLocal(it *Item) (ItemLocal, error) {
 	return ItemLocal{X: x, Y: y, Rotation: rotation}, nil
 }
 
+// Frame is the local frame of a building: its placement, to turn lon/lat back
+// into the drawing metres Studio works in.
 func (p *Package) Frame(buildingID string) (LocalFrame, error) {
 	pl, ok := p.Manifest.Placements[buildingID]
 	if !ok {

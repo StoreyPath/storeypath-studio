@@ -30,7 +30,7 @@ from typing import NamedTuple
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from .cad import DrawingError, meters_per_unit, read_drawing
-from .export import _label_point
+from .export import _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
@@ -126,6 +126,7 @@ class Review:
             f = self._floor(ws, floor_id)
             objects = sorted(ws.floor_objects(floor_id), key=lambda r: r.id)
             areas = {r.id: shape(r.geometry) for r in objects if r.kind == "space"}
+            seats = seating(ws, self.catalogue(), floor_id)
             return {
                 "id": floor_id, "name": f.name, "ordinal": f.ordinal,
                 "source": Path(f.source.path).name if f.source else None,
@@ -133,7 +134,7 @@ class Review:
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
                 # spaces and their zones; a space divided into zones is used through them
                 # a shape with nothing in it (a sliver read by an older Studio) is not shown
-            "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone") and not shape(r.geometry).is_empty],
+            "spaces": [self._space(ws, r, seats) for r in objects if r.kind in ("space", "zone") and not shape(r.geometry).is_empty],
                 "doors": [self._door(ws, r, areas, f.edits.resized) for r in objects if r.kind == "opening"],
                 # for drawing walls and doors onto: the walls as found, and what was drawn
                 "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
@@ -316,10 +317,13 @@ class Review:
         if any(v is not None for v in sizes.values()):
             f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **sizes))
 
-    def _space(self, ws: Workspace, r: ObjectRecord) -> dict:
+    def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None) -> dict:
         eff = ws.effective(r)
         o = ws.overrides.get(r.id)
         geom = shape(r.geometry)
+        if seats is None:  # what the items on its floor say of it
+            seats = seating(ws, self.catalogue(), r.id.rsplit("-", 1)[0])
+        capacity, capacity_from = capacity_of(eff, seats.get(r.id))
         x, y = _label_point(geom)
         width, height = _room_at(geom, x, y)
         return {
@@ -327,8 +331,11 @@ class Review:
             "type": eff["type"], "name": eff["name"], "number": eff["number"],
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "drawing_label": r.label,
-            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored"}) if o else None,
+            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"}) if o else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
+            # how many it seats: set here, else its desks'; and who it is laid out for
+            "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
+            "workplaces": (seats.get(r.id) or {}).get("workplaces", 0), "grade": (seats.get(r.id) or {}).get("grade"),
             "reasons": ws.review_reasons(r),
             "area": round(geom.area, 2),
             "label_point": [round(x, 3), round(y, 3)],
@@ -342,7 +349,9 @@ class Review:
         ``{"correction": {type, name, number}}`` replaces type, name and number: fields
         left out (or null) use what was detected, "" removes a detected name or number,
         {} accepts it as it is. ``{"hidden": bool}`` and ``{"ignored": bool}`` set the
-        flags. ``{"reset": true}`` removes the correction (the flags stay)."""
+        flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
+        desks say). ``{"reset": true}`` removes the correction (the flags and capacity
+        stay)."""
         with self._lock:
             ws = self._load()
             r = ws.objects.get(object_id)
@@ -351,6 +360,12 @@ class Review:
             if r.kind == "opening" and set(body) - {"ignored"}:
                 raise ValueError("an opening can only be deleted or restored")
             current = ws.overrides.get(object_id) or Override()
+            capacity = current.capacity
+            if "capacity" in body:
+                capacity = body["capacity"]
+                if capacity is not None and (isinstance(capacity, bool) or not isinstance(capacity, int)
+                                             or not 0 <= capacity <= 10000):
+                    raise ValueError("capacity is a whole number from 0, or null (as its desks say)")
             flags = {"hidden": current.hidden, "ignored": current.ignored}
             detected = {"hidden": False, "ignored": bool(r.detected_ignored)}
             for flag in ("hidden", "ignored"):
@@ -369,11 +384,11 @@ class Review:
                 values = {k: v.strip() if isinstance(v, str) else v for k, v in c.items() if v is not None}
                 if "type" in values:
                     values["type"] = SpaceType(values["type"])
-            elif any(f in body for f in flags):
-                values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored"})
+            elif any(f in body for f in flags) or "capacity" in body:
+                values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
             else:
                 raise ValueError("nothing to change")
-            override = Override(**values, **flags)
+            override = Override(**values, **flags, capacity=capacity)
             # An empty correction means "accepted"; one left empty only by clearing a flag
             # (or by a reset) means nothing and is removed.
             accepted = object_id in ws.overrides and not (current.hidden or current.ignored)

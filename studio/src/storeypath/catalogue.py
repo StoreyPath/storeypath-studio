@@ -27,6 +27,9 @@ CATALOGUE_VERSION = 1
 FILE_NAME = "catalogue.json"
 _CODE_RE = re.compile(r"^[A-Z0-9]+(-[A-Z0-9]+)*$")
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+# who a desk is for, highest first: a room takes the grade of the highest desk in it
+GRADES = ("president", "c_level", "director", "manager", "section_head", "senior", "junior")
+Grade = Literal["president", "c_level", "director", "manager", "section_head", "senior", "junior"]
 
 
 class ItemField(BaseModel):
@@ -58,6 +61,10 @@ class ItemType(BaseModel):
     mount: Literal["floor", "wall", "ceiling"] = "floor"
     elevation: float | None = None  # its bottom above the floor; None: on the floor, 1.2 m on a wall, under the ceiling
     color: str = "#8a8a8a"
+    # how many people work at one (a desk: 1; a bench of four: 4; a sofa: 0): counted
+    # into the capacity of the room it stands in, unless the room's is set in review
+    workplaces: int = Field(0, ge=0, le=100)
+    grade: Grade | None = None  # who it is for (desks by grade): a room takes its highest
     fields: list[ItemField] = Field(default_factory=list)
     retired: bool = False
 
@@ -94,22 +101,22 @@ class Catalogue(BaseModel):
                 raise ValueError(f"{t.code}: two fields share a key")
 
 
-def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str) -> ItemType:
+def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str, grade: str) -> ItemType:
     return ItemType(code=code, name_en=en, name_ar=ar, category="furniture", width=width, depth=depth,
-                    height=0.75, mount="floor", color=color)
+                    height=0.75, mount="floor", color=color, workplaces=1, grade=grade)
 
 
 def default_catalogue() -> Catalogue:
     """What a new Studio starts with: desks by grade, central photocopiers, access
     points, sofas, TVs and beds. People add more as they need them."""
     return Catalogue(types=[
-        _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b"),
-        _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532"),
-        _desk("DESK-DIRECTOR", "Director's desk", "مكتب مدير", 2.0, 1.0, "#8a6238"),
-        _desk("DESK-MANAGER", "Manager's desk", "مكتب مدير إدارة", 1.8, 0.9, "#9b7444"),
-        _desk("DESK-SECTION-HEAD", "Head of section desk", "مكتب رئيس قسم", 1.6, 0.8, "#a8834f"),
-        _desk("DESK-SENIOR", "Senior staff desk", "مكتب موظف أول", 1.4, 0.7, "#b8955f"),
-        _desk("DESK-JUNIOR", "Junior staff desk", "مكتب موظف", 1.2, 0.6, "#c6a674"),
+        _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b", "president"),
+        _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532", "c_level"),
+        _desk("DESK-DIRECTOR", "Director's desk", "مكتب مدير", 2.0, 1.0, "#8a6238", "director"),
+        _desk("DESK-MANAGER", "Manager's desk", "مكتب مدير إدارة", 1.8, 0.9, "#9b7444", "manager"),
+        _desk("DESK-SECTION-HEAD", "Head of section desk", "مكتب رئيس قسم", 1.6, 0.8, "#a8834f", "section_head"),
+        _desk("DESK-SENIOR", "Senior staff desk", "مكتب موظف أول", 1.4, 0.7, "#b8955f", "senior"),
+        _desk("DESK-JUNIOR", "Junior staff desk", "مكتب موظف", 1.2, 0.6, "#c6a674", "junior"),
         ItemType(code="COPIER", name_en="Central photocopier", name_ar="آلة تصوير مركزية", category="equipment",
                  width=1.2, depth=0.7, height=1.2, mount="floor", color="#3b6ea5",
                  fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
@@ -137,20 +144,37 @@ def default_catalogue() -> Catalogue:
 def load(folder: str | Path) -> Catalogue:
     """The Studio's catalogue (in ``folder``, its data folder): written with the
     default types the first time, and given the default types a newer Studio brings
-    that it lacks (types are retired, never taken away: one missing was never there)."""
+    that it lacks (types are retired, never taken away: one missing was never there),
+    and what a newer Studio says of its default types where the file says nothing
+    (how many people work at one, the grade a desk is for)."""
     path = Path(folder) / FILE_NAME
     if not path.is_file():
         cat = default_catalogue()
         save(folder, cat)
         return cat
-    cat = Catalogue.model_validate_json(path.read_text(encoding="utf-8"))
+    cat, filled = read(path.read_text(encoding="utf-8"))
     cat.check()
     known = {t.code for t in cat.types}
     new = [t for t in default_catalogue().types if t.code not in known]
-    if new:
+    if new or filled:
         cat.types.extend(new)
         save(folder, cat)
     return cat
+
+
+def read(text: str) -> tuple[Catalogue, bool]:
+    """A catalogue from its JSON, with what this Studio says of its own default types
+    where an older file says nothing (how many people work at one, the grade a desk is
+    for); and whether any was filled in."""
+    raw = json.loads(text)
+    defaults = {t.code: t for t in default_catalogue().types}
+    filled = False
+    for t in raw.get("types", []):
+        d = defaults.get(t.get("code"))
+        for key in ("workplaces", "grade"):
+            if d is not None and key not in t:
+                t[key], filled = getattr(d, key), True
+    return Catalogue.model_validate(raw), filled
 
 
 def save(folder: str | Path, cat: Catalogue) -> None:

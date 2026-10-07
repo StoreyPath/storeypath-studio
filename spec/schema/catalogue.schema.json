@@ -118,6 +118,34 @@
           "title": "Color",
           "type": "string"
         },
+        "workplaces": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Workplaces",
+          "type": "integer"
+        },
+        "grade": {
+          "anyOf": [
+            {
+              "enum": [
+                "president",
+                "c_level",
+                "director",
+                "manager",
+                "section_head",
+                "senior",
+                "junior"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grade"
+        },
         "fields": {
           "items": {
             "$ref": "#/$defs/ItemField"

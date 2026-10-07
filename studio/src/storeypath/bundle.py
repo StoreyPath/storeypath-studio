@@ -430,10 +430,10 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
     # was is taken as this workspace exports it: a package keeps positions to about a
     # centimetre, so areas and label points worked out again may differ by as much,
     # which is no change.
-    from .catalogue import Catalogue
+    from .catalogue import read as read_catalogue
 
-    cat_file = manifest.files.get("catalogue")
-    cat = Catalogue.model_validate_json(z.read(cat_file)) if cat_file and cat_file in z.namelist() else None
+    cat_file = manifest.files.get("catalogue")  # as this Studio would read it (an older one's filled in)
+    cat = read_catalogue(z.read(cat_file).decode("utf-8"))[0] if cat_file and cat_file in z.namelist() else None
     ws.exports.append(ExportRecord(
         sequence=manifest.export.sequence, exported_at=exported_at, file=file_name, objects=compared(ws, cat),
         buildings=sorted(buildings) if manifest.scope is not None else None,

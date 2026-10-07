@@ -99,6 +99,13 @@ class FloorProps(_Props):
     parapet_height_m: float | None = Field(None, description="the parapets' height above the floor")
 
 
+CAPACITY = ("how many people it is meant to seat (format 0.7): set in review, else the workplaces of the items "
+            "standing in it (a desk: one); null when neither says")
+CAPACITY_FROM = "what says so: review (a person set it) or items (its desks); null with no capacity"
+GRADE = ("who it is laid out for (format 0.7): the highest grade among the desks standing in it "
+         "(president, c_level, director, manager, section_head, senior, junior); null without one")
+Grade = Literal["president", "c_level", "director", "manager", "section_head", "senior", "junior"]
+
 DRAWING_LABEL = ("the text written in it on the drawing, as written (its lines joined by a line break; "
                  "never changed in review): a key to match on, beside the ID")
 
@@ -116,6 +123,9 @@ class SpaceProps(_Props):
         "IDs of the zones this space is divided into, with no wall between them (empty: one use)"))
     outdoor: bool = Field(False, description=(
         "open to the sky: a terrace or balcony with no windows of its own (a glazed veranda is not)"))
+    capacity: int | None = Field(None, ge=0, description=CAPACITY)
+    capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
+    grade: Grade | None = Field(None, description=GRADE)
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 
@@ -130,6 +140,9 @@ class ZoneProps(_Props):
     floor_id: str
     area_m2: float
     display_point: LonLat
+    capacity: int | None = Field(None, ge=0, description=CAPACITY)
+    capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
+    grade: Grade | None = Field(None, description=GRADE)
     hidden: bool = Field(False, description="real, but not shown unless asked for")
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 

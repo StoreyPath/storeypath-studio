@@ -100,12 +100,12 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 
 **space** — `type`, `name`, `number`, `drawing_label`, `floor_id`, `area_m2`,
 `display_point` (a good spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
-windows of its own; a glazed veranda is not), `hidden`, `ignored`. Geometry: Polygon
-or MultiPolygon.
+windows of its own; a glazed veranda is not), `capacity`, `capacity_from`, `grade`
+(Capacity), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
 A space is what walls, doors and windows enclose: walls stand on its edges.
 
 **zone** — `type`, `name`, `number`, `drawing_label`, `space_id`, `floor_id`, `area_m2`,
-`display_point`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon. A zone is a
+`display_point`, `capacity`, `capacity_from`, `grade`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon. A zone is a
 part of a space used for one thing, with no wall between it and the rest of the
 space: a majlis and a dining area in one hall, a passage running into a living room,
 team areas in an open office. The zones of a space divide it exactly (together they
@@ -123,6 +123,17 @@ names besides both.
 **Which to use.** A space with zones is used through its zones; a space without
 zones is used as a whole. Systems that place people or things in rooms should use
 the zones of a space that has them, and the space itself otherwise.
+
+**Capacity** (0.7). `capacity` is how many people a space or zone is meant to seat:
+the number a person set in review (`capacity_from: "review"`), else the workplaces of
+the items standing in it (`"items"`: a desk seats one; a space divided into zones
+counts its zones' too), else null. 0 is a room meant to seat nobody (a meeting room
+set so). `grade` is who it is laid out for: the highest grade among the desks standing
+in it (`president`, `c_level`, `director`, `manager`, `section_head`, `senior`,
+`junior`), or null. Both are the building's as drawn and furnished: a system placing
+people takes them as defaults, and may keep its own (a capacity it sets, a
+designation of the office) by the space's ID, which no later package changes. A
+change of capacity or grade is a change of the space in `changes.json`.
 
 **opening** — `type`, `floor_id`, `connects` (IDs of the one or two spaces it joins),
 `exterior` (true when it leads outside), `width_m` and `span` (jamb to jamb, when
@@ -230,7 +241,8 @@ an item's is never issued again once it is retired.
 `catalogue.json` (`schema/catalogue.schema.json`) lists the types: a `code` that is
 kept for good and never given to another type (a type no longer used is `retired`),
 English and Arabic names, a `category` (furniture, equipment, appliance), a size, how
-it is mounted (`floor`, `wall`, `ceiling`), a colour, and its `fields`. Each field
+it is mounted (`floor`, `wall`, `ceiling`), a colour, `workplaces` (how many people work
+at one: a desk, 1; 0 for most else) and `grade` (who a desk is for, 0.7), and its `fields`. Each field
 says who enters it: `owner: "storeypath"` (what is physical: a colour, a size, a
 model) or `"system"` (the system that manages the asset: an access point's network).
 A reader keeps the `system` fields itself, by the item's ID; the package never
@@ -378,6 +390,8 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
   (Items). `changes.json → moved_away`: items carried to another building.
 - The project file sent between Studios is a file of its own (`*.storeypath-project`),
   not a package carrying `studio/`.
+- Spaces' and zones' `capacity`, `capacity_from` and `grade` (Capacity); the
+  catalogue's `workplaces` and `grade`.
 
 ## Changes from 0.5
 

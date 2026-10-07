@@ -643,8 +643,12 @@ func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
 	if len(c.Retired) != 1 || !IsItemID(c.Retired[0]) || slices.Contains(c.Retired, c.MovedAway[0].ID) {
 		t.Errorf("retired %v", c.Retired)
 	}
-	if !slices.Equal(c.Changed, []string{hq.Buildings[0].ID}) {
-		t.Errorf("changed %v: only the building moved", c.Changed)
+	// the building moved, and the office the desk left seats one fewer
+	before := open(t, "campus-hq.storeypath")
+	left := *before.Item(c.MovedAway[0].ID).Space
+	if !slices.Equal(c.Changed, []string{hq.Buildings[0].ID, left}) ||
+		*before.Space(left).Capacity != *hq.Space(left).Capacity+1 {
+		t.Errorf("changed %v: the building, and %s (it seats one fewer)", c.Changed, left)
 	}
 	desk := c.MovedAway[0].ID
 	if annex.Item(desk) == nil || !slices.Contains(annex.Changes.Changed, desk) || slices.Contains(annex.Changes.Added, desk) {
@@ -687,5 +691,45 @@ func TestAProjectFileIsNotAPackage(t *testing.T) {
 	_, err := Read(bytes.NewReader(buf.Bytes()), int64(buf.Len()), DefaultLimits)
 	if err == nil || !strings.Contains(err.Error(), "project file") {
 		t.Errorf("error %v", err)
+	}
+}
+
+func TestSeating(t *testing.T) {
+	// How many a room seats and who it is for: the open office (117) set to 8 in
+	// review; offices as their desks say, the President's office in the Annex.
+	byNumber := map[string]Unit{}
+	for _, name := range []string{"campus-hq.storeypath", "campus-annex.storeypath"} {
+		p := open(t, name)
+		for _, f := range p.Floors {
+			for _, u := range p.UnitsOn(f.ID) {
+				if u.Number != nil {
+					byNumber[p.Buildings[0].Code+" "+*u.Number] = u
+				}
+			}
+		}
+		if ty := p.ItemType("DESK-PRESIDENT"); ty == nil || ty.Workplaces != 1 || ty.Grade == nil || *ty.Grade != "president" {
+			t.Errorf("%s: DESK-PRESIDENT %+v", name, ty)
+		}
+	}
+	str := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	seats := func(n string) (int, string, string) {
+		u, ok := byNumber[n]
+		if !ok || u.Capacity == nil {
+			return -1, str(u.CapacityFrom), str(u.Grade)
+		}
+		return *u.Capacity, str(u.CapacityFrom), str(u.Grade)
+	}
+	for _, want := range []struct {
+		number, from, grade string
+		capacity            int
+	}{{"HQ 117", "review", "junior", 8}, {"HQ 002", "items", "senior", 2}, {"ANNEX 001", "items", "president", 1}} {
+		if c, f, g := seats(want.number); c != want.capacity || f != want.from || g != want.grade {
+			t.Errorf("%s: %d %s %s, want %d %s %s", want.number, c, f, g, want.capacity, want.from, want.grade)
+		}
 	}
 }

@@ -126,7 +126,7 @@ test("a building's frame goes on the map as Studio's does, to a millimetre", () 
 
 // format 0.7: a package a building, each item placed in its building (`local`);
 // campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
-const HQ = "BYMBMX-DEMO-HQ";
+const HQ = (await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")))).buildings[0].id; // remade samples are new projects
 /** Each item of a package's building as the world plans it, with what the package says of it. */
 const planned = async (name) => {
   const pkg = await loadPackage(readFileSync(join(packages, `${name}.storeypath`)));

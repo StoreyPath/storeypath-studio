@@ -121,9 +121,9 @@ test("a floor's items: where each stands, the way it faces in the drawing, its t
 
 // format 0.7: a package a building, each item placed in its building (`local`);
 // campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
-const HQ = "BYMBMX-DEMO-HQ";
 const hq = readPackage(join(conformance, "packages/campus-hq.storeypath"));
 const moved = readPackage(join(conformance, "packages/campus-hq-2.storeypath"));
+const P = hq.manifest.project.id, HQ = `${P}-DEMO-HQ`; // remade samples are new projects
 
 test("a 0.7 package, one building: each item stands where `local` puts it in the building's own frame", async () => {
   equal(hq.manifest.scope.buildings, [HQ], "its one building");
@@ -144,7 +144,7 @@ test("a 0.7 package, one building: each item stands where `local` puts it in the
     }
   }
   equal(placed, hq.items.length, "every item");
-  const of = (type) => floorFromPackage(hq, "BYMBMX-DEMO-HQ-F00").items.find((i) => i.type === type);
+  const of = (type) => floorFromPackage(hq, `${HQ}-F00`).items.find((i) => i.type === type);
   near(of("DESK-DIRECTOR").front, [0, -1], 1e-9, "the director's desk faces -y (rotation 0)");
   near(of("DESK-SENIOR").front, [1, 0], 1e-9, "the senior's faces +x (rotation 90)");
 });
@@ -169,9 +169,9 @@ test("a building moved on the map: its items stand where they stood in its plan,
   }
   // the desk carried to the Annex, and the TV taken away, are not in the Headquarters' plan
   const gone = hq.items.map((i) => i.id).filter((id) => !moved.items.some((i) => i.id === id));
-  equal(gone, ["BYMBMX-I000003", "BYMBMX-I000005"], "gone");
+  equal(gone, [`${P}-I000003`, `${P}-I000005`], "gone");
   const annex = readPackage(join(conformance, "packages/campus-annex-2.storeypath"));
-  const desk = floorFromPackage(annex, "BYMBMX-DEMO-ANNEX-F01").items.find((i) => i.id === "BYMBMX-I000003");
+  const desk = floorFromPackage(annex, `${P}-DEMO-ANNEX-F01`).items.find((i) => i.id === `${P}-I000003`);
   near(desk.at, [143, 63.75], 1e-9, "the desk, in the Annex where its local says");
   near(desk.front, [1, 0], 1e-9, "facing +x there");
 });

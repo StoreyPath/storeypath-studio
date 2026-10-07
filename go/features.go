@@ -62,10 +62,25 @@ type Space struct {
 	Zones        []string `json:"zones"`
 	// Outdoor: open to the sky (a terrace or balcony with no windows of its own).
 	Outdoor bool `json:"outdoor"`
+	Seating
 	// Hidden: real, but not shown unless asked for. Ignored: judged not worth
 	// anything by a person; best left out.
 	Hidden  bool `json:"hidden"`
 	Ignored bool `json:"ignored"`
+}
+
+// Seating (format 0.7) is how many people a space or zone is meant to seat and who
+// it is laid out for, as the building is drawn and furnished: defaults a system
+// placing people may keep its own instead of, by the space's ID.
+type Seating struct {
+	// Capacity: the number set in review (CapacityFrom "review"), else the
+	// workplaces of the items standing in it ("items": a desk seats one; a divided
+	// space counts its zones' too); nil when neither says. 0 seats nobody.
+	Capacity     *int    `json:"capacity"`
+	CapacityFrom *string `json:"capacity_from"`
+	// Grade: the highest grade among the desks standing in it (president, c_level,
+	// director, manager, section_head, senior, junior); nil without one.
+	Grade *string `json:"grade"`
 }
 
 // Zone is a named part of a space used for one thing, with no wall between it
@@ -82,8 +97,9 @@ type Zone struct {
 	Floor        string  `json:"floor_id"`
 	Area         float64 `json:"area_m2"`
 	Label        LonLat  `json:"display_point"`
-	Hidden       bool    `json:"hidden"`
-	Ignored      bool    `json:"ignored"`
+	Seating
+	Hidden  bool `json:"hidden"`
+	Ignored bool `json:"ignored"`
 }
 
 // Opening is a door, a window, or a way through with no door (openings.geojson);
@@ -124,8 +140,10 @@ type Unit struct {
 	Label        LonLat
 	// Geometry: the zone's, or the space's.
 	Geometry *Geometry
-	Hidden   bool
-	Ignored  bool
+	// Seating: the zone's, or the space's.
+	Seating
+	Hidden  bool
+	Ignored bool
 }
 
 // Item is a piece of furniture or equipment placed on a floor (items.geojson,
@@ -217,10 +235,14 @@ type ItemType struct {
 	Mount  string  `json:"mount"`
 	// Elevation is its bottom above the floor; nil: on the floor, 1.2 m up a wall,
 	// just under the ceiling.
-	Elevation *float64    `json:"elevation"`
-	Color     string      `json:"color"` // #rrggbb
-	Fields    []ItemField `json:"fields"`
-	Retired   bool        `json:"retired"`
+	Elevation *float64 `json:"elevation"`
+	Color     string   `json:"color"` // #rrggbb
+	// Workplaces: how many people work at one (a desk: 1); counted into the
+	// capacity of the room it stands in. Grade: who a desk is for (format 0.7).
+	Workplaces int         `json:"workplaces"`
+	Grade      *string     `json:"grade"`
+	Fields     []ItemField `json:"fields"`
+	Retired    bool        `json:"retired"`
 }
 
 // ItemField is a detail the items of a type carry, and who enters it.

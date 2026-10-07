@@ -48,6 +48,10 @@ for _, b := range pkg.Buildings {
   package's `Changes.MovedAway`, not retired. Its `Values` are the details entered
   in StoreyPath; the fields the managing system owns (`OwnerSystem`) are never in a
   package. Older packages have no items and no catalogue.
+- Seating (format 0.7): each space's and zone's (and `Unit`'s) `Capacity` (set in
+  StoreyPath's review, `CapacityFrom` "review", or its desks' workplaces, "items")
+  and `Grade` (who it is laid out for: its highest desk), defaults a system placing
+  people may keep its own instead of; the catalogue's `Workplaces` and `Grade`.
 - One building per package (format 0.7): `Manifest.Scope` names it; `Holds` says
   whether a package holds a building. Older packages may hold several, or a whole
   project; a StoreyPath project file (`.storeypath-project`) is refused by `Read`.

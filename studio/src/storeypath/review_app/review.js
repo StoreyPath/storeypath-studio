@@ -889,8 +889,61 @@ function renderEditor() {
   $("ed-type").style.borderLeft = `6px solid ${color(s.type)}`;
   $("ed-name").value = s.name || "";
   $("ed-number").value = s.number || "";
+  renderCapacity(s);
   $("ed-area").textContent = `${s.area} m²${s.correction ? " · corrected" : ""}`;
   updateEditorState();
+}
+
+// ---- capacity: how many people a space or zone is meant to seat --------------------
+// Set here, or left to its desks (each seats as many as its type says: a desk, one);
+// the room takes the grade of the highest desk in it. Wayfinder may set its own.
+
+const GRADES = ["president", "c_level", "director", "manager", "section_head", "senior", "junior"];
+const GRADE_NAMES = { president: "the President", c_level: "C-level", director: "a Director", manager: "a Manager",
+  section_head: "a Head of section", senior: "senior staff", junior: "junior staff" };
+
+/** What the items standing in a space or zone say of it (as Studio exports it): their
+ * workplaces and the highest grade; a divided space counts its zones' items too. */
+function seatsOf(s) {
+  const out = { workplaces: 0, grade: null };
+  for (const a of state.floor?.items || []) {
+    if (a.retired) continue;
+    const t = typeOf(a.type);
+    if (!t || !(t.workplaces || t.grade)) continue;
+    const at = [a.x, a.y];
+    const zone = units().find((u) => u.kind === "zone" && !u.ignored && within(at, u.geometry));
+    const space = zone ? zone.space_id : state.floor.spaces.find((u) => u.kind === "space" && !u.ignored && within(at, u.geometry))?.id;
+    if (s.id !== space && s.id !== zone?.id) continue;
+    out.workplaces += t.workplaces || 0;
+    if (t.grade && (!out.grade || GRADES.indexOf(t.grade) < GRADES.indexOf(out.grade))) out.grade = t.grade;
+  }
+  return out;
+}
+
+/** Whether a point is in a shape, its holes left out (even-odd over its rings). */
+function within(p, geometry) {
+  return rings(geometry).reduce((inside, ring) => inside !== inRing(p, ring), false);
+}
+
+function renderCapacity(s) {
+  const seats = seatsOf(s);
+  const input = $("ed-capacity");
+  input.value = s.capacity_set ?? "";
+  input.placeholder = seats.workplaces ? `${seats.workplaces} (its desks)` : "not known";
+  const from = s.capacity_set != null
+    ? (seats.workplaces ? `set here; its desks seat ${seats.workplaces}` : "set here")
+    : seats.workplaces ? "from its desks: empty it to keep that" : "no desks in it: set it, or place desks";
+  $("ed-capacity-from").textContent = from + (seats.grade ? ` · laid out for ${GRADE_NAMES[seats.grade]}` : "");
+}
+
+async function saveCapacity() {
+  const s = state.byId.get(state.selected);
+  if (!s) return;
+  const raw = $("ed-capacity").value.trim();
+  const capacity = raw === "" ? null : Number(raw);
+  if (capacity !== null && !(Number.isInteger(capacity) && capacity >= 0)) return toast("Capacity: a whole number from 0", true);
+  if (capacity === (s.capacity_set ?? null)) return;
+  await saveSpace({ capacity });
 }
 
 function setFlag(id, flag, value) {
@@ -919,7 +972,8 @@ async function saveSpace(body, id = state.selected) {
   floor.review = reviewSpaces().length;
   fillFloorSelect();
   const flagged = "hidden" in body ? (body.hidden ? "hidden" : "shown again")
-    : "ignored" in body ? (body.ignored ? "deleted" : "restored") : null;
+    : "ignored" in body ? (body.ignored ? "deleted" : "restored")
+    : "capacity" in body ? (body.capacity === null ? "capacity from its desks" : `seats ${body.capacity}`) : null;
   toast(flagged ? `${title(updated)}: ${flagged}` : body.reset ? "Corrections removed" : `Saved ${code(updated.id)}`);
   if (!visible(updated) && state.selected === updated.id) select(null);
 }
@@ -1500,6 +1554,7 @@ function setupPanel() {
     e.preventDefault();
   });
   for (const id of ["ed-type", "ed-name", "ed-number"]) $(id).addEventListener("input", updateEditorState);
+  $("ed-capacity").addEventListener("change", saveCapacity);
   $("ed-type").addEventListener("change", (e) => (e.target.style.borderLeft = `6px solid ${color(e.target.value)}`));
   $("search").addEventListener("input", (e) => {
     state.filter = e.target.value.trim().toLowerCase();
@@ -1630,6 +1685,7 @@ async function placeAsset(type, p) {
     const a = await request(`${BASE}/floors/${state.floor.id}/items`, { type, x: round4(p[0]), y: round4(p[1]), rotation: 0 });
     state.floor.items.push(a);
     renderAssets();
+    if (state.byId.get(state.selected)) renderCapacity(state.byId.get(state.selected));
   } catch (e) {
     toast(`Not placed: ${e.message}`, true);
   }
@@ -1646,6 +1702,7 @@ async function changeAsset(a, body) {
       toast("Carried to the other floor: it keeps its ID");
     } else if (i >= 0) list[i] = { ...got, floor_id: state.floor.id };
     renderAssets();
+    if (state.byId.get(state.selected)) renderCapacity(state.byId.get(state.selected));
     if (state.asset === a.id) renderAssetEditor();
   } catch (e) {
     toast(`Not saved: ${e.message}`, true);

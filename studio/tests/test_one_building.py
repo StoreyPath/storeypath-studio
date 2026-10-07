@@ -7,6 +7,7 @@ import json
 import zipfile
 
 import pytest
+import shapely
 from shapely.geometry import shape
 
 from storeypath.assets import asset_dir
@@ -108,14 +109,17 @@ def test_an_item_carried_to_another_building_is_moved_away_not_retired(campus, t
     desk.floor_id, desk.x, desk.y = there, ax, ay
     tv.status = "retired"
 
+    room = next(i for i, r in ws.objects.items() if i.startswith(f_id + "-") and r.kind == "space"
+                and shape(r.geometry).covers(shapely.Point(x, y)))
     export_package(ws, tmp_path / "hq-2.storeypath", building=hq)
     assert validate_package(tmp_path / "hq-2.storeypath") == []
     _, changes, items = _read(tmp_path / "hq-2.storeypath")
     assert changes["moved_away"] == [{"id": desk.id, "building_id": annex}] and desk.id not in items
-    assert changes["retired"] == [tv.id] and tv.id in changes["all_retired"] and changes["changed"] == []
+    assert changes["retired"] == [tv.id] and tv.id in changes["all_retired"]
+    assert changes["changed"] == [room]  # it seats one fewer: its desk went
     export_package(ws, tmp_path / "annex-2.storeypath", building=annex)
     _, changes, items = _read(tmp_path / "annex-2.storeypath")
-    assert changes["changed"] == [desk.id] and changes["added"] == [] and desk.id in items  # moved in, not new
+    assert desk.id in changes["changed"] and changes["added"] == [] and desk.id in items  # moved in, not new
     export_package(ws, tmp_path / "hq-3.storeypath", building=hq)
     _, changes, _ = _read(tmp_path / "hq-3.storeypath")
     assert changes["moved_away"] == [] and changes["retired"] == []  # each said once

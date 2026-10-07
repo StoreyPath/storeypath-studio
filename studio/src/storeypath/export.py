@@ -24,7 +24,7 @@ from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, make_id
-from .catalogue import Catalogue, default_catalogue
+from .catalogue import GRADES, Catalogue, default_catalogue
 from .package import (
     FILES,
     OBJECTS_CSV_COLUMNS,
@@ -242,6 +242,50 @@ def _walls_and_parapets(walls, spaces, thickness: float | None):
 WALL_ELEVATION_M = 1.2  # a wall item's bottom above the floor, when its type does not say
 
 
+def floor_units(ws: Workspace, f_id: str) -> list:
+    """A floor's spaces and zones in use, with their shapes: where items stand."""
+    return [(shape(r.geometry), r) for r in ws.floor_objects(f_id)
+            if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+
+
+def standing_in(it, units) -> tuple[str | None, str | None]:
+    """The space, and the zone when the space is divided, an item's middle stands in."""
+    middle = shapely.Point(it.x, it.y)
+    zone = next((rec for geom, rec in units if rec.kind == "zone" and geom.covers(middle)), None)
+    space = zone.parent if zone else next((rec.id for geom, rec in units if rec.kind == "space" and geom.covers(middle)), None)
+    return space, zone.id if zone else None
+
+
+def seating(ws: Workspace, cat: Catalogue, f_id: str, units=None) -> dict[str, dict]:
+    """What the items standing in each space and zone of a floor say of it: how many
+    people work there (its desks' workplaces) and the highest grade among its desks.
+    A divided space counts what stands in its zones too."""
+    units = floor_units(ws, f_id) if units is None else units
+    out: dict[str, dict] = {}
+    for it in ws.floor_items(f_id):
+        t = cat.get(it.type)
+        if t is None or not (t.workplaces or t.grade):
+            continue
+        for unit in standing_in(it, units):
+            if unit is None:
+                continue
+            seats = out.setdefault(unit, {"workplaces": 0, "grade": None})
+            seats["workplaces"] += t.workplaces
+            if t.grade and (seats["grade"] is None or GRADES.index(t.grade) < GRADES.index(seats["grade"])):
+                seats["grade"] = t.grade
+    return out
+
+
+def capacity_of(eff: dict, seats: dict | None) -> tuple[int | None, str | None]:
+    """How many people a space or zone is meant to seat, and what says so: set in
+    review, else the workplaces of the items standing in it, else not known."""
+    if eff["capacity"] is not None:
+        return eff["capacity"], "review"
+    if seats and seats["workplaces"]:
+        return seats["workplaces"], "items"
+    return None, None
+
+
 def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> dict:
     """An item as a feature: where it stands in its building's own frame (what it is
     placed by), its footprint on the map (its width along its rotation, its front
@@ -253,16 +297,14 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
     fx, fy = math.sin(r), -math.cos(r)  # its front
     corners = [(it.x + sx * ux * w / 2 + sy * fx * d / 2, it.y + sx * uy * w / 2 + sy * fy * d / 2)
                for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-    middle = shapely.Point(it.x, it.y)
-    zone = next((rec for geom, rec in units if rec.kind == "zone" and geom.covers(middle)), None)
-    space = zone.parent if zone else next((rec.id for geom, rec in units if rec.kind == "space" and geom.covers(middle)), None)
+    space, zone = standing_in(it, units)
     mount = t.mount if t else "floor"
     elevation = t.elevation if t and t.elevation is not None else (0.0 if mount == "floor" else WALL_ELEVATION_M if mount == "wall" else None)
     own = {f.key for f in t.fields if f.owner == "storeypath"} if t else set()
     return _feature(it.id, _rounded(g.geometry(Polygon(corners))), {
         "kind": "item", "type": it.type, "category": t.category if t else "furniture",
         "name": t.name_en if t else it.type, "floor_id": it.floor_id, "building_id": b_id,
-        "space_id": space, "zone_id": zone.id if zone else None,
+        "space_id": space, "zone_id": zone,
         "local": {"x_m": round(it.x, LOCAL_DECIMALS), "y_m": round(it.y, LOCAL_DECIMALS),
                   "rotation_deg": round(it.rotation % 360, 2)},
         "display_point": _lonlat(g, (it.x, it.y)),
@@ -307,9 +349,12 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                          "parapet_height_m": (f.parapet_height or DEFAULT_PARAPET_M) if parapets is not None else None},
                     )
                 )
+                seats = seating(ws, cat, f_id)
                 for r in sorted(ws.floor_objects(f_id), key=lambda r: r.id):
                     eff = ws.effective(r)
                     geom = shape(r.geometry)
+                    capacity, capacity_from = capacity_of(eff, seats.get(r.id))
+                    grade = (seats.get(r.id) or {}).get("grade")
                     if r.kind == "space":
                         out["spaces"].append(
                             _feature(
@@ -320,6 +365,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "zones": list(r.zones), "outdoor": r.id in sky,
+                                 "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
@@ -332,6 +378,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "number": eff["number"], "drawing_label": r.label, "space_id": r.parent, "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
+                                 "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
@@ -351,8 +398,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                         )
             for f in sorted(b.floors, key=lambda f: f.ordinal):  # the furniture and equipment on each floor
                 f_id = child_id(b_id, f.code)
-                units = [(shape(r.geometry), r) for r in ws.floor_objects(f_id)
-                         if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+                units = floor_units(ws, f_id)
                 for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
                     out["items"].append(_item_feature(it, cat.get(it.type), g, placed[b_id][0].bearing, b_id, units))
             footprint = None

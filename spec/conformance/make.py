@@ -181,10 +181,12 @@ def furnish(ws) -> None:
     west wall; a manager's desk; a TV on the meeting room's wall; a photocopier
     against the corridor's wall, between two doors, and an access point in the
     corridor; a sofa in the reception. On its first floor: a head of section's desk,
-    the open office's three desks and its access point, and a desk in a zone of the
-    divided hall. In the Annex, turned 110° on the map: the president's desk. Back on
+    the open office's three desks and its access point (its capacity set to 8 in
+    review), and a desk in a zone of the divided hall. In the Annex, turned 110° on the map: the president's desk. Back on
     the Headquarters' ground floor: a king-size bed in an office."""
     from shapely.geometry import shape
+
+    from storeypath.workspace import Override
 
     floors = {f"{b.code}-{f.code}": fid for _, b, f, fid in ws.iter_floors()}
 
@@ -219,6 +221,10 @@ def furnish(ws) -> None:
     f_id, (x0, y0, x1, y1) = room("HQ-F01", "117")  # the open office
     for k in range(3):
         place("DESK-JUNIOR", f_id, x0 + 1.9 + 1.5 * k, y1 - 2.4, rotation=180)
+    open_office = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and ws.effective(r)["number"] == "117")
+    seats = ws.overrides.get(open_office.id) or Override()
+    seats.capacity = 8  # set in review: more than its three desks so far
+    ws.overrides[open_office.id] = seats
     place("ACCESS-POINT", f_id, x1 - 2.5, y0 + 2.5)  # clear of its label
     hall = max((r for r in ws.floor_objects(f_id) if r.kind == "zone"), key=lambda r: shape(r.geometry).bounds[0])
     hx0, hy0, hx1, hy1 = shape(hall.geometry).bounds  # the east zone of the divided hall, against its north wall

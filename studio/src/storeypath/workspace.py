@@ -198,6 +198,8 @@ class Override(BaseModel):
     # shaft, a plant room). Ignored: not worth anything (a sliver, a pocket); leave it out.
     hidden: bool | None = None
     ignored: bool | None = None
+    # how many people it is meant to seat, set by a person; None: as its desks say
+    capacity: int | None = Field(None, ge=0, le=10000)
 
 
 class Reading(BaseModel):
@@ -440,6 +442,7 @@ class Workspace(BaseModel):
             "corrected": o is not None,
             "hidden": bool(o and o.hidden),
             "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
+            "capacity": o.capacity if o is not None else None,
         }
 
     def review_reasons(self, record: ObjectRecord) -> list[str]:
