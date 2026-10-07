@@ -7,4 +7,4 @@ export { LocalFrame } from "./frame.js";
 export type { Placement } from "./frame.js";
 export { TYPE_COLORS } from "./colors.js";
 export { poleOf } from "./geometry.js";
-export type { Camera, FloorPlan, PlanDrawing, PlanOpening, PlanSpace, Polygon, Ring, SpaceStyle, XY } from "./types.js";
+export type { Camera, FloorPlan, PlanDrawing, PlanItem, PlanOpening, PlanSpace, Polygon, Ring, SpaceStyle, XY } from "./types.js";

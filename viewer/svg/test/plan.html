@@ -23,7 +23,10 @@
     const engine = (window.engine = new sp.FloorPlanEngine("#plan", { motion: false, ...options }));
     window.chosen = [];
     window.cameras = 0;
-    engine.addEventListener("select", (e) => window.chosen.push(e.detail.id));
+    engine.addEventListener("select", (e) => {
+      window.chosen.push(e.detail.id);
+      window.picked = e.detail;
+    });
     engine.addEventListener("camerachange", () => window.cameras++);
     engine.setFloor(plan ?? sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01"));
     await frames();

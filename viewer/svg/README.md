@@ -1,7 +1,8 @@
 # StoreyPath plan viewer (SVG)
 
 One floor of a StoreyPath package as a plain SVG plan: spaces and zones, walls,
-doors with their swings, windows and openings, labels. No WebGL and no
+doors with their swings, windows and openings, furniture and equipment, labels.
+No WebGL and no
 dependencies, so it runs on any machine: VDI desktops and kiosks with no GPU,
 old browsers' worth of hardware, a phone. Written in strict TypeScript; ships ES
 modules and type declarations.
@@ -46,6 +47,16 @@ folder: `npm run build && python3 -m http.server`, and open `/example/`).
   where they fit inside their space, each line in its own direction
   (`unicode-bidi: plaintext`: Arabic and English mix). They sit on the space's
   label point, which is inside it whatever its shape.
+- **Items** (format 0.6: furniture and equipment) over the spaces and under the
+  walls and labels, as Studio draws them: the footprint in its type's colour, its
+  front edge darker, and a mark of its kind: a desk's chair, a sofa's seat, the
+  way a TV faces, a photocopier's lid; an access point a small circle with a wifi
+  mark; anything on the ceiling dashed, as overhead. Each is a `<g>` with
+  `data-sp-item`, a button in the tab order. `items: false` (or `setItems(false)`)
+  hides them; `interactiveItems: false` leaves them out of clicks, which then
+  choose the space under them. A floor model gives them as `items`, each its middle
+  (`at`), the way its front faces (`front`, a direction in the plan's
+  coordinates), `width`, `depth`, `type`, `mount` and `color`.
 - A **pin** (`setPin`) on a space's label point, for "you are here".
 
 Hidden spaces (set in review) are left out unless `showHidden`; ignored ones always.
@@ -54,16 +65,17 @@ Hidden spaces (set in review) are left out unless `showHidden`; ignored ones alw
 
 | | |
 |---|---|
-| `new FloorPlanEngine(element, options)` | `label`, `ariaLabel`, `styleOf`, `interactive`, `colors`, `motion`, `padding`, `maxScale`, `labels`, `labelSize`, `title` |
+| `new FloorPlanEngine(element, options)` | `label`, `ariaLabel`, `styleOf`, `interactive`, `colors`, `motion`, `padding`, `maxScale`, `labels`, `labelSize`, `items`, `interactiveItems`, `title` |
 | `setFloor(plan, { fit })` | draw a floor; fitted unless `fit: false` |
 | `setOptions(options)` / `restyle()` | new options; apply `styleOf` again when the host's data changes |
-| `select(id, { focus })` / `selected` | choose a space (`focus: "pan"` brings it to the middle at the same zoom, `"zoom"` zooms to it) |
+| `setItems(on)` / `itemsShown` | show the items, or hide them (shown unless `items: false`) |
+| `select(id, { focus })` / `selected` | choose a space or an item (`focus: "pan"` brings it to the middle at the same zoom, `"zoom"` zooms to it) |
 | `highlight(ids, { dim })` | bring some spaces out, dim the rest; `null` for none |
 | `setPin(id)` / `markerOf(id)` | a pin in a space; a space's label point |
 | `fit()`, `fitTo(ids)`, `focus(id, { zoom })`, `zoomBy(f, at)` | move the view |
 | `camera()` / `setCamera(c)` | the view: screen = (x·k + tx, ∓y·k + ty) |
 | `toScreen(p)` / `toPlan(s)` | between plan metres and the element's CSS pixels |
-| events | `select` (`detail: { id, space }`, from a click, a tap or the keyboard), `camerachange` |
+| events | `select` (`detail: { id, space, item }`: the space or the item chosen, from a click, a tap or the keyboard), `camerachange` |
 
 A drawing's y grows upwards; set `yDown: true` on a floor model whose y grows
 downwards (as a page's does).
@@ -79,8 +91,9 @@ Theme with CSS variables on any ancestor (`--sp-wall`, `--sp-door`, `--sp-window
 `.sp-highlight`, `.sp-dim`, `.sp-type-office`, …). Space colours follow their type
 unless `styleOf` or `colors` says otherwise.
 
-For tests: the `<svg>` carries `data-cam="k,tx,ty"`, each unit `data-sp-id` (and
-`data-selected` when chosen), the pin `data-sp-pin` with `data-plan-x`/`data-plan-y`.
+For tests: the `<svg>` carries `data-cam="k,tx,ty"`, each unit `data-sp-id` and each
+item `data-sp-item` (and `data-selected` when chosen), the pin `data-sp-pin` with
+`data-plan-x`/`data-plan-y`.
 
 ## Coordinates
 

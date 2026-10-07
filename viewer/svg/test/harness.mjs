@@ -38,7 +38,8 @@ export function readPackage(path) {
   const manifest = json("manifest.json");
   const features = (role) => (manifest.files[role] ? json(manifest.files[role]).features : []);
   return { manifest, floors: features("floors"), spaces: features("spaces"), zones: features("zones"),
-    openings: features("openings") };
+    openings: features("openings"), items: features("items"),
+    catalogue: manifest.files.catalogue ? json(manifest.files.catalogue) : null };
 }
 
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html",

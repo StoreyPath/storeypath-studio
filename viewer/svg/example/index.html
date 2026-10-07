@@ -22,16 +22,20 @@
   <input type="file" id="file" accept=".storeypath">
   <select id="floor" aria-label="Floor"></select>
   <input type="search" id="find" placeholder="Find a room" aria-label="Find a room">
+  <label><input type="checkbox" id="items" checked> Items</label>
   <button id="fit">Fit</button>
 </header>
 <div id="plan"><div id="about" role="status"></div></div>
 <script type="module">
-  // Open a .storeypath file (or ?package=<url>): its floors, a click shows a space,
-  // the search box brings matching rooms out.
+  // Open a .storeypath file (or ?package=<url>): its floors, a click shows a space
+  // or an item (furniture and equipment, shown unless ?items=0), the search box
+  // brings matching rooms out.
   import { FloorPlanEngine, floorFromPackage, readPackage } from "../dist/index.js";
 
   const $ = (id) => document.getElementById(id);
-  const engine = new FloorPlanEngine("#plan", { title: "Floor plan" });
+  const params = new URLSearchParams(location.search);
+  const engine = new FloorPlanEngine("#plan", { title: "Floor plan", items: params.get("items") !== "0" });
+  $("items").checked = engine.itemsShown;
   let pkg = null;
   let plan = null;
 
@@ -49,8 +53,23 @@
   }
 
   engine.addEventListener("select", (e) => {
-    const s = e.detail.space;
+    const { space: s, item } = e.detail;
+    if (item) {
+      // its type from the package's catalogue, and the details entered in StoreyPath
+      const type = pkg.catalogue?.types.find((t) => t.code === item.type);
+      const values = pkg.items.find((i) => i.id === item.id)?.properties.values ?? {};
+      const details = Object.entries(values).map(([k, v]) => `${type?.fields.find((f) => f.key === k)?.name_en ?? k}: ${v}`);
+      $("about").textContent = [`${type?.name_en ?? item.name ?? item.type} (${item.type})`, item.id, ...details].join(" — ");
+      return;
+    }
     $("about").textContent = s ? `${[s.name, s.number].filter(Boolean).join(" ") || s.type} — ${s.id}` : "";
+  });
+  $("items").addEventListener("change", (e) => {
+    engine.setItems(e.target.checked);
+    const url = new URL(location.href);
+    if (e.target.checked) url.searchParams.delete("items");
+    else url.searchParams.set("items", "0");
+    history.replaceState(null, "", url);
   });
   $("file").addEventListener("change", async (e) => e.target.files[0] && open(e.target.files[0]));
   $("floor").addEventListener("change", (e) => show(e.target.value));

@@ -1,9 +1,10 @@
 // A floor of a StoreyPath package (spec/FORMAT.md) as the engine's floor model:
-// its zones and undivided spaces, in the building's local drawing metres (the
-// drawing the way the architect drew it, whatever its bearing on the map).
+// its zones and undivided spaces, and its furniture and equipment, in the
+// building's local drawing metres (the drawing the way the architect drew it,
+// whatever its bearing on the map).
 
 import { LocalFrame, type Placement } from "./frame.js";
-import type { FloorPlan, PlanOpening, PlanSpace, Polygon, XY } from "./types.js";
+import type { FloorPlan, PlanItem, PlanOpening, PlanSpace, Polygon, XY } from "./types.js";
 
 type LonLat = [number, number];
 
@@ -28,6 +29,10 @@ interface OpeningProps {
   floor_id: string; type: "door" | "window" | "opening"; span?: LonLat[] | null; swings?: LonLat[][] | null;
   hidden?: boolean; ignored?: boolean;
 }
+interface ItemProps {
+  floor_id: string; building_id: string; type: string; category?: string; name?: string | null;
+  mount?: "floor" | "wall" | "ceiling"; display_point: LonLat; heading: number; width_m: number; depth_m: number;
+}
 
 /** What a package gives: its manifest and its features (as viewer/src/package.js loads them, or as read). */
 export interface PackageLike {
@@ -36,12 +41,17 @@ export interface PackageLike {
   spaces: Feature<SpaceProps>[];
   zones?: Feature<ZoneProps>[];
   openings: Feature<OpeningProps>[];
+  /** Furniture and equipment (format 0.6), and the catalogue of their types. */
+  items?: Feature<ItemProps>[];
+  catalogue?: { types: { code: string; color?: string }[] } | null;
 }
 
 export interface FromPackageOptions {
   /** Spaces marked hidden in review: left out unless asked for (ignored ones always are). */
   showHidden?: boolean;
 }
+
+const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe
 
 /** A floor of a package, ready to draw. */
 export function floorFromPackage(pkg: PackageLike, floorId: string, options: FromPackageOptions = {}): FloorPlan {
@@ -90,9 +100,22 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
     const swings = (p.swings ?? []).filter((s) => s.length === 2).map((s) => [local(s[0]!), local(s[1]!)] as [XY, XY]);
     openings.push({ id: o.id, type: p.type, ...(span ? { span } : {}), ...(swings.length ? { swings } : {}) });
   }
+  // furniture and equipment: the way each faces, from north to the drawing's own
+  // (its +y is turned to the placement's bearing)
+  const colors = new Map((pkg.catalogue?.types ?? []).map((t) => [t.code, t.color]));
+  const items: PlanItem[] = [];
+  for (const f of pkg.items ?? []) {
+    const p = f.properties;
+    if (p.floor_id !== floorId || !p.display_point) continue;
+    const a = (((p.heading ?? 0) - (placement.bearing || 0)) * Math.PI) / 180;
+    items.push({ id: f.id, type: p.type, category: p.category ?? "furniture", name: p.name ?? null, mount: p.mount ?? "floor",
+      at: local(p.display_point), front: [Math.sin(a), Math.cos(a)], width: p.width_m || 1, depth: p.depth_m || 0.6,
+      color: colors.get(p.type) ?? ITEM_COLOR });
+  }
   return {
     id: floorId,
     spaces,
+    items,
     drawing: {
       outline: polygons(floor.geometry),
       walls: polygons(floor.properties.walls),

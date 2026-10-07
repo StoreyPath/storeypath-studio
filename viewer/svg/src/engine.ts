@@ -1,18 +1,19 @@
 // The floor plan in plain SVG: no WebGL, no dependencies, for any machine (VDI
 // desktops and kiosks without a GPU). One floor at a time: its spaces and zones,
-// walls, doors with their swings, windows and openings, with labels that stay
-// upright and readable at any zoom, in any language and direction.
+// walls, doors with their swings, windows and openings, its furniture and
+// equipment, with labels that stay upright and readable at any zoom, in any
+// language and direction.
 //
 // The engine draws what it is given (setFloor: the floor model in types.ts) and
 // leaves meaning to its host: the host says how each space looks (styleOf), what
 // it is called (label), which spaces can be chosen (interactive) and what to do
 // when one is (the "select" event). Hooks for tests: the root carries data-cam
-// (k,tx,ty), each space data-sp-id (and data-selected when chosen), the pin
-// data-sp-pin with data-plan-x/y.
+// (k,tx,ty), each space data-sp-id (and data-selected when chosen), each item
+// data-sp-item, the pin data-sp-pin with data-plan-x/y.
 
 import { TYPE_COLORS } from "./colors.js";
 import { boundsOf, finite, inside, pathOf, poleOf, round, type Box } from "./geometry.js";
-import type { Camera, FloorPlan, PlanOpening, PlanSpace, SpaceStyle, XY } from "./types.js";
+import type { Camera, FloorPlan, PlanItem, PlanOpening, PlanSpace, SpaceStyle, XY } from "./types.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DRAG_PX = 4; // a press that moves less than this is a click
@@ -37,6 +38,11 @@ export interface EngineOptions {
   maxScale?: number;
   /** Show labels. */
   labels?: boolean;
+  /** Show the furniture and equipment (default: true). */
+  items?: boolean;
+  /** Whether items can be clicked or chosen with the keyboard (default: true); when
+   * not, a click on one chooses the space under it. */
+  interactiveItems?: boolean;
   /** Label size in pixels (set the font with CSS: .sp-labels). */
   labelSize?: number;
   /** What the plan is called, for screen readers. */
@@ -45,8 +51,18 @@ export interface EngineOptions {
 
 export interface SelectDetail {
   id: string | null;
+  /** The space or zone chosen, or the item: one of them, or neither. */
   space: PlanSpace | null;
+  item: PlanItem | null;
 }
+
+/** How an item is drawn, by its type code's first part (DESK-MANAGER is a desk);
+ * others by how they are mounted. */
+const ITEM_KINDS: Record<string, string> = { DESK: "desk", SOFA: "sofa", TV: "tv", SCREEN: "tv", COPIER: "copier",
+  PRINTER: "copier", ACCESS: "ap" };
+const itemKind = (it: PlanItem): string =>
+  ITEM_KINDS[(it.type ?? "").split("-")[0]!] ?? (it.mount === "ceiling" ? "round" : "plain");
+const fine = (v: number): number => Math.round(v * 1e4) / 1e4;
 
 const svg = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] => {
   const e = document.createElementNS(SVG_NS, tag);
@@ -61,13 +77,14 @@ export class FloorPlanEngine extends EventTarget {
   private colors: Record<string, string>;
   private plan: FloorPlan | null = null;
   private readonly world: SVGGElement;
-  private readonly layers: Record<"outline" | "units" | "containers" | "selection" | "walls" | "openings", SVGGElement>;
+  private readonly layers: Record<"outline" | "units" | "containers" | "items" | "selection" | "walls" | "openings", SVGGElement>;
   private readonly labelLayer: SVGGElement;
   private readonly pinLayer: SVGGElement;
   private paths = new Map<string, SVGPathElement>();
   private labels = new Map<string, { text: SVGTextElement; width: number; height: number }>();
   private measured = false;
   private spaces = new Map<string, PlanSpace>();
+  private items = new Map<string, { item: PlanItem; shape: SVGGElement; outline: string }>();
   private boxes = new Map<string, Box>();
   private markers = new Map<string, XY>();
   private floorBox: Box = [0, 0, 1, 1];
@@ -91,7 +108,7 @@ export class FloorPlanEngine extends EventTarget {
     const element = typeof container === "string" ? document.querySelector<HTMLElement>(container) : container;
     if (!element) throw new Error(`FloorPlanEngine: container ${String(container)} not found`);
     this.element = element;
-    this.opts = { padding: 24, maxScale: 400, labels: true, labelSize: 12, ...options };
+    this.opts = { padding: 24, maxScale: 400, labels: true, labelSize: 12, items: true, interactiveItems: true, ...options };
     this.colors = { ...TYPE_COLORS, ...options.colors };
     this.svg = svg("svg", { class: "sp-plan", role: "group", tabindex: 0, "aria-label": options.title ?? "Floor plan" });
     this.world = svg("g", { class: "sp-world" });
@@ -99,12 +116,13 @@ export class FloorPlanEngine extends EventTarget {
       outline: svg("g", { class: "sp-outline" }),
       units: svg("g", { class: "sp-units" }),
       containers: svg("g", { class: "sp-containers" }),
+      items: svg("g", { class: "sp-items" }), // over the spaces, under the walls and the labels
       selection: svg("g", { class: "sp-selection" }),
       walls: svg("g", { class: "sp-walls" }),
       openings: svg("g", { class: "sp-openings" }),
     };
-    this.world.append(this.layers.outline, this.layers.units, this.layers.containers, this.layers.selection, this.layers.walls,
-      this.layers.openings);
+    this.world.append(this.layers.outline, this.layers.units, this.layers.containers, this.layers.items, this.layers.selection,
+      this.layers.walls, this.layers.openings);
     this.labelLayer = svg("g", { class: "sp-labels", "aria-hidden": "true" });
     this.pinLayer = svg("g", { class: "sp-pin-layer" });
     this.svg.append(this.world, this.labelLayer, this.pinLayer);
@@ -129,6 +147,7 @@ export class FloorPlanEngine extends EventTarget {
     this.paths.clear();
     this.labels.clear();
     this.spaces.clear();
+    this.items.clear();
     this.boxes.clear();
     this.markers.clear();
     const d = plan.drawing ?? {};
@@ -158,8 +177,10 @@ export class FloorPlanEngine extends EventTarget {
     if (d.walls?.length) this.layers.walls.append(svg("path", { class: "sp-wall", d: pathOf(d.walls) }));
     if (d.parapets?.length) this.layers.walls.append(svg("path", { class: "sp-parapet", d: pathOf(d.parapets) }));
     for (const o of d.openings ?? []) this.layers.openings.append(...this.drawOpening(o));
+    for (const it of plan.items ?? []) this.drawItem(it);
+    this.showItems();
     this.floorBox = finite(box) ? box : [0, 0, 1, 1];
-    if (this.chosen && !this.spaces.has(this.chosen)) this.chosen = null;
+    if (this.chosen && !this.spaces.has(this.chosen) && !this.items.has(this.chosen)) this.chosen = null;
     if (this.pinned && !this.spaces.has(this.pinned)) this.pinned = null;
     this.restyle();
     if (fit || !this.fitted) this.fit({ animate: false });
@@ -170,12 +191,24 @@ export class FloorPlanEngine extends EventTarget {
   setOptions(options: EngineOptions): void {
     this.opts = { ...this.opts, ...options };
     if (options.colors) this.colors = { ...TYPE_COLORS, ...options.colors };
-    if (this.plan && (options.label || options.ariaLabel || options.interactive || options.labelSize)) {
+    if (this.plan && (options.label || options.ariaLabel || options.interactive || options.labelSize
+      || options.interactiveItems !== undefined)) {
       this.setFloor(this.plan, { fit: false });
     } else {
+      this.showItems();
       this.restyle();
       this.apply();
     }
+  }
+
+  /** Show the furniture and equipment, or not (a chosen item is let go). */
+  setItems(on: boolean): void {
+    this.opts.items = on;
+    this.showItems();
+  }
+
+  get itemsShown(): boolean {
+    return this.opts.items !== false;
   }
 
   /** Apply styleOf again (the host's data changed: blocks, occupants…). */
@@ -197,10 +230,15 @@ export class FloorPlanEngine extends EventTarget {
       if (id === this.chosen) path.setAttribute("data-selected", "true");
       else path.removeAttribute("data-selected");
     }
-    // the chosen space's outline over its neighbours' (a copy: moving the space itself
-    // would take the keyboard focus off it)
-    const chosen = this.chosen ? this.paths.get(this.chosen) : undefined;
-    this.layers.selection.replaceChildren(...(chosen ? [svg("path", { d: chosen.getAttribute("d") ?? "" })] : []));
+    for (const [id, { shape }] of this.items) {
+      shape.classList.toggle("sp-selected", id === this.chosen);
+      if (id === this.chosen) shape.setAttribute("data-selected", "true");
+      else shape.removeAttribute("data-selected");
+    }
+    // the chosen space's (or item's) outline over its neighbours' (a copy: moving the
+    // space itself would take the keyboard focus off it)
+    const d = this.chosen ? this.paths.get(this.chosen)?.getAttribute("d") ?? this.items.get(this.chosen)?.outline : undefined;
+    this.layers.selection.replaceChildren(...(d ? [svg("path", { d })] : []));
   }
 
   // ---- choosing --------------------------------------------------------------
@@ -209,9 +247,9 @@ export class FloorPlanEngine extends EventTarget {
     return this.chosen;
   }
 
-  /** Choose a space (or none). `focus`: bring it into view, panning only, or zooming to it. */
+  /** Choose a space or an item (or none). `focus`: bring it into view, panning only, or zooming to it. */
   select(id: string | null, { focus = false }: { focus?: false | "pan" | "zoom" } = {}): boolean {
-    if (id !== null && !this.spaces.has(id)) return false;
+    if (id !== null && !this.spaces.has(id) && !(this.items.has(id) && this.itemsShown)) return false;
     this.chosen = id;
     this.restyle();
     if (id && focus) this.focus(id, { zoom: focus === "zoom" });
@@ -369,6 +407,77 @@ export class FloorPlanEngine extends EventTarget {
     return out;
   }
 
+  /** An item: its footprint in its colour, its front edge darker, and a mark of its
+   * kind, drawn in its own frame (x along its width, y towards its front); round
+   * ones (on the ceiling) a circle, upright on the screen whatever the plan's y. */
+  private drawItem(it: PlanItem): void {
+    const len = Math.hypot(it.front[0], it.front[1]) || 1;
+    const f: XY = [it.front[0] / len, it.front[1] / len], u: XY = [-f[1], f[0]];
+    const w = it.width, d = it.depth, kind = itemKind(it);
+    const circle = kind === "ap" || kind === "round";
+    const classes = ["sp-item", `sp-item-${kind}`, it.mount === "ceiling" && "sp-item-overhead",
+      this.opts.interactiveItems === false && "sp-item-passive"];
+    const g = svg("g", { class: classes.filter(Boolean).join(" "), "data-sp-item": it.id });
+    const mark = (tag: "path" | "rect" | "line" | "circle", attrs: Record<string, string | number>, cls = "sp-item-mark") =>
+      g.append(svg(tag, { class: cls, ...attrs }));
+    let ring: XY[];
+    if (circle) {
+      const r = Math.max(Math.min(w, d) / 2, 0.3); // big enough to see
+      g.setAttribute("transform", `translate(${round(it.at[0])},${round(it.at[1])}) scale(1,${this.ySign})`);
+      mark("circle", { r: round(r), style: `fill:${it.color ?? ""}` }, "sp-item-body");
+      if (kind === "ap") { // a dot and two arcs over it: wifi
+        const at = 0.35 * r;
+        mark("circle", { cy: round(at), r: round(0.09 * r) }, "sp-item-dot");
+        for (const q of [0.3 * r, 0.58 * r]) {
+          const s = q * Math.SQRT1_2;
+          mark("path", { d: `M${round(-s)},${round(at - s)}A${round(q)},${round(q)} 0 0 1 ${round(s)},${round(at - s)}` });
+        }
+      }
+      ring = Array.from({ length: 24 }, (_, i): XY => [it.at[0] + r * Math.cos((i * Math.PI) / 12), it.at[1] + r * Math.sin((i * Math.PI) / 12)]);
+    } else {
+      g.setAttribute("transform", `matrix(${fine(u[0])} ${fine(u[1])} ${fine(f[0])} ${fine(f[1])} ${round(it.at[0])} ${round(it.at[1])})`);
+      mark("rect", { x: round(-w / 2), y: round(-d / 2), width: round(w), height: round(d), style: `fill:${it.color ?? ""}` },
+        "sp-item-body");
+      if (kind === "desk") { // its chair, before it
+        mark("rect", { x: -0.22, y: round(d / 2 + 0.1), width: 0.44, height: 0.42, rx: 0.1 }, "sp-item-chair");
+      } else if (kind === "sofa") { // its seat, between the arms and before the back
+        const arm = Math.min(0.2, w / 6), back = Math.min(0.22, d / 3);
+        mark("rect", { x: round(-w / 2 + arm), y: round(-d / 2 + back), width: round(w - 2 * arm), height: round(d - back) });
+      } else if (kind === "tv") { // what it faces
+        mark("path", { d: `M${round(-w * 0.3)},${round(d / 2)}L0,${round(d / 2 + Math.min(0.5, w * 0.3))}L${round(w * 0.3)},${round(d / 2)}` },
+          "sp-item-mark sp-item-view");
+      } else if (kind === "copier") { // its lid
+        const m = Math.min(0.08, w / 8, d / 8);
+        mark("rect", { x: round(-w / 2 + m), y: round(-d / 2 + m), width: round(w - 2 * m), height: round((d - 2 * m) * 0.6) });
+      }
+      mark("line", { x1: round(-w / 2), y1: round(d / 2), x2: round(w / 2), y2: round(d / 2) }, "sp-item-front");
+      ring = ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([a, b]): XY => [
+        it.at[0] + (a * w * u[0] + b * d * f[0]) / 2, it.at[1] + (a * w * u[1] + b * d * f[1]) / 2]);
+    }
+    const said = [it.name, it.type].find((x) => x) ?? it.id;
+    if (this.opts.interactiveItems !== false) {
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", said);
+    }
+    const title = svg("title");
+    title.textContent = said;
+    g.prepend(title);
+    this.layers.items.append(g);
+    this.items.set(it.id, { item: it, shape: g, outline: pathOf([[[...ring, ring[0]!]]]) });
+    this.markers.set(it.id, it.at);
+    this.boxes.set(it.id, boundsOf([[ring]]));
+  }
+
+  /** The items' layer shown or not; a chosen item hidden is let go. */
+  private showItems(): void {
+    this.layers.items.style.display = this.itemsShown ? "" : "none";
+    if (!this.itemsShown && this.chosen && this.items.has(this.chosen)) {
+      this.chosen = null;
+      this.restyle();
+    }
+  }
+
   private drawPin(): void {
     this.pinLayer.replaceChildren();
     const id = this.pinned;
@@ -472,12 +581,18 @@ export class FloorPlanEngine extends EventTarget {
   }
 
   private chooseFrom(target: EventTarget | null): void {
-    const el = target instanceof Element ? target.closest("[data-sp-id]") : null;
+    const el = target instanceof Element ? target.closest("[data-sp-id], [data-sp-item]") : null;
+    const item = this.items.get(el?.getAttribute("data-sp-item") ?? "")?.item ?? null;
+    if (item) {
+      this.select(item.id);
+      this.dispatchEvent(new CustomEvent<SelectDetail>("select", { detail: { id: item.id, space: null, item } }));
+      return;
+    }
     const id = el?.getAttribute("data-sp-id") ?? null;
     const space = id ? this.spaces.get(id) ?? null : null;
     if (space && !this.interactive(space)) return;
     this.select(space ? space.id : null);
-    this.dispatchEvent(new CustomEvent<SelectDetail>("select", { detail: { id: space?.id ?? null, space } }));
+    this.dispatchEvent(new CustomEvent<SelectDetail>("select", { detail: { id: space?.id ?? null, space, item: null } }));
   }
 
   private bind(): void {
@@ -537,7 +652,7 @@ export class FloorPlanEngine extends EventTarget {
       this.zoomBy(Math.exp(-e.deltaY * speed), this.local(e));
     }, { passive: false });
     s.addEventListener("keydown", (e) => {
-      const onSpace = e.target instanceof Element && e.target.hasAttribute("data-sp-id");
+      const onSpace = e.target instanceof Element && (e.target.hasAttribute("data-sp-id") || e.target.hasAttribute("data-sp-item"));
       if (onSpace && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         this.chooseFrom(e.target);

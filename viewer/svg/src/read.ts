@@ -32,8 +32,10 @@ export async function readPackage(source: ArrayBuffer | Uint8Array | Blob): Prom
     const name = manifest.files[role];
     return name ? ((await json(name)) as { features: never[] }).features : [];
   };
-  const [floors, spaces, zones, openings] = await Promise.all(["floors", "spaces", "zones", "openings"].map(features));
-  return { manifest, floors: floors!, spaces: spaces!, zones: zones!, openings: openings! };
+  const [floors, spaces, zones, openings, items] = await Promise.all(["floors", "spaces", "zones", "openings", "items"].map(features));
+  // the types of the items (format 0.6): their colours
+  const catalogue = manifest.files["catalogue"] ? ((await json(manifest.files["catalogue"])) as PackageLike["catalogue"]) : null;
+  return { manifest, floors: floors!, spaces: spaces!, zones: zones!, openings: openings!, items: items!, catalogue };
 }
 
 interface Entry {

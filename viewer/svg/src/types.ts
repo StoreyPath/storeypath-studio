@@ -48,9 +48,36 @@ export interface PlanDrawing {
   containers?: { id: string; polygons: Polygon[] }[];
 }
 
+/** A piece of furniture or equipment: a desk, a photocopier, an access point… Drawn
+ * over the spaces, below the labels, as its footprint with a mark of its kind. */
+export interface PlanItem {
+  /** The item's ID (a StoreyPath item ID, or the system's own). */
+  id: string;
+  /** Its type's code (DESK-MANAGER, COPIER, ACCESS-POINT, …): its first part says how
+   * it is drawn (DESK, SOFA, TV, COPIER, ACCESS); others by how they are mounted. */
+  type?: string;
+  /** furniture, equipment or appliance. */
+  category?: string;
+  name?: string | null;
+  /** floor, wall or ceiling (drawn dashed, as overhead). */
+  mount?: "floor" | "wall" | "ceiling";
+  /** Its middle. */
+  at: XY;
+  /** The way its front faces (where a desk's user sits), as a direction in the plan's
+   * coordinates: [0, -1] is towards -y. */
+  front: XY;
+  /** Metres along its front, and front to back. */
+  width: number;
+  depth: number;
+  /** Its colour (its type's), a CSS colour. */
+  color?: string;
+}
+
 export interface FloorPlan {
   id?: string;
   spaces: PlanSpace[];
+  /** Furniture and equipment on the floor. */
+  items?: PlanItem[];
   drawing?: PlanDrawing;
   /** True when y grows downwards (as on a page); false (the default) for y up. */
   yDown?: boolean;

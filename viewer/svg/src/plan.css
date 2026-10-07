@@ -20,6 +20,11 @@
   --sp-dim-opacity: 0.28;
   --sp-pin: #d62d50;
   --sp-pin-dot: #ffffff;
+  --sp-item-opacity: 0.85;
+  --sp-item-stroke: rgba(0, 0, 0, 0.55);
+  --sp-item-front: #1d1d1f;
+  --sp-item-mark: rgba(0, 0, 0, 0.55);
+  --sp-item-chair: #5b5f69;
   display: block;
   width: 100%;
   height: 100%;
@@ -63,6 +68,22 @@
 .sp-window { stroke: var(--sp-window); stroke-width: 3; }
 .sp-way { stroke: var(--sp-way); stroke-width: 2.5; stroke-dasharray: 4 4; }
 
+/* furniture and equipment, as Studio draws them: the footprint in its type's colour,
+   its front darker; overhead (on the ceiling) dashed and pale */
+.sp-item { cursor: pointer; }
+.sp-item:focus { outline: none; }
+.sp-item.sp-item-passive { pointer-events: none; }
+.sp-item * { vector-effect: non-scaling-stroke; }
+.sp-item-body { fill-opacity: var(--sp-item-opacity); stroke: var(--sp-item-stroke); stroke-width: 1; }
+.sp-item-overhead .sp-item-body { fill-opacity: 0.3; stroke-dasharray: 3 3; }
+.sp-item-front { stroke: var(--sp-item-front); stroke-width: 2.5; }
+.sp-item-mark { fill: none; stroke: var(--sp-item-mark); stroke-width: 1; }
+.sp-item-view { stroke-dasharray: 3 3; }
+.sp-item-chair { fill: var(--sp-item-chair); stroke: var(--sp-item-stroke); stroke-width: 1; }
+.sp-item-dot { fill: var(--sp-item-front); stroke: none; }
+.sp-item-ap .sp-item-mark { stroke: var(--sp-item-front); stroke-width: 1.5; stroke-linecap: round; }
+.sp-item.sp-selected .sp-item-body, .sp-item:focus-visible .sp-item-body { stroke: var(--sp-select); stroke-width: 3; stroke-dasharray: none; }
+
 .sp-labels { pointer-events: none; }
 .sp-labels text {
   fill: var(--sp-label);
@@ -90,6 +111,10 @@
     --sp-parapet: #6e6e76;
     --sp-label: #f1f1f3;
     --sp-label-halo: rgba(20, 20, 24, 0.85);
+    --sp-item-stroke: rgba(255, 255, 255, 0.45);
+    --sp-item-front: #f1f1f3;
+    --sp-item-mark: rgba(255, 255, 255, 0.6);
+    --sp-item-chair: #8b909b;
   }
 }
 

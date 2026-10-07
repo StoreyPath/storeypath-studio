@@ -95,6 +95,30 @@ test("a package with its floors pre-built in 3D (0.5, world/) reads as one witho
   equal(floorFromPackage(read, FLOOR), floorFromPackage(pkg, FLOOR), "the same floor");
 });
 
+test("a floor's items: where each stands, the way it faces in the drawing, its type's colour", () => {
+  const plan = floorFromPackage(pkg, "EWBSSN-DEMO-HQ-F00");
+  equal(plan.items.length, pkg.items.filter((i) => i.properties.floor_id === "EWBSSN-DEMO-HQ-F00").length, "items");
+  equal([...new Set(plan.items.map((i) => i.type))].sort(),
+    ["ACCESS-POINT", "COPIER", "DESK-DIRECTOR", "DESK-JUNIOR", "DESK-MANAGER", "DESK-SENIOR", "SOFA", "TV"], "types");
+  const of = (type) => plan.items.find((i) => i.type === type);
+  // placed in Studio facing the drawing's -y (the director's) and +x (against a west
+  // wall): the building is turned 20° on the map, the drawing is not
+  near(of("DESK-DIRECTOR").front, [0, -1], 1e-6, "the director's desk faces -y");
+  near(of("DESK-SENIOR").front, [1, 0], 1e-6, "the senior's faces +x");
+  equal([of("DESK-DIRECTOR").color, of("ACCESS-POINT").color, of("ACCESS-POINT").mount], ["#8a6238", "#1f9d8b", "ceiling"], "colours");
+  equal([of("COPIER").width, of("COPIER").depth], [1.2, 0.7], "its size");
+  for (const it of plan.items) {
+    const f = pkg.items.find((i) => i.id === it.id).properties;
+    const room = plan.spaces.find((s) => s.id === (f.zone_id ?? f.space_id));
+    truly(room && inside(room.polygons, it.at), `${it.id} stands in ${f.space_id}`);
+  }
+  const annex = floorFromPackage(pkg, "EWBSSN-DEMO-ANNEX-F00").items; // turned 110°
+  equal(annex.map((i) => i.type), ["DESK-PRESIDENT"], "the Annex's");
+  near(annex[0].front, [0, -1], 1e-6, "faces the drawing's -y there too");
+  const older = readPackage(join(conformance, "packages/unplaced.storeypath"));
+  equal(floorFromPackage(older, older.floors[0].id).items, [], "an older package has none");
+});
+
 test("an unplaced building reads in its own metres too", () => {
   const unplaced = readPackage(join(conformance, "packages/unplaced.storeypath"));
   const floor = unplaced.floors[0];
@@ -120,6 +144,67 @@ inChrome("draws the floor: units, zones, containers, walls, doors and windows", 
     buttons: document.querySelectorAll('.sp-units [role="button"][tabindex="0"]').length,
   }));
   equal(got, { units: 25, zones: 2, containers: 1, walls: 1, swings: 24, windows: 14, buttons: 25 }, "drawn");
+});
+
+inChrome("draws the items over the spaces and under the labels, each with a mark of its kind", async (page) => {
+  await page.run(() => window.fresh({}, window.sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F00")));
+  const got = await page.run(() => {
+    const layers = [...document.querySelectorAll(".sp-world > g")].map((g) => g.getAttribute("class"));
+    const count = (s) => document.querySelectorAll(s).length;
+    const ap = document.querySelector(".sp-item-ap");
+    return { layers, items: count(".sp-items [data-sp-item]"), desks: count(".sp-item-desk"), chairs: count(".sp-item-desk .sp-item-chair"),
+      sofa: count(".sp-item-sofa .sp-item-mark"), tv: count(".sp-item-tv .sp-item-view"), copier: count(".sp-item-copier .sp-item-mark"),
+      ap: [ap.classList.contains("sp-item-overhead"), ap.querySelectorAll("path").length, /scale\(1,-1\)/.test(ap.getAttribute("transform"))],
+      fronts: count(".sp-item-front"), buttons: count('.sp-items [role="button"][tabindex="0"]'),
+      fill: getComputedStyle(document.querySelector(".sp-item-copier .sp-item-body")).fill,
+      labelsLast: document.querySelector(".sp-labels").previousElementSibling === document.querySelector(".sp-world") };
+  });
+  equal(got.layers.indexOf("sp-items"), got.layers.indexOf("sp-containers") + 1, "over the spaces");
+  truly(got.layers.indexOf("sp-items") < got.layers.indexOf("sp-walls") && got.labelsLast, `under the walls and labels: ${got.layers}`);
+  equal([got.items, got.desks, got.chairs, got.sofa, got.tv, got.copier, got.fronts, got.buttons], [8, 4, 4, 1, 1, 1, 7, 8], "drawn");
+  equal(got.ap, [true, 2, true], "the access point: overhead, a wifi mark, upright on the screen");
+  equal(got.fill, "rgb(59, 110, 165)", "the copier in its type's colour");
+});
+
+inChrome("a click on an item chooses it: a select event with the item", async (page) => {
+  await page.run(() => window.fresh({}, window.sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01")));
+  const desk = await page.run(() => {
+    const it = window.sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01").items.find((i) => i.type === "DESK-SECTION-HEAD");
+    return { id: it.id, at: window.onPage(it.at) };
+  });
+  await page.click(...desk.at);
+  const got = await page.run(() => ({ chosen: window.chosen, selected: window.engine.selected, item: window.picked.item?.type,
+    space: window.picked.space, marked: document.querySelector(".sp-item.sp-selected")?.dataset.spItem,
+    outline: document.querySelectorAll(".sp-selection path").length }));
+  equal(got, { chosen: [desk.id], selected: desk.id, item: "DESK-SECTION-HEAD", space: null, marked: desk.id, outline: 1 }, "chosen");
+  // and from the keyboard
+  await page.run(() => window.engine.select(null));
+  await page.run((id) => document.querySelector(`[data-sp-item="${id}"]`).focus(), desk.id);
+  await page.key("Enter", "Enter", 13);
+  equal(await page.run(() => window.engine.selected), desk.id, "Enter on an item chooses it");
+});
+
+inChrome("items can be hidden, or left out of clicks: then a click chooses the office under them", async (page) => {
+  const office = "EWBSSN-DEMO-HQ-F01-0069"; // office 112, the head of section's desk in it
+  const at = async () => page.run(() => {
+    const it = window.sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01").items.find((i) => i.type === "DESK-SECTION-HEAD");
+    return window.onPage(it.at);
+  });
+  await page.run(() => window.fresh({ items: false }));
+  equal(await page.run(() => [getComputedStyle(document.querySelector(".sp-items")).display, window.engine.itemsShown]),
+    ["none", false], "hidden by the option");
+  await page.click(...(await at()));
+  equal(await page.run(() => window.chosen), [office], "the office");
+  await page.run(() => window.engine.setItems(true));
+  equal(await page.run(() => getComputedStyle(document.querySelector(".sp-items")).display), "inline", "shown again");
+  const id =await page.run(() => document.querySelector(".sp-item-desk").dataset.spItem);
+  await page.run((id) => window.engine.select(id), id);
+  await page.run(() => window.engine.setItems(false));
+  equal(await page.run(() => window.engine.selected), null, "a chosen item hidden is let go");
+  await page.run(() => window.fresh({ interactiveItems: false }));
+  await page.click(...(await at()));
+  equal(await page.run(() => [window.chosen, document.querySelectorAll('.sp-items [tabindex]').length]), [[office], 0],
+    "not clickable: the office under it");
 });
 
 inChrome("fits the floor in its box, inside the padding", async (page) => {
