@@ -8,17 +8,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
 )
 
 // FormatName and FormatVersion: the format this module reads. Packages of the
-// same major version are read; properties and files it does not know are ignored.
+// same major version are read; properties, files and objects.csv rows of kinds it
+// does not know are ignored.
 const (
 	FormatName    = "storeypath-package"
-	FormatVersion = "0.6.0"
+	FormatVersion = "0.7.0"
 )
+
+// oneBuildingFrom: from format 0.7 a package holds exactly one building.
+const oneBuildingFrom = 7
 
 // The files of a package, by role. Items and the catalogue (format 0.6) are found
 // through the manifest's files ("items", "catalogue"), and are not in older packages.
@@ -61,9 +66,10 @@ type Manifest struct {
 	Types      map[string][]string  `json:"types"`
 	Sources    []Source             `json:"sources"`
 	Placements map[string]Placement `json:"placements"`
-	// Scope: the buildings the package holds when it is not the whole project
-	// (format 0.4); nil, all of them. What is outside it is not in the package, and
-	// its absence says nothing about it: see Holds.
+	// Scope: the building the package holds (from format 0.7, always exactly one;
+	// from 0.4, the buildings it held when not the whole project; nil before, or for
+	// a whole project). What is outside it is not in the package, and its absence
+	// says nothing about it: see Holds.
 	Scope *Scope `json:"scope,omitempty"`
 }
 
@@ -106,6 +112,16 @@ type Changes struct {
 	// AllRetired: every ID the project has ever retired, so a system that skipped
 	// an export can clean up its links.
 	AllRetired []string `json:"all_retired"`
+	// MovedAway (format 0.7): items in this building when it was last exported,
+	// carried since to another building of the project. They are not retired: that
+	// building's package holds them when it is next exported.
+	MovedAway []MovedAway `json:"moved_away"`
+}
+
+// MovedAway is an item carried to another building of the project.
+type MovedAway struct {
+	ID       string `json:"id"`
+	Building string `json:"building_id"`
 }
 
 // Object is a row of objects.csv: every ID in the package, flat.
@@ -210,6 +226,10 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 		return nil, err
 	}
 	if !ok {
+		if entries["project.json"] != nil || entries["studio/project.spproj"] != nil {
+			return nil, errors.New("not a package: a StoreyPath project file, for StoreyPath Studio to continue " +
+				"the project; export a building's package (.storeypath) from Studio instead")
+		}
 		return nil, errors.New("not a package: no manifest.json")
 	}
 	if err := json.Unmarshal(data, &p.Manifest); err != nil {
@@ -522,6 +542,22 @@ func (p *Package) UnitsOn(floorID string) []Unit {
 
 // Frame is the local frame of a building: its placement, to turn lon/lat back
 // into the drawing metres Studio works in.
+// ItemLocal is where an item stands in its building's own frame: its Local as the
+// package has it (format 0.7), or for an older package worked out from its map
+// position and heading through the building's placement (to about a centimetre).
+func (p *Package) ItemLocal(it *Item) (ItemLocal, error) {
+	if it.Local != nil {
+		return *it.Local, nil
+	}
+	f, err := p.Frame(it.Building)
+	if err != nil {
+		return ItemLocal{}, err
+	}
+	x, y := f.ToLocal(it.Label)
+	rotation := math.Mod(180-(it.Heading-f.Placement.Bearing)+720, 360)
+	return ItemLocal{X: x, Y: y, Rotation: rotation}, nil
+}
+
 func (p *Package) Frame(buildingID string) (LocalFrame, error) {
 	pl, ok := p.Manifest.Placements[buildingID]
 	if !ok {

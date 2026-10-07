@@ -2,7 +2,9 @@ package storeypath
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,8 +36,8 @@ const (
 	ProblemObjects      = "OBJECTS"       // objects.csv does not list exactly the features
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
 	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
-	ProblemScope        = "SCOPE"         // a package of part of a project holds a building its scope does not list, or lacks one it does
-	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor
+	ProblemScope        = "SCOPE"         // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
+	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position away from it
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
 )
 
@@ -43,6 +45,15 @@ var kindLevel = map[string]string{
 	"location": LevelLocation, "building": LevelBuilding, "floor": LevelFloor,
 	"space": LevelObject, "zone": LevelObject, "opening": LevelObject,
 }
+
+// knownKinds: the kinds of objects.csv rows this reader knows. Rows of others (a
+// later format's), and their IDs in changes.json, are left alone.
+var knownKinds = map[string]bool{"project": true, "location": true, "building": true, "floor": true,
+	"space": true, "zone": true, "opening": true, "item": true}
+
+// localAgreesM: how far an item's map position may be from its position in its
+// building (the package keeps 7 decimals of a degree, about a centimetre).
+const localAgreesM = 0.05
 
 var collectionFiles = map[string]string{
 	"location": FileLocation, "building": FileBuildings, "floor": FileFloors,
@@ -52,8 +63,9 @@ var collectionFiles = map[string]string{
 // Validate checks the package as Studio's validator does: its files, the
 // manifest's counts, every ID and every reference between features, objects.csv
 // and changes.json, and the items (format 0.6): their IDs, the floor, space and zone
-// each stands in, its type in the catalogue. No problems means the package can be
-// linked to as it is.
+// each stands in, its type in the catalogue, and (0.7) their position in their
+// building, which their map position must agree with. From 0.7 a package holds one
+// building. No problems means the package can be linked to as it is.
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
 	add := func(code, file, id, format string, args ...any) {
@@ -68,6 +80,7 @@ func (p *Package) Validate() []Problem {
 			m.FormatVersion, major(FormatVersion))
 	}
 	project := m.Project.ID
+	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
 
 	counts := map[string]int{"location": len(p.Locations), "buildings": len(p.Buildings), "floors": len(p.Floors),
 		"spaces": len(p.Spaces), "zones": len(p.Zones), "openings": len(p.Openings)}
@@ -133,6 +146,15 @@ func (p *Package) Validate() []Problem {
 	for _, b := range p.Buildings {
 		parent(b.ID, b.Location, "location", FileBuildings)
 	}
+	if oneBuilding { // from 0.7, a package holds one building and names it
+		if m.Scope == nil || len(m.Scope.Buildings) != 1 {
+			add(ProblemScope, FileManifest, "", "a package of format %s holds one building: its manifest's scope names it", m.FormatVersion)
+		}
+		if len(p.Buildings) != 1 {
+			add(ProblemScope, FileBuildings, "", "%s: a package of format %s holds one building, this one %d",
+				FileBuildings, m.FormatVersion, len(p.Buildings))
+		}
+	}
 	if m.Scope != nil {
 		listed := map[string]bool{}
 		for _, id := range m.Scope.Buildings {
@@ -197,13 +219,25 @@ func (p *Package) Validate() []Problem {
 		if p.Catalogue != nil && p.Catalogue.Type(it.Type) == nil {
 			add(ProblemItemType, FileItems, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
 		}
+		if it.Local == nil && oneBuilding {
+			add(ProblemItem, FileItems, it.ID, "%s: no position in its building (local)", it.ID)
+		} else if f, err := p.Frame(it.Building); it.Local != nil && err == nil {
+			at := f.ToLonLat(it.Local.X, it.Local.Y)
+			off := math.Hypot((at[0]-it.Label[0])*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
+			if off > localAgreesM {
+				add(ProblemItem, FileItems, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
+			}
+		}
 		geometryOf(it.ID, it.Geometry, FileItems, false, add)
 	}
 
+	unknown := map[string]bool{} // rows of a later format's kinds
 	if p.files[FileObjects] {
 		listed := map[string]bool{}
 		for _, row := range p.Objects {
-			if row.Kind != "project" {
+			if !knownKinds[row.Kind] {
+				unknown[row.ID] = true
+			} else if row.Kind != "project" {
 				listed[row.ID] = true
 			}
 		}
@@ -225,13 +259,21 @@ func (p *Package) Validate() []Problem {
 
 	if c := p.Changes; c != nil {
 		for _, id := range append(append([]string(nil), c.Added...), c.Changed...) {
-			if _, ok := p.kinds[id]; !ok {
+			if _, ok := p.kinds[id]; !ok && !unknown[id] {
 				add(ProblemChanges, FileChanges, id, "%s: %s is listed as added/changed but not in the package", FileChanges, id)
 			}
 		}
 		for _, id := range c.AllRetired {
 			if _, ok := p.kinds[id]; ok {
 				add(ProblemChanges, FileChanges, id, "%s: retired ID %s is still in the package", FileChanges, id)
+			}
+		}
+		for _, mv := range c.MovedAway {
+			if _, here := p.kinds[mv.ID]; here || !IsItemID(mv.ID) {
+				add(ProblemChanges, FileChanges, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", FileChanges, mv.ID)
+			}
+			if _, here := p.kinds[mv.Building]; here || !strings.HasPrefix(mv.Building, project+"-") {
+				add(ProblemChanges, FileChanges, mv.ID, "%s: %s moved to %s, not another building of the project", FileChanges, mv.ID, mv.Building)
 			}
 		}
 		if c.Sequence != m.Export.Sequence {
@@ -257,6 +299,16 @@ func geometryOf(id string, g *Geometry, file string, point bool, add func(code, 
 }
 
 func major(version string) string { return strings.SplitN(version, ".", 2)[0] }
+
+// minor is a format version's minor number ("0.7.0" → 7; 0 when it has none).
+func minor(version string) int {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 2 {
+		return 0
+	}
+	n, _ := strconv.Atoi(parts[1])
+	return n
+}
 
 func levelDepth(level string) int {
 	for i, l := range levels {

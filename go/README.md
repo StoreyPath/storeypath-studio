@@ -41,17 +41,26 @@ for _, b := range pkg.Buildings {
 - Items (format 0.6): `Items`, `Item`, `ItemsOn`, the `Catalogue` of their types
   and `ItemType`. An item's ID is the project's and its own number
   (`K7Q2XM-I000142`, `IsItemID`), not its place: where it stands is its `Floor`,
-  `Space` and `Zone`. Its `Values` are the details entered in StoreyPath; the
-  fields the managing system owns (`OwnerSystem`) are never in a package. Older
-  packages have no items and no catalogue.
+  `Space` and `Zone`, and (0.7) its `Local` position in its building, which moving
+  the building on the map never changes: keep that, not the map position, for the
+  history of where an item has been (`ItemLocal` gives it for older packages too,
+  worked out from the map). An item carried to another building is in the
+  package's `Changes.MovedAway`, not retired. Its `Values` are the details entered
+  in StoreyPath; the fields the managing system owns (`OwnerSystem`) are never in a
+  package. Older packages have no items and no catalogue.
+- One building per package (format 0.7): `Manifest.Scope` names it; `Holds` says
+  whether a package holds a building. Older packages may hold several, or a whole
+  project; a StoreyPath project file (`.storeypath-project`) is refused by `Read`.
 - `LocalFrame`: a building's longitude and latitude back to the local metres
   Studio drew it in, and back (azimuthal equidistant on WGS84, Vincenty), within a
   millimetre of Studio; positions read from a package are within about a
   centimetre (it keeps 7 decimals of a degree).
 - `ParseID`: an ID's project, parent, code and the prefix at any level.
 
-Properties a later format version adds are ignored, as the format asks; a package
-of another major version is reported by `Validate` (`VERSION`). So are files it
+Properties a later format version adds are ignored, as the format asks, and so are
+`objects.csv` rows of kinds this module does not know (with their IDs in
+`changes.json`); a package of another major version is reported by `Validate`
+(`VERSION`). So are files it
 does not read: a package's floors pre-built in 3D (format 0.5, `world/`) are for
 viewers.
 

@@ -290,7 +290,13 @@ func area(polys [][][][2]float64) (total, perimeter float64) {
 // (or raw bytes for others) and returns what to write, or nil to leave it out.
 func rewrite(t *testing.T, edit func(name string, data []byte) []byte) *Package {
 	t.Helper()
-	src, err := zip.OpenReader(filepath.Join(corpus, "packages", "campus.storeypath"))
+	return rewriteFrom(t, "campus.storeypath", edit)
+}
+
+// rewriteFrom is a corpus package with its files edited (nil: left out), read.
+func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) []byte) *Package {
+	t.Helper()
+	src, err := zip.OpenReader(filepath.Join(corpus, "packages", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +548,7 @@ func TestAPackageWithItsFloorsPreBuiltReadsAsWithout(t *testing.T) {
 	if problems := p.Validate(); len(problems) != 0 {
 		t.Fatalf("problems: %v", problems)
 	}
-	if p.Manifest.FormatVersion != FormatVersion || p.Manifest.Files["world"] != "world/" {
+	if minor(p.Manifest.FormatVersion) < 5 || p.Manifest.Files["world"] != "world/" {
 		t.Fatalf("format %s, files %v", p.Manifest.FormatVersion, p.Manifest.Files)
 	}
 	if len(p.Floors) != len(plain.Floors) || len(p.Spaces) != len(plain.Spaces) || len(p.Openings) != len(plain.Openings) ||
@@ -554,5 +560,132 @@ func TestAPackageWithItsFloorsPreBuiltReadsAsWithout(t *testing.T) {
 		if !p.files["world/"+f.ID+".glb"] {
 			t.Errorf("%s: not pre-built", f.ID)
 		}
+	}
+}
+
+func TestAPackageHoldsOneBuilding(t *testing.T) {
+	// From 0.7 a package holds exactly one building, and names it (scope); a
+	// package of 0.6 held the whole campus.
+	for _, name := range []string{"campus-hq.storeypath", "campus-annex.storeypath", "campus-hq-2.storeypath", "campus-annex-2.storeypath"} {
+		p := open(t, name)
+		if p.Manifest.FormatVersion != FormatVersion || p.Manifest.Scope == nil || len(p.Manifest.Scope.Buildings) != 1 ||
+			len(p.Buildings) != 1 || p.Buildings[0].ID != p.Manifest.Scope.Buildings[0] {
+			t.Errorf("%s: format %s, scope %v, %d buildings", name, p.Manifest.FormatVersion, p.Manifest.Scope, len(p.Buildings))
+		}
+	}
+	two := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		scope := doc["scope"].(map[string]any)
+		scope["buildings"] = append(scope["buildings"].([]any), "X")
+	}))
+	none := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { delete(doc, "scope") }))
+	for _, p := range []*Package{two, none} {
+		if !slices.Contains(codes(p.Validate()), ProblemScope) {
+			t.Errorf("scope %v: not a problem", p.Manifest.Scope)
+		}
+	}
+	if problems := open(t, "campus.storeypath").Validate(); len(problems) != 0 {
+		t.Errorf("0.6, the whole campus: %v", problems)
+	}
+}
+
+func TestItemsArePlacedInTheirBuilding(t *testing.T) {
+	// campus-hq-2 is the Headquarters after it was moved on the map: every item is
+	// where it was in the building (Local), wherever it is on the map now.
+	before, after := open(t, "campus-hq.storeypath"), open(t, "campus-hq-2.storeypath")
+	moved := 0
+	for _, it := range after.Items {
+		was := before.Item(it.ID)
+		if was == nil || it.Local == nil || was.Local == nil {
+			t.Fatalf("%s: in both, with Local", it.ID)
+		}
+		if *it.Local != *was.Local {
+			t.Errorf("%s: Local %v, was %v", it.ID, *it.Local, *was.Local)
+		}
+		if it.Label != was.Label {
+			moved++
+		}
+		local, err := after.ItemLocal(it)
+		if err != nil || local != *it.Local {
+			t.Errorf("%s: ItemLocal %v %v", it.ID, local, err)
+		}
+		// without Local (an older package), worked out from the map to a centimetre
+		it2 := *it
+		it2.Local = nil
+		if w, err := after.ItemLocal(&it2); err != nil || math.Hypot(w.X-it.Local.X, w.Y-it.Local.Y) > 0.02 ||
+			math.Abs(math.Mod(w.Rotation-it.Local.Rotation+540, 360)-180) > 0.05 {
+			t.Errorf("%s: worked out %v, Local %v (%v)", it.ID, w, *it.Local, err)
+		}
+	}
+	if moved != len(after.Items) || moved == 0 {
+		t.Errorf("%d of %d items elsewhere on the map", moved, len(after.Items))
+	}
+	off := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileItems, func(doc map[string]any) {
+		props(features(doc)[0])["local"].(map[string]any)["x_m"] = props(features(doc)[0])["local"].(map[string]any)["x_m"].(float64) + 1
+	}))
+	without := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileItems, func(doc map[string]any) {
+		delete(props(features(doc)[0]), "local")
+	}))
+	for _, p := range []*Package{off, without} {
+		if got := codes(p.Validate()); !slices.Equal(got, []string{ProblemItem}) {
+			t.Errorf("problems %v, want ITEM", got)
+		}
+	}
+}
+
+func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
+	// campus-hq-2: a desk carried to the Annex (moved away), the TV taken away
+	// (retired); campus-annex-2 holds the desk, changed.
+	hq, annex := open(t, "campus-hq-2.storeypath"), open(t, "campus-annex-2.storeypath")
+	c := hq.Changes
+	if len(c.MovedAway) != 1 || c.MovedAway[0].Building != annex.Buildings[0].ID || hq.Item(c.MovedAway[0].ID) != nil {
+		t.Fatalf("moved away %v", c.MovedAway)
+	}
+	if len(c.Retired) != 1 || !IsItemID(c.Retired[0]) || slices.Contains(c.Retired, c.MovedAway[0].ID) {
+		t.Errorf("retired %v", c.Retired)
+	}
+	if !slices.Equal(c.Changed, []string{hq.Buildings[0].ID}) {
+		t.Errorf("changed %v: only the building moved", c.Changed)
+	}
+	desk := c.MovedAway[0].ID
+	if annex.Item(desk) == nil || !slices.Contains(annex.Changes.Changed, desk) || slices.Contains(annex.Changes.Added, desk) {
+		t.Errorf("the Annex: %v changed, %v added", annex.Changes.Changed, annex.Changes.Added)
+	}
+	gone := rewriteFrom(t, "campus-hq-2.storeypath", editJSON(FileChanges, func(doc map[string]any) {
+		doc["moved_away"].([]any)[0].(map[string]any)["building_id"] = hq.Buildings[0].ID
+	}))
+	if !slices.Contains(codes(gone.Validate()), ProblemChanges) {
+		t.Error("moved away to its own building: not a problem")
+	}
+}
+
+func TestRowsOfKindsThisReaderDoesNotKnowAreLeftAlone(t *testing.T) {
+	// A later format may add kinds, as 0.6 added items: their rows in objects.csv,
+	// and their IDs in changes.json, are no problem.
+	p := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileObjects:
+			return append(d, []byte("X-P000001,plant,PALM,,,,,,,,,,,,,,\n")...)
+		case FileChanges:
+			var doc map[string]any
+			json.Unmarshal(d, &doc)
+			doc["added"] = append(doc["added"].([]any), "X-P000001")
+			d, _ = json.Marshal(doc)
+		}
+		return d
+	})
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Errorf("problems: %v", problems)
+	}
+}
+
+func TestAProjectFileIsNotAPackage(t *testing.T) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, _ := w.Create("project.json")
+	f.Write([]byte(`{"format": "storeypath-project"}`))
+	w.Close()
+	_, err := Read(bytes.NewReader(buf.Bytes()), int64(buf.Len()), DefaultLimits)
+	if err == nil || !strings.Contains(err.Error(), "project file") {
+		t.Errorf("error %v", err)
 	}
 }

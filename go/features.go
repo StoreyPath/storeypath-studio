@@ -147,9 +147,16 @@ type Item struct {
 	// the package was exported: nil when it is in none.
 	Space *string `json:"space_id"`
 	Zone  *string `json:"zone_id"`
-	Label LonLat  `json:"display_point"`
-	// Heading is the way its front faces (where a desk's user sits), in degrees
-	// clockwise from north.
+	// Local (format 0.7) is where it stands in its building: what it is placed by.
+	// Moving the building on the map never changes it, so a system keeping the
+	// history of where items have been keeps this (and the floor), not the map
+	// position. Nil in older packages: Package.ItemLocal works it out from Label
+	// and Heading.
+	Local *ItemLocal `json:"local"`
+	// Label is its middle on the map, and Heading the way its front faces (where a
+	// desk's user sits) in degrees clockwise from north: both follow from Local and
+	// the building's placement.
+	Label   LonLat  `json:"display_point"`
 	Heading float64 `json:"heading"`
 	// Width along its front, Depth front to back, Height (m).
 	Width  float64 `json:"width_m"`
@@ -163,6 +170,16 @@ type Item struct {
 	// strings, or numbers as float64. The fields the system that manages the asset
 	// owns are never in a package: that system keeps them, by the item's ID.
 	Values map[string]any `json:"values"`
+}
+
+// ItemLocal is where an item stands in its building's own frame: its middle (X,
+// Y: metres from the origin of the building's drawings, shared by all its floors)
+// and the way its front faces (Rotation: degrees counter-clockwise, 0 the
+// drawings' -Y, 90 their +X).
+type ItemLocal struct {
+	X        float64 `json:"x_m"`
+	Y        float64 `json:"y_m"`
+	Rotation float64 `json:"rotation_deg"`
 }
 
 // Catalogue is catalogue.json (format 0.6): the types of items, the organization's,
