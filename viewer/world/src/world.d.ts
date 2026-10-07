@@ -25,7 +25,9 @@ export interface Feature<P = Record<string, unknown>> {
 }
 
 /** A piece of furniture or equipment (items.geojson, format 0.6). Its ID is the
- * project's and its own number (PROJECT-I000142), not its place. */
+ * project's and its own number (PROJECT-I000142), not its place. Where it stands is
+ * `local` (format 0.7), in its building's own frame; its point and heading on the
+ * map follow from that and the building's placement. */
 export interface ItemProperties {
 	kind: 'item';
 	/** A code of the catalogue (DESK-MANAGER, COPIER, …). */
@@ -38,6 +40,10 @@ export interface ItemProperties {
 	/** Where its middle stands: null when in none. */
 	space_id: string | null;
 	zone_id: string | null;
+	/** Where it stands in its building (format 0.7; absent before): its middle in metres
+	 * of the building's drawings, and the way its front faces, degrees counter-clockwise
+	 * from their -y. What it is placed by: moving the building on the map leaves it as it is. */
+	local?: { x_m: number; y_m: number; rotation_deg: number } | null;
 	display_point: LonLat;
 	/** The way its front faces (where a desk's user sits), degrees clockwise from north. */
 	heading: number;
@@ -90,7 +96,8 @@ export interface Manifest {
 	format_version: string;
 	project: { id: string; name: string };
 	files: Record<string, string>;
-	/** Only some of the project's buildings (format 0.4); absent: all of them. */
+	/** Only some of the project's buildings (format 0.4); from 0.7 always the one building
+	 * the package holds; absent: all of them. */
 	scope?: { buildings: string[] } | null;
 	[key: string]: unknown;
 }
@@ -130,7 +137,7 @@ export declare class StoreyPathPackage {
 	readonly project: { id: string; name: string };
 	/** The feature with this ID, or null. */
 	get(id: string): Feature | null;
-	/** The buildings the package holds when it is part of a project, or null for the whole project. */
+	/** The buildings the package holds when it is part of a project (from 0.7, always one), or null for the whole project. */
 	readonly scope: string[] | null;
 	/** Whether the package holds a building: always for the whole project; for a part, when it is in the scope. */
 	holds(buildingId: string): boolean;

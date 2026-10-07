@@ -101,6 +101,9 @@ item `data-sp-item` (and `data-selected` when chosen), the pin `data-sp-pin` wit
 building's local metres: the drawing as the architect drew it, whatever its
 bearing on the map. It agrees with Studio to a millimetre on
 `spec/conformance/localframe.json`; `LocalFrame` is exported for the same use.
+Items of format 0.7 carry where they stand in those metres (`local`), and are put
+there as they are: moving the building on the map moves nothing in its plan.
+Older packages' items are placed by their point and heading on the map.
 
 ## Tests
 

@@ -14,6 +14,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { toLonLat } from "./frame.js";
 
 /** This builder's version: a floor pre-built by another (before 2, without its
  * items) is built again. */
@@ -265,14 +266,21 @@ export function planFloor(pkg, floor, origin, options = {}) {
 
   // the furniture and equipment (format 0.6): where each stands, the way its front
   // faces (x east, n north), its size, how high its bottom is and its colour; and
-  // the edges of those on the floor, which the walker bumps into
+  // the edges of those on the floor, which the walker bumps into. Where it stands in
+  // its building (format 0.7: `local`, its middle and its turn counter-clockwise
+  // from the drawing's -y) is put on the map by the building's placement, as Studio
+  // put its walls there; older packages give its point and heading on the map.
   plan.items = [];
   plan.itemObstacles = [];
+  const placement = pkg.manifest?.placements?.[props.building_id];
   for (const item of pkg.itemsOn?.(floor.id) ?? []) {
     const p = item.properties;
-    if (!p.display_point) continue;
-    const [x, n] = local(p.display_point);
-    const h = ((p.heading ?? 0) * Math.PI) / 180;
+    const own = p.local && placement ? p.local : null;
+    if (!own && !p.display_point) continue;
+    const [x, n] = local(own ? toLonLat(placement, [own.x_m, own.y_m]) : p.display_point);
+    // the drawing's +y faces the placement's bearing, so its -y the opposite way
+    const heading = own ? (placement.bearing || 0) + 180 - (own.rotation_deg || 0) : p.heading ?? 0;
+    const h = (heading * Math.PI) / 180;
     const it = { id: item.id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
       width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
       color: pkg.itemType?.(p.type)?.color ?? ITEM_COLOR };

@@ -90,8 +90,8 @@ export class StoreyPathPackage {
     return this.byId.get(id) ?? null;
   }
 
-  /** The buildings the package holds when it is part of a project (format 0.4), or
-   * null for the whole project. */
+  /** The buildings the package holds when it is part of a project (format 0.4; from
+   * 0.7, always one), or null for the whole project. */
   get scope() {
     return this.manifest.scope?.buildings ?? null;
   }
@@ -139,7 +139,8 @@ export class StoreyPathPackage {
   }
 
   /** The furniture and equipment on a floor (format 0.6; none in older packages). An
-   * item's ID says nothing of where it is: its properties do. */
+   * item's ID says nothing of where it is: its properties do (from 0.7, ``local``:
+   * where it stands in its building). */
   itemsOn(floorId) {
     return this._itemsByFloor.get(floorId) ?? [];
   }

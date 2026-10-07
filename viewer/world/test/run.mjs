@@ -1,5 +1,5 @@
-// node test/run.mjs (after npm run build): the built module and the baker in Node,
-// then in headless Chrome with WebGL drawn in software: a conformance package
+// node test/run.mjs (after npm run build): the built module, the builder (where items
+// stand) and the baker in Node, then in headless Chrome with WebGL drawn in software: a conformance package
 // opened, its floors and rooms built, a room chosen by a click and by select, its
 // items drawn when asked for (or when one floor is shown), chosen by a click and
 // bumped into by the walker, the same package pre-built (world/) shown the same,
@@ -7,14 +7,29 @@
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { launch, serve } from "../../svg/test/harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const packages = join(root, "../../spec/conformance/packages");
+
+// the builder and the package reader as the baker runs them: "three", "three/addons/…"
+// and "jszip" are the vendored copies
+const vendor = pathToFileURL(join(root, "../vendor/")).href;
+register(`data:text/javascript,${encodeURIComponent(`
+  const to = (s) => s === "three" ? "three/three.module.js" : s.startsWith("three/addons/") ? "three/" + s.slice(6)
+    : s === "jszip" ? "jszip.mjs" : null;
+  export async function resolve(specifier, context, next) {
+    const path = to(specifier);
+    return path ? { url: ${JSON.stringify(vendor)} + path, shortCircuit: true } : next(specifier, context);
+  }`)}`);
+const { loadPackage } = await import("../../src/package.js");
+const { originOf, planFloor, toLocal } = await import("../../src/world/build.js");
+const { toLonLat } = await import("../../src/world/frame.js");
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -69,10 +84,10 @@ test("the baker writes each floor as binary glTF: its pieces, rooms and obstacle
   }
 });
 
-test("the baker writes a floor's items apart, in both forms, with the IDs they index", () => {
+for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's items apart, in both forms, with the IDs they index (${name})`, () => {
   const out = mkdtempSync(join(tmpdir(), "sp-bake-"));
   try {
-    execFileSync(process.execPath, [join(root, "bake.mjs"), join(packages, "campus.storeypath"), out]);
+    execFileSync(process.execPath, [join(root, "bake.mjs"), join(packages, `${name}.storeypath`), out]);
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
     truly(x.builder === 2 && x.items.length === 9 && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
@@ -94,6 +109,92 @@ test("the baker writes a floor's items apart, in both forms, with the IDs they i
       "a floor with no items has no item pieces");
   } finally {
     rmSync(out, { recursive: true, force: true });
+  }
+});
+
+/** Metres between two points [x, n]. */
+const apart = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+test("a building's frame goes on the map as Studio's does, to a millimetre", () => {
+  const { tolerance_m: tolerance, vectors } = JSON.parse(readFileSync(join(packages, "../localframe.json"), "utf8"));
+  for (const v of vectors) {
+    const [lon, lat] = toLonLat(v.placement, v.local);
+    const metres = [(lon - v.lonlat[0]) * 111320 * Math.cos((lat * Math.PI) / 180), (lat - v.lonlat[1]) * 110574];
+    truly(Math.hypot(...metres) <= tolerance, `${v.local}: ${metres} m off`);
+  }
+});
+
+// format 0.7: a package a building, each item placed in its building (`local`);
+// campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
+const HQ = "BYMBMX-DEMO-HQ";
+/** Each item of a package's building as the world plans it, with what the package says of it. */
+const planned = async (name) => {
+  const pkg = await loadPackage(readFileSync(join(packages, `${name}.storeypath`)));
+  const origin = originOf(pkg, HQ), placement = pkg.manifest.placements[HQ];
+  const items = new Map();
+  for (const floor of pkg.floorsOf(HQ)) {
+    for (const it of planFloor(pkg, floor, origin).items) items.set(it.id, { it, p: pkg.get(it.id).properties });
+  }
+  return { pkg, origin, placement, items };
+};
+/** A point of the world's plan back in the building's drawings: the point its placement
+ * puts there (Newton's method), and a direction there turned back by its bearing. */
+const inBuilding = ({ origin, placement }, [x, n]) => {
+  const world = (p) => toLocal(origin, toLonLat(placement, p));
+  let p = [placement.x, placement.y];
+  for (let i = 0; i < 6; i++) {
+    const f = world(p), ax = world([p[0] + 1, p[1]]), ay = world([p[0], p[1] + 1]);
+    const [a, c, b, d] = [ax[0] - f[0], ax[1] - f[1], ay[0] - f[0], ay[1] - f[1]], det = a * d - b * c;
+    const ex = x - f[0], en = n - f[1];
+    p = [p[0] + (d * ex - b * en) / det, p[1] + (a * en - c * ex) / det];
+  }
+  return p;
+};
+const turnedBack = ({ placement }, [fx, fn]) => {
+  const b = (placement.bearing * Math.PI) / 180;
+  return [fx * Math.cos(b) - fn * Math.sin(b), fx * Math.sin(b) + fn * Math.cos(b)];
+};
+
+test("a 0.7 package, one building: each item stands where `local` puts it, through the building's placement", async () => {
+  const hq = await planned("campus-hq");
+  truly(hq.pkg.buildings.length === 1 && hq.pkg.scope.length === 1 && hq.pkg.scope[0] === HQ, `one building: ${hq.pkg.scope}`);
+  truly(hq.items.size === hq.pkg.items.length, `every item: ${hq.items.size} of ${hq.pkg.items.length}`);
+  for (const [id, { it, p }] of hq.items) {
+    const r = (p.local.rotation_deg * Math.PI) / 180;
+    const at = inBuilding(hq, [it.x, it.n]), front = turnedBack(hq, [it.fx, it.fn]);
+    truly(apart(at, [p.local.x_m, p.local.y_m]) <= 1e-6, `${id} at ${at}, its local point ${p.local.x_m},${p.local.y_m}`);
+    truly(apart(front, [Math.sin(r), -Math.cos(r)]) <= 1e-9, `${id} faces ${front}, turned ${p.local.rotation_deg}°`);
+    // where the package puts it on the map: its point (rounded to a centimetre) and heading
+    truly(apart([it.x, it.n], toLocal(hq.origin, p.display_point)) <= 0.01, `${id}: its point on the map is elsewhere`);
+    const h = (p.heading * Math.PI) / 180;
+    truly(apart([it.fx, it.fn], [Math.sin(h), Math.cos(h)]) <= 1e-9, `${id}: not its heading on the map`);
+  }
+});
+
+test("a building moved on the map: its items stand where they stood in it, facing the same way", async () => {
+  const [hq, moved] = await Promise.all([planned("campus-hq"), planned("campus-hq-2")]);
+  truly(moved.placement.bearing - hq.placement.bearing === 15 && moved.placement.lon !== hq.placement.lon, "moved");
+  for (const [id, { it, p }] of moved.items) {
+    const was = hq.items.get(id);
+    truly(was, `${id} was there before`);
+    truly(apart(inBuilding(moved, [it.x, it.n]), inBuilding(hq, [was.it.x, was.it.n])) <= 1e-6
+      && apart(inBuilding(moved, [it.x, it.n]), [p.local.x_m, p.local.y_m]) <= 1e-6, `${id} stands elsewhere in the building`);
+    truly(apart(turnedBack(moved, [it.fx, it.fn]), turnedBack(hq, [was.it.fx, was.it.fn])) <= 1e-9, `${id} faces another way`);
+    // on the map, it turned with the building
+    const turned = ((Math.atan2(it.fx, it.fn) - Math.atan2(was.it.fx, was.it.fn)) * 180) / Math.PI;
+    truly(Math.abs(((turned + 540) % 360) - 180 - 15) < 1e-9, `${id} turned ${turned}° on the map`);
+  }
+});
+
+test("with no `local` (before 0.7) an item is placed by its point and heading on the map: the same place", async () => {
+  const hq = await planned("campus-hq");
+  for (const i of hq.pkg.items) delete i.properties.local;
+  for (const floor of hq.pkg.floorsOf(HQ)) {
+    for (const it of planFloor(hq.pkg, floor, hq.origin).items) {
+      const want = hq.items.get(it.id).it;
+      truly(apart([it.x, it.n], [want.x, want.n]) <= 0.01 && apart([it.fx, it.fn], [want.fx, want.fn]) <= 1e-9,
+        `${it.id}: ${JSON.stringify([it.x, it.n, it.fx, it.fn])} vs ${JSON.stringify([want.x, want.n, want.fx, want.fn])}`);
+    }
   }
 });
 
@@ -140,7 +241,8 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0}#w,
 const file = (name) => readFileSync(join(packages, name));
 const server = await serve(root, { "/page.html": PAGE, "/simple-office.storeypath": file("simple-office.storeypath"),
   "/campus.storeypath": file("campus.storeypath"), "/simple-office-world.storeypath": file("simple-office-world.storeypath"),
-  "/campus-world.storeypath": file("campus-world.storeypath"), "/jszip.min.js": readFileSync(join(root, "../vendor/jszip.min.js")) });
+  "/campus-world.storeypath": file("campus-world.storeypath"), "/campus-hq.storeypath": file("campus-hq.storeypath"),
+  "/campus-hq-2.storeypath": file("campus-hq-2.storeypath"), "/jszip.min.js": readFileSync(join(root, "../vendor/jszip.min.js")) });
 const page = await launch({ webgl: true });
 await page.open(`${server.url}/page.html`, 900, 600);
 await page.run(async () => {
@@ -395,7 +497,7 @@ test("a floor full of items costs a few draw calls", async () => {
   truly(r.on > r.off && r.on - r.off <= 4, JSON.stringify(r)); // two pieces, and their shadows
 });
 
-for (const name of ["campus", "campus-world"]) {
+for (const name of ["campus", "campus-world", "campus-hq", "campus-hq-2"]) {
   test(`${name}: a click on an item chooses it, and select highlights it`, async () => {
     const at = await page.run(async (name) => {
       const world = window.world;
@@ -415,10 +517,12 @@ for (const name of ["campus", "campus-world"]) {
       const p = world.camera.position.clone().set(x, y, z).project(world.camera);
       const box = world.renderer.domElement.getBoundingClientRect();
       window.said = new Promise((res) => world.addEventListener("select", (e) => res(e.detail), { once: true }));
-      return { id: desk.id, prebuilt: world.prebuilt.length, inside,
+      return { id: desk.id, prebuilt: world.prebuilt.length, inside, building: world.building, scope: world.package.scope,
         x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
     }, name);
-    truly(at.inside && (name === "campus" ? at.prebuilt === 0 : at.prebuilt > 0), JSON.stringify(at));
+    truly(at.inside && (name === "campus-world" ? at.prebuilt > 0 : at.prebuilt === 0), JSON.stringify(at));
+    truly(name.startsWith("campus-hq") ? JSON.stringify(at.scope) === JSON.stringify([at.building]) : at.scope === null,
+      `its building: ${JSON.stringify(at)}`); // a package of 0.7 holds one
     await page.click(at.x, at.y);
     const got = await page.run(async () => {
       const d = await window.said;

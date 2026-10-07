@@ -119,6 +119,76 @@ test("a floor's items: where each stands, the way it faces in the drawing, its t
   equal(floorFromPackage(older, older.floors[0].id).items, [], "an older package has none");
 });
 
+// format 0.7: a package a building, each item placed in its building (`local`);
+// campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
+const HQ = "BYMBMX-DEMO-HQ";
+const hq = readPackage(join(conformance, "packages/campus-hq.storeypath"));
+const moved = readPackage(join(conformance, "packages/campus-hq-2.storeypath"));
+
+test("a 0.7 package, one building: each item stands where `local` puts it in the building's own frame", async () => {
+  equal(hq.manifest.scope.buildings, [HQ], "its one building");
+  equal(await readInBrowsers(readFileSync(join(conformance, "packages/campus-hq.storeypath"))), hq, "read in browsers too");
+  const frame = new LocalFrame(hq.manifest.placements[HQ]);
+  let placed = 0;
+  for (const floor of hq.floors) {
+    const plan = floorFromPackage(hq, floor.id);
+    for (const it of plan.items) {
+      const p = hq.items.find((i) => i.id === it.id).properties;
+      const r = (p.local.rotation_deg * Math.PI) / 180;
+      near(it.at, [p.local.x_m, p.local.y_m], 1e-6, `${it.id} at its local point`);
+      near(it.front, [Math.sin(r), -Math.cos(r)], 1e-9, `${it.id} turned as its local says`);
+      near(it.at, frame.toLocal(p.display_point), 0.01, `${it.id}: its point on the map, rounded, is there too`);
+      const room = plan.spaces.find((s) => s.id === (p.zone_id ?? p.space_id));
+      truly(room && inside(room.polygons, it.at), `${it.id} stands in ${p.space_id}`);
+      placed++;
+    }
+  }
+  equal(placed, hq.items.length, "every item");
+  const of = (type) => floorFromPackage(hq, "BYMBMX-DEMO-HQ-F00").items.find((i) => i.type === type);
+  near(of("DESK-DIRECTOR").front, [0, -1], 1e-9, "the director's desk faces -y (rotation 0)");
+  near(of("DESK-SENIOR").front, [1, 0], 1e-9, "the senior's faces +x (rotation 90)");
+});
+
+test("a building moved on the map: its items stand where they stood in its plan, facing the same way", () => {
+  const was = hq.manifest.placements[HQ], is = moved.manifest.placements[HQ];
+  truly(is.bearing - was.bearing === 15 && is.lon !== was.lon, "moved: shifted and turned 15°");
+  for (const floor of hq.floors) {
+    const before = floorFromPackage(hq, floor.id), after = floorFromPackage(moved, floor.id);
+    const earlier = new Map(before.items.map((i) => [i.id, i]));
+    for (const it of after.items) {
+      const old = earlier.get(it.id);
+      truly(old, `${it.id} was there before`);
+      near(it.at, old.at, 1e-9, `${it.id} stands where it stood`);
+      near(it.front, old.front, 1e-9, `${it.id} faces as it did`);
+      const [p, q] = [hq, moved].map((pkg) => pkg.items.find((i) => i.id === it.id).properties);
+      truly(Math.hypot(p.display_point[0] - q.display_point[0], p.display_point[1] - q.display_point[1]) > 1e-5
+        && (q.heading - p.heading + 360) % 360 === 15, `${it.id}: its point and heading on the map moved with the building`);
+    }
+    // the rooms too, through the frame (each label point rounded to a centimetre on the map)
+    for (const s of after.spaces) near(s.marker, before.spaces.find((x) => x.id === s.id).marker, 0.02, `${s.id} stays`);
+  }
+  // the desk carried to the Annex, and the TV taken away, are not in the Headquarters' plan
+  const gone = hq.items.map((i) => i.id).filter((id) => !moved.items.some((i) => i.id === id));
+  equal(gone, ["BYMBMX-I000003", "BYMBMX-I000005"], "gone");
+  const annex = readPackage(join(conformance, "packages/campus-annex-2.storeypath"));
+  const desk = floorFromPackage(annex, "BYMBMX-DEMO-ANNEX-F01").items.find((i) => i.id === "BYMBMX-I000003");
+  near(desk.at, [143, 63.75], 1e-9, "the desk, in the Annex where its local says");
+  near(desk.front, [1, 0], 1e-9, "facing +x there");
+});
+
+test("with no `local` (before 0.7) an item is placed by its point and heading on the map: the same place", () => {
+  const older = structuredClone(hq);
+  for (const i of older.items) delete i.properties.local;
+  for (const floor of hq.floors) {
+    const want = floorFromPackage(hq, floor.id).items, got = floorFromPackage(older, floor.id).items;
+    equal(got.map((i) => i.id), want.map((i) => i.id), "the same items");
+    got.forEach((it, k) => {
+      near(it.at, want[k].at, 0.01, `${it.id}: there, to its point's rounding`);
+      near(it.front, want[k].front, 1e-9, `${it.id}: facing the same way`);
+    });
+  }
+});
+
 test("an unplaced building reads in its own metres too", () => {
   const unplaced = readPackage(join(conformance, "packages/unplaced.storeypath"));
   const floor = unplaced.floors[0];

@@ -78,12 +78,14 @@ the walker is in), `walkFloor`, `atStairs`, `walking` (mouse taken), `player`
 package's pre-built 3D), `items` (whether items are drawn now).
 
 Items (format 0.6: desks, photocopiers, access points, sofas, TVs, …) are drawn
-in their type's colour as simple shapes of their kind, on their floor, at their
-footprint and heading. They cost nothing until shown: their geometry is made (or
-taken from the pre-built file) the first time a floor shows them, detailed when
-one floor is shown, a box each when more are, in two meshes a floor (below the
-cut, and above it: on a wall, under the ceiling). A click on one chooses it, as on
-a room (`select` with the item's feature); the walker bumps into those on the floor.
+in their type's colour as simple shapes of their kind, on their floor, where they
+stand in their building (format 0.7: `local`, put on the map by the building's
+placement, as its walls are; older packages: their point and heading on the map).
+They cost nothing until shown: their geometry is made (or taken from the
+pre-built file) the first time a floor shows them, detailed when one floor is
+shown, a box each when more are, in two meshes a floor (below the cut, and above
+it: on a wall, under the ceiling). A click on one chooses it, as on a room
+(`select` with the item's feature); the walker bumps into those on the floor.
 
 A floor is built from the package's features by
 [src/world/build.js](src/world/build.js), merged into a few dozen meshes (one for
