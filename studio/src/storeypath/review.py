@@ -249,11 +249,14 @@ class Review:
                 raise ValueError("an opening can only be deleted or restored")
             current = ws.overrides.get(object_id) or Override()
             flags = {"hidden": current.hidden, "ignored": current.ignored}
+            detected = {"hidden": False, "ignored": bool(r.detected_ignored)}
             for flag in ("hidden", "ignored"):
                 if flag in body:
                     if not isinstance(body[flag], bool):
                         raise ValueError(f"{flag} is true or false")
-                    flags[flag] = body[flag] or None
+                    # as detected: no correction; otherwise kept, so a space Studio set
+                    # aside (vision: not a room) can be restored
+                    flags[flag] = None if body[flag] == detected[flag] else body[flag]
             if body.get("reset"):
                 values = {}
             elif "correction" in body:

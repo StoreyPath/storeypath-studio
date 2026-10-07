@@ -871,3 +871,18 @@ def test_a_package_of_one_building(studio, tmp_path):
     assert status == 404
     status, _ = call(f"{base}/api/projects/{code}/export", {"buildings": labs})
     assert status == 400
+
+
+def test_a_space_studio_set_aside_is_restored_by_a_person(review):
+    # Vision set a hall aside as not a room; a person who knows it is inside the
+    # building restores it, and deleting it again puts it back as detected.
+    r, path, f_id = review
+    ws = Workspace.load(path)
+    hall = next(o for o in ws.floor_objects(f_id) if o.kind == "space")
+    hall.detected_ignored = True
+    ws.save(path)
+    restored = r.correct(hall.id, {"ignored": False})
+    assert restored["ignored"] is False and Workspace.load(path).effective(Workspace.load(path).objects[hall.id])["ignored"] is False
+    again = r.correct(hall.id, {"ignored": True})
+    ws = Workspace.load(path)
+    assert again["ignored"] is True and ws.effective(ws.objects[hall.id])["ignored"] is True
