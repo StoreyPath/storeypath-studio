@@ -420,8 +420,13 @@ def convert(
     use_vision: Annotated[bool, typer.Option("--vision/--no-vision",
                                              help="look at every room with the vision model "
                                                   "($STOREYPATH_VISION_URL), when one is set")] = True,
+    force: Annotated[bool, typer.Option("--force",
+                                        help="apply a read even when it finds no rooms on a floor, or would retire "
+                                             "most of them (a drawing that really changed that much)")] = False,
 ):
-    """Read the drawings and update the project's objects, keeping existing IDs."""
+    """Read the drawings and update the project's objects, keeping existing IDs. A
+    read that would retire most of a floor's rooms (layers renamed, wrong units) is
+    not applied without --force: the floor keeps its rooms."""
     from .llm import LocalModel
     from .symbols import SymbolSpotter
 
@@ -449,12 +454,13 @@ def convert(
         try:
             report = convert_floor(ws, fid, workspace.parent, model, symbols,
                                    vision if vision is not None and vision.available() else None,
-                                   say=lambda m: typer.echo(f"  {m}"))
+                                   say=lambda m: typer.echo(f"  {m}"), force=force)
         except DrawingError as e:
             typer.secho(f"{fid}: {e}", fg="red", err=True)
             failed = True
             continue
-        typer.echo(report.summary())
+        failed |= report.held
+        typer.secho(report.summary(), fg="yellow" if report.held else None)
         for w in report.warnings:
             typer.secho(f"  warning: {w}", fg="yellow")
     ws.save(workspace)

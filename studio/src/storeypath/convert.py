@@ -34,6 +34,11 @@ MATCH_MIN_IOU_SAME_NUMBER = 0.1  # …or this much when the room number is uncha
 VERTICAL_MIN_IOU = 0.5  # elevator/stairs outlines on two floors this aligned share a code
 DOOR_MATCH_DISTANCE = 0.5  # m
 SAMPLE_TEXTS = 6  # unknown texts per layer asked about when reading what a layer holds
+# A read that finds no spaces where a floor has some, or that would retire more than
+# this share of them, is most likely a bad read (layers renamed, wrong units, a
+# broken file): it is held back, the floor keeping its rooms and IDs, until it is
+# applied on purpose (``force``).
+HOLD_RETIRING_SHARE = 0.5
 
 
 @dataclass
@@ -45,8 +50,11 @@ class ConversionReport:
     retired: list[str] = field(default_factory=list)
     unspecified: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    held: bool = False  # the read was not applied: it would have retired most of the floor
 
     def summary(self) -> str:
+        if self.held:
+            return f"{self.floor_id}: not changed: the drawing read too unlike the floor (see the warning)"
         source = " (spaces found from walls)" if self.method == "walls" else ""
         return (
             f"{self.floor_id}: {len(self.kept)} kept, {len(self.added)} new, "
@@ -56,12 +64,14 @@ class ConversionReport:
 
 def convert_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
-    symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None,
+    symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None, force: bool = False,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds. With the "auto" profile the
     layers are read from what is drawn on them; ``model`` (a local language model)
     reads the texts the rules do not know; ``symbols`` spots the fixtures drawn in
-    rooms that have no name; ``vision`` looks at every room as drawn (vision.py)."""
+    rooms that have no name; ``vision`` looks at every room as drawn (vision.py).
+    A read that would retire most of the floor is held back unless ``force`` (see
+    apply_extraction): the floor is then left as it was."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -77,9 +87,8 @@ def convert_floor(
                                 unknown=lambda t: worth_reading(t) and reader.is_room_name(t) is None))
         analysis = analyse(doc, meters_per_unit(doc, src.units), src.region, reader.is_room_name, base)
         profile = analysis.profile
-        floor.layers = analysis.summary()
     else:
-        profile, floor.layers = base, []
+        profile, analysis = base, None
     extraction = extract_floor(doc, profile, src.units, src.region, src.offset,
                                skip_label=lambda t: reader.is_room_name(t) is False, drawn_walls=floor.edits.walls,
                                drawn_dividers=floor.edits.dividers)
@@ -108,14 +117,16 @@ def convert_floor(
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     _resized_openings(extraction, floor.edits.resized)
-    report = apply_extraction(ws, floor_id, extraction)
+    report = apply_extraction(ws, floor_id, extraction, force=force)
+    if not report.held:  # a read held back leaves the floor as it was
+        floor.layers = analysis.summary() if analysis is not None else []
+        floor.source.sha256 = sha
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
     if spot_failed:
         report.warnings.append(f"symbols were not spotted: {spot_failed}")
     if vision is not None and vision.failed:
         report.warnings.append(f"vision: {vision.failed}")
-    floor.source.sha256 = sha
     return report
 
 
@@ -196,8 +207,11 @@ def _keep_package_values(ws: Workspace, record: ObjectRecord) -> None:
     ws.overrides[record.id] = o
 
 
-def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> ConversionReport:
-    """Register an extracted floor in the workspace, reusing IDs where objects match."""
+def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: bool = False) -> ConversionReport:
+    """Register an extracted floor in the workspace, reusing IDs where objects match.
+    A read that finds no spaces on a floor that has some, or that would retire more
+    than HOLD_RETIRING_SHARE of them, is held back unless ``force``: nothing changes,
+    and the report says so (``held``) with a warning."""
     report = ConversionReport(floor_id, method=ex.method, warnings=list(ex.warnings))
     floor = ws.floor(floor_id)
     building_id = parse_id(floor_id).prefix("building")
@@ -214,6 +228,10 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
     taken = {r.id for r in unit_pairs.values()}
     container_pairs = _match_spaces([r for r in existing if r.id not in taken], containers)
     found = {id(units[i]): r for i, r in unit_pairs.items()} | {id(containers[i]): r for i, r in container_pairs.items()}
+    if not force and (hold := _hold_back(existing, found, ex)):
+        report.held = True
+        report.warnings.append(hold)
+        return report
 
     def register(obj, kind: str) -> ObjectRecord:
         record = found.get(id(obj))
@@ -259,6 +277,20 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
     floor.converted_at = now
     floor.method, floor.warnings = ex.method, list(ex.warnings)
     return report
+
+
+def _hold_back(existing: list[ObjectRecord], found: dict, ex: FloorExtraction) -> str | None:
+    """Why a read is held back (see apply_extraction), or None to apply it."""
+    if not existing:
+        return None
+    kept = {r.id for r in found.values()}
+    retiring = sum(1 for r in existing if r.id not in kept)
+    if ex.spaces and retiring <= HOLD_RETIRING_SHARE * len(existing):
+        return None
+    what = "no spaces" if not ex.spaces else f"{len(ex.spaces)} spaces, {len(existing) - retiring} of them where they were"
+    return (f"nothing was changed: the drawing read {what}, so {retiring} of the floor's {len(existing)} spaces and "
+            "their IDs would be retired. Check the drawing (its layers, units or part read); if it really "
+            "changed this much, convert again with force (storeypath convert --force)")
 
 
 def _sizes_from_the_schedule(ex: FloorExtraction, doc, region, vision, model, say) -> None:
