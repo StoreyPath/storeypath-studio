@@ -992,7 +992,11 @@ async function reconvert() {
   button.disabled = true;
   $("status").textContent = "Re-reading drawing…";
   try {
-    const job = await followJob(await request(`${BASE}/floors/${id}/convert`, {}), "Re-reading drawing…");
+    let job = await followJob(await request(`${BASE}/floors/${id}/convert`, {}), "Re-reading drawing…");
+    // a reading that would retire most of the floor is held back: applied only when asked
+    if ((job.result.held || []).includes(id) && confirm('This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs. If the drawing really lost those rooms, read it anyway: the rooms it no longer has are retired. Read anyway?')) {
+      job = await followJob(await request(`${BASE}/floors/${id}/convert`, { force: true }), "Re-reading drawing…");
+    }
     toast(job.result.summaries.join("\n"));
     state.project = await request(`${BASE}/review`);
     fillFloorSelect();

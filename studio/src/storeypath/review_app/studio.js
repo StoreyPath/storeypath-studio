@@ -596,7 +596,9 @@ function readAgain(code, f) {
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
-      await runJob(api(`projects/${code}/floors/${f.id}/convert`, {}));
+      const r = await runJob(api(`projects/${code}/floors/${f.id}/convert`, {}));
+      // a reading that would retire most of the floor is held back: applied only when asked
+      if ((r?.held || []).includes(f.id) && confirm('This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs. If the drawing really lost those rooms, read it anyway: the rooms it no longer has are retired. Read anyway?')) await runJob(api(`projects/${code}/floors/${f.id}/convert`, { force: true }));
       toast(`${f.name} read`);
       await projectPage(code);
     } catch (e) {

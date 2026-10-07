@@ -686,7 +686,12 @@ class Studio:
             if moved:
                 ws.save(ws_path)
 
-    def convert(self, code: str, floor: str | None = None) -> Job:
+    def convert(self, code: str, floor: str | None = None, force: bool = False) -> Job:
+        """Read floors' drawings again (one, or all). A reading that finds no rooms on a
+        floor that has some, or would retire most of them, is held back and the floor
+        keeps its rooms (convert.py); ``force`` applies it all the same."""
+        if not isinstance(force, bool):
+            raise ValueError("force is true or false")
         ws_path = self.path(code)
 
         def run(job: Job):
@@ -696,14 +701,14 @@ class Studio:
             # beside the others when its drawing would stack it on one of them
             unread = {f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings
                       if all(f.converted_at is None for f in b.floors)}
-            result = self._convert(ws_path, floors, job)
+            result = self._convert(ws_path, floors, job, force=force)
             if unread:
                 self._stand_apart(ws_path, unread, job)
             return result
 
         return self.jobs.submit("Converting", run)
 
-    def _convert(self, ws_path: Path, floor_ids: list[str], job: Job) -> dict:
+    def _convert(self, ws_path: Path, floor_ids: list[str], job: Job, force: bool = False) -> dict:
         from .convert import convert_floor
 
         if self.model.available():
@@ -723,7 +728,7 @@ class Studio:
                 try:
                     report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols,
                                            self.vision if self.vision.available() else None,
-                                           say=lambda m: job.say("  " + m))
+                                           say=lambda m: job.say("  " + m), force=force)
                 except Exception as e:  # this floor stays as it was; the others are converted
                     traceback.print_exc()
                     job.say(f"  {fid}: not converted: {_message(e)}")
@@ -1433,7 +1438,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             case "POST", ["projects", code, "floors"]:
                 return studio.add_floors(code, body)
             case "POST", ["projects", code, "convert"]:
-                return studio.convert(code, body.get("floor"))
+                return studio.convert(code, body.get("floor"), body.get("force", False))
             case "POST", ["projects", code, "buildings", b_id, "site"]:
                 return studio.move(code, b_id, body)
             case "POST", ["projects", code, "locations", loc_id, "arrange"]:
@@ -1473,7 +1478,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             case "POST", ["projects", code, "items", item_id]:
                 return studio.review(code).change_item(item_id, body)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
-                return studio.convert(code, floor_id)
+                return studio.convert(code, floor_id, body.get("force", False))
             case "POST", ["projects", code, "objects", object_id]:
                 return studio.review(code).correct(object_id, body)
             case "GET", ["projects", code, "review"]:

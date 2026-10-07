@@ -924,3 +924,35 @@ def test_a_space_drawn_where_the_drawing_encloses_none(review):
 
     r.edit(f_id, {"remove": {"at": [x1 + 3, y0 + 2]}})  # inside the first: taken away
     assert len(Workspace.load(path).floor(f_id).edits.spaces) == 1
+
+
+def test_a_reading_that_would_retire_a_floor_is_held_back_unless_forced(studio, tmp_path):
+    # The drawing is replaced by one with no rooms (a wrong file, a damaged one): read
+    # again, the floor keeps its rooms and the job says it was held back; read again
+    # with force, the rooms the drawing no longer has are retired.
+    import ezdxf
+
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Held"})
+    code = created["code"]
+    write_floor_dxf(tmp_path / "a.dxf", office_floor(0), title="GROUND FLOOR PLAN")
+    call(f"{base}/api/projects/{code}/drawings/a.dxf?private=0", raw=(tmp_path / "a.dxf").read_bytes())
+    _, job = call(f"{base}/api/projects/{code}/drawings/a.dxf/plans", {})
+    plan = max(wait(base, job)["plans"], key=lambda x: x["size"][0] * x["size"][1])
+    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "a.dxf", "plans": [
+        {"index": plan["index"], "title": plan["title"], "region": plan["region"], "building": "Admin", "ordinal": 0}]})
+    wait(base, job)
+    ws_path = app.path(code)
+    ws = Workspace.load(ws_path)
+    (f_id, f), = [(fid, f) for *_, f, fid in ws.iter_floors()]
+    active = lambda: {r.id for r in Workspace.load(ws_path).floor_objects(f_id) if r.kind == "space"}
+    rooms = active()
+    assert rooms
+    ezdxf.new().saveas(ws_path.parent / f.source.path)  # the same name, no rooms
+
+    _, job = call(f"{base}/api/projects/{code}/floors/{f_id}/convert", {})
+    assert wait(base, job)["held"] == [f_id] and active() == rooms
+    status, _ = call(f"{base}/api/projects/{code}/floors/{f_id}/convert", {"force": "yes"})
+    assert status == 400
+    _, job = call(f"{base}/api/projects/{code}/floors/{f_id}/convert", {"force": True})
+    assert wait(base, job)["held"] == [] and not active()
