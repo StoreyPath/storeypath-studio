@@ -171,6 +171,10 @@ class Studio:
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
             left.unlink(missing_ok=True)
+        for left in self.data.glob(f"*/exports/{WRITING}*"):  # a package never finished (Studio stopped)
+            import shutil
+
+            shutil.rmtree(left, ignore_errors=True)
 
     # ---- projects ---------------------------------------------------------------
 
@@ -823,9 +827,6 @@ class Studio:
             raise ValueError(f"no building {building} in this project")
 
         def run(job: Job):
-            from .export import export_package
-            from .validate import validate_package
-
             with self._changing(ws_path):
                 ws = Workspace.load(ws_path)
                 folder = ws_path.parent / "exports"
@@ -834,13 +835,7 @@ class Studio:
                 # by code, as the folder, with the building's
                 out = folder / f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
                 job.say(f"writing {out.name}")
-                manifest = export_package(ws, out, building=building, say=job.say, catalogue=self.catalogue())
-                ws.save(ws_path)
-            errors = validate_package(out)
-            for e in errors:
-                job.say("invalid: " + e)
-            if errors:
-                raise ValueError("the package failed validation")
+                manifest = write_valid_package(ws, ws_path, out, building, self.catalogue(), job.say)
             job.say("valid: " + ", ".join(f"{n} {k}" for k, n in manifest.counts.items()))
             loose = [b for b, p in manifest.placements.items() if not p.placed]
             if loose:
@@ -921,6 +916,41 @@ class Studio:
         if not path.is_file():
             raise NotFound(f"no export {name}")
         return path
+
+
+WRITING = ".writing-"  # a package being written, beside where it goes, until it is found valid
+
+
+def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say):
+    """A building's package written to ``out`` and entered as an export in the workspace
+    (saved to ``ws_path``) only when it is valid: it is written beside ``out`` first and
+    checked; one that is not valid is not kept, nor entered (its number is not used up).
+    Raises ValueError, saying what is wrong, when it is not."""
+    import shutil
+    import tempfile
+
+    from .export import export_package
+    from .validate import validate_package
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix=WRITING, dir=out.parent))  # beside it: put in place by a rename
+    try:
+        part = folder / out.name  # the name it is entered under
+        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue)
+        errors = validate_package(part)
+        for e in errors:
+            say("invalid: " + e)
+        if errors:
+            raise ValueError("the package failed validation: it was not kept, nor entered as an export")
+        part.replace(out)
+        try:
+            ws.save(ws_path)
+        except BaseException:
+            out.unlink(missing_ok=True)
+            raise
+        return manifest
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 FAR_APART_M = 2000.0  # a building drawn this far from the others has a drawing of its own origin
