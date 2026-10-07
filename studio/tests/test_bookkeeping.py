@@ -650,6 +650,24 @@ def test_a_building_added_to_a_placed_site_moves_no_other(campus):
     assert after[hq] == before[hq] and after[annex] == before[annex]
 
 
+def test_a_project_saved_as_new_gives_its_items_its_own_ids(campus, tmp_path):
+    ws, _, hq, _ = campus
+    desk = ws.add_item("DESK-MANAGER", *_ground(ws, hq))
+    gone = ws.add_item("TV", *_ground(ws, hq))
+    gone.status = "retired"
+    copy = ws.save_as_new_project(tmp_path / "copy.spproj", "Copy")
+    number = desk.id.split("-")[1]
+    assert set(copy.items) == {f"{copy.id}-{number}", f"{copy.id}-{gone.id.split('-')[1]}"}
+    moved = copy.items[f"{copy.id}-{number}"]
+    assert moved.id == f"{copy.id}-{number}" and moved.floor_id == f"{copy.id}-DEMO-HQ-F00"
+    assert copy.next_item_seq == ws.next_item_seq and copy.readings == ws.readings
+    export_package(copy, tmp_path / "copy-hq.storeypath", building=f"{copy.id}-DEMO-HQ")
+    changes, items = _read(tmp_path / "copy-hq.storeypath")
+    assert items == {moved.id} and moved.id in changes["added"]
+    assert f"{copy.id}-{gone.id.split('-')[1]}" in changes["all_retired"]
+    assert Workspace.load(tmp_path / "copy.spproj").items == copy.items
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 

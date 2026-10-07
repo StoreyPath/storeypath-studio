@@ -298,7 +298,10 @@ class Workspace(BaseModel):
         os.replace(part, path)
 
     def save_as_new_project(self, path: str | Path, name: str) -> Workspace:
-        """A copy that is a *different* project: new project code, fresh history."""
+        """A copy that is a *different* project: new project code, fresh history. Every
+        ID is the new project's: its objects', and its items' (each keeping its own
+        number) on the new project's floors. What texts were read as is kept (it is
+        by text, not by ID)."""
         copy = Workspace.model_validate(self.model_dump())
         old, new = self.project.code, generate_project_code()
 
@@ -314,6 +317,10 @@ class Workspace(BaseModel):
             for i, r in copy.objects.items()
         }
         copy.overrides = {recode(i): o for i, o in copy.overrides.items()}
+        copy.items = {
+            recode(i): it.model_copy(update={"id": recode(i), "floor_id": recode(it.floor_id) if it.floor_id else ""})
+            for i, it in copy.items.items()
+        }
         copy.exports = []
         copy.save(path)
         return copy
