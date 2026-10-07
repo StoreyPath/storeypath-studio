@@ -6,6 +6,7 @@ IDs are not assigned here (see convert.py).
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from collections.abc import Callable
@@ -25,7 +26,7 @@ from .cad import drawing_units, header_units, meters_per_unit
 from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
-from .split import split_by_labels
+from .split import exact_parts, split_by_labels
 from .walls import DoorShape, DoorSwing, open_issue, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
@@ -120,11 +121,18 @@ class FloorExtraction:
         return [*self.zones, *(s for i, s in enumerate(self.spaces) if i not in zoned)]
 
 
+MAX_BLOCK_PIECES = 1_000_000  # entities taken out of blocks in one walk through a drawing, at most
+
+
 def _walk(entities, parent_layer: str | None = None, depth: int = 0,
-          expand: Callable[[DXFGraphic, str], bool] | None = None):
+          expand: Callable[[DXFGraphic, str], bool] | None = None, _within: tuple[str, ...] = (),
+          _budget: list[int] | None = None):
     """Yield (entity, effective layer) through nested block inserts. Entities on
     layer "0" inside a block take the layer of the insert, as CAD programs show them.
-    ``expand(insert, layer)`` returning False keeps a block's contents out."""
+    ``expand(insert, layer)`` returning False keeps a block's contents out. A block
+    placed inside itself is not expanded again, and at most MAX_BLOCK_PIECES are
+    taken out of blocks: a broken drawing's blocks would otherwise never end."""
+    budget = [MAX_BLOCK_PIECES] if _budget is None else _budget
     for e in entities:
         layer = e.dxf.get("layer", "0")
         if parent_layer is not None and layer == "0":
@@ -134,61 +142,157 @@ def _walk(entities, parent_layer: str | None = None, depth: int = 0,
             for attrib in e.attribs:
                 a_layer = attrib.dxf.get("layer", "0")
                 yield attrib, (layer if a_layer == "0" else a_layer)
-            if depth < MAX_BLOCK_DEPTH and (expand is None or expand(e, layer)):
+            name = e.dxf.get("name", "")
+            if depth < MAX_BLOCK_DEPTH and name not in _within and budget[0] > 0 \
+                    and (expand is None or expand(e, layer)):
                 try:
                     children = list(e.virtual_entities())
                 except Exception:  # broken or unsupported block content
                     continue
-                yield from _walk(children, layer, depth + 1, expand)
+                budget[0] -= len(children)
+                yield from _walk(children, layer, depth + 1, expand, (*_within, name), budget)
 
 
 def modelspace_entities(doc: Drawing, region: tuple[float, float, float, float] | None = None):
     """Top-level entities of the drawing; with ``region`` (x0, y0, x1, y1 in drawing
     units) only those whose middle lies inside it, for drawings that hold several
-    floors (or sheets) side by side."""
+    floors (or sheets) side by side. To read a plan, see plan_entities."""
     if region is None:
         yield from doc.modelspace()
         return
-    entities, centres = _entity_index(doc)
+    entities, centres, _ = _entity_index(doc)
     x0, y0, x1, y1 = region
     inside = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
     for i in np.nonzero(inside)[0]:
         yield entities[i]
 
 
+def plan_entities(doc: Drawing, region: tuple[float, float, float, float] | None = None):
+    """The entities of one plan: as modelspace_entities, but a block placed across
+    ``region`` (a sheet pasted as one block, a bound xref holding several plans) is
+    not given whole to the plan that holds its middle: it is taken apart, and its
+    pieces whose middle lies inside are the plan's (themselves taken apart when they
+    too lie across it). Pieces on layer "0" take the block's layer, as in _walk."""
+    if region is None:
+        yield from doc.modelspace()
+        return
+    entities, centres, boxes = _entity_index(doc)
+    x0, y0, x1, y1 = region
+    inside = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
+    across = (boxes[:, 0] <= x1) & (boxes[:, 2] >= x0) & (boxes[:, 1] <= y1) & (boxes[:, 3] >= y0) & ~(
+        (boxes[:, 0] >= x0) & (boxes[:, 2] <= x1) & (boxes[:, 1] >= y0) & (boxes[:, 3] <= y1))
+    budget = [MAX_BLOCK_PIECES]
+    for i in np.nonzero(inside | across)[0]:
+        e = entities[i]
+        if across[i] and e.dxftype() == "INSERT":
+            yield from _pieces_in(e, region, 1, (e.dxf.get("name", ""),), budget)
+        elif inside[i]:
+            yield e
+
+
+def _pieces_in(insert, region, depth: int, within: tuple[str, ...], budget: list[int]):
+    """The pieces of a block placed across ``region`` that lie in it (see plan_entities)."""
+    try:
+        children = list(insert.virtual_entities())
+    except Exception:  # broken or unsupported block content
+        return
+    budget[0] -= len(children)
+    layer = insert.dxf.get("layer", "0")
+    x0, y0, x1, y1 = region
+    for c in children:
+        if c.dxf.get("layer", "0") == "0":
+            c.dxf.layer = layer  # a copy: the drawing is not changed
+        try:
+            ext = ezdxf.bbox.extents([c], fast=True)
+        except Exception:
+            continue
+        if not ext.has_data or not _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
+            continue
+        lo, hi = ext.extmin, ext.extmax
+        within_region = lo.x >= x0 and hi.x <= x1 and lo.y >= y0 and hi.y <= y1
+        overlaps = lo.x <= x1 and hi.x >= x0 and lo.y <= y1 and hi.y >= y0
+        name = c.dxf.get("name", "") if c.dxftype() == "INSERT" else ""
+        if name and overlaps and not within_region and depth < MAX_BLOCK_DEPTH and name not in within \
+                and budget[0] > 0:
+            yield from _pieces_in(c, region, depth + 1, (*within, name), budget)
+        elif x0 <= ext.center.x <= x1 and y0 <= ext.center.y <= y1:
+            yield c
+
+
 def _entity_index(doc: Drawing):
-    """The middle of every top-level entity, measured once per drawing: picking one
-    plan out of a sheet set is then a lookup, not a pass over every entity."""
+    """The middle and extents of every top-level entity, measured once per drawing:
+    picking one plan out of a sheet set is then a lookup, not a pass over every
+    entity. An entity whose extents cannot be measured, or are not finite, is left out."""
     index = getattr(doc, "_storeypath_index", None)
     if index is None:
-        entities, centres = [], []
+        entities, centres, boxes = [], [], []
         cache = ezdxf.bbox.Cache()
         for e in doc.modelspace():
             try:
                 ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
             except Exception:
                 continue
-            if ext.has_data:
+            if ext.has_data and _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
                 entities.append(e)
                 centres.append((ext.center.x, ext.center.y))
-        index = (entities, np.array(centres, dtype=float).reshape(-1, 2))
+                boxes.append((ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y))
+        index = (entities, np.array(centres, dtype=float).reshape(-1, 2),
+                 np.array(boxes, dtype=float).reshape(-1, 4))
         doc._storeypath_index = index
     return index
 
 
+def _finite(*values: float) -> bool:
+    return all(math.isfinite(v) for v in values)
+
+
+def drawing_extents(doc: Drawing) -> tuple[float, float, float, float] | None:
+    """Where the drawing's entities lie (x0, y0, x1, y1, drawing units), measured one
+    entity at a time: a broken entity is left out instead of failing the whole."""
+    x0 = y0 = math.inf
+    x1 = y1 = -math.inf
+    cache = ezdxf.bbox.Cache()
+    for e in doc.modelspace():
+        try:
+            ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
+        except Exception:
+            continue
+        if ext.has_data and _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
+            x0, y0 = min(x0, ext.extmin.x), min(y0, ext.extmin.y)
+            x1, y1 = max(x1, ext.extmax.x), max(y1, ext.extmax.y)
+    return (x0, y0, x1, y1) if x0 <= x1 else None
+
+
 def _flatten(e: DXFGraphic, tolerance: float) -> tuple[list[tuple[float, float]], bool] | None:
-    """Points along an entity and whether it is closed."""
+    """Points along an entity and whether it is closed. None for an entity that
+    cannot be read as a line: a broken one (a spline with too few points, a point
+    at infinity or not a number) is left out, not the floor."""
     try:
-        path = ezdxf.path.make_path(e)
-    except (TypeError, ValueError):
+        pts = _points(ezdxf.path.make_path(e), tolerance)
+    except Exception:  # broken or unsupported geometry
         return None
-    pts = [(v.x, v.y) for v in path.flattening(tolerance)]
-    if len(pts) < 2:
+    if pts is None or len(pts) < 2:
         return None
     closed = bool(getattr(e, "closed", False)) or e.dxftype() in ("CIRCLE",)
     if not closed and len(pts) > 3:
         closed = Point(pts[0]).distance(Point(pts[-1])) <= tolerance
     return pts, closed
+
+
+MAX_CURVE_STEPS = 1e7  # a curve this many times the flattening tolerance across is no drawing's
+
+
+def _points(path, tolerance: float) -> list[tuple[float, float]] | None:
+    """A path's points, its curves flattened. None for a path with a point that is
+    not finite, or a curve too large to flatten (flattening those never ends)."""
+    vertices = path.control_vertices()
+    if not all(_finite(v.x, v.y) for v in vertices):
+        return None
+    if path.has_curves and vertices:
+        xs, ys = [v.x for v in vertices], [v.y for v in vertices]
+        if max(max(xs) - min(xs), max(ys) - min(ys)) > MAX_CURVE_STEPS * tolerance:
+            return None
+    return [(v.x, v.y) for v in path.flattening(tolerance)]
 
 
 def _text_lines(e: DXFGraphic) -> list[str]:
@@ -205,24 +309,26 @@ def _text_lines(e: DXFGraphic) -> list[str]:
 def _center(e: DXFGraphic) -> tuple[float, float] | None:
     try:
         ext = ezdxf.bbox.extents([e], fast=True)
-        if ext.has_data:
-            c = ext.center
-            return c.x, c.y
+        if ext.has_data and _finite(ext.center.x, ext.center.y):
+            return ext.center.x, ext.center.y
     except Exception:
         pass
     insert = e.dxf.get("insert")
-    return (insert.x, insert.y) if insert is not None else None
+    return (insert.x, insert.y) if insert is not None and _finite(insert.x, insert.y) else None
 
 
 def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | None]:
-    """Name and number from a space's label lines, e.g. ["OFFICE", "204"] or ["OFFICE 204"]."""
+    """Name and number from a space's label lines, e.g. ["OFFICE", "204"] or ["OFFICE 204"].
+    A line that is a number on its own is the number: then a number ending another
+    line is part of the name (["MEETING ROOM 2", "301"])."""
     names, number = [], None
+    on_its_own = any(profile.number_re.fullmatch(line) for line in lines)
     for line in lines:
         if profile.number_re.fullmatch(line):
             number = number or line
             continue
         head, _, tail = line.rpartition(" ")
-        if head and number is None and profile.number_re.fullmatch(tail):
+        if head and number is None and not on_its_own and profile.number_re.fullmatch(tail):
             names.append(head.strip())
             number = tail
         else:
@@ -295,7 +401,7 @@ def extract_floor(
 
     is_dashed = dashed_lines(doc)
 
-    for e, layer in _walk(modelspace_entities(doc, region), expand=expand):
+    for e, layer in _walk(plan_entities(doc, region), expand=expand):
         kind = e.dxftype()
         layer_counts[layer] += 1
         if kind in ("TEXT", "MTEXT", "ATTRIB"):
@@ -365,9 +471,10 @@ def extract_floor(
     doorways: list[Polygon] = []
     open_edges = fabric = None
     outside = 0
-    spaces, containers = _clean_spaces(closed_shapes, profile, warnings)
+    spaces, containers = _clean_spaces(closed_shapes, profile, warnings, [lb.point for lb in labels])
     outline = _floor_outline(spaces, containers)
     used = "outlines"
+    wall_lines, wall_fills = _near_the_plan(wall_lines, wall_fills, warnings)
     wall_lines = _without_crosses(wall_lines)
     if not spaces and method != "outlines" and (wall_lines or wall_fills):
         found = spaces_from_walls(
@@ -461,6 +568,48 @@ def extract_floor(
         if outline is not None and outside:  # areas left out as the outside: the walls round them too
             outline, walls = _to_the_building(outline, walls, rooms)
     return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels, zones)
+
+
+PLAN_CELL_M = 50.0  # walls are grouped into bodies on a grid this coarse…
+FAR_M = 1000.0  # …and what lies this far beyond the main body is no part of the plan
+
+
+def _near_the_plan(lines: list, fills: list, warnings: list[str]) -> tuple[list, list]:
+    """The wall lines and fills of the plan: its main body of walls (pieces in grid
+    cells next to each other, the body with the most wall) and what lies within FAR_M
+    of it. A stray far off (a line at a georeferenced drawing's origin, a point at
+    1e14) would otherwise spread the building's envelope over it and lose every room."""
+    items = [*lines, *fills]
+    if len(items) < 2:
+        return lines, fills
+    bounds = np.array([g.bounds for g in items], dtype=float)
+    cells: dict[tuple[int, int], list[int]] = {}
+    for k, (x0, y0, x1, y1) in enumerate(bounds):
+        for x, y in ((x0, y0), (x1, y1)):
+            cells.setdefault((int(x // PLAN_CELL_M), int(y // PLAN_CELL_M)), []).append(k)
+    body: dict[tuple[int, int], int] = {}  # cell → its body
+    for start in cells:
+        if start in body:
+            continue
+        body[start], todo = start, [start]
+        while todo:
+            cx, cy = todo.pop()
+            for nb in ((cx + dx, cy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                if nb in cells and nb not in body:
+                    body[nb] = start
+                    todo.append(nb)
+    size: dict[tuple[int, int], float] = {}
+    for cell, ks in cells.items():
+        size[body[cell]] = size.get(body[cell], 0.0) + sum(items[k].length for k in ks)
+    main = max(size, key=size.get)
+    members = sorted({k for cell, ks in cells.items() if body[cell] == main for k in ks})
+    x0, y0 = bounds[members, 0].min() - FAR_M, bounds[members, 1].min() - FAR_M
+    x1, y1 = bounds[members, 2].max() + FAR_M, bounds[members, 3].max() + FAR_M
+    near = (bounds[:, 0] >= x0) & (bounds[:, 1] >= y0) & (bounds[:, 2] <= x1) & (bounds[:, 3] <= y1)
+    if near.all():
+        return lines, fills
+    warnings.append(f"{int((~near).sum())} wall piece(s) far from the plan were left out")
+    return [g for g, ok in zip(lines, near) if ok], [g for g, ok in zip(fills, near[len(lines):]) if ok]
 
 
 def _opening_tag(e) -> tuple[str, str] | None:
@@ -614,14 +763,17 @@ def _attached(walls, rooms, touch: float = 0.1):
     or elevation marker, a north arrow or a symbol beside the plan, drawn on a wall
     layer, stands apart and is left out."""
     pieces = as_polygons(walls)
-    kept = [p.distance(rooms) <= touch for p in pieces]
-    grew = True
-    while grew:  # what touches a kept piece is kept
-        grew = False
-        for i, p in enumerate(pieces):
-            if not kept[i] and any(k and p.distance(q) <= touch for k, q in zip(kept, pieces)):
-                kept[i] = grew = True
-    return unary_union([p for p, k in zip(pieces, kept) if k]) or None
+    if not pieces:
+        return None
+    tree = STRtree(pieces)
+    kept = {int(i) for i in tree.query(rooms, predicate="dwithin", distance=touch)}
+    todo = list(kept)
+    while todo:  # what touches a kept piece is kept
+        for j in tree.query(pieces[todo.pop()], predicate="dwithin", distance=touch):
+            if int(j) not in kept:
+                kept.add(int(j))
+                todo.append(int(j))
+    return unary_union([pieces[i] for i in sorted(kept)]) or None
 
 
 OUTSIDE_REACH_M = 0.6  # an area set aside this close to the outline's edge is outside…
@@ -697,9 +849,12 @@ def _door_swing(e, scale: float) -> DoorShape | None:
 
 def _door_block(e, scale: float) -> DoorShape | None:
     """A door block: its extent, and the swing arcs drawn in it. None for a block
-    that is no door (a basin or a car on a door layer)."""
-    ext = ezdxf.bbox.extents([e], fast=True)
-    if not ext.has_data:
+    that is no door (a basin or a car on a door layer), or one that cannot be read."""
+    try:
+        ext = ezdxf.bbox.extents([e], fast=True)
+    except Exception:  # a block the drawing does not define, broken content
+        return None
+    if not ext.has_data or not _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
         return None
     swings = []
     try:
@@ -750,7 +905,7 @@ def _divide_open_areas(spaces, labels, profile, walls) -> tuple[list, list[Extra
             per_space.setdefault(i, []).append(label)
     out, zones, gaps = [], [], []
     for i, s in enumerate(spaces):
-        groups = _label_groups(per_space.get(i, []))
+        groups = _room_groups(_label_groups(per_space.get(i, [])), profile)
         parts, lines = (split_by_labels(s.polygon, [[lb.point for lb in g] for g in groups],
                                         profile.spaces.max_split, profile.spaces.min_area)
                         if len(groups) >= 2 else ([s.polygon], []))
@@ -889,11 +1044,20 @@ def type_zoned_spaces(spaces, zones) -> None:
 
 def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
     """A hatch on a wall layer: a filled wall area if small or thin, otherwise just
-    its boundary (a hatch covering a whole floor must not turn it into wall)."""
-    for path in ezdxf.path.from_hatch(e):
-        pts = [(v.x * scale, v.y * scale) for v in path.flattening(tol)]
-        if len(pts) < 3:
+    its boundary (a hatch covering a whole floor must not turn it into wall). A
+    boundary that cannot be read is left out."""
+    try:
+        paths = list(ezdxf.path.from_hatch(e))
+    except Exception:  # a broken boundary
+        return
+    for path in paths:
+        try:
+            pts = _points(path, tol)
+        except Exception:
             continue
+        if pts is None or len(pts) < 3:
+            continue
+        pts = [(x * scale, y * scale) for x, y in pts]
         for poly in as_polygons(make_valid(Polygon(pts))):
             if poly.area <= HATCH_FILL_MAX_M2 or poly.buffer(-max_thickness / 2).is_empty:
                 fills.append(poly)
@@ -901,34 +1065,64 @@ def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
                 lines.append(poly.exterior)
 
 
+CONTAINER_SHARE = 0.5  # an outline is the floor's, not a room, when the outlines in it cover this much of it
+TWIN_IOU = 0.8  # an outline round another this alike is the same room drawn twice (gross and net)
+TWIN_SHARE = 0.5  # …as is one round another at least this big with only a wall's thickness between
+
+
 def _clean_spaces(
-    shapes: list[tuple[Polygon, str]], profile: Profile, warnings: list[str]
+    shapes: list[tuple[Polygon, str]], profile: Profile, warnings: list[str], label_points=(),
 ) -> tuple[list[ExtractedSpace], list[Polygon]]:
-    """Drop tiny and duplicate outlines. Outlines that contain several others are
-    returned separately as floor-outline candidates instead of spaces."""
+    """Drop tiny and duplicate outlines. A room drawn twice, to the walls' middle and
+    to their faces (gross and net), is one room: the inner outline is kept (the outer
+    when only it holds the room's label), never the ring between. An outline holding
+    several others is the floor's outline (returned separately, as a candidate), not a
+    room, when they cover most of it or it holds no label of its own; otherwise it is
+    a room with the others cut out of it (an open office round two shafts)."""
     shapes = [(p, layer) for p, layer in shapes if p.area >= profile.spaces.min_area]
     shapes.sort(key=lambda s: -s[0].area)
+    polys = [p for p, _ in shapes]
+    middles = STRtree([p.representative_point() for p in polys])
+    outlines = STRtree(polys)
+    labels = STRtree(list(label_points))
+    thin = profile.walls.max_thickness / 2
+
+    def labelled(area) -> bool:
+        return len(labels.query(area, predicate="contains")) > 0
 
     kept: list[ExtractedSpace] = []
+    final: dict[int, Polygon] = {}  # the outlines kept as spaces, by index
+    dropped: set[int] = set()
     containers: list[Polygon] = []
+    cut = 0
     for i, (poly, layer) in enumerate(shapes):
-        inner = [
-            q for q, _ in shapes[i + 1:]
-            if poly.contains(q.representative_point()) and q.area < poly.area * 0.9
-        ]
+        if i in dropped:
+            continue
+        inner = sorted(j for j in (int(k) for k in middles.query(poly, predicate="contains"))
+                       if j > i and j not in dropped)
+        twin = next((j for j in inner if _same_room(poly, polys[j], thin)), None)
+        if twin is not None:
+            if labelled(polys[twin]) or not labelled(poly):
+                continue  # the gross outline of a room drawn net too: the net one is the room
+            dropped.add(twin)  # the label is in the ring: this outline is the room
+            inner.remove(twin)
         if len(inner) >= 2:
-            containers.append(poly)
+            others = unary_union([polys[j] for j in inner])
+            covered = others.intersection(poly).area / poly.area
+            if covered >= CONTAINER_SHARE or not labelled(poly.difference(others)):
+                containers.append(poly)
+                continue
+        near = (int(k) for k in outlines.query(poly, predicate="intersects"))
+        if any(j < i and j in final and iou(final[j], poly) > 0.95 for j in near):
             continue
-        dup = next((k for k in kept if iou(k.polygon, poly) > 0.95), None)
-        if dup is not None:
-            continue
-        if len(inner) == 1:
-            poly = poly.difference(inner[0])
-            warnings.append(
-                f"an outline on {layer} contains one other outline; the inner area was cut out of it"
-            )
+        if inner:
+            poly = poly.difference(unary_union([polys[j] for j in inner]))
+            cut += 1
+        final[i] = poly
         kept.append(ExtractedSpace(polygon=poly, layer=layer))
 
+    if cut:
+        warnings.append(f"{cut} outline(s) contain other outlines; the inner areas were cut out of them")
     if containers:
         warnings.append(
             f"{len(containers)} outline(s) enclosing several spaces were used as the floor outline, not as spaces"
@@ -937,15 +1131,25 @@ def _clean_spaces(
     return kept, containers
 
 
+def _same_room(outer: Polygon, inner: Polygon, thin: float) -> bool:
+    """Whether an outline round another is the same room drawn again: nearly the
+    same, or only a wall's thickness bigger all round (gross round net)."""
+    if iou(outer, inner) > TWIN_IOU:
+        return True
+    return inner.area >= TWIN_SHARE * outer.area and outer.difference(inner).buffer(-thin).is_empty
+
+
 def _floor_outline(spaces: list[ExtractedSpace], containers: list[Polygon]):
-    if containers:
-        return unary_union(containers)
+    """The floor's outline: the outlines drawn round its rooms, with any room drawn
+    outside them; else the rooms, closed over the walls between them."""
     if not spaces:
-        return None
+        return unary_union(containers) if containers else None
     c = OUTLINE_CLOSING_M
     merged = unary_union([s.polygon.buffer(c, join_style="mitre") for s in spaces]).buffer(
         -c, join_style="mitre"
     )
+    if containers:
+        merged = unary_union([*containers, merged])
     parts = []
     for p in as_polygons(merged):
         holes = [h for h in p.interiors if Polygon(h).area >= OUTLINE_MIN_HOLE_M2]
@@ -991,9 +1195,10 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
     for i, ls in per_space.items():
         ls.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))  # reading order
         lines = [ln for lb in ls for ln in lb.lines]
-        spaces[i].name, spaces[i].number = _split_label(lines, profile)
         spaces[i].label = "\n".join(lines) or None
-        groups = _label_groups(ls)
+        groups = _room_groups(_label_groups(ls), profile)
+        own = sorted((lb for g in groups for lb in g), key=lambda lb: (-round(lb.point.y, 1), lb.point.x))
+        spaces[i].name, spaces[i].number = _split_label([ln for lb in own for ln in lb.lines], profile)
         if len(groups) > 1:
             merged += 1
             names = " / ".join(repr(" ".join(ln for lb in g for ln in lb.lines)) for g in groups)
@@ -1006,6 +1211,20 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
     if orphans:
         sample = ", ".join(repr(o) for o in orphans[:5])
         warnings.append(f"{len(orphans)} label(s) are not inside any space: {sample}")
+
+
+def _room_groups(groups: list[list[Label]], profile: Profile) -> list[list[Label]]:
+    """The label groups that can each be a room's: a group that is only tags (an
+    equipment or door tag, FCU-1, D4, AC-3) is not one when the space holds another,
+    so it neither divides the space nor gives its number. A space labelled by such
+    texts alone keeps them: they may be its rooms' numbers (A101)."""
+    from .reading import NOT_A_ROOM
+
+    def tag(line: str) -> bool:  # a number as rooms are numbered (204, 1.05) is no tag
+        return bool(NOT_A_ROOM.match(line)) and not (line[:1].isdigit() and profile.number_re.fullmatch(line))
+
+    named = [g for g in groups if not all(tag(ln) for lb in g for ln in lb.lines)]
+    return named or groups
 
 
 def _label_groups(labels: list[Label]) -> list[list[Label]]:
@@ -1066,7 +1285,7 @@ def _halves(polygon, line: LineString, min_area: float) -> list | None:
     if not line.crosses(polygon):
         return None
     parts = [p for p in as_polygons(split(polygon, line)) if p.area >= min_area]
-    return parts if len(parts) > 1 else None
+    return exact_parts(polygon, parts) if len(parts) > 1 else None  # the bits too small: to a neighbour
 
 
 def _parted_by(spaces: list[ExtractedSpace], lines: list[LineString], min_area: float) -> list[ExtractedSpace]:

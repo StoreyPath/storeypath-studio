@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import shutil
 import statistics
 import subprocess
@@ -115,27 +116,95 @@ def read_drawing_to_change(path: str | Path) -> Drawing:
 def _parse(path: Path) -> Drawing:
     suffix = path.suffix.lower()
     if suffix == ".dxf":
-        try:
-            return ezdxf.readfile(path)
-        except (OSError, ezdxf.DXFStructureError) as e:
-            raise DrawingError(f"cannot read {path.name}: {e}") from e
+        return _audited(_read_dxf(path, path.name))
     if suffix == ".dwg":
-        return _read_dwg(path)
+        return _audited(_read_dwg(path))
     raise DrawingError(f"unsupported file type {suffix!r}: expected .dwg or .dxf")
+
+
+def _read_dxf(path: Path, name: str) -> Drawing:
+    """A DXF file; a damaged one read as far as ezdxf can recover it (said in the
+    drawing's notes), DrawingError when nothing can be read from it."""
+    try:
+        return ezdxf.readfile(path)
+    except OSError as e:
+        raise DrawingError(f"cannot read {name}: {e}") from e
+    except Exception as e:  # damaged: a bad value, a section cut short…
+        first = e
+    try:
+        from ezdxf import recover
+
+        doc, _ = recover.readfile(path)
+    except Exception as e:
+        raise DrawingError(f"cannot read {name}: {first}") from e
+    if not len(doc.modelspace()):
+        raise DrawingError(f"cannot read {name}: {first}")
+    _note(doc, f"{name} is damaged ({first}): it was read as far as it could be; check its floors in review")
+    return doc
+
+
+def _note(doc: Drawing, note: str) -> None:
+    doc.__dict__.setdefault("_storeypath_notes", []).append(note)
+
+
+def _audited(doc: Drawing) -> Drawing:
+    """The drawing as ezdxf's auditor leaves it: what it finds broken is fixed or
+    taken out (an insert of a block the drawing does not define, a spline with too
+    few points, a hatch with a broken boundary), as CAD programs do on opening, so
+    one broken entity does not stop the reading of a floor. What was taken out is
+    said in the drawing's notes (``read_notes``)."""
+    try:
+        auditor = doc.audit()
+    except Exception:  # the auditor itself fails on it: read as it is
+        return doc
+    removed = [f.message for f in auditor.fixes if f.message.startswith(("Deleted", "Removed"))]
+    if removed:
+        more = f" (and {len(removed) - 1} more)" if len(removed) > 1 else ""
+        _note(doc, f"{len(removed)} broken entities were left out of the drawing as it was read: {removed[0]}{more}")
+    return doc
+
+
+def read_notes(doc: Drawing) -> list[str]:
+    """What a person should know of how a drawing was read: a damaged file, broken
+    entities left out. For the conversion report."""
+    return list(getattr(doc, "_storeypath_notes", []))
+
+
+DWG_TIMEOUT_S = 600  # a DWG converter still at work after this long is stopped
+# What LibreDWG says of a file that is damaged, not merely of objects it does not know
+# (it reports errors on many good files' materials and the like).
+DWG_DAMAGE = re.compile(r"CRC mismatch|Invalid object type|Invalid class index|Object handle not found|"
+                        r"section.*overflow|error parsing", re.IGNORECASE)
 
 
 def _read_dwg(path: Path) -> Drawing:
     if shutil.which("dwg2dxf"):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / (path.stem + ".dxf")
-            result = subprocess.run(
-                ["dwg2dxf", "-y", "-o", str(out), str(path)], capture_output=True, text=True
-            )
-            if not out.exists():
-                raise DrawingError(f"dwg2dxf failed on {path.name}: {result.stderr.strip()}")
-            return ezdxf.readfile(out)
+            try:
+                result = subprocess.run(["dwg2dxf", "-y", "-o", str(out), str(path)], capture_output=True,
+                                        text=True, errors="replace", timeout=DWG_TIMEOUT_S)
+            except subprocess.TimeoutExpired as e:
+                raise DrawingError(f"dwg2dxf did not finish converting {path.name} in {DWG_TIMEOUT_S // 60} "
+                                   "minutes; save the drawing as DXF instead") from e
+            except OSError as e:
+                raise DrawingError(f"dwg2dxf could not run: {e}") from e
+            said = [ln.strip() for ln in result.stderr.splitlines() if ln.strip()]
+            if not out.exists() or out.stat().st_size == 0:
+                raise DrawingError(f"dwg2dxf failed on {path.name}: {' '.join(said[-3:])}")
+            doc = _read_dxf(out, path.name)
+            damage = [ln for ln in said if DWG_DAMAGE.search(ln)]
+            if result.returncode != 0 or damage:
+                why = (damage or [ln for ln in said if ln.startswith("ERROR")] or said or ["no reason given"])[0]
+                _note(doc, f"{path.name} looks damaged: converting it said \"{why}\" (and {len(said) - 1} more); "
+                           "parts of it may be missing: check its floors in review, or save it again from the "
+                           "CAD program")
+            return doc
     if odafc.is_installed():
-        return odafc.readfile(str(path))
+        try:
+            return odafc.readfile(str(path))
+        except Exception as e:
+            raise DrawingError(f"the ODA File Converter could not read {path.name}: {e}") from e
     raise DrawingError(
         "reading DWG needs a converter: install LibreDWG (provides dwg2dxf) or the "
         "ODA File Converter, or save the drawing as DXF"
@@ -267,27 +336,7 @@ def _door_clue(doc: Drawing) -> UnitClue:
     """Door swings: quarter-turn arcs with a leaf, a straight line from the hinge
     (the arc's centre) about as long as the radius. Fixtures, columns and window bays
     have quarter arcs too (a basin's rounded corners), but no leaf."""
-    msp = doc.modelspace()
-    radii: list[float] = []
-    in_blocks: dict[str, list[float]] = {}
-    leaves = None
-    seen = 0
-    for e in msp.query("ARC INSERT"):
-        if seen >= MAX_ARCS:
-            break
-        if e.dxftype() == "ARC":
-            seen += 1
-            if _quarter(e):
-                leaves = leaves or _Leaves(msp)
-                if leaves.hinge_of(e):
-                    radii.append(e.dxf.radius)
-        else:
-            name = e.dxf.name
-            if name not in in_blocks:
-                block = doc.blocks.get(name)
-                in_blocks[name] = _door_radii(block) if block is not None else []
-            seen += len(in_blocks[name])
-            radii.extend(r * _insert_scale(e) for r in in_blocks[name])
+    radii = _through_blocks(doc, _door_radii, MAX_ARCS)
     if len(radii) < 3:
         return UnitClue("doors", [], f"{len(radii)} door swings")
     votes = {u: sum(1 for r in radii if DOOR_SWING_M[0] <= r * k <= DOOR_SWING_M[1]) for u, k in M_PER_UNIT.items()}
@@ -302,11 +351,47 @@ def _door_clue(doc: Drawing) -> UnitClue:
     return UnitClue("doors", fits, f"{len(radii)} door swings, typically {statistics.median(radii):g} across")
 
 
-def _door_radii(block) -> list[float]:
-    arcs = [a for a in block if a.dxftype() == "ARC" and _quarter(a)]
+MAX_CLUE_DEPTH = 8  # blocks inside blocks followed this deep for the units clues
+
+
+def _through_blocks(doc: Drawing, measure, most: int) -> list[float]:
+    """What ``measure(layout)`` finds in the drawing and in the blocks placed in it,
+    as placed (times each insert's scale), blocks in blocks too: a sheet pasted as one
+    block, or a bound xref, holds the doors, dimensions and texts that show the units.
+    Each block is measured once; one placed inside itself is not followed. At most
+    ``most`` values."""
+    memo: dict[str, list[float]] = {}
+
+    def of(layout, within: tuple[str, ...]) -> list[float]:
+        out = list(measure(layout))[:most]
+        if len(within) >= MAX_CLUE_DEPTH:
+            return out
+        for insert in layout.query("INSERT"):
+            if len(out) >= most:
+                break
+            name = insert.dxf.get("name", "")
+            if name in within:
+                continue
+            if name not in memo:
+                block = doc.blocks.get(name)
+                memo[name] = of(block, (*within, name)) if block is not None else []
+            k = _insert_scale(insert)
+            out += [v * k for v in memo[name][: most - len(out)]]
+        return out
+
+    return of(doc.modelspace(), ())
+
+
+def _door_radii(layout) -> list[float]:
+    arcs = []
+    for a in layout.query("ARC"):
+        if len(arcs) >= MAX_ARCS:
+            break
+        if _quarter(a):
+            arcs.append(a)
     if not arcs:
         return []
-    leaves = _Leaves(block)
+    leaves = _Leaves(layout)
     return [a.dxf.radius for a in arcs if leaves.hinge_of(a)]
 
 
@@ -330,9 +415,9 @@ class _Leaves:
 
     def hinge_of(self, arc) -> bool:
         """Whether a segment about as long as the radius starts at the arc's centre."""
-        if self.tree is None:
-            return False
         c, r = arc.dxf.center, arc.dxf.radius
+        if self.tree is None or not all(math.isfinite(v) for v in (c.x, c.y, r)):
+            return False
         near = self.tree.query(Point(c.x, c.y), predicate="dwithin", distance=0.1 * r)
         return any(0.85 * r <= self.lengths[i] <= 1.15 * r for i in near)
 
@@ -350,29 +435,44 @@ def _segments(e) -> list[tuple[tuple[float, float], tuple[float, float]]]:
 
 def _dimension_clue(doc: Drawing) -> UnitClue:
     """The typical length the drawing's linear dimensions measure."""
-    lengths = []
-    for d in doc.modelspace().query("DIMENSION"):
-        if d.dimtype not in (0, 1):  # linear and aligned
-            continue
-        try:
-            m = d.get_measurement()
-        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
-            continue
-        if isinstance(m, (int, float)) and m > 0:
-            lengths.append(float(m))
+    lengths = _through_blocks(doc, _dimension_lengths, MAX_CLUES)
     if len(lengths) < 5:
         return UnitClue("dimensions", [], f"{len(lengths)} dimensions")
     typical = statistics.median(lengths)
     return UnitClue("dimensions", _fits(typical, DIMENSION_M), f"{len(lengths)} dimensions, typically {typical:g}")
 
 
+MAX_CLUES = 20000  # dimensions or texts measured for the units, at most
+
+
+def _dimension_lengths(layout) -> list[float]:
+    lengths = []
+    for d in layout.query("DIMENSION"):
+        if len(lengths) >= MAX_CLUES:
+            break
+        if d.dimtype not in (0, 1):  # linear and aligned
+            continue
+        try:
+            m = d.get_measurement()
+        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
+            continue
+        if isinstance(m, (int, float)) and m > 0 and math.isfinite(m):
+            lengths.append(float(m))
+    return lengths
+
+
 def _text_clue(doc: Drawing) -> UnitClue:
-    heights = [t.dxf.height for t in doc.modelspace().query("TEXT") if t.dxf.height > 0]
-    heights += [t.dxf.char_height for t in doc.modelspace().query("MTEXT") if t.dxf.char_height > 0]
+    heights = _through_blocks(doc, _text_heights, MAX_CLUES)
     if len(heights) < 5:
         return UnitClue("text", [], f"{len(heights)} texts")
     typical = statistics.median(heights)
     return UnitClue("text", _fits(typical, TEXT_HEIGHT_M), f"{len(heights)} texts, typically {typical:g} high")
+
+
+def _text_heights(layout) -> list[float]:
+    heights = [t.dxf.height for t in layout.query("TEXT") if t.dxf.height > 0]
+    heights += [t.dxf.char_height for t in layout.query("MTEXT") if t.dxf.char_height > 0]
+    return [h for h in heights if math.isfinite(h)]
 
 
 def _insert_scale(insert) -> float:

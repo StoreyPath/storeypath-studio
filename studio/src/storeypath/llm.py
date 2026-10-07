@@ -49,6 +49,36 @@ class ModelUnavailable(Exception):
     pass
 
 
+class BadAnswer(ModelUnavailable):
+    """The model answered, but not with what was asked: a reply with no answer in it
+    (content null, as when a reasoning model spends its tokens thinking), or one
+    that is not a JSON object. One question is lost, not the model."""
+
+
+def reply_answer(reply) -> dict:
+    """The JSON object an OpenAI-compatible chat reply answers with. BadAnswer when
+    it holds none."""
+    try:
+        content = reply["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise BadAnswer(f"the reply holds no answer ({type(e).__name__}: {e})") from e
+    if not isinstance(content, str):
+        raise BadAnswer("the reply holds no answer (none given: the model may have used its tokens up thinking)")
+    try:
+        answer = json.loads(content)
+    except ValueError as e:
+        raise BadAnswer(f"the answer is not JSON: {content[:80]!r}") from e
+    if not isinstance(answer, dict):
+        raise BadAnswer(f"the answer is not a JSON object: {content[:80]!r}")
+    return answer
+
+
+def _items(answer: dict, key: str) -> list[dict]:
+    """The objects of a list in an answer, leaving out anything else."""
+    items = answer.get(key)
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
 class LocalModel:
     """A llama-server process (started on first use) or an existing server."""
 
@@ -155,9 +185,11 @@ class LocalModel:
                 reply = json.load(r)
         except (urllib.error.URLError, OSError) as e:
             raise ModelUnavailable(f"the language model did not answer: {e}") from e
-        content = reply["choices"][0]["message"]["content"]
+        except ValueError as e:
+            raise BadAnswer(f"the language model's reply is not JSON: {e}") from e
+        answer = reply_answer(reply)
         self._warmed = True
-        return json.loads(content)
+        return answer
 
 
 def _find_model() -> Path | None:
@@ -249,14 +281,17 @@ def read_labels(model: LocalModel, texts: list[str], rooms_only: bool = False) -
     choices = [*TYPE_GUIDE] if rooms_only else [*TYPE_GUIDE, NOT_A_ROOM]
     schema = {"type": "object", "properties": {"type": {"enum": choices}}, "required": ["type"]}
 
-    def one(text: str) -> tuple[str, LabelReading]:
-        kind = model.ask(LABEL_SYSTEM, f"Text: {text}", schema, max_tokens=30).get("type")
-        is_space = kind in TYPE_GUIDE
+    def one(text: str) -> tuple[str, LabelReading | None]:
+        try:
+            kind = model.ask(LABEL_SYSTEM, f"Text: {text}", schema, max_tokens=30).get("type")
+        except BadAnswer:
+            return text, None  # this text is asked again next time
+        is_space = isinstance(kind, str) and kind in TYPE_GUIDE
         return text, LabelReading(is_space, SpaceType(kind) if is_space else None)
 
     unique = list(dict.fromkeys(t.strip() for t in texts if t.strip()))
     with ThreadPoolExecutor(max_workers=getattr(model, "parallel", 1)) as pool:
-        return dict(pool.map(one, unique))
+        return {text: reading for text, reading in pool.map(one, unique) if reading is not None}
 
 
 VIEW_KINDS = ["floor_plan", "site_plan", "roof_plan", "elevation", "section", "detail", "schedule", "other"]
@@ -273,7 +308,7 @@ TITLE_SYSTEM = (
     "- detail: a construction detail that is not a plan\n"
     "- schedule: a table of doors, windows or finishes\n"
     "- other: anything else\n"
-    "For a floor plan also give the floor as a number: basement -1, ground floor 0 "
+    "For a floor plan also give the floor as a number: basement -1 (a second basement -2), ground floor 0 "
     "(rez-de-chaussée, Erdgeschoss, planta baja, الأرضي), first floor 1 (الأول), second 2, "
     "and so on; null when the title does not say. A penthouse is above the numbered "
     "floors: null, unless its title gives a number. Give the name of the building when the "
@@ -310,12 +345,13 @@ def read_titles(model: LocalModel, titles: list[str]) -> dict[str, TitleReading]
     user = "Titles:\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(unique, 1))
     answer = model.ask(TITLE_SYSTEM, user, schema, max_tokens=80 * len(unique) + 100)
     out = {}
-    for item in answer.get("titles", []):
-        i = item.get("n", 0) - 1
+    for item in _items(answer, "titles"):
+        i = item.get("n", 0) - 1 if isinstance(item.get("n"), int) else -1
         if 0 <= i < len(unique):
-            floor = item.get("floor")
-            out[unique[i]] = TitleReading(item.get("kind", "other"), floor if isinstance(floor, int) else None,
-                                          item.get("building") or None)
+            floor, kind, building = item.get("floor"), item.get("kind"), item.get("building")
+            out[unique[i]] = TitleReading(kind if kind in VIEW_KINDS else "other",
+                                          floor if isinstance(floor, int) else None,
+                                          building if isinstance(building, str) and building else None)
     return out
 
 
@@ -345,10 +381,10 @@ def read_layer_names(model: LocalModel, names: list[str]) -> dict[str, str]:
         }
         user = "Layers:\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(batch, 1))
         answer = model.ask(LAYER_SYSTEM, user, schema, max_tokens=40 * len(batch) + 100)
-        for item in answer.get("layers", []):
-            i = item.get("n", 0) - 1
+        for item in _items(answer, "layers"):
+            i = item.get("n", 0) - 1 if isinstance(item.get("n"), int) else -1
             if 0 <= i < len(batch):
-                out[batch[i]] = item.get("role", "other")
+                out[batch[i]] = item.get("role") if item.get("role") in LAYER_ROLES else "other"
     return out
 
 
@@ -370,7 +406,7 @@ def read_unit_notes(model: LocalModel, notes: list[str]) -> dict[str, str | None
     out = {}
     for note in dict.fromkeys(n.strip() for n in notes if n.strip()):
         answer = model.ask(UNIT_NOTE_SYSTEM, f"Note: {note}", schema, max_tokens=30).get("units")
-        out[note] = UNIT_CHOICES.get(answer)
+        out[note] = UNIT_CHOICES.get(answer) if isinstance(answer, str) else None
     return out
 
 
@@ -454,8 +490,8 @@ def find_private(model: LocalModel, texts: list[str], say=None) -> dict[str, lis
         batch = texts[start:start + PRIVATE_BATCH]
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(batch))
         answer = model.ask(PRIVATE_SYSTEM, f"Texts:\n{numbered}", schema, max_tokens=60 + 30 * len(batch))
-        for p in answer.get("private", []):
-            n, part = p.get("n"), (p.get("part") or "").strip()
+        for p in _items(answer, "private"):
+            n, part = p.get("n"), (p.get("part") if isinstance(p.get("part"), str) else "").strip()
             if isinstance(n, int) and 1 <= n <= len(batch) and len(part) >= 2 and part.lower() in batch[n - 1].lower():
                 out.setdefault(batch[n - 1], []).append((part, p.get("kind") if p.get("kind") in PRIVATE_KINDS else "other"))
         if say:

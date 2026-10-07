@@ -28,7 +28,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, wait
+from collections import OrderedDict
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 
 from shapely import wkt
@@ -36,8 +37,9 @@ from shapely.affinity import scale as scale_geom
 from shapely.affinity import translate
 from shapely.geometry import LineString, box
 
-from .extract import ExtractedSpace, ExtractedZone, modelspace_entities
+from .extract import ExtractedSpace, ExtractedZone, plan_entities
 from .geometry import as_polygons
+from .split import exact_parts
 from .types import SpaceType
 
 SYSTEM = ("You read architectural floor plans (CAD drawings, as printed) the way an architect does. "
@@ -117,9 +119,10 @@ class VisionModel:
             self._checked_at = time.monotonic()
             try:
                 with urllib.request.urlopen(self._request("/models"), timeout=5) as r:
-                    models = json.load(r).get("data") or []
-                if not self.model and models:
-                    self.model = models[0].get("id", "")
+                    listed = json.load(r)
+                models = listed.get("data") if isinstance(listed, dict) else None
+                if not self.model and isinstance(models, list) and models and isinstance(models[0], dict):
+                    self.model = str(models[0].get("id") or "")
                 self._checked = True
             except (OSError, ValueError, urllib.error.URLError) as e:
                 self.failed = f"no vision model at {self.url}: {e}"
@@ -148,13 +151,15 @@ class VisionModel:
             "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
             "chat_template_kwargs": {"enable_thinking": False},
         }
+        from .llm import BadAnswer, reply_answer
+
         try:
             with self._slots, urllib.request.urlopen(self._request("/chat/completions", body), timeout=self.timeout) as r:
                 out = json.load(r)
-            answer = json.loads(out["choices"][0]["message"]["content"])
-        except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
+            answer = reply_answer(out)
+        except (OSError, ValueError, BadAnswer, urllib.error.URLError) as e:
             raise VisionUnavailable(f"{self.name}: {e}") from e
-        return {f: answer[f] for f in fields if answer.get(f) in fields[f]}
+        return {f: answer[f] for f in fields if isinstance(answer.get(f), str) and answer[f] in fields[f]}
 
 
 class InWords:
@@ -172,7 +177,7 @@ class InWords:
         return self.vision.available()
 
     def ask(self, system: str, user: str, schema: dict, max_tokens: int = 1024) -> dict:
-        from .llm import ModelUnavailable
+        from .llm import BadAnswer, ModelUnavailable, reply_answer
 
         body = {
             "model": self.vision.model, "temperature": 0, "max_tokens": max_tokens,
@@ -183,9 +188,14 @@ class InWords:
         try:
             with urllib.request.urlopen(self.vision._request("/chat/completions", body), timeout=self.vision.timeout) as r:
                 out = json.load(r)
-            return json.loads(out["choices"][0]["message"]["content"])
-        except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
+        except (OSError, urllib.error.URLError) as e:
             raise ModelUnavailable(f"{self.name}: {e}") from e
+        except ValueError as e:
+            raise BadAnswer(f"{self.name}: the reply is not JSON: {e}") from e
+        try:
+            return reply_answer(out)
+        except BadAnswer as e:
+            raise BadAnswer(f"{self.name}: {e}") from e
 
 
 @dataclass
@@ -201,9 +211,18 @@ def _print_config():
                          lineweight_scaling=0.6, min_lineweight=0.25)
 
 
+_DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
+
+
 def print_png(doc, bbox, width: int, height: int) -> bytes:
     """A part of the drawing as printed, black on white: ``bbox`` (drawing units)
-    filling ``width`` × ``height`` pixels (the same shape). PNG."""
+    filling ``width`` × ``height`` pixels (the same shape). PNG. Drawn one at a
+    time with vision's views (the review's prints are drawn while a floor is looked at)."""
+    with _DRAWING:
+        return _print_png(doc, bbox, width, height)
+
+
+def _print_png(doc, bbox, width: int, height: int) -> bytes:
     from ezdxf.addons.drawing import Frontend, RenderContext
     from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -214,7 +233,7 @@ def print_png(doc, bbox, width: int, height: int) -> bytes:
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
     pad = max(x1 - x0, y1 - y0) * 0.1  # blocks placed just outside reach in
-    entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
+    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
     Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
@@ -238,7 +257,7 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     fig = Figure(figsize=(px / 100, px / 100), dpi=100)  # no pyplot: safe in Studio's job threads
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
-    entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
+    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
     Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
     for g in highlight:
         for part in getattr(g, "geoms", [g]):
@@ -255,9 +274,6 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     ax.set_aspect("equal")
     ax.axis("off")
     return fig
-
-
-_DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
 
 
 def render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
@@ -279,21 +295,30 @@ class FloorPrint:
     """A floor printed once, in overlapping tiles, and looked at a part at a time,
     as a person reads a printed sheet: each room's view is cut out of a tile and
     its outline drawn on it, instead of drawing the plan again for every room.
-    Views wider than the tiles' overlap are drawn on their own."""
+    Views wider than the tiles' overlap are drawn on their own. Only the last few
+    tiles are kept (each is some 90 MB): rooms are best looked at tile by tile (see
+    ``tile_of``)."""
 
     PX_PER_M = CROP_PX / CROP_MIN_M  # the smallest view keeps its full detail
     STRIDE_M = 30.0
     OVERLAP_M = 12.0
+    KEEP_TILES = 4
 
     def __init__(self, doc, scale: float):
         self.doc, self.scale = doc, scale
         self.stride = self.STRIDE_M / scale  # drawing units
         self.overlap = self.OVERLAP_M / scale
         self.tile_px = round((self.STRIDE_M + self.OVERLAP_M) * self.PX_PER_M)
-        self._tiles: dict[tuple[int, int], object] = {}
+        self._tiles: OrderedDict[tuple[int, int], object] = OrderedDict()
+
+    def tile_of(self, bbox) -> tuple[int, int]:
+        """The tile a view of ``bbox`` (drawing units) is cut from."""
+        return int(bbox[0] // self.stride), int(bbox[1] // self.stride)
 
     def _tile(self, i: int, j: int):
-        if (i, j) not in self._tiles:
+        if (i, j) in self._tiles:
+            self._tiles.move_to_end((i, j))
+        else:
             from PIL import Image
 
             x0, y0 = i * self.stride, j * self.stride
@@ -301,6 +326,8 @@ class FloorPrint:
             fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
             fig.canvas.draw()
             self._tiles[(i, j)] = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
+            while len(self._tiles) > self.KEEP_TILES:
+                self._tiles.popitem(last=False)
         return self._tiles[(i, j)]
 
     def view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
@@ -313,7 +340,7 @@ class FloorPrint:
             return render(self.doc, bbox, highlight, px, marks, letters)
         from PIL import ImageDraw, ImageFont
 
-        i, j = int(x0 // self.stride), int(y0 // self.stride)
+        i, j = self.tile_of(bbox)
         tile = self._tile(i, j)
         tx0, ty1 = i * self.stride, j * self.stride + self.stride + self.overlap
         k = self.tile_px / (self.stride + self.overlap)  # pixels per drawing unit
@@ -363,28 +390,57 @@ def room_key(model: str, sha: str, src, polygon) -> str:
 PROGRESS_S = 15.0  # how often a long look at a floor says how far it has got
 
 
-def _ask_each(todo: list, draw, ask, model: VisionModel, say=None, what: str = "rooms") -> list:
+def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: str = "rooms") -> None:
     """``ask(item, image)`` about each item of ``todo`` as soon as ``draw(item)`` has
     drawn it: drawing one at a time (it is not thread-safe through ezdxf's caches),
-    the questions going out meanwhile, ``model.parallel`` at once. Says how far it
-    has got every PROGRESS_S seconds, as a large floor takes a while. The answers,
-    in order."""
+    the questions going out meanwhile, ``model.parallel`` at once. Each answer is
+    handed to ``keep`` (in this thread) as soon as it comes, so what was answered is
+    kept whatever becomes of the rest; an item that cannot be drawn or asked about is
+    left out, the reason in ``model.failed``: one failure costs one item. At most
+    twice as many as the model takes at once are drawn ahead of their questions (a
+    drawn view is kept until it is asked about). Says how far it has got every
+    PROGRESS_S seconds, as a large floor takes a while."""
     last = time.monotonic()
+    done = 0
 
-    def progress(futures) -> None:
+    def progress() -> None:
         nonlocal last
         if say is not None and time.monotonic() - last >= PROGRESS_S:
             last = time.monotonic()
-            say(f"vision: {sum(f.done() for f in futures)} of {len(todo)} {what} looked at")
+            say(f"vision: {done} of {len(todo)} {what} looked at")
 
+    def collect(finished) -> None:
+        nonlocal done
+        for f in finished:
+            done += 1
+            try:
+                keep(f.result())
+            except Exception as e:  # an answer that cannot be used: this item only
+                model.failed = f"one of the {what} was not looked at: {type(e).__name__}: {e}"
+
+    ahead = 2 * max(1, model.parallel)
     with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
-        futures = []
+        pending: set = set()
         for item in todo:
-            futures.append(pool.submit(ask, item, draw(item)))
-            progress(futures)
-        while wait(futures, timeout=PROGRESS_S).not_done:
-            progress(futures)
-        return [f.result() for f in futures]
+            while len(pending) >= ahead:  # the model is busy: no more drawn until it answers
+                finished, pending = wait(pending, timeout=PROGRESS_S, return_when=FIRST_COMPLETED)
+                collect(finished)
+                progress()
+            try:
+                image = draw(item)
+            except Exception as e:  # a part of the drawing that cannot be printed
+                model.failed = f"one of the {what} could not be drawn: {type(e).__name__}: {e}"
+                done += 1
+                continue
+            pending.add(pool.submit(ask, item, image))
+            finished = {f for f in pending if f.done()}
+            pending -= finished
+            collect(finished)
+            progress()
+        while pending:
+            finished, pending = wait(pending, timeout=PROGRESS_S, return_when=FIRST_COMPLETED)
+            collect(finished)
+            progress()
 
 
 def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | None, answers: dict[str, dict],
@@ -415,10 +471,14 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
         sheet = sheet or FloorPrint(doc, scale)
         fields = {"outline": OUTLINES, "type": list(ROOM_TYPES)}
 
-        def draw(item):
-            n, _ = item
+        def region_of(n):
             inset = polygons[n].buffer(-0.12)  # inside the walls, so the walls stay visible
-            region = in_drawing(polygons[n] if inset.is_empty else inset)
+            return in_drawing(polygons[n] if inset.is_empty else inset)
+
+        todo.sort(key=lambda item: sheet.tile_of(_window(region_of(item[0]), scale))[::-1])  # tile by tile
+
+        def draw(item):
+            region = region_of(item[0])
             return sheet.view(_window(region, scale), [region])
 
         def one(item, image):
@@ -429,12 +489,16 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
                 model.failed = str(e)
                 return n, key, None
 
-        for n, key, got in _ask_each(todo, draw, one, model, say, "rooms"):
+        def keep(result):
+            nonlocal asked
+            n, key, got = result
             if got and "outline" in got and "type" in got:
                 answers[key] = {"outline": got["outline"], "type": got["type"], "model": name,
                                 "shape": wkt.dumps(polygons[n], rounding_precision=2)}
                 views[n] = RoomView(got["outline"], got["type"])
                 asked += 1
+
+        _ask_each(todo, draw, one, keep, model, say, "rooms")
     return views, asked
 
 
@@ -701,7 +765,7 @@ def _segments_in(doc, region_drawing, to_local) -> list[LineString]:
 
     x0, y0, x1, y1 = region_drawing.bounds
     out = []
-    for e, _ in _walk(modelspace_entities(doc, (x0, y0, x1, y1))):
+    for e, _ in _walk(plan_entities(doc, (x0, y0, x1, y1))):
         if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB", "INSERT", "DIMENSION", "HATCH", "MULTILEADER"):
             continue
         try:
@@ -808,10 +872,14 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
                 model.failed = str(e)
                 return line, {}
 
-        for line, got in _ask_each(todo, draw, one, model, say, "lines across merged rooms"):
+        def keep(result):
+            nonlocal asked
+            line, got = result
             if "a" in got and "b" in got:
                 line[3] = answers[line[2]] = {"a": got["a"], "b": got["b"], "model": name, "cut": line[4]}
                 asked += 1
+
+        _ask_each(todo, draw, one, keep, model, say, "lines across merged rooms")
 
     made: list = []
     rooms = looked = 0
@@ -838,7 +906,12 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
     counting = threading.Lock()
 
     def check(row):
-        found = _checked(row[1], row[2], doc, src, scale, sha, model, answers, sheet)
+        try:
+            found = _checked(row[1], row[2], doc, src, scale, sha, model, answers, sheet)
+        except Exception as e:  # this room stays whole; the others are still divided
+            if model is not None:
+                model.failed = f"a merged room was not divided: {type(e).__name__}: {e}"
+            found = [units[row[0]].polygon], [], 0
         with counting:
             progress["done"] += 1
             if say is not None and time.monotonic() - progress["last"] >= PROGRESS_S:
@@ -848,7 +921,7 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
 
     with ThreadPoolExecutor(max_workers=max(1, model.parallel if model is not None else 1)) as pool:
         for row, (pieces, used, n) in zip(checking, pool.map(check, checking)):
-            row[1], row[2] = pieces, used
+            row[1], row[2] = exact_parts(units[row[0]].polygon, pieces), used  # the zones divide the room exactly
             looked += n
     for k, pieces, used in cut_up:
         unit = units[k]

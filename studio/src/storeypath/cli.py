@@ -304,10 +304,13 @@ def words(drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")]):
 def align(
     workspace: WorkspaceArg,
     building_id: str,
-    reference: Annotated[Optional[str], typer.Option(help="floor ID the others are lined up with (default: lowest)")] = None,
+    reference: Annotated[Optional[str], typer.Option(help="floor ID the others are lined up with (default: the "
+                                                          "lowest floor converted already, else the lowest)")] = None,
 ):
     """Line up a building's floors drawn side by side in one drawing (or shifted
-    between drawings): finds where each plan's walls overlap the reference floor's."""
+    between drawings): finds where each plan's walls overlap the reference floor's.
+    Floors converted already stay where they are (their rooms' IDs stand on it):
+    only floors not converted yet are moved."""
     from .cad import meters_per_unit, read_drawing
     from .sheets import align as align_walls, floor_walls
 
@@ -319,7 +322,10 @@ def align(
     floors = sorted((f for f in b.floors if f.source), key=lambda f: f.ordinal)
     if len(floors) < 2:
         _fail("align needs at least two floors with drawings")
-    ref = next((f for f in floors if f"{building_id}-{f.code}" == reference), None) if reference else floors[0]
+    if reference:
+        ref = next((f for f in floors if f"{building_id}-{f.code}" == reference), None)
+    else:  # a floor already there: the new ones are lined up with it
+        ref = next((f for f in floors if f.converted_at is not None), floors[0])
     if ref is None:
         _fail(f"no floor {reference} in {building_id}")
     docs: dict[str, object] = {}
@@ -338,14 +344,19 @@ def align(
         return floor_walls(doc, profile, scale, src.region), scale
 
     try:
-        ref_walls, _ = walls(ref)
+        ref_walls, ref_scale = walls(ref)
         ref_offset = ref.source.offset or (0.0, 0.0)
         for f in floors:
             if f is ref:
                 continue
+            if f.converted_at is not None:  # moving it would give all its rooms new IDs
+                typer.echo(f"{building_id}-{f.code}: converted already: kept where it is")
+                continue
             other, scale = walls(f)
             (tx, ty), overlap = align_walls(ref_walls, other)
-            f.source.offset = (round(ref_offset[0] + tx / scale, 6), round(ref_offset[1] + ty / scale, 6))
+            # in this floor's drawing units, from where the reference stands (meters between)
+            f.source.offset = (round((ref_offset[0] * ref_scale + tx) / scale, 6),
+                               round((ref_offset[1] * ref_scale + ty) / scale, 6))
             note = "" if overlap >= 0.3 else "  (little overlap: check this floor in review)"
             typer.echo(f"{building_id}-{f.code}: shifted {tx:.3f}, {ty:.3f} m onto {building_id}-{ref.code}; "
                        f"{overlap:.0%} of its walls line up{note}")
@@ -420,8 +431,13 @@ def convert(
     use_vision: Annotated[bool, typer.Option("--vision/--no-vision",
                                              help="look at every room with the vision model "
                                                   "($STOREYPATH_VISION_URL), when one is set")] = True,
+    force: Annotated[bool, typer.Option("--force",
+                                        help="apply a read even when it finds no rooms on a floor, or would retire "
+                                             "most of them (a drawing that really changed that much)")] = False,
 ):
-    """Read the drawings and update the project's objects, keeping existing IDs."""
+    """Read the drawings and update the project's objects, keeping existing IDs. A
+    read that would retire most of a floor's rooms (layers renamed, wrong units) is
+    not applied without --force: the floor keeps its rooms."""
     from .llm import LocalModel
     from .symbols import SymbolSpotter
 
@@ -443,25 +459,39 @@ def convert(
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
     failed = False
-    for fid in floors:
-        if ws.floor(fid).source is None:
-            continue
-        try:
-            report = convert_floor(ws, fid, workspace.parent, model, symbols,
-                                   vision if vision is not None and vision.available() else None,
-                                   say=lambda m: typer.echo(f"  {m}"))
-        except DrawingError as e:
-            typer.secho(f"{fid}: {e}", fg="red", err=True)
-            failed = True
-            continue
-        typer.echo(report.summary())
-        for w in report.warnings:
-            typer.secho(f"  warning: {w}", fg="yellow")
-    ws.save(workspace)
-    if model is not None:
-        model.close()
+    try:
+        for fid in floors:
+            if ws.floor(fid).source is None:
+                continue
+            try:
+                report = convert_floor(ws, fid, workspace.parent, model, symbols,
+                                       vision if vision is not None and vision.available() else None,
+                                       say=lambda m: typer.echo(f"  {m}"), force=force)
+            except Exception as e:  # this floor is not converted; the others are
+                why = str(e) if isinstance(e, DrawingError) else f"{type(e).__name__}: {e}"
+                typer.secho(f"{fid}: not converted: {why}", fg="red", err=True)
+                failed = True
+                ws = _as_saved(workspace, ws)
+                continue
+            failed |= report.held
+            typer.secho(report.summary(), fg="yellow" if report.held else None)
+            for w in report.warnings:
+                typer.secho(f"  warning: {w}", fg="yellow")
+            ws.save(workspace)  # each floor kept as soon as it is converted
+    finally:
+        if model is not None:
+            model.close()
     if failed:
         raise typer.Exit(1)
+
+
+def _as_saved(path: Path, ws: Workspace) -> Workspace:
+    """The project as last saved, a floor's failed conversion undone; what the models
+    answered meanwhile (about texts and room shapes in the drawings) is kept."""
+    saved = Workspace.load(path)
+    saved.readings.update(ws.readings)
+    saved.vision.update(ws.vision)
+    return saved
 
 
 @app.command("list")

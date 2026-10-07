@@ -18,7 +18,8 @@ import shapely
 from ezdxf.document import Drawing
 from shapely.geometry import box
 
-from .extract import _center, _flatten, _text_lines, _walk, _wall_hatch, modelspace_entities, CURVE_TOLERANCE_M
+from .extract import (CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, _wall_hatch, modelspace_entities,
+                      plan_entities)
 from .geometry import as_polygons
 from .profile import Profile
 from .walls import wall_mass
@@ -43,6 +44,10 @@ ORDINAL_WORDS = [
     (re.compile(r"\b(third|3rd)\b", re.I), 3),
     (re.compile(r"\b(fourth|4th)\b", re.I), 4),
 ]
+# Which basement: SECOND BASEMENT, BASEMENT 2, BASEMENT LEVEL 2
+NTH_BASEMENT = re.compile(r"\b(?:(first|1st|second|2nd|third|3rd|fourth|4th)\s+(?:basement|cellar)"
+                          r"|(?:basement|cellar)\s*(?:level\s*)?-?\s*(\d))\b", re.I)
+NTH = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
 ROOF_WORDS = re.compile(r"\b(roof|terrace|penthouse)\b", re.IGNORECASE)
 NOT_PLAN_WORDS = re.compile(r"\b(elevation|section|facade|detail)\b", re.IGNORECASE)
 
@@ -163,8 +168,10 @@ def _is_frame(members, bounds, all_bounds) -> bool:
 
 
 def _texts(doc: Drawing):
+    """The drawing's texts, with those in blocks (a sheet pasted as a block holds its
+    plans' titles): (text, middle, height)."""
     out = []
-    for e in doc.modelspace():
+    for e, _ in _walk(doc.modelspace()):
         kind = e.dxftype()
         if kind in ("TEXT", "MTEXT"):
             lines, c = _text_lines(e), _center(e)
@@ -260,19 +267,24 @@ def read_title(title: str | None):
 
 
 def _ordinal(title: str | None) -> int | None:
+    """The floor a title names, from its words: a second basement is -2. None when it
+    names none, or several (FIRST & SECOND FLOOR PLAN, TYPICAL (1ST-4TH)): those are
+    for the language model."""
     if not title:
         return None
-    for pattern, ordinal in ORDINAL_WORDS:
-        if pattern.search(title):
-            return ordinal
-    return None
+    found = set()
+    for m in list(NTH_BASEMENT.finditer(title)):
+        found.add(-(int(m[2]) if m[2] else NTH[m[1].lower()]))
+        title = title[:m.start()] + " " * (m.end() - m.start()) + title[m.end():]  # read: not read again below
+    found |= {ordinal for pattern, ordinal in ORDINAL_WORDS if pattern.search(title)}
+    return found.pop() if len(found) == 1 else None
 
 
 def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
     """The wall mass of one plan (meters, drawing position)."""
     tol = CURVE_TOLERANCE_M / scale
     lines, fills = [], []
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         if not profile.wall_layers.fullmatch(layer) or e.dxftype() in ("TEXT", "MTEXT", "ATTRIB", "INSERT"):
             continue
         if e.dxftype() == "HATCH":
@@ -286,12 +298,22 @@ def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
     return wall_mass(lines, fills, profile.walls)
 
 
+ALIGN_GAP_M = 10.0  # walls this far from the plan's main body are strays (a legend, a line at the origin)
+ALIGN_MAX_CELLS = 2000  # cells along a side of the grid the walls are laid on, at most
+
+
 def align(reference, other) -> tuple[tuple[float, float], float]:
     """How far ``other`` (a wall mass) lies from ``reference``: the shift (meters)
     to subtract from ``other`` so that it lines up, and the share of the smaller
-    plan's walls that then overlap."""
-    a, (ax, ay) = _raster(reference)
-    b, (bx, by) = _raster(other)
+    plan's walls that then overlap. Each plan is lined up by its main body of walls;
+    a large plan's walls are laid on a coarser grid."""
+    reference, other = _main_body(reference), _main_body(other)
+    if reference.is_empty or other.is_empty:
+        return (0.0, 0.0), 0.0
+    widest = max(max(g.bounds[2] - g.bounds[0], g.bounds[3] - g.bounds[1]) for g in (reference, other))
+    cell = max(ALIGN_CELL_M, widest / ALIGN_MAX_CELLS)
+    a, (ax, ay) = _raster(reference, cell)
+    b, (bx, by) = _raster(other, cell)
     shape = (a.shape[0] + b.shape[0], a.shape[1] + b.shape[1])
     corr = np.fft.irfft2(np.fft.rfft2(a, shape) * np.conj(np.fft.rfft2(b, shape)), shape)
     ki, kj = np.unravel_index(int(np.argmax(corr)), corr.shape)
@@ -299,15 +321,30 @@ def align(reference, other) -> tuple[tuple[float, float], float]:
     di, dj = _refine(corr, ki, kj)
     ki = ki - shape[0] if ki > shape[0] // 2 else ki
     kj = kj - shape[1] if kj > shape[1] // 2 else kj
-    tx = bx - ax - (kj + dj) * ALIGN_CELL_M
-    ty = by - ay - (ki + di) * ALIGN_CELL_M
+    tx = bx - ax - (kj + dj) * cell
+    ty = by - ay - (ki + di) * cell
     return (tx, ty), min(1.0, score)
 
 
-def _raster(mass) -> tuple[np.ndarray, tuple[float, float]]:
+def _main_body(mass):
+    """The walls of a plan's main body: the group of wall pieces lying within
+    ALIGN_GAP_M of each other that holds the most wall. Strays far off would
+    otherwise spread the grid over kilometres."""
+    pieces = as_polygons(mass)
+    if len(pieces) < 2:
+        return mass
+    groups = as_polygons(shapely.union_all(shapely.buffer(np.array(pieces, dtype=object), ALIGN_GAP_M / 2)))
+    if len(groups) < 2:
+        return mass
+    tree = shapely.STRtree(pieces)
+    best = max(groups, key=lambda g: sum(pieces[int(i)].area for i in tree.query(g, predicate="intersects")))
+    return shapely.union_all([pieces[int(i)] for i in tree.query(best, predicate="intersects")])
+
+
+def _raster(mass, cell: float = ALIGN_CELL_M) -> tuple[np.ndarray, tuple[float, float]]:
     x0, y0, x1, y1 = mass.bounds
-    xs = np.arange(x0, x1 + ALIGN_CELL_M, ALIGN_CELL_M)
-    ys = np.arange(y0, y1 + ALIGN_CELL_M, ALIGN_CELL_M)
+    xs = np.arange(x0, x1 + cell, cell)
+    ys = np.arange(y0, y1 + cell, cell)
     gx, gy = np.meshgrid(xs, ys)
     shapely.prepare(mass)
     grid = shapely.contains_xy(mass, gx, gy).astype(float)

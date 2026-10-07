@@ -26,7 +26,7 @@ import numpy as np
 import shapely
 from ezdxf.document import Drawing
 
-from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, dashed_lines, modelspace_entities
+from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, dashed_lines, plan_entities
 from .profile import (
     BlocksConfig,
     DoorsConfig,
@@ -203,7 +203,7 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
     tol = CURVE_TOLERANCE_M / scale
     is_dashed = dashed_lines(doc)
 
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         st = stats.setdefault(layer, LayerStats(layer))
         st.entities += 1
         kind = e.dxftype()
@@ -222,8 +222,9 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
         dashed = is_dashed(e, layer)
         if kind == "ARC":
             c = e.ocs().to_wcs(e.dxf.center)
-            arcs.append(_Arc(layer, c.x * scale, c.y * scale, e.dxf.radius * scale, e.dxf.start_angle,
-                             (e.dxf.end_angle - e.dxf.start_angle) % 360, dashed))
+            if all(math.isfinite(v) for v in (c.x, c.y, e.dxf.radius, e.dxf.start_angle, e.dxf.end_angle)):
+                arcs.append(_Arc(layer, c.x * scale, c.y * scale, e.dxf.radius * scale, e.dxf.start_angle,
+                                 (e.dxf.end_angle - e.dxf.start_angle) % 360, dashed))
             continue
         flat = _flatten(e, tol)
         if flat is None:
@@ -263,7 +264,7 @@ def plan_texts(doc: Drawing, region=None, per_layer: int | None = None, unknown=
     ``per_layer``, at most that many of each layer's texts that ``unknown`` says are
     not known yet: a few examples are enough to tell what a layer holds."""
     by_layer: dict[str, list[str]] = defaultdict(list)
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB"):
             text = " ".join(_text_lines(e)).strip()
             if text and len(text) <= 40 and len(text.split()) <= 5 and text not in by_layer[layer]:
@@ -319,21 +320,24 @@ def _pair_segments(segs: list[_Seg], stats) -> list[tuple[str, object]]:
         order = np.argsort(offset)
         offset, lo, hi, group = offset[order], lo[order], hi[order], group[order]
         own = np.isin(group, members)
-        j0 = 0
-        for i in range(len(group)):
-            while offset[i] - offset[j0] > WALL_GAP_M[1]:
-                j0 += 1
-            for j in range(j0, i):
-                gap = offset[i] - offset[j]
-                if gap < WALL_GAP_M[0] or not (own[i] or own[j]):
-                    continue
-                overlap = min(hi[i], hi[j]) - max(lo[i], lo[j])
-                if overlap <= 0:
-                    continue
-                for k, side in ((group[i], 0), (group[j], 1)):  # j lies below i
-                    if overlap > best[k, side]:
-                        best[k, side] = min(overlap, length[k])
-                        partner_gap[k, side] = gap
+        # Each segment against those below it within a wall's thickness that run
+        # alongside it, in order: found through an index, not all against all (a
+        # long facade drawn in hundreds of pieces along one line).
+        tree = shapely.STRtree(shapely.linestrings(np.stack([np.c_[lo, offset], np.c_[hi, offset]], axis=1)))
+        near = tree.query(shapely.box(lo, offset - WALL_GAP_M[1], hi, offset))
+        below = near[:, near[0] > near[1]]
+        below = below[:, np.lexsort((below[1], below[0]))]
+        for i, j in zip(below[0].tolist(), below[1].tolist()):
+            gap = offset[i] - offset[j]
+            if not WALL_GAP_M[0] <= gap <= WALL_GAP_M[1] or not (own[i] or own[j]):
+                continue
+            overlap = min(hi[i], hi[j]) - max(lo[i], lo[j])
+            if overlap <= 0:
+                continue
+            for k, side in ((group[i], 0), (group[j], 1)):  # j lies below i
+                if overlap > best[k, side]:
+                    best[k, side] = min(overlap, length[k])
+                    partner_gap[k, side] = gap
     out = []
     for i, sg in enumerate(solid):
         st = stats[sg.layer]

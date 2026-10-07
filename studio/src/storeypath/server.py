@@ -712,21 +712,37 @@ class Studio:
             job.say(f"spotting symbols with {self.symbols.name} (research use only)")
         if self.vision.available():
             job.say(f"looking at the rooms with {self.vision.name}")
-        summaries = []
+        summaries, held, failed = [], [], []
         with self._changing(ws_path):
             ws = Workspace.load(ws_path)
             for fid in floor_ids:
                 if ws.floor(fid).source is None:
                     continue
                 job.say(f"converting {fid}")
-                report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols,
-                                       self.vision if self.vision.available() else None, say=lambda m: job.say("  " + m))
+                # a read that would retire most of a floor is not applied: the floor keeps its rooms
+                try:
+                    report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols,
+                                           self.vision if self.vision.available() else None,
+                                           say=lambda m: job.say("  " + m))
+                except Exception as e:  # this floor stays as it was; the others are converted
+                    traceback.print_exc()
+                    job.say(f"  {fid}: not converted: {_message(e)}")
+                    failed.append(f"{fid}: {_message(e)}")
+                    saved = Workspace.load(ws_path)  # as last saved, with what the models answered meanwhile
+                    saved.readings.update(ws.readings)
+                    saved.vision.update(ws.vision)
+                    ws = saved
+                    continue
                 job.say("  " + report.summary())
                 for w in report.warnings:
                     job.say("  warning: " + w)
                 summaries.append(report.summary())
+                if report.held:
+                    held.append(fid)
                 ws.save(ws_path)
-        return {"summaries": summaries}
+        if failed:  # the job fails, the floors converted kept
+            raise ValueError(f"not converted: {'; '.join(failed)}")
+        return {"summaries": summaries, "held": held}
 
     def move(self, code: str, building_id: str, body: dict) -> dict:
         """A building moved on its location's site plan: ``x``, ``y`` (metres from the
