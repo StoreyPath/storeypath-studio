@@ -5,7 +5,9 @@
 #   docker build -f docker/Dockerfile -t storeypath/studio .
 #   docker run -p 8080:8080 -v storeypath:/data storeypath/studio
 #
-# then open http://localhost:8080. Air-gapped: build (or `docker save`) on a
+# then open http://localhost:8080 (or the machine's address). To reach it by a host
+# name other than localhost, allow that name: -e STOREYPATH_ALLOWED_HOSTS=gpu-server,studio.example
+# (Studio refuses requests addressed to other names, against DNS rebinding). Air-gapped: build (or `docker save`) on a
 # connected machine, `docker load` on the isolated one; run with --network none
 # if you like — nothing in it reaches out.
 #

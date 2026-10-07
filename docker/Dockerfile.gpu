@@ -11,6 +11,8 @@
 #   docker load -i storeypath-studio-gpu.tar.gz
 #   docker run -d --name storeypath --gpus all -p 8080:8080 -v storeypath:/data storeypath/studio:gpu
 #
+# (to reach it by a host name, add -e STOREYPATH_ALLOWED_HOSTS=<that name>; addresses
+# and localhost always work)
 # then open http://localhost:8080 once `docker logs storeypath` says Studio is
 # serving (loading the vision model takes a minute or two). One GPU with 32 GB free is
 # enough; pick one with --gpus '"device=1"'. NVIDIA driver 525 or newer (CUDA 12).

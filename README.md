@@ -136,7 +136,7 @@ in the `storeypath` volume, so they survive restarts and upgrades:
 |---|---|
 | Stop, start again | `docker stop storeypath` · `docker start storeypath` |
 | Upgrade | `docker pull ghcr.io/storeypath/studio && docker rm -f storeypath`, then the `run` line again |
-| Let others on your network use it | publish the port on all interfaces: `-p 8080:8080` (there are no user accounts yet: trusted networks only) |
+| Let others on your network use it | publish the port on all interfaces: `-p 8080:8080` (there are no user accounts yet: trusted networks only). They reach it by the machine's address; to use a host name instead, allow it: `-e STOREYPATH_ALLOWED_HOSTS=studio.example` (Studio refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
 | Logs | `docker logs -f storeypath` |
 
 The same image is the command-line tool: `docker run --rm -v "$PWD:/data"
