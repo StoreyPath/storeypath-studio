@@ -1826,7 +1826,8 @@ function setupAssets() {
 // plan. Walls, dividers and doors are drawn on the plan; what is saved shows in 3D
 // when it is built again (Update 3D, or another floor of another building).
 
-const view3d = { world: null, building: null, stale: true, shown: false, busy: null, picking: false };
+// busy: the build under way (a promise); again: asked for while it was, so done once more after it
+const view3d = { world: null, building: null, stale: true, shown: false, busy: null, again: false, picking: false };
 
 /** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
 function pick3d(id, { go = false } = {}) {
@@ -1857,42 +1858,69 @@ async function show3d(on) {
   await refresh3d();
 }
 
+/** The 3D view brought up to date: one build at a time; asked again while one is
+ * being built (another floor, a building of its own, a change saved), it is done once
+ * more when that one is done, with what is asked then. */
 async function refresh3d() {
   if (!view3d.shown || !state.floor) return;
-  if (view3d.busy) return view3d.busy;
+  if (view3d.busy) {
+    view3d.again = true;
+    return view3d.busy;
+  }
   view3d.busy = (async () => {
-    const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
     try {
-      if (!view3d.world) {
-        const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
-        view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
-        view3d.world.setLabels($("show-labels").checked);
-        view3d.world.addEventListener("select", ({ detail: { id } }) => {
-          if (view3d.picking) return; // our own choice, echoed back
-          if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
-          if (id === null && state.asset) return selectAsset(null);
-          if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
-        });
-      }
-      if (view3d.stale || view3d.building !== building) {
-        $("status").textContent = "Building the 3D view…";
-        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
-        view3d.building = building;
-        view3d.stale = false;
-      }
-      view3d.world.setFloor(state.floor.id);
-      if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
-      $("status").textContent = "";
-      $("update3d").hidden = true;
-    } catch (e) {
-      $("status").textContent = "";
-      toast(`The 3D view could not be shown: ${e.message}`, true);
-      show3d(false);
+      do {
+        view3d.again = false;
+        if (!(await build3d())) break;
+      } while (view3d.again && view3d.shown && state.floor);
     } finally {
       view3d.busy = null;
+      view3d.again = false;
     }
   })();
   return view3d.busy;
+}
+
+/** The 3D view of the floor shown, built again when the project changed since (or it
+ * showed another building): whether it could be shown. */
+async function build3d() {
+  const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
+  try {
+    if (!view3d.world) {
+      const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
+      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
+      view3d.world.setLabels($("show-labels").checked);
+      view3d.world.addEventListener("select", ({ detail: { id } }) => {
+        if (view3d.picking) return; // our own choice, echoed back
+        if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
+        if (id === null && state.asset) return selectAsset(null);
+        if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
+      });
+    }
+    if (view3d.stale || view3d.building !== building) {
+      $("status").textContent = "Building the 3D view…";
+      // up to date as of now: a change saved while it is built makes it stale again
+      view3d.stale = false;
+      try {
+        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
+      } catch (e) {
+        view3d.stale = true;
+        throw e;
+      }
+      view3d.building = building;
+    }
+    // the floor shown now, when it is of the building built (else that one is built next)
+    if (state.floor?.id.startsWith(`${view3d.building}-`)) view3d.world.setFloor(state.floor.id);
+    if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
+    $("status").textContent = "";
+    $("update3d").hidden = !view3d.stale; // a change saved while it was built is not in it yet
+    return true;
+  } catch (e) {
+    $("status").textContent = "";
+    toast(`The 3D view could not be shown: ${e.message}`, true);
+    show3d(false);
+    return false;
+  }
 }
 
 setupMap();
