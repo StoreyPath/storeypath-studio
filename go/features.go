@@ -206,12 +206,39 @@ type Catalogue struct {
 	Format        string     `json:"format"`
 	FormatVersion int        `json:"format_version"`
 	Types         []ItemType `json:"types"`
+
+	// byCode: where each code is first in Types, as Read decoded them (built
+	// there, not at the first lookup, so that lookups from several goroutines
+	// need no lock), and how many types there were then.
+	byCode  map[string]int
+	indexed int
 }
 
-// Type is the item type with a code, or nil.
+// index finds every type by its code, as Type does.
+func (c *Catalogue) index() {
+	c.byCode, c.indexed = make(map[string]int, len(c.Types)), len(c.Types)
+	for i, t := range c.Types {
+		if _, seen := c.byCode[t.Code]; !seen {
+			c.byCode[t.Code] = i
+		}
+	}
+}
+
+// Type is the item type with a code, or nil. A catalogue read from a package finds
+// it by its code at once; one made otherwise, or whose types have been added to or
+// removed since, by going through them.
 func (c *Catalogue) Type(code string) *ItemType {
 	if c == nil {
 		return nil
+	}
+	if c.byCode != nil && len(c.Types) == c.indexed {
+		i, ok := c.byCode[code]
+		if !ok {
+			return nil
+		}
+		if c.Types[i].Code == code {
+			return &c.Types[i]
+		}
 	}
 	for i := range c.Types {
 		if c.Types[i].Code == code {

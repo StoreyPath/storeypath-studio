@@ -20,6 +20,14 @@ var levels = []string{LevelProject, LevelLocation, LevelBuilding, LevelFloor, Le
 
 var segmentRE = regexp.MustCompile(`^[A-Z0-9]{1,16}$`)
 
+// The longest an ID can be: five segments of 16, and their hyphens; an item's, the
+// project's segment, a hyphen and its seven. A longer string is refused before it
+// is taken apart.
+const (
+	maxIDLength     = 5*16 + 4
+	maxItemIDLength = 16 + 1 + 7
+)
+
 // ID is a StoreyPath ID taken apart. Every prefix of an ID is itself an ID: the
 // location, building and floor an object belongs to.
 type ID struct {
@@ -33,12 +41,18 @@ var itemCodeRE = regexp.MustCompile(`^I\d{6}$`)
 // the place hierarchy: ParseID reads it as two segments, and its floor is in the
 // item, not in its ID.
 func IsItemID(value string) bool {
+	if len(value) > maxItemIDLength {
+		return false
+	}
 	project, code, ok := strings.Cut(value, "-")
 	return ok && segmentRE.MatchString(project) && itemCodeRE.MatchString(code)
 }
 
 // ParseID checks an ID and takes it apart.
 func ParseID(value string) (ID, error) {
+	if len(value) > maxIDLength {
+		return ID{}, fmt.Errorf("%q: an ID is at most %d characters", clip(value), maxIDLength)
+	}
 	segments := strings.Split(value, "-")
 	if len(segments) < 1 || len(segments) > len(levels) {
 		return ID{}, fmt.Errorf("%q: an ID has 1 to %d segments", value, len(levels))

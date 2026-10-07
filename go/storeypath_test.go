@@ -3,14 +3,19 @@ package storeypath
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const corpus = "../spec/conformance"
@@ -202,6 +207,53 @@ func TestItemsAndTheirCatalogue(t *testing.T) {
 	}
 }
 
+func TestTheCatalogueFindsATypeByItsCode(t *testing.T) {
+	// Validate looks up every item's type: by going through the types, a catalogue
+	// of n types and n items took n² steps.
+	p := open(t, "campus-hq.storeypath")
+	if p.Catalogue.byCode == nil {
+		t.Fatal("not indexed when read")
+	}
+	for i := range p.Catalogue.Types {
+		if ty := &p.Catalogue.Types[i]; p.ItemType(ty.Code) != ty {
+			t.Errorf("%s: not found", ty.Code)
+		}
+	}
+	// the first of a code, as before; a type added since, or a catalogue made by hand
+	c := &Catalogue{Types: []ItemType{{Code: "A", NameEN: "first"}, {Code: "B"}, {Code: "A", NameEN: "second"}}}
+	if c.Type("A").NameEN != "first" || c.Type("C") != nil {
+		t.Error("made by hand")
+	}
+	c.index()
+	if c.Type("A").NameEN != "first" || c.Type("B") != &c.Types[1] || c.Type("C") != nil {
+		t.Error("indexed")
+	}
+	if c.Types = append(c.Types, ItemType{Code: "C"}); c.Type("C") == nil {
+		t.Error("a type added after it was indexed")
+	}
+	var none *Catalogue
+	if none.Type("A") != nil {
+		t.Error("no catalogue")
+	}
+
+	n := 100_000
+	big := &Catalogue{Types: make([]ItemType, n)}
+	for i := range big.Types {
+		big.Types[i].Code = fmt.Sprintf("T%07d", i)
+	}
+	big.index()
+	last := big.Types[n-1].Code
+	start := time.Now()
+	for range n {
+		if big.Type(last) == nil {
+			t.Fatal("the last type not found")
+		}
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("%d lookups in a catalogue of %d types took %v", n, n, took)
+	}
+}
+
 func TestItemIDs(t *testing.T) {
 	for id, want := range map[string]bool{"K7Q2XM-I000142": true, "K7Q2XM-I00014": false, "K7Q2XM-RUH": false,
 		"K7Q2XM-I000142-X": false, "k7q2xm-I000142": false, "I000142": false} {
@@ -240,6 +292,68 @@ func TestTheLocalFrameAgreesWithStudio(t *testing.T) {
 		}
 		if dlon, dlat := (ll[0]-v.LonLat[0])*111320*math.Cos(v.LonLat[1]*math.Pi/180), (ll[1]-v.LonLat[1])*110574; math.Hypot(dlon, dlat) > vectors.Tolerance {
 			t.Errorf("ToLonLat %v: %v, Studio %v", v.Local, ll, v.LonLat)
+		}
+	}
+}
+
+func TestABuildingAcrossTheAntimeridian(t *testing.T) {
+	// The Headquarters anchored at 179.9998°E: its items stand both sides of the
+	// antimeridian, and a package has their longitudes in [-180, 180]. ToLonLat
+	// went past 180, and Validate put the items 38,000 km from where they stand.
+	plain := open(t, "campus-hq.storeypath")
+	building := plain.Buildings[0].ID
+	pl := plain.Manifest.Placements[building]
+	pl.Lon, pl.Lat = 179.9998, -16.5
+	f := NewLocalFrame(pl)
+	east, west := 0, 0
+	p := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) {
+				at := doc["placements"].(map[string]any)[building].(map[string]any)
+				at["lon"], at["lat"] = pl.Lon, pl.Lat
+			})(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) {
+				for _, it := range features(doc) {
+					local := props(it)["local"].(map[string]any)
+					ll := f.ToLonLat(local["x_m"].(float64), local["y_m"].(float64))
+					lon := math.Round(math.Remainder(ll[0], 360)*1e7) / 1e7 // as a package has it
+					if lon < 0 {
+						west++
+					} else {
+						east++
+					}
+					props(it)["display_point"] = []any{lon, math.Round(ll[1]*1e7) / 1e7}
+				}
+			})(n, d)
+		}
+		return d
+	})
+	if east == 0 || west == 0 {
+		t.Fatalf("%d items east of the antimeridian, %d west: not across it", east, west)
+	}
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Errorf("problems: %v", problems)
+	}
+	for _, it := range p.Items {
+		ll := f.ToLonLat(it.Local.X, it.Local.Y)
+		if ll[0] <= -180 || ll[0] > 180 {
+			t.Errorf("%s: ToLonLat %v", it.ID, ll)
+		}
+		own := *it.Local
+		it.Local = nil
+		local, err := p.ItemLocal(it)
+		if it.Local = &own; err != nil || math.Hypot(local.X-own.X, local.Y-own.Y) > 0.02 {
+			t.Errorf("%s: worked out from the map %v, in its building %v (%v)", it.ID, local, own, err)
+		}
+	}
+	if ll := NewLocalFrame(Placement{Lon: 179.9999, Lat: -16.5}).ToLonLat(50, 0); math.Abs(ll[0]-(-179.9996316)) > 1e-6 {
+		t.Errorf("50 m east of 179.9999°E: %v", ll)
+	}
+	for lon, want := range map[float64]float64{180: 180, -180: 180, 180.5: -179.5, -180.5: 179.5, 540: 180, 0: 0, -179.5: -179.5} {
+		if got := wrapLon(lon); math.Abs(got-want) > 1e-9 {
+			t.Errorf("wrapLon(%v) = %v, want %v", lon, got, want)
 		}
 	}
 }
@@ -296,6 +410,19 @@ func rewrite(t *testing.T, edit func(name string, data []byte) []byte) *Package 
 // rewriteFrom is a corpus package with its files edited (nil: left out), read.
 func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) []byte) *Package {
 	t.Helper()
+	data := zipFrom(t, name, edit, zip.Deflate)
+	p, err := Read(bytes.NewReader(data), int64(len(data)), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// zipFrom is a corpus package with its files edited (nil: left out), as a ZIP
+// whose files are compressed by method (zip.Store: not at all; zip.Deflate: at
+// best compression).
+func zipFrom(t *testing.T, name string, edit func(name string, data []byte) []byte, method uint16) []byte {
+	t.Helper()
 	src, err := zip.OpenReader(filepath.Join(corpus, "packages", name))
 	if err != nil {
 		t.Fatal(err)
@@ -303,6 +430,9 @@ func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) 
 	defer src.Close()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
+	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.BestCompression)
+	})
 	for _, f := range src.File {
 		rc, _ := f.Open()
 		data, _ := io.ReadAll(rc)
@@ -310,15 +440,16 @@ func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) 
 		if data = edit(f.Name, data); data == nil {
 			continue
 		}
-		out, _ := w.Create(f.Name)
+		out, _ := w.CreateHeader(&zip.FileHeader{Name: f.Name, Method: method})
 		out.Write(data)
 	}
 	w.Close()
-	p, err := Read(bytes.NewReader(buf.Bytes()), int64(buf.Len()), DefaultLimits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return buf.Bytes()
+}
+
+// readZip reads a package from its bytes, within limits.
+func readZip(data []byte, limits Limits) (*Package, error) {
+	return Read(bytes.NewReader(data), int64(len(data)), limits)
 }
 
 // editJSON changes one JSON file of the package.
@@ -485,6 +616,61 @@ func TestLimitsKeepOutWhatIsTooBig(t *testing.T) {
 	if _, err := Read(bytes.NewReader([]byte("not a zip")), 9, DefaultLimits); err == nil {
 		t.Error("not a ZIP read")
 	}
+	if _, err := OpenWithLimits(filepath.Join(corpus, "packages", "campus.storeypath"), Limits{MaxFileBytes: 200}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("OpenWithLimits: %v", err)
+	}
+}
+
+func TestAPackageThatExpandsIsRefused(t *testing.T) {
+	// A few hundred KB uploaded, a spaces.geojson of tiny features repeated: under
+	// MaxFileBytes, but hundreds of times its size in the ZIP. Read refuses it
+	// before decoding it.
+	feature := `{"type":"Feature","id":"SD8YHE-DEMO-HQ-F00-0001","geometry":null,"properties":{"kind":"space"}},`
+	bomb := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileSpaces {
+			return d
+		}
+		return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat(feature, (32<<20)/len(feature)) + `{}]}`)
+	}, zip.Deflate)
+	if _, err := readZip(bomb, DefaultLimits); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "times its size") {
+		t.Errorf("%d KB expanding to 32 MB: %v", len(bomb)>>10, err)
+	}
+	// stored as it is, the same file is within the ratio: then it has too many features
+	stored := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileSpaces {
+			return d
+		}
+		return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat("{},", DefaultLimits.MaxFeatures) + `{}]}`)
+	}, zip.Store)
+	if _, err := readZip(stored, DefaultLimits); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("%d features: %v", DefaultLimits.MaxFeatures+1, err)
+	}
+	if _, err := readZip(stored, Limits{MaxFeatures: DefaultLimits.MaxFeatures + 1}); err != nil {
+		t.Errorf("%d features, within limits: %v", DefaultLimits.MaxFeatures+1, err)
+	}
+	// objects.csv lists the features, and may have MaxFeatures rows more
+	rows := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileObjects {
+			return d
+		}
+		return append(d, strings.Repeat("X-P000001,plant,PALM,,,,,,,,,,,,,,\n", 1000)...)
+	}, zip.Store)
+	if _, err := readZip(rows, Limits{MaxFeatures: 999}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("1000 rows more than the features: %v", err)
+	}
+	if _, err := readZip(rows, Limits{MaxFeatures: 1000}); err != nil {
+		t.Errorf("1000 rows more than the features, within limits: %v", err)
+	}
+	// a small file may compress far better than a package's files: not refused
+	padded := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileChanges {
+			return d
+		}
+		return append(d, bytes.Repeat([]byte(" "), 900<<10)...)
+	}, zip.Deflate)
+	if p, err := readZip(padded, DefaultLimits); err != nil || len(p.Validate()) != 0 {
+		t.Errorf("changes.json padded to 900 KB: %v", err)
+	}
 }
 
 func TestIDs(t *testing.T) {
@@ -497,10 +683,49 @@ func TestIDs(t *testing.T) {
 		id.Parent() != "K7Q2XM-RUH-HQ-F02" || floor != "K7Q2XM-RUH-HQ-F02" {
 		t.Errorf("%v: level %s, project %s, code %s, parent %s", id, id.Level(), id.Project(), id.Code(), id.Parent())
 	}
-	for _, bad := range []string{"", "k7q2xm", "A-B-C-D-E-F", "A--B", "A-B C"} {
+	for _, bad := range []string{"", "k7q2xm", "A-B-C-D-E-F", "A--B", "A-B C", strings.Repeat("A", 17)} {
 		if _, err := ParseID(bad); err == nil {
 			t.Errorf("%q read as an ID", bad)
 		}
+	}
+	longest := strings.TrimSuffix(strings.Repeat(strings.Repeat("A", 16)+"-", 5), "-")
+	if _, err := ParseID(longest); err != nil || len(longest) != maxIDLength {
+		t.Errorf("the longest ID (%d characters): %v", len(longest), err)
+	}
+	if id := strings.Repeat("A", 16) + "-I000001"; !IsItemID(id) || len(id) != maxItemIDLength {
+		t.Errorf("the longest item ID %s", id)
+	}
+}
+
+func TestAnIDTooLongIsRefusedBeforeItIsTakenApart(t *testing.T) {
+	// 16 MiB of hyphens: refused by its length, without splitting it (which took
+	// gigabytes), and shown cut short in the problem.
+	hyphens := strings.Repeat("-", 16<<20)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := ParseID(hyphens)
+	isItem := IsItemID(hyphens)
+	runtime.ReadMemStats(&after)
+	if err == nil || isItem || len(err.Error()) > 200 || after.TotalAlloc-before.TotalAlloc > 1<<20 {
+		t.Errorf("ParseID: %d bytes of error, %d bytes allocated", len(err.Error()), after.TotalAlloc-before.TotalAlloc)
+	}
+	// stored, not compressed: compressed, it is more than MaxRatio times its size
+	p, err := readZip(zipFrom(t, "campus-hq.storeypath", editJSON(FileSpaces, func(doc map[string]any) {
+		features(doc)[0].(map[string]any)["id"] = hyphens
+	}), zip.Store), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range p.Validate() {
+		if len(pr.Message) > 300 || len(pr.ID) > 300 {
+			t.Errorf("a problem of %d bytes (ID %d bytes)", len(pr.Message), len(pr.ID))
+		}
+		if pr.Code == ProblemBadID && !strings.Contains(pr.Message, "at most 84 characters") {
+			t.Errorf("%s", pr.Message)
+		}
+	}
+	if !slices.Contains(codes(p.Validate()), ProblemBadID) {
+		t.Error("an ID of 16 MiB: not a problem")
 	}
 }
 
@@ -632,6 +857,109 @@ func TestItemsArePlacedInTheirBuilding(t *testing.T) {
 	}
 }
 
+func TestAnItemsHeadingIsTheWayItFacesInItsBuilding(t *testing.T) {
+	// heading = bearing + 180 - rotation_deg: an item turned round on the map, but
+	// not in its building, passed. In campus-hq-2 the building is turned on the map.
+	for _, name := range []string{"campus-hq.storeypath", "campus-hq-2.storeypath"} {
+		turned := func(by float64) *Package {
+			return rewriteFrom(t, name, editJSON(FileItems, func(doc map[string]any) {
+				props(features(doc)[0])["heading"] = props(features(doc)[0])["heading"].(float64) + by
+			}))
+		}
+		for by, ok := range map[float64]bool{180: false, 1: false, -0.6: false, 0.3: true, -0.3: true, 360: true, -720.2: true} {
+			problems := turned(by).Validate()
+			if ok != (len(problems) == 0) || (!ok && (problems[0].Code != ProblemItem || !strings.Contains(problems[0].Message, "heading"))) {
+				t.Errorf("%s: heading turned by %v: %v", name, by, problems)
+			}
+		}
+	}
+}
+
+func TestEveryBuildingHasAPlacement(t *testing.T) {
+	// Without its building's placement an item's map position was not checked
+	// against its position in the building, and nothing said so.
+	none := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) { doc["placements"] = map[string]any{} })(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) { props(features(doc)[0])["display_point"] = []any{47.0, 25.0} })(n, d)
+		}
+		return d
+	})
+	problems := none.Validate()
+	if !slices.Equal(codes(problems), []string{ProblemPlacement}) || len(problems) != 1 || problems[0].ID != none.Buildings[0].ID {
+		t.Errorf("no placement: %v", problems)
+	}
+	// campus (0.6) holds two buildings: the Annex unplaced, and an item said to be
+	// in a building the package does not hold
+	annex := rewriteFrom(t, "campus.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) {
+				for id := range doc["placements"].(map[string]any) {
+					if strings.HasSuffix(id, "-ANNEX") {
+						delete(doc["placements"].(map[string]any), id)
+					}
+				}
+			})(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) { props(features(doc)[0])["building_id"] = "EWBSSN-DEMO-GONE" })(n, d)
+		}
+		return d
+	})
+	var unplaced []string
+	for _, pr := range annex.Validate() {
+		if pr.Code == ProblemPlacement {
+			unplaced = append(unplaced, pr.ID)
+		}
+	}
+	if !slices.Equal(unplaced, []string{"EWBSSN-DEMO-ANNEX", "EWBSSN-DEMO-GONE"}) {
+		t.Errorf("unplaced: %v", unplaced)
+	}
+}
+
+func TestAZoneIsPartOfOneSpace(t *testing.T) {
+	// A zone also listed by another space of its floor passed: UnitsOn listed it
+	// twice, and the other space was used through it, not as a whole.
+	plain := open(t, "campus-hq.storeypath")
+	zone := plain.Zones[0]
+	var other *Space
+	for _, s := range plain.SpacesOn(zone.Floor) {
+		if s.ID != zone.Space && len(s.Zones) == 0 {
+			other = s
+			break
+		}
+	}
+	listing := func(space string, zones ...any) func(string, []byte) []byte {
+		return editJSON(FileSpaces, func(doc map[string]any) {
+			for _, f := range features(doc) {
+				if f.(map[string]any)["id"] == space {
+					props(f)["zones"] = zones
+				}
+			}
+		})
+	}
+	problems := rewriteFrom(t, "campus-hq.storeypath", listing(other.ID, zone.ID)).Validate()
+	if len(problems) != 1 || problems[0].Code != ProblemZone || problems[0].ID != other.ID || !strings.Contains(problems[0].Message, "part of space "+zone.Space) {
+		t.Errorf("%s listed by %s too: %v", zone.ID, other.ID, problems)
+	}
+	own := plain.Space(zone.Space)
+	twice := append(append([]any{}, toAny(own.Zones)...), zone.ID)
+	problems = rewriteFrom(t, "campus-hq.storeypath", listing(own.ID, twice...)).Validate()
+	if len(problems) != 1 || problems[0].Code != ProblemZone || !strings.Contains(problems[0].Message, "twice") {
+		t.Errorf("%s listed twice by its space: %v", zone.ID, problems)
+	}
+}
+
+func toAny(s []string) []any {
+	out := make([]any, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
+}
+
 func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
 	// campus-hq-2: a desk carried to the Annex (moved away), the TV taken away
 	// (retired); campus-annex-2 holds the desk, changed.
@@ -679,6 +1007,228 @@ func TestRowsOfKindsThisReaderDoesNotKnowAreLeftAlone(t *testing.T) {
 	})
 	if problems := p.Validate(); len(problems) != 0 {
 		t.Errorf("problems: %v", problems)
+	}
+}
+
+func TestFilesAreFoundThroughTheManifest(t *testing.T) {
+	// Every file is where manifest.files says, whatever its name; a file every
+	// package has, at its usual name when they do not say.
+	plain := open(t, "campus-hq.storeypath")
+	moved := map[string]string{} // usual name → where it is moved to
+	for role, name := range plain.Manifest.Files {
+		if usualNames[role] != "" {
+			moved[name] = "data/" + role + "-" + name
+		}
+	}
+	listMoved := editJSON(FileManifest, func(doc map[string]any) {
+		files := doc["files"].(map[string]any)
+		for role, name := range files {
+			if to, ok := moved[name.(string)]; ok {
+				files[role] = to
+			}
+		}
+	})
+	missing := 0
+	for _, pr := range rewriteFrom(t, "campus-hq.storeypath", listMoved).Validate() {
+		if pr.Code == ProblemMissingFile && strings.HasPrefix(pr.File, "data/") {
+			missing++
+		}
+	}
+	if missing != len(moved) {
+		t.Fatalf("the manifest lists %d files where they are not: %d missing", len(moved), missing)
+	}
+	p, err := readZip(renamed(t, zipFrom(t, "campus-hq.storeypath", listMoved, zip.Deflate), moved), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Fatalf("every file moved, and listed where it is: %v", problems)
+	}
+	if len(p.Spaces) != len(plain.Spaces) || len(p.Items) != len(plain.Items) || p.Catalogue == nil ||
+		len(p.Objects) != len(plain.Objects) || p.Changes == nil || p.file("spaces") != "data/spaces-spaces.geojson" {
+		t.Errorf("%d spaces, %d items, catalogue %v, %d objects, changes %v", len(p.Spaces), len(p.Items),
+			p.Catalogue != nil, len(p.Objects), p.Changes != nil)
+	}
+	// spaces listed at rooms.geojson, not there: the problem names the file listed
+	rooms := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		doc["files"].(map[string]any)["spaces"] = "rooms.geojson"
+	}))
+	if problems := rooms.Validate(); len(problems) == 0 || problems[0].Code != ProblemMissingFile || problems[0].File != "rooms.geojson" {
+		t.Errorf("spaces listed at rooms.geojson, not there: %v", problems)
+	}
+	// a name of a MiB (stored: compressed, the manifest is too many times its size)
+	long, err := readZip(zipFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		doc["files"].(map[string]any)["spaces"] = strings.Repeat("x", 1<<20)
+	}), zip.Store), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := long.Validate(); len(problems) == 0 || len(problems[0].File) > 200 || len(problems[0].Message) > 300 {
+		t.Errorf("a name of a MiB: %d problems", len(problems))
+	}
+	// a manifest that does not list a file every package has: at its usual name
+	unlisted := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		delete(doc["files"].(map[string]any), "spaces")
+		delete(doc["files"].(map[string]any), "objects")
+	}))
+	if problems := unlisted.Validate(); len(problems) != 0 || len(unlisted.Spaces) != len(plain.Spaces) {
+		t.Errorf("spaces and objects not listed: %v", problems)
+	}
+}
+
+// renamed is a package's ZIP with files renamed (from → to).
+func renamed(t *testing.T, data []byte, names map[string]string) []byte {
+	t.Helper()
+	src, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for _, f := range src.File {
+		rc, _ := f.Open()
+		d, _ := io.ReadAll(rc)
+		rc.Close()
+		name := f.Name
+		if to, ok := names[name]; ok {
+			name = to
+		}
+		out, _ := w.Create(name)
+		out.Write(d)
+	}
+	w.Close()
+	return buf.Bytes()
+}
+
+func TestAKeyWrittenInAnotherCaseIsABrokenFile(t *testing.T) {
+	// encoding/json reads "Hidden" into Hidden, the last of "hidden" and "Hidden"
+	// winning: every other reader keeps to "hidden". Such a file is broken.
+	first := func(file string, change func(f map[string]any)) func(string, []byte) []byte {
+		return editJSON(file, func(doc map[string]any) { change(features(doc)[0].(map[string]any)) })
+	}
+	for _, c := range []struct {
+		name, file, key string
+		edit            func(string, []byte) []byte
+	}{
+		{"a property", FileSpaces, `"Hidden"`, first(FileSpaces, func(f map[string]any) {
+			props(f)["hidden"], props(f)["Hidden"] = false, true
+		})},
+		{"a property of an embedded struct", FileSpaces, `"Capacity"`, first(FileSpaces, func(f map[string]any) { props(f)["Capacity"] = 40 })},
+		{"its kind", FileZones, `"KIND"`, first(FileZones, func(f map[string]any) { props(f)["KIND"] = "zone" })},
+		{"its kind, with a Kelvin sign", FileZones, `"Kind"`, first(FileZones, func(f map[string]any) { props(f)["Kind"] = "zone" })},
+		{"a feature's ID", FileOpenings, `"Id"`, first(FileOpenings, func(f map[string]any) { f["Id"] = "X" })},
+		{"a geometry's type", FileFloors, `"TYPE"`, first(FileFloors, func(f map[string]any) {
+			f["geometry"].(map[string]any)["TYPE"] = "Point"
+		})},
+		{"walls' type", FileFloors, `"Type"`, first(FileFloors, func(f map[string]any) {
+			props(f)["walls"].(map[string]any)["Type"] = "Point"
+		})},
+		{"an item's position in its building", FileItems, `"X_M"`, first(FileItems, func(f map[string]any) {
+			props(f)["local"].(map[string]any)["X_M"] = 1000.0
+		})},
+		{"a collection's features", FileSpaces, `"Features"`, editJSON(FileSpaces, func(doc map[string]any) { doc["Features"] = []any{} })},
+		{"a catalogue type's colour", FileCatalogue, `"Color"`, editJSON(FileCatalogue, func(doc map[string]any) {
+			doc["types"].([]any)[0].(map[string]any)["Color"] = "#ff0000"
+		})},
+		{"changes", FileChanges, `"All_Retired"`, editJSON(FileChanges, func(doc map[string]any) { doc["All_Retired"] = []any{} })},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			problems := rewriteFrom(t, "campus-hq.storeypath", c.edit).Validate()
+			if len(problems) == 0 || problems[0].Code != ProblemBadFile || problems[0].File != c.file || !strings.Contains(problems[0].Message, c.key) {
+				t.Errorf("%v", problems)
+			}
+		})
+	}
+	// an escape spelling the key exactly is the key; keys of no field, and the
+	// item's values (any key), are left alone
+	p := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileSpaces:
+			return bytes.Replace(d, []byte(`"hidden"`), []byte(`"hidden"`), 1)
+		case FileItems:
+			var doc map[string]any
+			json.Unmarshal(d, &doc)
+			props(features(doc)[0])["Colour"] = "red"
+			props(features(doc)[0])["values"] = map[string]any{"Model": "X", "model": "Y"}
+			d, _ = json.Marshal(doc)
+		}
+		return d
+	})
+	if problems := p.Validate(); len(problems) != 0 || p.Items[0].Values["Model"] != "X" {
+		t.Errorf("problems: %v", problems)
+	}
+	// in the manifest, the package cannot be read
+	data := zipFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["Format_Version"] = "0.1.0" }), zip.Deflate)
+	if _, err := readZip(data, DefaultLimits); err == nil || !strings.Contains(err.Error(), `"Format_Version"`) {
+		t.Errorf("manifest: %v", err)
+	}
+}
+
+func TestValuesAreThoseTheFormatAllows(t *testing.T) {
+	// The values Studio's validator checks: types the manifest lists, a capacity
+	// of none or more and what says so, grades, mounts, categories and colours.
+	first := func(file string, change func(p map[string]any)) func(string, []byte) []byte {
+		return editJSON(file, func(doc map[string]any) { change(props(features(doc)[0])) })
+	}
+	firstType := func(change func(ty map[string]any)) func(string, []byte) []byte {
+		return editJSON(FileCatalogue, func(doc map[string]any) { change(doc["types"].([]any)[0].(map[string]any)) })
+	}
+	for _, c := range []struct {
+		name string
+		edit func(string, []byte) []byte
+		ok   bool
+	}{
+		{"a space type not listed", first(FileSpaces, func(p map[string]any) { p["type"] = "spaceship" }), false},
+		{"a space with no type", first(FileSpaces, func(p map[string]any) { delete(p, "type") }), false},
+		{"a zone type not listed", first(FileZones, func(p map[string]any) { p["type"] = "door" }), false},
+		{"an opening type not listed", first(FileOpenings, func(p map[string]any) { p["type"] = "portal" }), false},
+		{"a type the manifest lists (a later format's)", func(n string, d []byte) []byte {
+			switch n {
+			case FileManifest:
+				return editJSON(n, func(doc map[string]any) {
+					types := doc["types"].(map[string]any)
+					types["space"] = append(types["space"].([]any), "gym")
+				})(n, d)
+			case FileSpaces:
+				return first(n, func(p map[string]any) { p["type"] = "gym" })(n, d)
+			}
+			return d
+		}, true},
+		{"a capacity less than none", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = -3, "review" }), false},
+		{"a capacity of none", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = 0, "review" }), true},
+		{"capacity from a guess", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = 4, "guess" }), false},
+		{"capacity from review, of no capacity", first(FileZones, func(p map[string]any) { p["capacity"], p["capacity_from"] = nil, "review" }), false},
+		{"a grade not of the format", first(FileSpaces, func(p map[string]any) { p["grade"] = "ceo" }), false},
+		{"a grade", first(FileZones, func(p map[string]any) { p["grade"] = "section_head" }), true},
+		{"an item mounted nowhere", first(FileItems, func(p map[string]any) { p["mount"] = "floating" }), false},
+		{"an item of no category", first(FileItems, func(p map[string]any) { p["category"] = "food" }), false},
+		{"a colour that is not one", firstType(func(ty map[string]any) { ty["color"] = "red;fill:url(https://example.com/beacon.svg#a)" }), false},
+		{"a colour in capitals", firstType(func(ty map[string]any) { ty["color"] = "#A1B2C3" }), true},
+		{"a type's colour, category and mount left out (Studio's defaults)", firstType(func(ty map[string]any) {
+			delete(ty, "color")
+			delete(ty, "category")
+			delete(ty, "mount")
+		}), true},
+		{"a type's category", firstType(func(ty map[string]any) { ty["category"] = "food" }), false},
+		{"a type's mount", firstType(func(ty map[string]any) { ty["mount"] = "roof" }), false},
+		{"a type's grade", firstType(func(ty map[string]any) { ty["grade"] = "ceo" }), false},
+		{"a type's workplaces", firstType(func(ty map[string]any) { ty["workplaces"] = -1 }), false},
+		{"a type's workplaces, too many", firstType(func(ty map[string]any) { ty["workplaces"] = 101 }), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			problems := rewriteFrom(t, "campus-hq.storeypath", c.edit).Validate()
+			if c.ok && len(problems) != 0 {
+				t.Errorf("problems: %v", problems)
+			}
+			if !c.ok && !slices.Equal(codes(problems), []string{ProblemValue}) {
+				t.Errorf("problems %v, want VALUE", problems)
+			}
+		})
+	}
+	// a manifest that lists no types: this format's
+	untyped := rewriteFrom(t, "simple-office.storeypath", editJSON(FileManifest, func(doc map[string]any) { delete(doc, "types") }))
+	if problems := untyped.Validate(); len(problems) != 0 {
+		t.Errorf("no types listed: %v", problems)
 	}
 }
 
@@ -747,5 +1297,75 @@ func TestAPackageNewerThanTheReaderIsRefused(t *testing.T) {
 	problems := newer.Validate()
 	if !slices.Contains(codes(problems), ProblemVersion) || !strings.Contains(problems[0].Message, "update the reader") {
 		t.Errorf("0.8.0: %v", problems)
+	}
+}
+
+func TestAFormatVersionIsReadStrictly(t *testing.T) {
+	// Read loosely, "0.8a.0" and "0.8-rc1" were 0.0 and 0.8 read as 0.0: a
+	// newer package read, without the rules of 0.7. What is not a format
+	// version is refused, and every rule applies to it.
+	for v, want := range map[string]string{
+		"0.7.0": "", "0.6.0": "", "0.4.1": "", "0.7.9": "", "0.7": "", "0.7.0-rc1": "", "0.7.0+build.5": "", "0.07.0": "",
+		"0.8.0": "newer", "0.8": "newer", "0.8-rc1": "newer", "0.10.0": "newer", "0.99999999999999999999.0": "newer",
+		"1.0.0": "unsupported", "99999999999999999999.0.0": "unsupported",
+		"0.8a.0": "not a format version", "0.x": "not a format version", "0.-1.0": "not a format version",
+		"0. 8.0": "not a format version", "0.1_0.0": "not a format version", "": "not a format version",
+		"abc": "not a format version", "0": "not a format version", " 0.7.0": "not a format version",
+		"0.7.0 ": "not a format version", "0.+8.0": "not a format version", "v0.7.0": "not a format version",
+		"0.7.0.1": "not a format version", "٠.٧.٠": "not a format version", "0.7.0-": "not a format version",
+		"0.7.0-rc 1": "not a format version", "0.7.0-rc1\n": "not a format version",
+	} {
+		err := CheckVersion(v)
+		if (want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), want)) {
+			t.Errorf("%q: %v, want %q", v, err, want)
+		}
+	}
+	// campus (0.6: two buildings, items with no position in their building) labelled
+	// so: not read as 0.0, but refused, and held to 0.7's rules
+	for _, v := range []string{"0.8a.0", "0.8-rc1"} {
+		p := rewriteFrom(t, "campus.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = v }))
+		if got := codes(p.Validate()); !slices.Contains(got, ProblemVersion) || !slices.Contains(got, ProblemScope) {
+			t.Errorf("campus as %s: %v", v, got)
+		}
+	}
+}
+
+func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
+	// A server can refuse a package by its manifest before reading the rest: here
+	// a package whose spaces.geojson Read refuses, as too large.
+	feature := `{"type":"Feature","id":"X","geometry":null,"properties":{"kind":"space"}},`
+	data := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileSpaces:
+			return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat(feature, (8<<20)/len(feature)) + `{}]}`)
+		case FileManifest:
+			var doc map[string]any
+			json.Unmarshal(d, &doc)
+			doc["format_version"] = "0.8.0"
+			d, _ = json.Marshal(doc)
+		}
+		return d
+	}, zip.Deflate)
+	if _, err := readZip(data, DefaultLimits); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Read: %v", err)
+	}
+	m, err := ReadManifest(bytes.NewReader(data), int64(len(data)), DefaultLimits)
+	if err != nil || m.Project.ID != "SD8YHE" || m.FormatVersion != "0.8.0" || CheckVersion(m.FormatVersion) == nil {
+		t.Errorf("ReadManifest: %+v %v", m, err)
+	}
+	if _, err := ReadManifest(bytes.NewReader(data), int64(len(data)), Limits{MaxFileBytes: 100}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a manifest larger than the limit: %v", err)
+	}
+	if _, err := ReadManifest(bytes.NewReader([]byte("not a zip")), 9, DefaultLimits); err == nil {
+		t.Error("not a ZIP: a manifest")
+	}
+	noManifest := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n == FileManifest {
+			return nil
+		}
+		return d
+	}, zip.Deflate)
+	if _, err := ReadManifest(bytes.NewReader(noManifest), int64(len(noManifest)), DefaultLimits); err == nil {
+		t.Error("no manifest.json: a manifest")
 	}
 }

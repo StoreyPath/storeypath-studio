@@ -3,9 +3,12 @@ package storeypath
 import (
 	"fmt"
 	"math"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // A Problem found in a package: a stable Code a program can act on, the file and
@@ -19,6 +22,22 @@ type Problem struct {
 
 func (p Problem) String() string { return p.Message }
 
+// shownLength: the longest a string from a package is shown in a problem (longer
+// than any ID), so a file of hostile strings cannot make problems as large.
+const shownLength = 100
+
+// clip is a string from a package as a problem shows it: cut short at shownLength.
+func clip(s string) string {
+	if len(s) <= shownLength {
+		return s
+	}
+	i := shownLength
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + "…"
+}
+
 // Problem codes. They never change meaning; new ones may be added.
 const (
 	ProblemMissingFile  = "MISSING_FILE"  // a file of the package is not in it
@@ -31,14 +50,16 @@ const (
 	ProblemWrongProject = "WRONG_PROJECT" // an ID is not of the package's project
 	ProblemIDLevel      = "ID_LEVEL"      // an ID has the wrong number of segments for its kind
 	ProblemParent       = "PARENT"        // a feature's parent is missing, or its ID does not start with it
-	ProblemZone         = "ZONE"          // a zone and its space do not list each other
+	ProblemZone         = "ZONE"          // a zone and its space do not list each other, or a space lists another's zone (or one twice)
 	ProblemOpening      = "OPENING"       // an opening joins a space that is not there, or on another floor
 	ProblemObjects      = "OBJECTS"       // objects.csv does not list exactly the features
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
 	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
 	ProblemScope        = "SCOPE"         // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
-	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position away from it
+	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
+	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
+	ProblemValue        = "VALUE"         // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
 )
 
 var kindLevel = map[string]string{
@@ -46,32 +67,71 @@ var kindLevel = map[string]string{
 	"space": LevelObject, "zone": LevelObject, "opening": LevelObject,
 }
 
+// knownTypes: the types of spaces, zones and openings of this format, for a
+// manifest that does not list them (manifest.json → types lists those a package
+// may use, a later format's too).
+var knownTypes = map[string][]string{
+	"space": spaceTypes, "zone": spaceTypes, "opening": {"door", "opening", "window"},
+}
+
+var spaceTypes = []string{"office", "room", "meeting_room", "corridor", "lobby", "elevator", "stairs", "escalator",
+	"ramp", "restroom", "kitchen", "storage", "utility", "shaft", "open_area", "unspecified", "bedroom", "living_room",
+	"dining_room", "bathroom", "dressing_room", "laundry", "prayer_room", "parking", "balcony", "terrace", "open_to_below"}
+
+// The values a property may have, as Studio's models allow them.
+var (
+	grades        = []string{"president", "c_level", "director", "manager", "section_head", "senior", "junior"}
+	capacityFroms = []string{"review", "items"}
+	mounts        = []string{"floor", "wall", "ceiling"}
+	categories    = []string{"furniture", "equipment", "appliance"}
+	colourRE      = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+// maxWorkplaces: the most people who work at one item (a bench of desks).
+const maxWorkplaces = 100
+
 // knownKinds: the kinds of objects.csv rows this reader knows. Rows of others (a
 // later format's), and their IDs in changes.json, are left alone.
 var knownKinds = map[string]bool{"project": true, "location": true, "building": true, "floor": true,
 	"space": true, "zone": true, "opening": true, "item": true}
 
 // localAgreesM: how far an item's map position may be from its position in its
-// building (the package keeps 7 decimals of a degree, about a centimetre).
-const localAgreesM = 0.05
+// building (the package keeps 7 decimals of a degree, about a centimetre), and
+// headingAgreesDeg how far its heading may be from the way it faces in its building
+// (each kept to 2 decimals).
+const (
+	localAgreesM     = 0.05
+	headingAgreesDeg = 0.5
+)
 
-var collectionFiles = map[string]string{
-	"location": FileLocation, "building": FileBuildings, "floor": FileFloors,
-	"space": FileSpaces, "zone": FileZones, "opening": FileOpenings, "item": FileItems,
+// kindRoles: the role of the file each kind of feature is in.
+var kindRoles = map[string]string{
+	"location": "location", "building": "buildings", "floor": "floors",
+	"space": "spaces", "zone": "zones", "opening": "openings", "item": "items",
 }
 
 // Validate checks the package as Studio's validator does: its files, the
 // manifest's counts, every ID and every reference between features, objects.csv
-// and changes.json, and the items (format 0.6): their IDs, the floor, space and zone
-// each stands in, its type in the catalogue, and (0.7) their position in their
-// building, which their map position must agree with. From 0.7 a package holds one
-// building. No problems means the package can be linked to as it is.
+// and changes.json, every building's placement, and the items (format 0.6): their
+// IDs, the floor, space and zone each stands in, its type in the catalogue, and
+// (0.7) their position in their building, which their map position must agree
+// with through the building's placement. From 0.7 a package holds one building.
+// No problems means the package can be linked to as it is.
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
 	add := func(code, file, id, format string, args ...any) {
-		out = append(out, Problem{Code: code, File: file, ID: id, Message: fmt.Sprintf(format, args...)})
+		for i, arg := range args {
+			if s, ok := arg.(string); ok {
+				args[i] = clip(s)
+			}
+		}
+		out = append(out, Problem{Code: code, File: clip(file), ID: clip(id), Message: fmt.Sprintf(format, args...)})
 	}
 	m := p.Manifest
+	// the files, where the manifest's files say
+	buildingsFile, floorsFile, spacesFile, zonesFile := p.file("buildings"), p.file("floors"), p.file("spaces"), p.file("zones")
+	openingsFile, itemsFile, objectsFile, changesFile := p.file("openings"), p.file("items"), p.file("objects"), p.file("changes")
+	fileOf := func(kind string) string { return p.file(kindRoles[kind]) }
 	if m.Format != FormatName {
 		add(ProblemFormat, FileManifest, "", "unknown format %q", m.Format)
 	}
@@ -79,23 +139,54 @@ func (p *Package) Validate() []Problem {
 		add(ProblemVersion, FileManifest, "", "%v", err)
 	}
 	project := m.Project.ID
+	// values: the types the manifest lists for each kind (else this format's), and
+	// what a space's or zone's seating may be
+	types := map[string]map[string]bool{}
+	for kind, known := range knownTypes {
+		names := m.Types[kind]
+		if len(names) == 0 {
+			names = known
+		}
+		types[kind] = map[string]bool{}
+		for _, name := range names {
+			types[kind][name] = true
+		}
+	}
+	typed := func(kind, file, id, typ string) {
+		if !types[kind][typ] {
+			add(ProblemValue, file, id, "%s: type %q is not one of the %s types of the package", id, typ, kind)
+		}
+	}
+	seated := func(file, id string, s Seating) {
+		if s.Capacity != nil && *s.Capacity < 0 {
+			add(ProblemValue, file, id, "%s: capacity %d is less than none", id, *s.Capacity)
+		}
+		if s.CapacityFrom != nil && !slices.Contains(capacityFroms, *s.CapacityFrom) {
+			add(ProblemValue, file, id, "%s: capacity_from %q is not review or items", id, *s.CapacityFrom)
+		} else if s.CapacityFrom != nil && s.Capacity == nil {
+			add(ProblemValue, file, id, "%s: capacity_from %q with no capacity", id, *s.CapacityFrom)
+		}
+		if s.Grade != nil && !slices.Contains(grades, *s.Grade) {
+			add(ProblemValue, file, id, "%s: grade %q is not one of %s", id, *s.Grade, strings.Join(grades, ", "))
+		}
+	}
 	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
 
 	counts := map[string]int{"location": len(p.Locations), "buildings": len(p.Buildings), "floors": len(p.Floors),
 		"spaces": len(p.Spaces), "zones": len(p.Zones), "openings": len(p.Openings)}
 	roles := []string{"location", "buildings", "floors", "spaces", "zones", "openings"}
 	for _, role := range roles {
-		file := role + ".geojson"
-		if !p.read[file] { // missing or unreadable: already a problem of its own
+		file := p.file(role)
+		if !p.read[role] { // missing or unreadable: already a problem of its own
 			continue
 		}
 		if got, ok := m.Counts[role]; !ok || got != counts[role] {
 			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts[role], counts[role])
 		}
 	}
-	if file := m.Files["items"]; file != "" && p.read[file] {
+	if p.read["items"] {
 		if got, ok := m.Counts["items"]; !ok || got != len(p.Items) {
-			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts["items"], len(p.Items))
+			add(ProblemCount, itemsFile, "", "%s: manifest counts %d, file has %d", itemsFile, m.Counts["items"], len(p.Items))
 		}
 	}
 
@@ -107,26 +198,26 @@ func (p *Package) Validate() []Problem {
 	for _, id := range ids {
 		kinds := p.kinds[id]
 		if len(kinds) > 1 {
-			add(ProblemDuplicateID, collectionFiles[kinds[0]], id, "duplicate ID %s", id)
+			add(ProblemDuplicateID, fileOf(kinds[0]), id, "duplicate ID %s", id)
 		}
 		if kinds[0] == "item" { // the project's and its own number: where it is, is data
 			if !IsItemID(id) {
-				add(ProblemBadID, FileItems, id, "%s: not an item ID (the project's code, -I and six digits)", id)
+				add(ProblemBadID, itemsFile, id, "%s: not an item ID (the project's code, -I and six digits)", id)
 			} else if !strings.HasPrefix(id, project+"-") {
-				add(ProblemWrongProject, FileItems, id, "%s: project segment is not the package's project %s", id, project)
+				add(ProblemWrongProject, itemsFile, id, "%s: project segment is not the package's project %s", id, project)
 			}
 			continue
 		}
 		pid, err := ParseID(id)
 		if err != nil {
-			add(ProblemBadID, collectionFiles[kinds[0]], id, "%s: %v", collectionFiles[kinds[0]], err)
+			add(ProblemBadID, fileOf(kinds[0]), id, "%s: %v", fileOf(kinds[0]), err)
 			continue
 		}
 		if pid.Project() != project {
-			add(ProblemWrongProject, collectionFiles[kinds[0]], id, "%s: project segment is not the package's project %s", id, project)
+			add(ProblemWrongProject, fileOf(kinds[0]), id, "%s: project segment is not the package's project %s", id, project)
 		}
 		if want := kindLevel[kinds[0]]; pid.Level() != want {
-			add(ProblemIDLevel, collectionFiles[kinds[0]], id, "%s: a %s ID needs %d segments", id, kinds[0], levelDepth(want))
+			add(ProblemIDLevel, fileOf(kinds[0]), id, "%s: a %s ID needs %d segments", id, kinds[0], levelDepth(want))
 		}
 	}
 	kindOf := func(id string) string {
@@ -143,15 +234,15 @@ func (p *Package) Validate() []Problem {
 		}
 	}
 	for _, b := range p.Buildings {
-		parent(b.ID, b.Location, "location", FileBuildings)
+		parent(b.ID, b.Location, "location", buildingsFile)
 	}
 	if oneBuilding { // from 0.7, a package holds one building and names it
 		if m.Scope == nil || len(m.Scope.Buildings) != 1 {
 			add(ProblemScope, FileManifest, "", "a package of format %s holds one building: its manifest's scope names it", m.FormatVersion)
 		}
 		if len(p.Buildings) != 1 {
-			add(ProblemScope, FileBuildings, "", "%s: a package of format %s holds one building, this one %d",
-				FileBuildings, m.FormatVersion, len(p.Buildings))
+			add(ProblemScope, buildingsFile, "", "%s: a package of format %s holds one building, this one %d",
+				buildingsFile, m.FormatVersion, len(p.Buildings))
 		}
 	}
 	if m.Scope != nil {
@@ -164,74 +255,134 @@ func (p *Package) Validate() []Problem {
 		}
 		for _, b := range p.Buildings {
 			if !listed[b.ID] {
-				add(ProblemScope, FileBuildings, b.ID, "building %s is in the package but not in its scope", b.ID)
+				add(ProblemScope, buildingsFile, b.ID, "building %s is in the package but not in its scope", b.ID)
 			}
 		}
 	}
+	// the placements hold one for each building: where its frame is on the map,
+	// which the items standing in it are checked against
+	unplaced := map[string]bool{}
+	placed := func(building string) {
+		if _, ok := m.Placements[building]; !ok && !unplaced[building] {
+			unplaced[building] = true
+			add(ProblemPlacement, FileManifest, building, "building %s has no placement", building)
+		}
+	}
+	for _, b := range p.Buildings {
+		placed(b.ID)
+	}
+	for _, it := range p.Items {
+		placed(it.Building)
+	}
 	for _, f := range p.Floors {
-		parent(f.ID, f.Building, "building", FileFloors)
+		parent(f.ID, f.Building, "building", floorsFile)
 	}
 	zonesOf := map[string]map[string]bool{}
 	for _, s := range p.Spaces {
-		parent(s.ID, s.Floor, "floor", FileSpaces)
+		parent(s.ID, s.Floor, "floor", spacesFile)
 		zonesOf[s.ID] = map[string]bool{}
 		for _, z := range s.Zones {
+			if zonesOf[s.ID][z] {
+				add(ProblemZone, spacesFile, s.ID, "%s: lists zone %s twice", s.ID, z)
+			}
 			zonesOf[s.ID][z] = true
 			if kindOf(z) != "zone" {
-				add(ProblemZone, FileSpaces, s.ID, "%s: lists unknown zone %s", s.ID, z)
+				add(ProblemZone, spacesFile, s.ID, "%s: lists unknown zone %s", s.ID, z)
+			} else if of := p.Zone(z).Space; of != s.ID { // a zone is part of one space
+				add(ProblemZone, spacesFile, s.ID, "%s: lists zone %s, which is part of space %s", s.ID, z, of)
 			}
 		}
-		geometryOf(s.ID, s.Geometry, FileSpaces, false, add)
+		typed("space", spacesFile, s.ID, s.Type)
+		seated(spacesFile, s.ID, s.Seating)
+		geometryOf(s.ID, s.Geometry, spacesFile, false, add)
 	}
 	for _, z := range p.Zones {
-		parent(z.ID, z.Floor, "floor", FileZones)
+		parent(z.ID, z.Floor, "floor", zonesFile)
 		if kindOf(z.Space) != "space" {
-			add(ProblemZone, FileZones, z.ID, "%s: zone of unknown space %s", z.ID, z.Space)
+			add(ProblemZone, zonesFile, z.ID, "%s: zone of unknown space %s", z.ID, z.Space)
 		} else if !zonesOf[z.Space][z.ID] {
-			add(ProblemZone, FileZones, z.ID, "%s: not listed in the zones of its space %s", z.ID, z.Space)
+			add(ProblemZone, zonesFile, z.ID, "%s: not listed in the zones of its space %s", z.ID, z.Space)
 		}
-		geometryOf(z.ID, z.Geometry, FileZones, false, add)
+		typed("zone", zonesFile, z.ID, z.Type)
+		seated(zonesFile, z.ID, z.Seating)
+		geometryOf(z.ID, z.Geometry, zonesFile, false, add)
 	}
 	for _, o := range p.Openings {
-		parent(o.ID, o.Floor, "floor", FileOpenings)
+		parent(o.ID, o.Floor, "floor", openingsFile)
 		for _, s := range o.Connects {
 			if kindOf(s) != "space" {
-				add(ProblemOpening, FileOpenings, o.ID, "%s: connects to unknown space %s", o.ID, s)
+				add(ProblemOpening, openingsFile, o.ID, "%s: connects to unknown space %s", o.ID, s)
 			} else if !strings.HasPrefix(s, o.Floor+"-") {
-				add(ProblemOpening, FileOpenings, o.ID, "%s: connects to %s on another floor", o.ID, s)
+				add(ProblemOpening, openingsFile, o.ID, "%s: connects to %s on another floor", o.ID, s)
 			}
 		}
-		geometryOf(o.ID, o.Geometry, FileOpenings, true, add)
+		typed("opening", openingsFile, o.ID, o.Type)
+		geometryOf(o.ID, o.Geometry, openingsFile, true, add)
 	}
 	for _, it := range p.Items {
 		if kindOf(it.Floor) != "floor" || !strings.HasPrefix(it.Floor, it.Building+"-") {
-			add(ProblemItem, FileItems, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
+			add(ProblemItem, itemsFile, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
 		}
 		for _, in := range []struct {
 			id   *string
 			kind string
 		}{{it.Space, "space"}, {it.Zone, "zone"}} {
 			if in.id != nil && (kindOf(*in.id) != in.kind || !strings.HasPrefix(*in.id, it.Floor+"-")) {
-				add(ProblemItem, FileItems, it.ID, "%s: in unknown %s %s (or not on its floor)", it.ID, in.kind, *in.id)
+				add(ProblemItem, itemsFile, it.ID, "%s: in unknown %s %s (or not on its floor)", it.ID, in.kind, *in.id)
 			}
 		}
 		if p.Catalogue != nil && p.Catalogue.Type(it.Type) == nil {
-			add(ProblemItemType, FileItems, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
+			add(ProblemItemType, itemsFile, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
 		}
 		if it.Local == nil && oneBuilding {
-			add(ProblemItem, FileItems, it.ID, "%s: no position in its building (local)", it.ID)
+			add(ProblemItem, itemsFile, it.ID, "%s: no position in its building (local)", it.ID)
 		} else if f, err := p.Frame(it.Building); it.Local != nil && err == nil {
 			at := f.ToLonLat(it.Local.X, it.Local.Y)
-			off := math.Hypot((at[0]-it.Label[0])*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
+			dlon := math.Remainder(at[0]-it.Label[0], 360) // the short way, across the antimeridian too
+			off := math.Hypot(dlon*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
 			if off > localAgreesM {
-				add(ProblemItem, FileItems, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
+				add(ProblemItem, itemsFile, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
+			}
+			// its front faces rotation_deg counter-clockwise from the drawings' -y,
+			// which the building's bearing turns to: on the map, clockwise from north
+			faces := f.Placement.Bearing + 180 - it.Local.Rotation
+			if math.Abs(math.Remainder(it.Heading-faces, 360)) > headingAgreesDeg {
+				add(ProblemItem, itemsFile, it.ID, "%s: its heading %.2f° is not the way it faces in its building (%.2f°)",
+					it.ID, it.Heading, math.Mod(math.Mod(faces, 360)+360, 360))
 			}
 		}
-		geometryOf(it.ID, it.Geometry, FileItems, false, add)
+		if !slices.Contains(mounts, it.Mount) {
+			add(ProblemValue, itemsFile, it.ID, "%s: mount %q is not floor, wall or ceiling", it.ID, it.Mount)
+		}
+		if !slices.Contains(categories, it.Category) {
+			add(ProblemValue, itemsFile, it.ID, "%s: category %q is not furniture, equipment or appliance", it.ID, it.Category)
+		}
+		geometryOf(it.ID, it.Geometry, itemsFile, false, add)
+	}
+
+	if c := p.Catalogue; c != nil { // a colour, category or mount left out is Studio's default
+		file := p.file("catalogue")
+		for _, ty := range c.Types {
+			if ty.Color != "" && !colourRE.MatchString(ty.Color) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: colour %q is not #rrggbb", file, ty.Code, ty.Color)
+			}
+			if ty.Category != "" && !slices.Contains(categories, ty.Category) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: category %q is not furniture, equipment or appliance", file, ty.Code, ty.Category)
+			}
+			if ty.Mount != "" && !slices.Contains(mounts, ty.Mount) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: mount %q is not floor, wall or ceiling", file, ty.Code, ty.Mount)
+			}
+			if ty.Workplaces < 0 || ty.Workplaces > maxWorkplaces {
+				add(ProblemValue, file, ty.Code, "%s: type %s: workplaces %d is not 0 to %d", file, ty.Code, ty.Workplaces, maxWorkplaces)
+			}
+			if ty.Grade != nil && !slices.Contains(grades, *ty.Grade) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: grade %q is not one of %s", file, ty.Code, *ty.Grade, strings.Join(grades, ", "))
+			}
+		}
 	}
 
 	unknown := map[string]bool{} // rows of a later format's kinds
-	if p.files[FileObjects] {
+	if p.files[objectsFile] {
 		listed := map[string]bool{}
 		for _, row := range p.Objects {
 			if !knownKinds[row.Kind] {
@@ -252,31 +403,31 @@ func (p *Package) Validate() []Problem {
 			}
 		}
 		if extra+missing > 0 {
-			add(ProblemObjects, FileObjects, "", "%s: rows do not match the features (%d extra, %d missing)", FileObjects, extra, missing)
+			add(ProblemObjects, objectsFile, "", "%s: rows do not match the features (%d extra, %d missing)", objectsFile, extra, missing)
 		}
 	}
 
 	if c := p.Changes; c != nil {
 		for _, id := range append(append([]string(nil), c.Added...), c.Changed...) {
 			if _, ok := p.kinds[id]; !ok && !unknown[id] {
-				add(ProblemChanges, FileChanges, id, "%s: %s is listed as added/changed but not in the package", FileChanges, id)
+				add(ProblemChanges, changesFile, id, "%s: %s is listed as added/changed but not in the package", changesFile, id)
 			}
 		}
 		for _, id := range c.AllRetired {
 			if _, ok := p.kinds[id]; ok {
-				add(ProblemChanges, FileChanges, id, "%s: retired ID %s is still in the package", FileChanges, id)
+				add(ProblemChanges, changesFile, id, "%s: retired ID %s is still in the package", changesFile, id)
 			}
 		}
 		for _, mv := range c.MovedAway {
 			if _, here := p.kinds[mv.ID]; here || !IsItemID(mv.ID) {
-				add(ProblemChanges, FileChanges, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", FileChanges, mv.ID)
+				add(ProblemChanges, changesFile, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", changesFile, mv.ID)
 			}
 			if _, here := p.kinds[mv.Building]; here || !strings.HasPrefix(mv.Building, project+"-") {
-				add(ProblemChanges, FileChanges, mv.ID, "%s: %s moved to %s, not another building of the project", FileChanges, mv.ID, mv.Building)
+				add(ProblemChanges, changesFile, mv.ID, "%s: %s moved to %s, not another building of the project", changesFile, mv.ID, mv.Building)
 			}
 		}
 		if c.Sequence != m.Export.Sequence {
-			add(ProblemChanges, FileChanges, "", "%s: sequence does not match the manifest", FileChanges)
+			add(ProblemChanges, changesFile, "", "%s: sequence does not match the manifest", changesFile)
 		}
 	}
 	return out
@@ -297,30 +448,56 @@ func geometryOf(id string, g *Geometry, file string, point bool, add func(code, 
 	}
 }
 
-func major(version string) string { return strings.SplitN(version, ".", 2)[0] }
+// versionRE: a format version as the format writes it: major.minor, a patch
+// number if any, then a pre-release or build after - or + (ASCII only).
+var versionRE = regexp.MustCompile(`^([0-9]+)\.([0-9]+)(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?$`)
 
-// CheckVersion says whether this module reads packages of a format version: one
-// of another major version, or (before 1.0, where a minor version may change
-// what a package means, as 0.4's scope and 0.7's one building per package did)
-// of a newer minor version, is refused with a message to update the reader.
-// Older versions, and newer patch versions (properties added), are read.
-func CheckVersion(version string) error {
-	if major(version) != major(FormatVersion) {
-		return fmt.Errorf("unsupported format version %s (this reader reads %s.x)", version, major(FormatVersion))
+// parseVersion is a format version's major and minor numbers, ok false for what
+// is not a format version. A number too large to hold is taken as the largest.
+func parseVersion(version string) (major, minor int, ok bool) {
+	m := versionRE.FindStringSubmatch(version)
+	if m == nil {
+		return 0, 0, false
 	}
-	if major(FormatVersion) == "0" && minor(version) > minor(FormatVersion) {
-		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", version, FormatVersion)
+	number := func(s string) int {
+		n, err := strconv.Atoi(s)
+		if err != nil { // only too large, after the pattern
+			return math.MaxInt
+		}
+		return n
+	}
+	return number(m[1]), number(m[2]), true
+}
+
+// CheckVersion says whether this module reads packages of a format version: what
+// is not a format version (major.minor.patch) is refused, as is one of another
+// major version, or (before 1.0, where a minor version may change what a package
+// means, as 0.4's scope and 0.7's one building per package did) of a newer minor
+// version, with a message to update the reader. Older versions, and newer patch
+// versions (properties added), are read.
+func CheckVersion(version string) error {
+	major, minor, ok := parseVersion(version)
+	if !ok {
+		return fmt.Errorf("%q is not a format version (major.minor.patch)", clip(version))
+	}
+	ownMajor, ownMinor, _ := parseVersion(FormatVersion)
+	if major != ownMajor {
+		return fmt.Errorf("unsupported format version %s (this reader reads %d.x)", clip(version), ownMajor)
+	}
+	if ownMajor == 0 && minor > ownMinor {
+		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", clip(version), FormatVersion)
 	}
 	return nil
 }
 
-// minor is a format version's minor number ("0.7.0" → 7; 0 when it has none).
+// minor is a format version's minor number ("0.7.0" → 7). What is not a format
+// version is taken as the newest, so that every rule applies to it (and Validate
+// reports it).
 func minor(version string) int {
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) < 2 {
-		return 0
+	_, n, ok := parseVersion(version)
+	if !ok {
+		return math.MaxInt
 	}
-	n, _ := strconv.Atoi(parts[1])
 	return n
 }
 

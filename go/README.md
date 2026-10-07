@@ -29,12 +29,23 @@ for _, b := range pkg.Buildings {
 
 ## What it gives
 
-- `Open` / `Read`: a package from a file or a reader, within `Limits` (files,
-  bytes) against broken or hostile ZIPs. Fails only when a package cannot be read
-  at all; everything else is reported by `Validate`.
+- `Open` / `Read`: a package from a file or a reader, within `Limits` against
+  broken or hostile ZIPs: files in the ZIP, bytes per file and in all, how many
+  times its size in the ZIP a file may be (a package's files are 10 to 20), and
+  entries in any one list (features, a ring's points, IDs). Fails only when a
+  package cannot be read at all (`ErrTooLarge` when over its limits); everything
+  else is reported by `Validate`. `DefaultLimits` (64 MiB a file, 256 MiB in all,
+  100 times, 200,000 entries) are generous for the largest building, whose
+  package is a few MB. **A server reading uploaded packages should pass its own
+  limits, tied to the size of upload it accepts** (`OpenWithLimits`, `Read`): what
+  reading costs is in proportion to them, not to the upload.
 - `Validate`: the checks Studio's validator makes, each `Problem` with a stable
-  `Code` (`MISSING_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`, `ITEM`,
-  `ITEM_TYPE`, …), the file and the ID it is about.
+  `Code` (`MISSING_FILE`, `BAD_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`,
+  `PLACEMENT`, `ITEM`, `ITEM_TYPE`, `VALUE`, …), the file and the ID it is about.
+  A file is read by its keys as written: one that differs from the format's only
+  in case (`"Hidden"`) makes it a `BAD_FILE`, as Go's JSON decoder would
+  otherwise read it where other readers do not. Types of spaces, zones and
+  openings are those the manifest's `types` list.
 - Lookups: `Get`, `Building`, `Floor`, `Space`, `Zone`, `Opening`, `FloorsOf`,
   `SpacesOn`, `ZonesOf`, `OpeningsOn`, and `UnitsOn`: the zones of a divided space
   and every space with none, which is what a system placing people should use.
@@ -61,14 +72,27 @@ for _, b := range pkg.Buildings {
   centimetre (it keeps 7 decimals of a degree).
 - `ParseID`: an ID's project, parent, code and the prefix at any level.
 
+Each file is found through the manifest's `files`, as the format asks (at its usual
+name when a manifest does not list a file every package has; items and their
+catalogue only when it lists them).
+
 Properties a later format version adds are ignored, as the format asks, and so are
 `objects.csv` rows of kinds this module does not know (with their IDs in
-`changes.json`). A package this module cannot process is reported by `Validate`
-(`VERSION`), and `CheckVersion` says so from the manifest's `format_version` alone:
-another major version, or before 1.0 a newer minor one (0.8 for this 0.7 reader),
-with a message to update the reader. So are files it
-does not read: a package's floors pre-built in 3D (format 0.5, `world/`) are for
-viewers.
+`changes.json`). So are files it does not read: a package's floors pre-built in
+3D (format 0.5, `world/`) are for viewers. A package this module cannot process
+is reported by `Validate` (`VERSION`), and `CheckVersion` says so from the
+manifest's `format_version` alone: what is not a format version (`major.minor`,
+a `.patch` if any, then a `-` or `+` suffix if any: ASCII digits and letters),
+another major version, or before 1.0 a newer minor one (0.8 for this 0.7
+reader), with a message to update the reader. `ReadManifest` reads the manifest
+alone, so a server can refuse a package before reading the rest of it:
+
+```go
+m, err := storeypath.ReadManifest(r, size, limits)
+if err == nil {
+	err = storeypath.CheckVersion(m.FormatVersion)
+}
+```
 
 ## Tests
 

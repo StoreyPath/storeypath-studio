@@ -21,17 +21,23 @@ func NewLocalFrame(p Placement) LocalFrame {
 	return LocalFrame{Placement: p, cos: math.Cos(b), sin: math.Sin(b)}
 }
 
-// ToLonLat is where a local point (drawing metres) is on earth, as Studio puts it.
+// ToLonLat is where a local point (drawing metres) is on earth, as Studio puts it:
+// its longitude in (-180, 180], across the antimeridian too.
 func (f LocalFrame) ToLonLat(x, y float64) LonLat {
 	dx, dy := x-f.Placement.X, y-f.Placement.Y
 	east := dx*f.cos + dy*f.sin
 	north := -dx*f.sin + dy*f.cos
 	dist := math.Hypot(east, north)
 	if dist == 0 {
-		return LonLat{f.Placement.Lon, f.Placement.Lat}
+		return LonLat{wrapLon(f.Placement.Lon), f.Placement.Lat}
 	}
 	lat, lon := vincentyDirect(f.Placement.Lat, f.Placement.Lon, math.Atan2(east, north), dist)
-	return LonLat{lon, lat}
+	return LonLat{wrapLon(lon), lat}
+}
+
+// wrapLon is a longitude in (-180, 180].
+func wrapLon(lon float64) float64 {
+	return lon - 360*math.Ceil((lon-180)/360)
 }
 
 // ToLocal is a position on earth in the building's drawing metres.
@@ -76,7 +82,7 @@ func deg(r float64) float64 { return r * 180 / math.Pi }
 // vincentyInverse is the distance (m) and the azimuth (radians, clockwise from
 // north) from point 1 to point 2, on the WGS84 ellipsoid.
 func vincentyInverse(lat1, lon1, lat2, lon2 float64) (float64, float64) {
-	L := rad(lon2 - lon1)
+	L := rad(math.Remainder(lon2-lon1, 360)) // the short way, across the antimeridian too
 	U1 := math.Atan((1 - wgsF) * math.Tan(rad(lat1)))
 	U2 := math.Atan((1 - wgsF) * math.Tan(rad(lat2)))
 	sinU1, cosU1 := math.Sincos(U1)
