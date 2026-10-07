@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 
@@ -287,21 +288,30 @@ class FloorPrint:
     """A floor printed once, in overlapping tiles, and looked at a part at a time,
     as a person reads a printed sheet: each room's view is cut out of a tile and
     its outline drawn on it, instead of drawing the plan again for every room.
-    Views wider than the tiles' overlap are drawn on their own."""
+    Views wider than the tiles' overlap are drawn on their own. Only the last few
+    tiles are kept (each is some 90 MB): rooms are best looked at tile by tile (see
+    ``tile_of``)."""
 
     PX_PER_M = CROP_PX / CROP_MIN_M  # the smallest view keeps its full detail
     STRIDE_M = 30.0
     OVERLAP_M = 12.0
+    KEEP_TILES = 4
 
     def __init__(self, doc, scale: float):
         self.doc, self.scale = doc, scale
         self.stride = self.STRIDE_M / scale  # drawing units
         self.overlap = self.OVERLAP_M / scale
         self.tile_px = round((self.STRIDE_M + self.OVERLAP_M) * self.PX_PER_M)
-        self._tiles: dict[tuple[int, int], object] = {}
+        self._tiles: OrderedDict[tuple[int, int], object] = OrderedDict()
+
+    def tile_of(self, bbox) -> tuple[int, int]:
+        """The tile a view of ``bbox`` (drawing units) is cut from."""
+        return int(bbox[0] // self.stride), int(bbox[1] // self.stride)
 
     def _tile(self, i: int, j: int):
-        if (i, j) not in self._tiles:
+        if (i, j) in self._tiles:
+            self._tiles.move_to_end((i, j))
+        else:
             from PIL import Image
 
             x0, y0 = i * self.stride, j * self.stride
@@ -309,6 +319,8 @@ class FloorPrint:
             fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
             fig.canvas.draw()
             self._tiles[(i, j)] = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
+            while len(self._tiles) > self.KEEP_TILES:
+                self._tiles.popitem(last=False)
         return self._tiles[(i, j)]
 
     def view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
@@ -321,7 +333,7 @@ class FloorPrint:
             return render(self.doc, bbox, highlight, px, marks, letters)
         from PIL import ImageDraw, ImageFont
 
-        i, j = int(x0 // self.stride), int(y0 // self.stride)
+        i, j = self.tile_of(bbox)
         tile = self._tile(i, j)
         tx0, ty1 = i * self.stride, j * self.stride + self.stride + self.overlap
         k = self.tile_px / (self.stride + self.overlap)  # pixels per drawing unit
@@ -377,8 +389,10 @@ def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: s
     the questions going out meanwhile, ``model.parallel`` at once. Each answer is
     handed to ``keep`` (in this thread) as soon as it comes, so what was answered is
     kept whatever becomes of the rest; an item that cannot be drawn or asked about is
-    left out, the reason in ``model.failed``: one failure costs one item. Says how far
-    it has got every PROGRESS_S seconds, as a large floor takes a while."""
+    left out, the reason in ``model.failed``: one failure costs one item. At most
+    twice as many as the model takes at once are drawn ahead of their questions (a
+    drawn view is kept until it is asked about). Says how far it has got every
+    PROGRESS_S seconds, as a large floor takes a while."""
     last = time.monotonic()
     done = 0
 
@@ -397,9 +411,14 @@ def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: s
             except Exception as e:  # an answer that cannot be used: this item only
                 model.failed = f"one of the {what} was not looked at: {type(e).__name__}: {e}"
 
+    ahead = 2 * max(1, model.parallel)
     with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
         pending: set = set()
         for item in todo:
+            while len(pending) >= ahead:  # the model is busy: no more drawn until it answers
+                finished, pending = wait(pending, timeout=PROGRESS_S, return_when=FIRST_COMPLETED)
+                collect(finished)
+                progress()
             try:
                 image = draw(item)
             except Exception as e:  # a part of the drawing that cannot be printed
@@ -445,10 +464,14 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
         sheet = sheet or FloorPrint(doc, scale)
         fields = {"outline": OUTLINES, "type": list(ROOM_TYPES)}
 
-        def draw(item):
-            n, _ = item
+        def region_of(n):
             inset = polygons[n].buffer(-0.12)  # inside the walls, so the walls stay visible
-            region = in_drawing(polygons[n] if inset.is_empty else inset)
+            return in_drawing(polygons[n] if inset.is_empty else inset)
+
+        todo.sort(key=lambda item: sheet.tile_of(_window(region_of(item[0]), scale))[::-1])  # tile by tile
+
+        def draw(item):
+            region = region_of(item[0])
             return sheet.view(_window(region, scale), [region])
 
         def one(item, image):

@@ -588,6 +588,53 @@ def test_a_broken_entity_the_auditor_misses_is_left_out_too(plain_office, breaka
     assert len(convert_floor(ws, f, tmp_path).added) == counts["ncs"]
 
 
+def test_views_are_drawn_only_a_little_ahead_of_the_model():
+    import threading
+    import time
+
+    lock = threading.Lock()
+    counts = {"drawn": 0, "answered": 0, "most": 0}
+
+    def draw(item):
+        with lock:
+            counts["drawn"] += 1
+            counts["most"] = max(counts["most"], counts["drawn"] - counts["answered"])
+        return b"png"
+
+    def ask(item, image):
+        time.sleep(0.01)
+        with lock:
+            counts["answered"] += 1
+        return item
+
+    kept = []
+    vision._ask_each(list(range(40)), draw, ask, kept.append, vision.VisionModel(url="http://x", parallel=2))
+    assert sorted(kept) == list(range(40)) and counts["most"] <= 4
+
+
+def test_only_the_last_few_tiles_of_a_floor_are_kept(monkeypatch):
+    class Canvas:
+        def draw(self):
+            pass
+
+        def get_width_height(self):
+            return 4, 4
+
+        def buffer_rgba(self):
+            return bytes(64)
+
+    class Figure:
+        canvas = Canvas()
+
+    printed = []
+    monkeypatch.setattr(vision, "_print", lambda doc, bbox, px, **k: printed.append(bbox) or Figure())
+    sheet = vision.FloorPrint(None, 0.001)
+    for i in range(10):
+        sheet._tile(i, 0)
+    sheet._tile(9, 0)  # kept: not printed again
+    assert len(printed) == 10 and len(sheet._tiles) == vision.FloorPrint.KEEP_TILES
+
+
 def test_a_room_that_cannot_be_drawn_costs_that_room_only():
     kept = []
 
