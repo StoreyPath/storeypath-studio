@@ -14,16 +14,22 @@ command line can be used side by side. The web server is in server.py:
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
                                                   {"ignored": bool} deletes a space or an opening (or restores it)
     POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}}, {"add": {"divider": …}},
-                                                  {"add": {"opening": {"type", "span"}}} or {"remove": {"at": [x, y]}}:
+                                                  {"add": {"opening": {"type", "span"}}} or
+                                                  {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
                                                   what a person draws, kept through every conversion; then
                                                   the floor is read again (a job)
+
+A change is refused (Busy, answered 409) while a job works on the project: the job
+would save over it.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -62,6 +68,16 @@ class NotFound(Exception):
     pass
 
 
+class Busy(Exception):
+    """A job is changing the project (reading a drawing, converting, exporting): a
+    change saved now would be lost when the job saves its own copy, so none is made."""
+
+
+BUSY_MESSAGE = ("a job is working on this project (adding floors, converting or exporting): "
+                "nothing was changed; make the change again when the job is done")
+BUSY_WAIT_S = 1.0  # a change waits this long for a short one (placing a building) to finish
+
+
 
 def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | None:
     """Where Studio divided an open area (no wall drawn): the edge the two spaces
@@ -76,23 +92,50 @@ def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | No
 class Review:
     """The editor's operations on one workspace file."""
 
-    def __init__(self, path: str | Path, catalogue=None):
+    def __init__(self, path: str | Path, catalogue=None, changing=None):
         self.path = Path(path)
         self._catalogue = catalogue  # () -> the Studio's catalogue of item types (catalogue.py)
+        # () -> the lock a job holds while it changes the project (server.py): a change
+        # made here takes it, and is refused while a job has it
+        self._changing = changing
         self._lock = threading.RLock()
         self._ws: Workspace | None = None
-        self._mtime: int | None = None
+        self._mtime: tuple | None = None
         self._drawings: dict[tuple, dict] = {}
 
+    def _stamp(self) -> tuple:
+        s = self.path.stat()  # every save is a new file (Workspace.save): its inode tells it apart
+        return s.st_mtime_ns, s.st_ino, s.st_size
+
     def _load(self) -> Workspace:
-        mtime = self.path.stat().st_mtime_ns
-        if self._ws is None or mtime != self._mtime:
-            self._ws, self._mtime = Workspace.load(self.path), mtime
+        stamp = self._stamp()
+        if self._ws is None or stamp != self._mtime:
+            self._ws, self._mtime = Workspace.load(self.path), stamp
         return self._ws
 
     def _save(self, ws: Workspace) -> None:
         ws.save(self.path)
-        self._mtime = self.path.stat().st_mtime_ns
+        self._mtime = self._stamp()
+
+    @contextmanager
+    def _writing(self):
+        """The workspace, to change and save: only while no job is changing the project
+        (else Busy: a job saves the copy it loaded, which would lose the change). A
+        change that fails part way leaves nothing of it behind: the workspace is read
+        again from its file."""
+        lock = self._changing() if self._changing else None
+        if lock is not None and not lock.acquire(timeout=BUSY_WAIT_S):
+            raise Busy(BUSY_MESSAGE)
+        try:
+            with self._lock:
+                try:
+                    yield self._load()
+                except BaseException:
+                    self._ws = None
+                    raise
+        finally:
+            if lock is not None:
+                lock.release()
 
     def _floor(self, ws: Workspace, floor_id: str):
         try:
@@ -178,10 +221,7 @@ class Review:
             if value is None or value == "":
                 continue  # cleared
             if f.kind == "number":
-                try:
-                    value = float(value)
-                except (TypeError, ValueError):
-                    raise ValueError(f"{key} is a number") from None
+                value = _finite(value, key)
             elif f.kind == "choice" and value not in f.choices:
                 raise ValueError(f"{key} is one of {', '.join(f.choices)}")
             elif f.kind == "color" and not (isinstance(value, str) and len(value) == 7 and value.startswith("#")):
@@ -193,8 +233,7 @@ class Review:
 
     def add_item(self, floor_id: str, body: dict) -> dict:
         """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres)."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             self._floor(ws, floor_id)
             values = self._item_values(body.get("type"), body.get("values"))
             x, y = _number(body, "x"), _number(body, "y")
@@ -204,34 +243,38 @@ class Review:
 
     def change_item(self, item_id: str, body: dict) -> dict:
         """An item moved, turned, given another type or details, carried to another floor
-        (``floor_id``), taken away (``{"retired": true}``) or brought back."""
-        with self._lock:
-            ws = self._load()
+        (``floor_id``), taken away (``{"retired": true}``) or brought back: all that is
+        asked, or (when any of it cannot be) nothing."""
+        with self._writing() as ws:
             it = ws.items.get(item_id)
             if it is None:
                 raise NotFound(f"no item {item_id}")
+            new = it.model_copy(deep=True)  # changed whole, then put in its place
             if "retired" in body:
                 if not isinstance(body["retired"], bool):
                     raise ValueError("retired is true or false")
-                it.status = "retired" if body["retired"] else "active"
-                it.retired_at = utcnow() if body["retired"] else None
+                new.status = "retired" if body["retired"] else "active"
+                new.retired_at = utcnow() if body["retired"] else None
             if "floor_id" in body:
+                if not isinstance(body["floor_id"], str):
+                    raise NotFound(f"no floor {body['floor_id']}")
                 self._floor(ws, body["floor_id"])
-                it.floor_id = body["floor_id"]
+                new.floor_id = body["floor_id"]
             if "type" in body:
                 self._item_values(body["type"], None)  # a type of the catalogue
-                it.type = body["type"]
-                own = {f.key for f in self.catalogue().get(it.type).fields if f.owner == "storeypath"}
-                it.values = {k: v for k, v in it.values.items() if k in own}  # what the new type has
+                new.type = body["type"]
+                own = {f.key for f in self.catalogue().get(new.type).fields if f.owner == "storeypath"}
+                new.values = {k: v for k, v in new.values.items() if k in own}  # what the new type has
             if "values" in body:
-                it.values = self._item_values(it.type, body["values"])
+                new.values = self._item_values(new.type, body["values"])
             for key in ("x", "y"):
                 if key in body:
-                    setattr(it, key, _number(body, key))
+                    setattr(new, key, _number(body, key))
             if "rotation" in body:
-                it.rotation = _number(body, "rotation") % 360
+                new.rotation = _number(body, "rotation") % 360
+            ws.items[item_id] = new
             self._save(ws)
-            return self._item(it)
+            return self._item(new)
 
     def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None, resized=()) -> dict:
         eff = ws.effective(r)
@@ -249,9 +292,8 @@ class Review:
     def edit(self, floor_id: str, body: dict) -> None:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
-        takes what was drawn nearest a point."""
-        with self._lock:
-            ws = self._load()
+        takes the one of its kind drawn as the page shows it (_remove)."""
+        with self._writing() as ws:
             f = self._floor(ws, floor_id)
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
             if "wall" in add or "divider" in add:
@@ -272,26 +314,12 @@ class Review:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
                 self._resize(ws, floor_id, f, body["resize"])
-            elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
-                at = Point(_points([body["remove"]["at"]], 1)[0])
-                lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings,
-                         "space": f.edits.spaces}
-
-                def reach(kind, x):  # a drawn space: anywhere inside it
-                    if kind == "space":
-                        return Polygon(x).distance(at)
-                    return LineString(x.span if kind == "opening" else x).distance(at)
-
-                drawn = [(reach(kind, x), kind, i) for kind, items in lists.items() for i, x in enumerate(items)]
-                near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
-                if not near:
-                    raise NotFound("nothing drawn there")
-                _, kind, i = min(near)
-                lists[kind].pop(i)
+            elif isinstance(body.get("remove"), dict) and ("at" in body["remove"] or "shape" in body["remove"]):
+                _remove(f, body["remove"])
             else:
                 raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}}, '
                                  '{"add": {"space": [[x, y], …]}}, {"resize": {"at": [x, y], "width", "sill", '
-                                 '"height"}} or {"remove": {"at": [x, y]}}')
+                                 '"height"}} or {"remove": {"kind", "shape": its points as drawn, "at": [x, y]}}')
             self._save(ws)
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
@@ -331,7 +359,9 @@ class Review:
             "type": eff["type"], "name": eff["name"], "number": eff["number"],
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "drawing_label": r.label,
-            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"}) if o else None,
+            # a person's correction or check ({}: accepted as it is); not a capacity alone
+            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
+            if o and eff["corrected"] else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             # how many it seats: set here, else its desks'; and who it is laid out for
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
@@ -352,8 +382,7 @@ class Review:
         flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
         desks say). ``{"reset": true}`` removes the correction (the flags and capacity
         stay)."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             r = ws.objects.get(object_id)
             if r is None or r.status != "active" or r.kind not in ("space", "zone", "opening"):
                 raise NotFound(f"no active space, zone or opening {object_id}")
@@ -366,7 +395,8 @@ class Review:
                 if capacity is not None and (isinstance(capacity, bool) or not isinstance(capacity, int)
                                              or not 0 <= capacity <= 10000):
                     raise ValueError("capacity is a whole number from 0, or null (as its desks say)")
-            flags = {"hidden": current.hidden, "ignored": current.ignored}
+            # hidden False is no flag (nothing is hidden as detected): it marks a check, below
+            flags = {"hidden": current.hidden or None, "ignored": current.ignored}
             detected = {"hidden": False, "ignored": bool(r.detected_ignored)}
             for flag in ("hidden", "ignored"):
                 if flag in body:
@@ -388,12 +418,16 @@ class Review:
                 values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
             else:
                 raise ValueError("nothing to change")
+            # Checked: a person saved a correction, or accepted it as it is, and has not reset
+            # it since. A flag or a capacity set keeps that as it was: a capacity alone is no
+            # check (workspace.effective), nor one left empty by clearing a flag.
+            was_checked = object_id in ws.overrides and ws.effective(r)["corrected"] \
+                and not (current.hidden or current.ignored)
+            checked = False if body.get("reset") else True if "correction" in body else was_checked
             override = Override(**values, **flags, capacity=capacity)
-            # An empty correction means "accepted"; one left empty only by clearing a flag
-            # (or by a reset) means nothing and is removed.
-            accepted = object_id in ws.overrides and not (current.hidden or current.ignored)
-            flag_only = "correction" not in body and not body.get("reset")
-            if override == Override() and (body.get("reset") or (flag_only and not accepted)):
+            if checked and not values and capacity is not None and override.hidden is None:
+                override.hidden = False  # accepted as it is, with a capacity: the mark of the check
+            if override == Override() and not checked:
                 ws.overrides.pop(object_id, None)
             else:
                 ws.overrides[object_id] = override
@@ -420,16 +454,66 @@ class Review:
         return self._drawings[key]
 
 
+DRAWN_KINDS = ("wall", "divider", "opening", "space")
+SAME_POINT_M = 0.001  # a shape sent back is the one drawn when its points are this near
+
+
+def _remove(f, body: dict) -> None:
+    """What a person drew on a floor, taken away: of its ``kind`` (wall, divider,
+    opening, space) the one whose points are ``shape`` (as the floor's edits give
+    them), else the one nearest ``at``. Without a kind (an older page), the nearest of
+    any, a line before a space it lies in."""
+    lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings,
+             "space": f.edits.spaces}
+    kind = body.get("kind")
+    if kind is not None and (not isinstance(kind, str) or kind not in lists):
+        raise ValueError(f"kind is one of {', '.join(DRAWN_KINDS)}")
+    kinds = [kind] if kind else list(DRAWN_KINDS)
+
+    def points(k, x):
+        return x.span if k == "opening" else x
+
+    if body.get("shape") is not None:
+        want = _closed(_xy(body["shape"], "shape: its points [[x, y], …], as drawn"))
+        for k in kinds:
+            for i, x in enumerate(lists[k]):
+                have = _closed(points(k, x))
+                if len(have) == len(want) and all(abs(a - b) <= SAME_POINT_M for p, q in zip(have, want)
+                                                  for a, b in zip(p, q)):
+                    lists[k].pop(i)
+                    return
+        raise NotFound(f"no {kind or 'drawing'} drawn so here: it may have been taken away already")
+    at = Point(_points([body["at"]], 1)[0])
+
+    def reach(k, x):  # a drawn space: anywhere inside it
+        if k == "space":
+            return Polygon(x).distance(at)
+        return LineString(points(k, x)).distance(at)
+
+    # nearest first; at one distance, a line before a space (one drawn across it lies in it)
+    drawn = [(reach(k, x), k == "space", DRAWN_KINDS.index(k), i) for k in kinds for i, x in enumerate(lists[k])]
+    near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
+    if not near:
+        raise NotFound(f"no {kind or 'drawing'} drawn there")
+    _, _, k, i = min(near)
+    lists[DRAWN_KINDS[k]].pop(i)
+
+
+def _closed(pts) -> list:
+    """A ring's points without the first again at its end."""
+    pts = [list(p) for p in pts]
+    return pts[:-1] if len(pts) > 2 and pts[0] == pts[-1] else pts
+
+
 DRAWN_SPACE_MIN_M2 = 1.0
 
 
 def _ring(value) -> list[list[float]]:
     """A space's outline from a request: three or more points [x, y] (local meters),
     a simple shape of at least DRAWN_SPACE_MIN_M2."""
-    try:
-        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
-    except (TypeError, ValueError):
-        raise ValueError("a space is its corners: [[x, y], [x, y], [x, y], …]") from None
+    if isinstance(value, list) and len(value) > 501:
+        raise ValueError("a space has 3 to 500 corners")
+    pts = _xy(value, "a space is its corners: [[x, y], [x, y], [x, y], …]")
     if len(pts) > 2 and pts[0] == pts[-1]:
         pts = pts[:-1]
     if len(pts) < 3 or len(pts) > 500:
@@ -442,23 +526,37 @@ def _ring(value) -> list[list[float]]:
     return pts
 
 
-def _number(body: dict, key: str, default: float | None = None) -> float:
-    value = body.get(key, default)
+def _finite(value, what: str) -> float:
+    """A finite number from a request: NaN and the infinities are not numbers here."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{what} is a number")
     try:
         number = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} is a number") from None
-    if number != number or number in (float("inf"), float("-inf")):
-        raise ValueError(f"{key} is a number")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{what} is a number") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{what} is a number")
     return number
+
+
+def _number(body: dict, key: str, default: float | None = None) -> float:
+    return _finite(body.get(key, default), key)
+
+
+def _xy(value, error: str) -> list[list[float]]:
+    """Points [x, y] (local meters, finite) from a request; ValueError(``error``) when
+    they are not."""
+    try:
+        return [[round(_finite(x, "x"), 4), round(_finite(y, "y"), 4)] for x, y in value]
+    except (TypeError, ValueError):
+        raise ValueError(error) from None
 
 
 def _points(value, n: int) -> list[list[float]]:
     """``n`` points [x, y] (local meters) from a request."""
-    try:
-        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
-    except (TypeError, ValueError):
-        raise ValueError(f"expected {n} points [x, y]") from None
+    if isinstance(value, list) and len(value) != n:
+        raise ValueError(f"expected {n} points [x, y]")
+    pts = _xy(value, f"expected {n} points [x, y]")
     if len(pts) != n:
         raise ValueError(f"expected {n} points [x, y]")
     return pts

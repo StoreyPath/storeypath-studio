@@ -67,7 +67,8 @@ function savedMode() {
 async function request(path, body) {
   const init = body === undefined ? {} : {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // the header a page of another site cannot send (server.py refuses changes without it)
+    headers: { "X-StoreyPath": "1", "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
   const res = await fetch(`/api/${path}`, init);
@@ -722,7 +723,7 @@ function bindPane(pane) {
     const door = openingNear(p);
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);
-    if (line) return selectItem({ kind: line.kind, at: line.at });
+    if (line) return selectItem({ kind: line.kind, at: line.at, line: line.line });
     // on the plan, what was clicked; on the print, the space drawn there
     select(pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null);
   };
@@ -1253,16 +1254,36 @@ function openingNear(p, px = 9) {
   return best?.d || null;
 }
 
-/** A wall or dividing line drawn here, under the pointer: {kind, at} (at: its middle). */
+/** A wall or dividing line drawn here, under the pointer: {kind, at, line} (at: its
+ * middle; line: its two ends, as saved, to take away that one and no other). */
 function drawnNear(p, px = 8) {
   const reach = px / state.view.k;
   let best = null;
   const lines = [...(state.floor?.edits?.walls || []).map((w) => ["wall", w]), ...(state.floor?.edits?.dividers || []).map((w) => ["divider", w])];
   for (const [kind, [a, b]] of lines) {
     const dist = toSegment(p, a, b);
-    if (dist <= reach && (!best || dist < best.dist)) best = { kind, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], length: Math.hypot(b[0] - a[0], b[1] - a[1]), dist };
+    if (dist <= reach && (!best || dist < best.dist)) best = { kind, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], length: Math.hypot(b[0] - a[0], b[1] - a[1]), line: [a, b], dist };
   }
-  return best ? { kind: best.kind, at: best.at, length: best.length } : null;
+  return best ? { kind: best.kind, at: best.at, length: best.length, line: best.line } : null;
+}
+
+/** Taking away what was drawn here: its kind and its points as saved (the server
+ * takes that one, never another drawn near it), and where it is, for an older server. */
+function takeAway(kind, at, shape) {
+  return submitEdit({ remove: { kind, at, ...(shape ? { shape } : {}) } }, "Taking it away…");
+}
+
+/** The opening drawn here that the floor reads as this door, window or opening: of
+ * those drawn, the one whose middle is nearest its middle. */
+function drawnOpeningOf(d) {
+  const mid = d.middle || [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2];
+  let best = null;
+  for (const o of state.floor?.edits?.openings || []) {
+    const m = [(o.span[0][0] + o.span[1][0]) / 2, (o.span[0][1] + o.span[1][1]) / 2];
+    const dist = Math.hypot(m[0] - mid[0], m[1] - mid[1]);
+    if (dist <= 0.5 && (!best || dist < best.dist)) best = { o, dist };
+  }
+  return { at: mid, span: best?.o.span || null };
 }
 
 function selectItem(item) {
@@ -1397,7 +1418,7 @@ function openMenu(cx, cy, p) {
     items.push(menuItem(d.drawn ? "Take it away" : d.ignored ? "Restore" : "Delete", () => deleteItem(), { danger: !d.ignored || d.drawn, hint: "Del" }));
     items.push(el("hr"));
   } else if (line) {
-    selectItem({ kind: line.kind, at: line.at });
+    selectItem({ kind: line.kind, at: line.at, line: line.line });
     items.push(el("div", { class: "heading" }, line.kind === "wall" ? "Wall drawn here" : "Dividing line drawn here"),
       el("div", { class: "meta" }, `${line.length.toFixed(2)} m long`));
     items.push(menuItem("Take it away", () => deleteItem(), { danger: true, hint: "Del" }));
@@ -1421,7 +1442,7 @@ function openMenu(cx, cy, p) {
   items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, p)));
   const drawnSpace = (state.floor?.edits?.spaces || []).find((ring) => inRing(p, ring));
   if (drawnSpace) {
-    items.push(menuItem("Take the drawn space away", () => submitEdit({ remove: { at: p } }, "Taking it away…"), { danger: true }));
+    items.push(menuItem("Take the drawn space away", () => takeAway("space", p, drawnSpace), { danger: true }));
   }
   $("menu").replaceChildren(...items);
   placeMenu(cx, cy);
@@ -1490,12 +1511,12 @@ function startLine(tool, p) {
 async function deleteItem() {
   const item = state.item;
   if (!item || state.busy) return;
-  if (item.kind === "wall" || item.kind === "divider") return submitEdit({ remove: { at: item.at } }, "Taking it away…");
+  if (item.kind === "wall" || item.kind === "divider") return takeAway(item.kind, item.at, item.line);
   const d = state.floor.doors.find((x) => x.id === item.id);
   if (!d) return;
   if (d.drawn) {
-    const mid = [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2];
-    return submitEdit({ remove: { at: mid } }, "Taking it away…");
+    const { at, span } = drawnOpeningOf(d);
+    return takeAway("opening", at, span);
   }
   try {
     const updated = await request(`${BASE}/objects/${d.id}`, { ignored: !d.ignored });
@@ -1805,7 +1826,8 @@ function setupAssets() {
 // plan. Walls, dividers and doors are drawn on the plan; what is saved shows in 3D
 // when it is built again (Update 3D, or another floor of another building).
 
-const view3d = { world: null, building: null, stale: true, shown: false, busy: null, picking: false };
+// busy: the build under way (a promise); again: asked for while it was, so done once more after it
+const view3d = { world: null, building: null, stale: true, shown: false, busy: null, again: false, picking: false };
 
 /** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
 function pick3d(id, { go = false } = {}) {
@@ -1836,42 +1858,69 @@ async function show3d(on) {
   await refresh3d();
 }
 
+/** The 3D view brought up to date: one build at a time; asked again while one is
+ * being built (another floor, a building of its own, a change saved), it is done once
+ * more when that one is done, with what is asked then. */
 async function refresh3d() {
   if (!view3d.shown || !state.floor) return;
-  if (view3d.busy) return view3d.busy;
+  if (view3d.busy) {
+    view3d.again = true;
+    return view3d.busy;
+  }
   view3d.busy = (async () => {
-    const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
     try {
-      if (!view3d.world) {
-        const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
-        view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
-        view3d.world.setLabels($("show-labels").checked);
-        view3d.world.addEventListener("select", ({ detail: { id } }) => {
-          if (view3d.picking) return; // our own choice, echoed back
-          if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
-          if (id === null && state.asset) return selectAsset(null);
-          if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
-        });
-      }
-      if (view3d.stale || view3d.building !== building) {
-        $("status").textContent = "Building the 3D view…";
-        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
-        view3d.building = building;
-        view3d.stale = false;
-      }
-      view3d.world.setFloor(state.floor.id);
-      if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
-      $("status").textContent = "";
-      $("update3d").hidden = true;
-    } catch (e) {
-      $("status").textContent = "";
-      toast(`The 3D view could not be shown: ${e.message}`, true);
-      show3d(false);
+      do {
+        view3d.again = false;
+        if (!(await build3d())) break;
+      } while (view3d.again && view3d.shown && state.floor);
     } finally {
       view3d.busy = null;
+      view3d.again = false;
     }
   })();
   return view3d.busy;
+}
+
+/** The 3D view of the floor shown, built again when the project changed since (or it
+ * showed another building): whether it could be shown. */
+async function build3d() {
+  const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
+  try {
+    if (!view3d.world) {
+      const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
+      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
+      view3d.world.setLabels($("show-labels").checked);
+      view3d.world.addEventListener("select", ({ detail: { id } }) => {
+        if (view3d.picking) return; // our own choice, echoed back
+        if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
+        if (id === null && state.asset) return selectAsset(null);
+        if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
+      });
+    }
+    if (view3d.stale || view3d.building !== building) {
+      $("status").textContent = "Building the 3D view…";
+      // up to date as of now: a change saved while it is built makes it stale again
+      view3d.stale = false;
+      try {
+        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
+      } catch (e) {
+        view3d.stale = true;
+        throw e;
+      }
+      view3d.building = building;
+    }
+    // the floor shown now, when it is of the building built (else that one is built next)
+    if (state.floor?.id.startsWith(`${view3d.building}-`)) view3d.world.setFloor(state.floor.id);
+    if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
+    $("status").textContent = "";
+    $("update3d").hidden = !view3d.stale; // a change saved while it was built is not in it yet
+    return true;
+  } catch (e) {
+    $("status").textContent = "";
+    toast(`The 3D view could not be shown: ${e.message}`, true);
+    show3d(false);
+    return false;
+  }
 }
 
 setupMap();

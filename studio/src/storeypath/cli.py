@@ -17,7 +17,7 @@ import typer
 from .assets import asset_dir
 from .cad import DrawingError
 from .convert import convert_floor
-from .export import ExportError, export_package
+from .export import ExportError
 from .ids import make_id
 from .package import json_schemas
 from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
@@ -509,10 +509,12 @@ def fix(
     else:
         if type is not None and record.kind != "space":
             _fail("only spaces have a type to correct")
-        o = ws.overrides.get(object_id, Override())
-        ws.overrides[object_id] = o.model_copy(update={
+        o = ws.overrides.get(object_id, Override()).model_copy(update={
             k: v for k, v in (("type", type), ("name", name), ("number", number)) if v is not None
         })
+        ws.overrides[object_id] = o
+        if not ws.effective(record)["corrected"] and o.hidden is None:
+            o.hidden = False  # accepted as it is, with a capacity set: the mark of the check (workspace.effective)
     ws.save(workspace)
     eff = ws.effective(record)
     typer.echo(f"{object_id}  {eff['type']}  {eff['name'] or ''} {eff['number'] or ''}".rstrip())
@@ -524,9 +526,13 @@ def serve(
     host: Annotated[str, typer.Option(help="0.0.0.0 to serve other machines (as in the container)")] = "127.0.0.1",
     port: Annotated[int, typer.Option()] = 8080,
     open_browser: Annotated[bool, typer.Option("--open/--no-open")] = False,
+    allowed_host: Annotated[Optional[list[str]], typer.Option(
+        "--allowed-host",
+        help="another name Studio is reached by (a server's, a proxy's), as typed in the browser; again for "
+             "more. localhost, this machine's name and addresses always are; also STOREYPATH_ALLOWED_HOSTS")] = None,
 ):
     """Run StoreyPath Studio in the browser: projects, drawings, review, export."""
-    _serve(data, host, port, "/" , open_browser)
+    _serve(data, host, port, "/" , open_browser, allowed=allowed_host or [])
 
 
 @app.command()
@@ -541,12 +547,13 @@ def review(
            f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them")
 
 
-def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "") -> None:
+def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
+           allowed: list[str] | None = None) -> None:
     from .server import Studio, make_server
 
     studio = Studio(data)
     try:
-        server = make_server(studio, host, port)
+        server = make_server(studio, host, port, allowed=allowed or [])
     except OSError as e:
         _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_port}{page}"
@@ -579,7 +586,12 @@ def export(
         help="the building to export, by its ID or code (a package holds one building; "
              "may be left out when the project has one)")] = None,
 ):
-    """Write the exchange package of one building."""
+    """Write the exchange package of one building, entered as an export only when it is
+    valid. Its items are of the item types of the Studio data folder the project is in
+    (its catalogue.json), else of the built-in ones."""
+    from . import catalogue as catalogues
+    from .server import write_valid_package
+
     ws = _load(workspace)
     if building is not None and building.count("-") < 2:  # a code: its ID
         found = [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings
@@ -587,19 +599,17 @@ def export(
         if len(found) != 1:
             _fail(f"no single building {building} in this project")
         building = found[0]
+    data = workspace.resolve().parent.parent  # <data>/<code>/<code>.spproj: the Studio's item types, when it has them
+    cat = catalogues.load(data) if (data / catalogues.FILE_NAME).is_file() else catalogues.default_catalogue()
     try:
-        manifest = export_package(ws, output, building=building, say=typer.echo)
-    except ExportError as e:
+        manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo)
+    except (ExportError, ValueError) as e:
         _fail(str(e))
-    ws.save(workspace)
-    errors = validate_package(output)
     counts = ", ".join(f"{n} {k}" for k, n in manifest.counts.items())
     typer.echo(f"export #{manifest.export.sequence} → {output} ({counts})")
     loose = [b for b, p in manifest.placements.items() if not p.placed]
     if loose:
         typer.echo(f"not on the map yet (exported around 0°N 0°E; `storeypath place` when known): {', '.join(loose)}")
-    if errors:
-        _fail("the package failed validation:\n  " + "\n  ".join(errors))
 
 
 @app.command()
