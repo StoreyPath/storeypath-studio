@@ -320,21 +320,24 @@ def _pair_segments(segs: list[_Seg], stats) -> list[tuple[str, object]]:
         order = np.argsort(offset)
         offset, lo, hi, group = offset[order], lo[order], hi[order], group[order]
         own = np.isin(group, members)
-        j0 = 0
-        for i in range(len(group)):
-            while offset[i] - offset[j0] > WALL_GAP_M[1]:
-                j0 += 1
-            for j in range(j0, i):
-                gap = offset[i] - offset[j]
-                if gap < WALL_GAP_M[0] or not (own[i] or own[j]):
-                    continue
-                overlap = min(hi[i], hi[j]) - max(lo[i], lo[j])
-                if overlap <= 0:
-                    continue
-                for k, side in ((group[i], 0), (group[j], 1)):  # j lies below i
-                    if overlap > best[k, side]:
-                        best[k, side] = min(overlap, length[k])
-                        partner_gap[k, side] = gap
+        # Each segment against those below it within a wall's thickness that run
+        # alongside it, in order: found through an index, not all against all (a
+        # long facade drawn in hundreds of pieces along one line).
+        tree = shapely.STRtree(shapely.linestrings(np.stack([np.c_[lo, offset], np.c_[hi, offset]], axis=1)))
+        near = tree.query(shapely.box(lo, offset - WALL_GAP_M[1], hi, offset))
+        below = near[:, near[0] > near[1]]
+        below = below[:, np.lexsort((below[1], below[0]))]
+        for i, j in zip(below[0].tolist(), below[1].tolist()):
+            gap = offset[i] - offset[j]
+            if not WALL_GAP_M[0] <= gap <= WALL_GAP_M[1] or not (own[i] or own[j]):
+                continue
+            overlap = min(hi[i], hi[j]) - max(lo[i], lo[j])
+            if overlap <= 0:
+                continue
+            for k, side in ((group[i], 0), (group[j], 1)):  # j lies below i
+                if overlap > best[k, side]:
+                    best[k, side] = min(overlap, length[k])
+                    partner_gap[k, side] = gap
     out = []
     for i, sg in enumerate(solid):
         st = stats[sg.layer]

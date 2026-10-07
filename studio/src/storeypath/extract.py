@@ -720,14 +720,17 @@ def _attached(walls, rooms, touch: float = 0.1):
     or elevation marker, a north arrow or a symbol beside the plan, drawn on a wall
     layer, stands apart and is left out."""
     pieces = as_polygons(walls)
-    kept = [p.distance(rooms) <= touch for p in pieces]
-    grew = True
-    while grew:  # what touches a kept piece is kept
-        grew = False
-        for i, p in enumerate(pieces):
-            if not kept[i] and any(k and p.distance(q) <= touch for k, q in zip(kept, pieces)):
-                kept[i] = grew = True
-    return unary_union([p for p, k in zip(pieces, kept) if k]) or None
+    if not pieces:
+        return None
+    tree = STRtree(pieces)
+    kept = {int(i) for i in tree.query(rooms, predicate="dwithin", distance=touch)}
+    todo = list(kept)
+    while todo:  # what touches a kept piece is kept
+        for j in tree.query(pieces[todo.pop()], predicate="dwithin", distance=touch):
+            if int(j) not in kept:
+                kept.add(int(j))
+                todo.append(int(j))
+    return unary_union([pieces[i] for i in sorted(kept)]) or None
 
 
 OUTSIDE_REACH_M = 0.6  # an area set aside this close to the outline's edge is outside…

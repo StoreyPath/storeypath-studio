@@ -570,6 +570,35 @@ def test_plans_inside_one_block_are_each_their_own_floor(tmp_path):
         assert len(ex.spaces) == 24 and {s.number[0] for s in ex.spaces if s.number} == {str(n)}
 
 
+def test_walls_built_onto_the_rooms_are_found_quickly():
+    import time
+
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from storeypath.extract import _attached
+
+    rooms = box(0, 0, 100, 100)
+    columns = [box(i % 50 * 2, i // 50 * 2, i % 50 * 2 + 0.3, i // 50 * 2 + 0.3) for i in range(2000)]
+    beside = [box(300 + i % 50 * 2, i // 50 * 2, 300 + i % 50 * 2 + 0.3, i // 50 * 2 + 0.3) for i in range(2000)]
+    chain = [box(100 + k * 0.35, 50, 100 + k * 0.35 + 0.3, 50.3) for k in range(20)]  # built on, piece by piece
+    started = time.monotonic()
+    kept = _attached(unary_union(columns + beside + chain), rooms)
+    assert time.monotonic() - started < 5
+    assert abs(kept.area - sum(p.area for p in columns + chain)) < 1e-6
+
+
+def test_a_facade_drawn_in_thousands_of_pieces_is_measured_quickly():
+    import time
+
+    from storeypath.analyse import LayerStats, _pair_segments, _Seg
+
+    segs = [_Seg("W", (k * 0.5, row * 0.05, k * 0.5 + 0.45, row * 0.05), False) for row in range(8) for k in range(3000)]
+    started = time.monotonic()
+    paired = _pair_segments(segs, {"W": LayerStats("W")})
+    assert paired and time.monotonic() - started < 10
+
+
 def test_a_block_placed_inside_itself_is_walked_once():
     from storeypath.extract import _walk
 
