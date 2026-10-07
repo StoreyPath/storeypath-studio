@@ -403,6 +403,7 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 				return nil, err
 			}
 		} else {
+			c.index()
 			p.Catalogue = &c
 		}
 	}

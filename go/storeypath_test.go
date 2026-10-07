@@ -6,6 +6,7 @@ import (
 	"compress/flate"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const corpus = "../spec/conformance"
@@ -202,6 +204,53 @@ func TestItemsAndTheirCatalogue(t *testing.T) {
 	old := open(t, "simple-office.storeypath")
 	if len(old.Items) != 0 || old.Catalogue != nil || old.ItemType("COPIER") != nil || old.ItemsOn(old.Floors[0].ID) != nil {
 		t.Error("an older package has no items")
+	}
+}
+
+func TestTheCatalogueFindsATypeByItsCode(t *testing.T) {
+	// Validate looks up every item's type: by going through the types, a catalogue
+	// of n types and n items took n² steps.
+	p := open(t, "campus-hq.storeypath")
+	if p.Catalogue.byCode == nil {
+		t.Fatal("not indexed when read")
+	}
+	for i := range p.Catalogue.Types {
+		if ty := &p.Catalogue.Types[i]; p.ItemType(ty.Code) != ty {
+			t.Errorf("%s: not found", ty.Code)
+		}
+	}
+	// the first of a code, as before; a type added since, or a catalogue made by hand
+	c := &Catalogue{Types: []ItemType{{Code: "A", NameEN: "first"}, {Code: "B"}, {Code: "A", NameEN: "second"}}}
+	if c.Type("A").NameEN != "first" || c.Type("C") != nil {
+		t.Error("made by hand")
+	}
+	c.index()
+	if c.Type("A").NameEN != "first" || c.Type("B") != &c.Types[1] || c.Type("C") != nil {
+		t.Error("indexed")
+	}
+	if c.Types = append(c.Types, ItemType{Code: "C"}); c.Type("C") == nil {
+		t.Error("a type added after it was indexed")
+	}
+	var none *Catalogue
+	if none.Type("A") != nil {
+		t.Error("no catalogue")
+	}
+
+	n := 100_000
+	big := &Catalogue{Types: make([]ItemType, n)}
+	for i := range big.Types {
+		big.Types[i].Code = fmt.Sprintf("T%07d", i)
+	}
+	big.index()
+	last := big.Types[n-1].Code
+	start := time.Now()
+	for range n {
+		if big.Type(last) == nil {
+			t.Fatal("the last type not found")
+		}
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("%d lookups in a catalogue of %d types took %v", n, n, took)
 	}
 }
 
