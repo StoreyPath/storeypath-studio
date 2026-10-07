@@ -23,6 +23,7 @@ KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
 # left alone, as a reader leaves unknown files and properties
 KNOWN_KINDS = {"project", *KIND_LEVEL, "item"}
 LOCAL_AGREES_M = 0.05  # an item's map position and its position in its building
+HEADING_AGREES_DEG = 0.5  # its heading on the map and its turn in its building
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -194,6 +195,12 @@ def validate_package(path: str | Path) -> list[str]:
                                          (lat - q.display_point[1]) * 110_574)
                         if not off <= LOCAL_AGREES_M:  # (NaN is never within it)
                             errors.append(f"{f.id}: its map position is {off:.2f} m from its position in its building")
+                        # its front, 0° the drawings' -y and counter-clockwise, on the map: clockwise from north
+                        want = (p.bearing + 180 - q.local.rotation_deg) % 360
+                        turn = abs((q.heading - want + 180) % 360 - 180)
+                        if not turn <= HEADING_AGREES_DEG:
+                            errors.append(f"{f.id}: its heading {q.heading:g}° is {turn:.1f}° from its turn in its "
+                                          f"building ({want:.2f}° on the map)")
 
         unknown: set[str] = set()
         name = file_of("objects")

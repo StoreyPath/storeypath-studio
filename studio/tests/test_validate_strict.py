@@ -282,6 +282,41 @@ def test_an_item_is_in_a_building_of_the_package(tmp_path):
     assert validate_package(out) == [f"{item}: in unknown building {location}"]
 
 
+# An item's heading
+
+
+def _bearing(building):
+    with zipfile.ZipFile(HQ) as z:
+        return json.loads(z.read("manifest.json"))["placements"][building]["bearing"]
+
+
+def test_an_items_heading_agrees_with_its_turn_in_its_building(tmp_path):
+    item = first("items.geojson")
+    q = item["properties"]
+    bearing = _bearing(q["building_id"])
+    assert bearing != 0  # a building turned on the map
+    assert abs((q["heading"] - (bearing + 180 - q["local"]["rotation_deg"]) + 180) % 360 - 180) < 0.01
+
+    h = q["heading"]
+    for heading, ok in (((h + 180) % 360, False),  # facing the other way
+                        ((h + 0.4) % 360, True), ((h - 0.4) % 360, True), ((h + 0.6) % 360, False),
+                        ((180 - q["local"]["rotation_deg"]) % 360, False)):  # as if the building were not turned
+        errors = validate_package(rewritten(tmp_path, **{"items.geojson": _props(0, heading=heading)}))
+        assert (errors == []) == ok, (heading, errors)
+        if not ok:
+            assert len(errors) == 1 and errors[0].startswith(f"{item['id']}: its heading"), errors
+
+
+def test_a_heading_just_either_side_of_north_agrees(tmp_path):
+    q = first("items.geojson")["properties"]
+    rotation = (_bearing(q["building_id"]) + 180 - 359.8) % 360  # its front 0.2° west of north
+
+    def turned(fc):
+        fc["features"][0]["properties"]["local"]["rotation_deg"] = rotation
+        fc["features"][0]["properties"]["heading"] = 0.1
+    assert validate_package(rewritten(tmp_path, **{"items.geojson": edited(turned)})) == []
+
+
 def test_the_models_refuse_numbers_that_are_not_finite():
     from pydantic import ValidationError
 
