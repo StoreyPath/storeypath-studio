@@ -449,6 +449,9 @@ func (p *Package) Validate() []Problem {
 		if a, b := c.PreviousSequence, m.Export.PreviousSequence; (a == nil) != (b == nil) || (a != nil && *a != *b) {
 			add(ProblemChanges, changesFile, "", "%s: previous_sequence does not match the manifest's", changesFile)
 		}
+		if n := m.Export.NextItem; n != nil && *n < 1 {
+			add(ProblemValue, FileManifest, "", "export.next_item %d is not a number an item can have", *n)
+		}
 		if c.Sequence != m.Export.Sequence {
 			add(ProblemChanges, changesFile, "", "%s: sequence does not match the manifest", changesFile)
 		}

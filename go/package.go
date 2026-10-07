@@ -70,6 +70,10 @@ type Manifest struct {
 		Sequence         int    `json:"sequence"`
 		ExportedAt       string `json:"exported_at"`
 		PreviousSequence *int   `json:"previous_sequence"`
+		// NextItem (format 0.7): the number the project gives the next item placed in
+		// any of its buildings; every lower number may be taken. A system continuing
+		// the project from this package numbers its new items from it. Nil before.
+		NextItem *int `json:"next_item"`
 	} `json:"export"`
 	CRS        string               `json:"crs"`
 	LengthUnit string               `json:"length_unit"`
