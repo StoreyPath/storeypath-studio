@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from .catalogue import Catalogue
 from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, parse_id
 from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
-                      ItemProps, Manifest, version_problem, version_tuple)
+                      ItemFeature, Manifest, version_problem, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -81,8 +81,8 @@ def validate_package(path: str | Path) -> list[str]:
 
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}
-        for role, props in COLLECTIONS.items():
-            fc = load(FILES[role], FeatureCollection[props])
+        for role, feature in COLLECTIONS.items():  # each kind's geometry checked by its model
+            fc = load(FILES[role], FeatureCollection[feature])
             if fc is None:
                 continue
             collections[role] = fc.features
@@ -153,7 +153,7 @@ def validate_package(path: str | Path) -> list[str]:
             codes = None
             if "catalogue" in manifest.files and (cat := load(manifest.files["catalogue"], Catalogue)) is not None:
                 codes = {t.code for t in cat.types}
-            fc = load(manifest.files["items"], FeatureCollection[ItemProps])
+            fc = load(manifest.files["items"], FeatureCollection[ItemFeature])
             if fc is not None:
                 items = fc.features
                 if manifest.counts.get("items") != len(items):

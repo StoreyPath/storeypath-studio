@@ -1,5 +1,55 @@
 {
   "$defs": {
+    "BuildingFeature": {
+      "properties": {
+        "type": {
+          "const": "Feature",
+          "default": "Feature",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+                  "Polygon": "#/$defs/PolygonGeometry"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PolygonGeometry"
+                },
+                {
+                  "$ref": "#/$defs/MultiPolygonGeometry"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "its footprint (null: no floor of it is converted)",
+          "title": "Geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/BuildingProps"
+        }
+      },
+      "required": [
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "title": "BuildingFeature",
+      "type": "object"
+    },
     "BuildingProps": {
       "additionalProperties": true,
       "properties": {
@@ -52,59 +102,6 @@
       "title": "BuildingProps",
       "type": "object"
     },
-    "Feature_BuildingProps_": {
-      "properties": {
-        "type": {
-          "const": "Feature",
-          "default": "Feature",
-          "title": "Type",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "geometry": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
-                  "Polygon": "#/$defs/PolygonGeometry"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
-                {
-                  "$ref": "#/$defs/PolygonGeometry"
-                },
-                {
-                  "$ref": "#/$defs/MultiPolygonGeometry"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Geometry"
-        },
-        "properties": {
-          "$ref": "#/$defs/BuildingProps"
-        }
-      },
-      "required": [
-        "id",
-        "geometry",
-        "properties"
-      ],
-      "title": "Feature[BuildingProps]",
-      "type": "object"
-    },
     "MultiPolygonGeometry": {
       "properties": {
         "type": {
@@ -141,35 +138,6 @@
         "coordinates"
       ],
       "title": "MultiPolygonGeometry",
-      "type": "object"
-    },
-    "PointGeometry": {
-      "properties": {
-        "type": {
-          "const": "Point",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PointGeometry",
       "type": "object"
     },
     "PolygonGeometry": {
@@ -217,7 +185,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_BuildingProps_"
+        "$ref": "#/$defs/BuildingFeature"
       },
       "title": "Features",
       "type": "array"
@@ -226,6 +194,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[BuildingProps]",
+  "title": "FeatureCollection[BuildingFeature]",
   "type": "object"
 }

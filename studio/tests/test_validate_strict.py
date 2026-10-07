@@ -175,6 +175,55 @@ def test_a_number_that_is_not_finite_is_refused(tmp_path, change):
     assert errors and errors[0].startswith(f"{file}: not JSON:") and "number" in errors[0], errors
 
 
+def _geometry(i, geometry, key=None):
+    def change(fc):
+        if key is None:
+            fc["features"][i]["geometry"] = geometry
+        else:
+            fc["features"][i]["properties"][key] = geometry
+    return edited(change)
+
+
+POINT = {"type": "Point", "coordinates": [46.67, 24.71]}
+SQUARE = [[[46.67, 24.71], [46.671, 24.71], [46.671, 24.711], [46.67, 24.71]]]
+POLYGON = {"type": "Polygon", "coordinates": SQUARE}
+MULTIPOLYGON = {"type": "MultiPolygon", "coordinates": [SQUARE]}
+LINE = {"type": "LineString", "coordinates": SQUARE[0]}
+
+
+@pytest.mark.parametrize("file, geometry, key", [
+    ("spaces.geojson", POINT, None),  # a space, a zone: Polygon or MultiPolygon
+    ("spaces.geojson", None, None),
+    ("spaces.geojson", LINE, None),
+    ("zones.geojson", POINT, None),
+    ("zones.geojson", None, None),
+    ("openings.geojson", POLYGON, None),  # an opening: a Point in the wall
+    ("openings.geojson", None, None),
+    ("items.geojson", MULTIPOLYGON, None),  # an item: its footprint, a Polygon
+    ("items.geojson", POINT, None),
+    ("items.geojson", None, None),
+    ("floors.geojson", POINT, None),  # a floor's outline, a building's footprint, a location's hull: or null
+    ("buildings.geojson", POINT, None),
+    ("location.geojson", LINE, None),
+    ("floors.geojson", POINT, "walls"),
+    ("floors.geojson", POINT, "parapets"),
+])
+def test_each_kind_has_its_own_geometry(tmp_path, file, geometry, key):
+    with zipfile.ZipFile(HQ) as z:
+        fid = json.loads(z.read(file))["features"][0]["id"]
+    errors = validate_package(rewritten(tmp_path, **{file: _geometry(0, geometry, key)}))
+    where = f"properties.{key}" if key else "geometry"  # (the file is refused: what refers to it, too)
+    assert errors and errors[0].startswith(f"{file}: {fid} (features.0.{where}"), errors
+
+
+def test_a_floor_building_or_location_may_have_no_geometry(tmp_path):
+    out = rewritten(tmp_path, **{f: _geometry(0, None) for f in ("floors.geojson", "buildings.geojson", "location.geojson")},
+                    **{"spaces.geojson": _geometry(0, MULTIPOLYGON)})
+    assert validate_package(out) == []
+    out = rewritten(tmp_path, **{"floors.geojson": _geometry(0, None, "walls")})
+    assert validate_package(out) == []
+
+
 def test_the_models_refuse_numbers_that_are_not_finite():
     from pydantic import ValidationError
 

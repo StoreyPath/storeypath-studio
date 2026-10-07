@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "Feature_LocationProps_": {
+    "LocationFeature": {
       "properties": {
         "type": {
           "const": "Feature",
@@ -18,15 +18,11 @@
               "discriminator": {
                 "mapping": {
                   "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
                   "Polygon": "#/$defs/PolygonGeometry"
                 },
                 "propertyName": "type"
               },
               "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
                 {
                   "$ref": "#/$defs/PolygonGeometry"
                 },
@@ -39,6 +35,7 @@
               "type": "null"
             }
           ],
+          "description": "the convex hull of its buildings (null: none has a footprint)",
           "title": "Geometry"
         },
         "properties": {
@@ -50,7 +47,7 @@
         "geometry",
         "properties"
       ],
-      "title": "Feature[LocationProps]",
+      "title": "LocationFeature",
       "type": "object"
     },
     "LocationProps": {
@@ -155,35 +152,6 @@
       "title": "MultiPolygonGeometry",
       "type": "object"
     },
-    "PointGeometry": {
-      "properties": {
-        "type": {
-          "const": "Point",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PointGeometry",
-      "type": "object"
-    },
     "PolygonGeometry": {
       "properties": {
         "type": {
@@ -229,7 +197,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_LocationProps_"
+        "$ref": "#/$defs/LocationFeature"
       },
       "title": "Features",
       "type": "array"
@@ -238,6 +206,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[LocationProps]",
+  "title": "FeatureCollection[LocationFeature]",
   "type": "object"
 }

@@ -63,9 +63,9 @@ class MultiPolygonGeometry(_Model):
     coordinates: list[list[list[LonLat]]]
 
 
-Geometry = Annotated[
-    Union[PointGeometry, PolygonGeometry, MultiPolygonGeometry], Field(discriminator="type")
-]
+# what an area is drawn as: a space, a zone, a floor's outline, its walls, a building's
+# footprint (an opening is a Point, an item's footprint a Polygon)
+Polygonal = Annotated[Union[PolygonGeometry, MultiPolygonGeometry], Field(discriminator="type")]
 
 
 class _Props(_Model):
@@ -98,11 +98,11 @@ class FloorProps(_Props):
     ordinal: int = Field(description="0 = ground floor, negative = below ground")
     elevation: float = Field(description="meters above the building's ground floor")
     height: float = Field(description="floor-to-floor height in meters")
-    walls: Geometry | None = Field(None, description="the walls as drawn, with their door and window gaps; "
-                                                    "full height, except the parapets")
+    walls: Polygonal | None = Field(None, description="the walls as drawn, with their door and window gaps; "
+                                                     "full height, except the parapets")
     wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
-    parapets: Geometry | None = Field(None, description="the low walls around terraces, balconies and roofs, "
-                                                       "parapet_height_m high")
+    parapets: Polygonal | None = Field(None, description="the low walls around terraces, balconies and roofs, "
+                                                        "parapet_height_m high")
     parapet_height_m: float | None = Field(None, description="the parapets' height above the floor")
 
 
@@ -212,13 +212,44 @@ P = TypeVar("P", bound=_Props)
 class Feature(_Model, Generic[P]):
     type: Literal["Feature"] = "Feature"
     id: str
-    geometry: Geometry | None
+    geometry: PointGeometry | Polygonal | None  # each kind's is narrower: its feature below
     properties: P
 
 
-class FeatureCollection(_Model, Generic[P]):
+class LocationFeature(Feature[LocationProps]):
+    geometry: Polygonal | None = Field(description="the convex hull of its buildings (null: none has a footprint)")
+
+
+class BuildingFeature(Feature[BuildingProps]):
+    geometry: Polygonal | None = Field(description="its footprint (null: no floor of it is converted)")
+
+
+class FloorFeature(Feature[FloorProps]):
+    geometry: Polygonal | None = Field(description="its outline (null: not known)")
+
+
+class SpaceFeature(Feature[SpaceProps]):
+    geometry: Polygonal = Field(description="what its walls, doors and windows enclose")
+
+
+class ZoneFeature(Feature[ZoneProps]):
+    geometry: Polygonal = Field(description="its part of its space")
+
+
+class OpeningFeature(Feature[OpeningProps]):
+    geometry: PointGeometry = Field(description="a point in the wall")
+
+
+class ItemFeature(Feature[ItemProps]):
+    geometry: PolygonGeometry = Field(description="its footprint, on the map")
+
+
+F = TypeVar("F", bound=Feature)
+
+
+class FeatureCollection(_Model, Generic[F]):
     type: Literal["FeatureCollection"] = "FeatureCollection"
-    features: list[Feature[P]]
+    features: list[F]
 
 
 class Generator(_Model):
@@ -332,13 +363,13 @@ def version_tuple(version: str) -> tuple[int, int]:
     return int(m[1]), int(m[2])
 
 
-COLLECTIONS: dict[str, type[_Props]] = {
-    "location": LocationProps,
-    "buildings": BuildingProps,
-    "floors": FloorProps,
-    "spaces": SpaceProps,
-    "zones": ZoneProps,
-    "openings": OpeningProps,
+COLLECTIONS: dict[str, type[Feature]] = {  # a package's collections of places, by role: their features
+    "location": LocationFeature,
+    "buildings": BuildingFeature,
+    "floors": FloorFeature,
+    "spaces": SpaceFeature,
+    "zones": ZoneFeature,
+    "openings": OpeningFeature,
 }
 
 
@@ -347,8 +378,8 @@ def json_schemas() -> dict[str, dict]:
     from .catalogue import Catalogue
 
     out = {"manifest.schema.json": Manifest.model_json_schema(), "changes.schema.json": Changes.model_json_schema()}
-    for role, props in COLLECTIONS.items():
-        out[f"{role}.schema.json"] = FeatureCollection[props].model_json_schema()
-    out["items.schema.json"] = FeatureCollection[ItemProps].model_json_schema()
+    for role, feature in COLLECTIONS.items():
+        out[f"{role}.schema.json"] = FeatureCollection[feature].model_json_schema()
+    out["items.schema.json"] = FeatureCollection[ItemFeature].model_json_schema()
     out["catalogue.schema.json"] = Catalogue.model_json_schema()
     return out
