@@ -448,7 +448,16 @@ def _envelope(mass, max_opening: float):
     ``max_opening`` spanned, and everything inside filled. Built from triangles
     between nearby wall points, so it works for walls of any shape and thickness."""
     pts = shapely.get_coordinates(shapely.segmentize(mass.boundary, max_opening / 4))
-    tris = shapely.get_parts(shapely.delaunay_triangles(shapely.multipoints(pts)))
+    # Points a fraction of a millimetre apart break the triangulation ("could not
+    # locate vertex"): one per millimetre, snapped; failing still, without the triangles.
+    pts = np.unique(np.round(pts, 3), axis=0)
+    tris = []
+    for tolerance in (0.001, 0.01):
+        try:
+            tris = shapely.get_parts(shapely.delaunay_triangles(shapely.multipoints(pts), tolerance=tolerance))
+            break
+        except shapely.errors.GEOSException:
+            continue
     kept = []
     if len(tris):
         corners = shapely.get_coordinates(tris).reshape(-1, 4, 2)[:, :3]
