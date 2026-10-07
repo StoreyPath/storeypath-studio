@@ -887,7 +887,7 @@ function exportCard(code, p) {
   const button = el("button", { class: "primary", type: "button", onclick: async () => {
     try {
       const r = await runJob(api(`projects/${code}/export`, what.value ? { buildings: [what.value] } : {}));
-      toast(`Exported ${r.file}`);
+      toast(`Exported ${r.file}, saved in ${p.exports_folder}: download it from the list below`, false, 8000);
       projectPage(code);
     } catch (e) {
       toast(e.message, true);
@@ -900,6 +900,7 @@ function exportCard(code, p) {
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, buildings.length > 1 ? what : null, button),
     el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before. A package of one building holds that building alone and says so: a system that reads it leaves the others as they are. Download project gives one file to send to someone who continues the project in their Studio: they open it on their Projects page."),
+    p.exports.length ? el("p", { class: "muted small" }, "Saved in ", el("code", {}, p.exports_folder), ", newest first:") : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),

@@ -275,7 +275,7 @@ class Studio:
         exports = sorted((p.name for p in (path.parent / "exports").glob("*.storeypath")), reverse=True) \
             if (path.parent / "exports").is_dir() else []
         return {**info, "locations": tree, "drawings": drawings, "exports": exports,
-                "exported": len(ws.exports)}
+                "exported": len(ws.exports), "exports_folder": str(path.parent / "exports")}
 
     # ---- drawings ---------------------------------------------------------------
 
