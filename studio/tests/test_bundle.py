@@ -137,7 +137,7 @@ def test_a_project_travels_whole_and_continues(review, tmp_path):
     opened = open_file(elsewhere, sent)
     code = ws.project.code
     assert opened == {"code": code, "name": ws.project.name, "how": "project", "floors": 1,
-                      "drawings": sum(1 for n in names if n.startswith("studio/drawings/"))}
+                      "drawings": sum(1 for n in names if n.startswith("studio/drawings/")), "item_types_added": []}
     there = Workspace.load(elsewhere / code / f"{code}.spproj")
     assert there.overrides[space.id].name == "Board room" and there.floor(f_id).edits.walls == [[[0.0, 0.0], [1.0, 0.0]]]
     assert [e.sequence for e in there.exports] == [1]
