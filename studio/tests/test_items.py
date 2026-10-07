@@ -168,3 +168,36 @@ def test_items_placed_moved_and_taken_away_in_review(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_items_come_back_when_a_package_opens_as_a_project(converted, tmp_path):
+    # A project rebuilt from a package has its items where they were, turned as they
+    # were, with their details; retired item numbers are never given again; the
+    # receiving Studio learns the item types it lacks.
+    from storeypath import catalogue
+    from storeypath.bundle import open_file
+    from storeypath.export import export_package
+    from storeypath.workspace import Placement
+
+    ws, d, f_id, b_id, *_ = converted
+    b = next(b for loc in ws.locations for b in loc.buildings)
+    b.placement = Placement(lon=46.7, lat=24.7, x=10, y=5, bearing=30)
+    cat = catalogue.default_catalogue()
+    cat.types.append(catalogue.ItemType(code="PLANT", name_en="Plant", name_ar="نبتة", width=0.5, depth=0.5))
+    desk = ws.add_item("DESK-DIRECTOR", f_id, 12.5, 7.25, rotation=37, values={})
+    plant = ws.add_item("PLANT", f_id, 3.0, 2.0, rotation=200)
+    gone = ws.add_item("SOFA", f_id, 1.0, 1.0)
+    gone.status = "retired"
+    export_package(ws, tmp_path / "p.storeypath", bake=False, catalogue=cat)
+
+    data = tmp_path / "other-studio"
+    data.mkdir()
+    opened = open_file(data, tmp_path / "p.storeypath")
+    assert opened["item_types_added"] == ["PLANT"] and catalogue.load(data).get("PLANT").name_ar == "نبتة"
+    again = Workspace.load(data / opened["code"] / f"{opened['code']}.spproj")
+    for it in (desk, plant):
+        back = again.items[it.id]
+        assert (back.type, back.floor_id) == (it.type, it.floor_id)
+        assert abs(back.x - it.x) < 0.02 and abs(back.y - it.y) < 0.02 and abs((back.rotation - it.rotation + 180) % 360 - 180) < 0.1
+    assert again.items[gone.id].status == "retired"
+    assert again.add_item("COPIER", f_id, 0, 0).id.endswith("I000004")  # after the retired one

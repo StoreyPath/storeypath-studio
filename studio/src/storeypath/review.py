@@ -150,7 +150,7 @@ class Review:
 
     def _item(self, it) -> dict:
         t = self.catalogue().get(it.type)
-        return {"id": it.id, "type": it.type, "x": it.x, "y": it.y, "rotation": it.rotation,
+        return {"id": it.id, "type": it.type, "floor_id": it.floor_id, "x": it.x, "y": it.y, "rotation": it.rotation,
                 "values": it.values, "retired": it.status == "retired",
                 "name_en": t.name_en if t else it.type, "name_ar": t.name_ar if t else "",
                 "category": t.category if t else "furniture", "color": t.color if t else "#8a8a8a",

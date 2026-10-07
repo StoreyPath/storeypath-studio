@@ -33,6 +33,9 @@ const state = {
   tool: null, // drawing: "wall", "divide", "door", "window" or "opening"
   wallStart: null, // a wall or dividing line being drawn: where it starts (a space: its last corner)
   corners: [], // a space being drawn: its corners so far
+  catalogue: [], // the item types (furniture and equipment) of this Studio
+  asset: null, // the item (furniture or equipment) chosen
+  placeType: null, // the type being placed (tool "place")
   busy: false, // an edit is being saved and the floor read again
   segments: null, // the floor's wall edges, for snapping to
 };
@@ -160,6 +163,7 @@ async function start() {
   $("project-meta").replaceChildren(el("code", {}, project.id), ` · ${file}`);
   $("ed-type").replaceChildren(...types.map((t) => el("option", { value: t }, typeLabel(t))));
   fillFloorSelect();
+  await loadCatalogue();
 
   const hash = new URLSearchParams(location.hash.slice(1));
   const first = floors.find((f) => f.id === hash.get("floor")) || floors.find((f) => f.review) || floors[0];
@@ -215,6 +219,8 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   renderLists();
   renderLegend();
   if (!keepView || changed) fit();
+  if (changed) selectAsset(null);
+  renderAssets();
   select(spaceId && state.byId.has(spaceId) ? spaceId : null, { fly: Boolean(spaceId) });
   showUnderlay();
   if (view3d.shown) refresh3d();
@@ -654,6 +660,7 @@ function setupMap() {
   $("show-hidden").addEventListener("change", (e) => {
     view3d.world?.setShowHidden(e.target.checked);
     state.showHidden = e.target.checked;
+    renderAssets();
     if (!state.floor) return;
     renderPlan();
     state.floor.spaces.forEach(styleSpace);
@@ -672,7 +679,9 @@ function bindPane(pane) {
   let drag = null;
   pane.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target };
+    const asset = !state.tool && assetOf(e.target);
+    drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
+      asset, from: asset ? [asset.x, asset.y] : null };
     pane.setPointerCapture(e.pointerId);
   });
   pane.addEventListener("pointermove", (e) => {
@@ -685,6 +694,12 @@ function bindPane(pane) {
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
     pane.classList.add("dragging");
+    if (drag.asset) { // an item carried across the plan: it follows the pointer
+      drag.asset.x = drag.from[0] + dx / state.view.k;
+      drag.asset.y = drag.from[1] - dy / state.view.k;
+      renderAssets();
+      return;
+    }
     state.view = { ...state.view, tx: drag.tx + dx, ty: drag.ty + dy };
     updateView();
   });
@@ -696,12 +711,14 @@ function bindPane(pane) {
   });
   const end = (e) => {
     if (!drag) return;
-    const { moved, target } = drag;
+    const { moved, target, asset } = drag;
     drag = null;
     pane.classList.remove("dragging");
+    if (asset && moved) return changeAsset(asset, { x: round4(asset.x), y: round4(asset.y) });
     if (moved) return;
     const p = planPoint(...local(e));
     if (state.tool) return toolClick(p);
+    if (asset) return selectAsset(asset.id);
     const door = openingNear(p);
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);
@@ -955,6 +972,7 @@ const HINTS = {
   door: "Door: click on a wall where it goes. Esc to stop.",
   window: "Window: click on a wall where it goes. Esc to stop.",
   opening: "Opening (a way through, no door): click on a wall where it goes. Esc to stop.",
+  place: "Place: click on the plan where it goes; again for another. Esc to stop.",
   space: "Space: click its corners (they snap to walls); click the first again, double-click or Enter to close it. Backspace takes the last corner back, Esc stops.",
 };
 const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
@@ -969,6 +987,10 @@ function setTool(tool) {
   state.tool = tool && state.tool !== tool ? tool : null;
   state.wallStart = null;
   state.corners = [];
+  if (state.tool !== "place") {
+    state.placeType = null;
+    $("place-type").value = "";
+  }
   $("map").classList.toggle("drawing-tool", Boolean(state.tool));
   clearPreview();
   if (state.tool) {
@@ -1060,7 +1082,10 @@ function preview(p) {
   if (state.busy) return;
   const r = 5 / state.view.k;
   let shapes = [];
-  if (state.tool === "space") {
+  if (state.tool === "place") {
+    const t = typeOf(state.placeType);
+    if (t) shapes.push(() => assetShape({ x: p[0], y: p[1], rotation: 0 }, t, "asset-ghost"));
+  } else if (state.tool === "space") {
     const end = snapWall(p);
     const pts = [...state.corners, end];
     const closing = state.corners.length >= 3 && closesSpace(end);
@@ -1103,6 +1128,7 @@ function closeSpace() {
 
 function toolClick(p) {
   if (state.busy) return;
+  if (state.tool === "place") return placeAsset(state.placeType, p);
   if (state.tool === "space") {
     const at = snapWall(p);
     if (state.corners.length >= 3 && closesSpace(at)) return closeSpace();
@@ -1297,10 +1323,19 @@ function menuItem(label, action, { danger = false, disabled = false, hint = "" }
 function openMenu(cx, cy, p) {
   if (state.tool) setTool(null);
   const items = [];
-  const d = openingNear(p);
-  const line = d ? null : drawnNear(p);
-  const s = d || line ? null : spaceAt(...p);
-  if (d) {
+  const asset = assetAt(p);
+  const d = asset ? null : openingNear(p);
+  const line = d || asset ? null : drawnNear(p);
+  const s = d || line || asset ? null : spaceAt(...p);
+  if (asset) {
+    selectAsset(asset.id);
+    const t = typeOf(asset.type);
+    items.push(el("div", { class: "heading" }, t ? t.name_en : asset.type), el("div", { class: "meta" }, asset.id));
+    items.push(menuItem("Turn 90°", () => changeAsset(asset, { rotation: (asset.rotation + 90) % 360 }), { hint: "R" }));
+    items.push(menuItem(asset.retired ? "Restore" : "Delete", () => changeAsset(asset, { retired: !asset.retired }),
+      { danger: !asset.retired, hint: asset.retired ? "" : "Del" }));
+    items.push(el("hr"));
+  } else if (d) {
     selectItem({ kind: "door", id: d.id });
     items.push(el("div", { class: "heading" }, openingName(d)), el("div", { class: "meta" }, openingMeta(d) || " "));
     if (!d.ignored) items.push(menuItem("Change size…", () => sizeMenu(cx, cy, d), { disabled: !readable(), hint: readable() ? "" : "needs its drawing" }));
@@ -1328,6 +1363,7 @@ function openMenu(cx, cy, p) {
   items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { disabled: !readable(), hint: readable() ? "W" : "needs its drawing" }));
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? "V" : "needs its drawing" }));
   items.push(menuItem("Draw a space from here", () => startSpace(p), { disabled: !readable(), hint: readable() ? "S" : "needs its drawing" }));
+  items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, p)));
   const drawnSpace = (state.floor?.edits?.spaces || []).find((ring) => inRing(p, ring));
   if (drawnSpace) {
     items.push(menuItem("Take the drawn space away", () => submitEdit({ remove: { at: p } }, "Taking it away…"), { danger: true }));
@@ -1477,11 +1513,13 @@ function setupPanel() {
       if (!$("menu").hidden) closeMenu();
       else if (typing) e.target.blur();
       else if (state.tool) setTool(null);
+      else if (state.asset) selectAsset(null);
       else if (state.item) selectItem(null);
       else select(null);
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (state.asset && !state.tool && assetKey(e)) return;
     if (state.tool === "space" && (e.key === "Backspace" || e.key === "Enter")) {
       e.preventDefault();
       if (e.key === "Enter") return closeSpace();
@@ -1510,6 +1548,195 @@ function setupPanel() {
     else if (e.key === "d" || e.key === "D") setTool("door");
     else if (e.key === "o" || e.key === "O") setTool("opening");
     else if (e.key === "s" || e.key === "S") setTool("space");
+  });
+}
+
+// ---- items: furniture and equipment -----------------------------------------------
+// Desks by grade, central photocopiers, access points, sofas, TVs… (the Studio's
+// catalogue of item types). Each has an ID of its own that stays with it wherever it
+// is carried; it is saved at once, with no reading of the drawing again.
+
+const round4 = (v) => Math.round(v * 1e4) / 1e4;
+const typeOf = (code) => state.catalogue.find((t) => t.code === code) || null;
+
+async function loadCatalogue() {
+  try {
+    state.catalogue = (await request("catalogue")).types.filter((t) => !t.retired);
+  } catch (e) {
+    toast(`No item types: ${e.message}`, true);
+    return;
+  }
+  const groups = new Map();
+  for (const t of state.catalogue) {
+    if (!groups.has(t.category)) groups.set(t.category, el("optgroup", { label: t.category[0].toUpperCase() + t.category.slice(1) }));
+    groups.get(t.category).append(el("option", { value: t.code }, t.name_en));
+  }
+  $("place-type").replaceChildren(el("option", { value: "" }, "an item…"), ...[...groups.values()].map((g) => g.cloneNode(true)));
+  $("as-type").replaceChildren(...[...groups.values()]);
+}
+
+/** An item's shape on the plan: its footprint turned with it, the edge it faces
+ * darker; on the ceiling, a circle. */
+function assetShape(a, t, cls) {
+  const g = svg("g", { transform: `translate(${a.x} ${a.y}) rotate(${a.rotation || 0})`, class: cls });
+  const w = t?.width ?? 1, d = t?.depth ?? 0.6;
+  if (t?.mount === "ceiling") {
+    g.classList.add("ceiling");
+    g.append(svg("circle", { r: Math.max(w, d) / 2, fill: t?.color || "#8a8a8a" }));
+  } else {
+    g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t?.color || "#8a8a8a" }));
+    g.append(svg("line", { x1: -w / 2, y1: -d / 2, x2: w / 2, y2: -d / 2, class: "front" })); // its front: the plan's -y, turned
+  }
+  return g;
+}
+
+function renderAssets() {
+  const layer = $("assets");
+  layer.replaceChildren();
+  for (const a of state.floor?.items || []) {
+    if (a.retired && !state.showHidden) continue;
+    const g = assetShape(a, typeOf(a.type) || a, "asset");
+    g.dataset.asset = a.id;
+    g.classList.toggle("chosen", a.id === state.asset);
+    g.classList.toggle("retired", a.retired);
+    g.append(svg("title", {}));
+    g.lastChild.textContent = `${typeOf(a.type)?.name_en || a.type} · ${a.id}`;
+    layer.append(g);
+  }
+}
+
+function assetOf(target) {
+  const id = target?.closest?.("[data-asset]")?.dataset.asset;
+  return id ? (state.floor?.items || []).find((a) => a.id === id) || null : null;
+}
+
+/** The item under a plan point (the one on top), shown ones only. */
+function assetAt(p) {
+  const shown = (state.floor?.items || []).filter((a) => !a.retired || state.showHidden);
+  for (const a of shown.slice().reverse()) {
+    const t = typeOf(a.type) || a;
+    const r = (-(a.rotation || 0) * Math.PI) / 180, dx = p[0] - a.x, dy = p[1] - a.y;
+    const u = dx * Math.cos(r) - dy * Math.sin(r), v = dx * Math.sin(r) + dy * Math.cos(r);
+    const reach = 4 / state.view.k;
+    if (Math.abs(u) <= (t.width ?? 1) / 2 + reach && Math.abs(v) <= (t.depth ?? 0.6) / 2 + reach) return a;
+  }
+  return null;
+}
+
+async function placeAsset(type, p) {
+  if (!type) return;
+  try {
+    const a = await request(`${BASE}/floors/${state.floor.id}/items`, { type, x: round4(p[0]), y: round4(p[1]), rotation: 0 });
+    state.floor.items.push(a);
+    renderAssets();
+  } catch (e) {
+    toast(`Not placed: ${e.message}`, true);
+  }
+}
+
+async function changeAsset(a, body) {
+  try {
+    const got = await request(`${BASE}/items/${a.id}`, body);
+    const list = state.floor.items;
+    const i = list.findIndex((x) => x.id === a.id);
+    if (got.floor_id && got.floor_id !== state.floor.id) {
+      list.splice(i, 1);
+      selectAsset(null);
+      toast("Carried to the other floor: it keeps its ID");
+    } else if (i >= 0) list[i] = { ...got, floor_id: state.floor.id };
+    renderAssets();
+    if (state.asset === a.id) renderAssetEditor();
+  } catch (e) {
+    toast(`Not saved: ${e.message}`, true);
+    await openFloor(state.floor.id, null, { keepView: true }); // as it is saved
+  }
+}
+
+function selectAsset(id) {
+  state.asset = id;
+  if (id) {
+    select(null);
+    if (state.item) selectItem(null);
+  }
+  renderAssets();
+  renderAssetEditor();
+}
+
+function renderAssetEditor() {
+  const a = (state.floor?.items || []).find((x) => x.id === state.asset);
+  $("asset-editor").hidden = !a;
+  if (!a) return;
+  const t = typeOf(a.type);
+  $("as-title").textContent = t ? t.name_en : a.type;
+  $("as-id").textContent = a.id;
+  const about = [t && `${t.width} m wide, ${t.depth} m deep`, t?.mount === "ceiling" ? "on the ceiling" : t?.mount === "wall" ? "on a wall" : ""]
+    .filter(Boolean).join(" · ");
+  $("as-meta").replaceChildren(...(t?.name_ar ? [el("bdi", { dir: "rtl", lang: "ar" }, t.name_ar), el("br")] : []), about);
+  $("as-type").value = a.type;
+  $("as-rotation").value = Math.round(a.rotation);
+  $("as-floor").replaceChildren(...state.project.floors.map((f) => el("option", { value: f.id }, `${f.building} · ${floorOptionText(f)}`)));
+  $("as-floor").value = state.floor.id;
+  const own = (t?.fields || []).filter((f) => f.owner === "storeypath");
+  $("as-fields").replaceChildren(...own.map((f) => {
+    const input = f.kind === "choice"
+      ? el("select", {}, el("option", { value: "" }, "—"), ...f.choices.map((c) => el("option", { value: c }, c)))
+      : el("input", { type: f.kind === "number" ? "number" : f.kind === "color" ? "color" : "text", step: "any" });
+    input.value = a.values?.[f.key] ?? (f.kind === "color" ? "#000000" : "");
+    input.addEventListener("change", () => changeAsset(a, { values: { ...a.values, [f.key]: input.value } }));
+    return el("label", {}, f.name_en, input);
+  }));
+  const others = (t?.fields || []).filter((f) => f.owner !== "storeypath").map((f) => f.name_en);
+  if (others.length) $("as-fields").append(el("p", { class: "meta", style: "grid-column: 1 / -1" }, `${others.join(", ")}: entered where the asset is managed (wayfinder)`));
+  $("as-delete").textContent = a.retired ? "Restore" : "Delete";
+  $("as-flags").textContent = a.retired ? "Deleted" : "";
+}
+
+/** The keys of a chosen item: R turns it 90°, [ and ] by 15°, the arrows move it
+ * (Shift: further), Delete takes it away. Whether the key was one of them. */
+function assetKey(e) {
+  const a = (state.floor?.items || []).find((x) => x.id === state.asset);
+  if (!a) return false;
+  const step = e.shiftKey ? 1 : 0.1;
+  const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+  if (e.key === "r" || e.key === "R") changeAsset(a, { rotation: (a.rotation + (e.shiftKey ? 270 : 90)) % 360 });
+  else if (e.key === "[" || e.key === "]") changeAsset(a, { rotation: (a.rotation + (e.key === "]" ? 345 : 15)) % 360 });
+  else if (moves[e.key]) changeAsset(a, { x: round4(a.x + moves[e.key][0]), y: round4(a.y + moves[e.key][1]) });
+  else if (e.key === "Delete" || e.key === "Backspace") changeAsset(a, { retired: !a.retired });
+  else return false;
+  e.preventDefault();
+  return true;
+}
+
+function placeItemMenu(cx, cy, p) {
+  const items = [el("div", { class: "heading" }, "Place an item here")];
+  for (const t of state.catalogue) items.push(menuItem(t.name_en, () => placeAsset(t.code, p)));
+  $("menu").replaceChildren(...items);
+  placeMenu(cx, cy);
+  $("menu").querySelector("button")?.focus();
+}
+
+function setupAssets() {
+  $("place-type").addEventListener("change", (e) => {
+    if (!e.target.value) return setTool(null);
+    if (state.tool !== "place") setTool("place");
+    state.placeType = e.target.value;
+  });
+  $("as-close").addEventListener("click", () => selectAsset(null));
+  $("as-type").addEventListener("change", (e) => {
+    const a = state.floor.items.find((x) => x.id === state.asset);
+    if (a) changeAsset(a, { type: e.target.value });
+  });
+  $("as-rotation").addEventListener("change", (e) => {
+    const a = state.floor.items.find((x) => x.id === state.asset);
+    if (a && Number.isFinite(Number(e.target.value))) changeAsset(a, { rotation: ((Number(e.target.value) % 360) + 360) % 360 });
+  });
+  $("as-floor").addEventListener("change", (e) => {
+    const a = state.floor.items.find((x) => x.id === state.asset);
+    if (a && e.target.value !== state.floor.id) changeAsset(a, { floor_id: e.target.value });
+  });
+  $("as-delete").addEventListener("click", () => {
+    const a = state.floor.items.find((x) => x.id === state.asset);
+    if (a) changeAsset(a, { retired: !a.retired });
   });
 }
 
@@ -1576,4 +1803,5 @@ async function refresh3d() {
 
 setupMap();
 setupPanel();
+setupAssets();
 start();

@@ -27,12 +27,13 @@ from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
 from .export import _hash, build_features, export_package
-from .ids import format_object_code, parse_id
+from .ids import format_object_code, is_item_id, parse_id
 from .package import FILES, Manifest
 from .workspace import (
     Building,
     ExportRecord,
     Floor,
+    Item,
     Location,
     ObjectRecord,
     Override,
@@ -99,7 +100,11 @@ def export_project(ws_path: Path, out) -> None:
                 ship(p)
     extra: dict[str, bytes | Path] = {WORKSPACE_FILE: shipped.model_dump_json(indent=1).encode()}
     extra.update({DRAWINGS + name: p for name, p in files.items()})
-    export_package(ws, out, record=False, extra=extra, bake=False)  # for another Studio: quick, no 3D
+    from . import catalogue
+
+    data = ws_path.parent.parent  # the Studio's data folder: its catalogue of item types, when it has one
+    cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else None
+    export_package(ws, out, record=False, extra=extra, bake=False, catalogue=cat)  # for another Studio: quick, no 3D
 
 
 # ---- a project from a file -----------------------------------------------------
@@ -151,8 +156,32 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
             (folder / "drawings" / name).write_bytes(z.read(info))
             drawings += 1
     ws.save(folder / f"{code}.spproj")
+    learned = _learn_types(data, source)
     floors = sum(1 for _ in ws.iter_floors())
-    return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings}
+    return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
+            "item_types_added": learned}
+
+
+def _learn_types(data: Path, source: Path) -> list[str]:
+    """The item types a package's catalogue has and this Studio's lacks, added to it
+    (a type's code is its identity everywhere: one already here is kept as it is)."""
+    from . import catalogue
+
+    with zipfile.ZipFile(source) as z:
+        try:
+            manifest = Manifest.model_validate_json(z.read("manifest.json"))
+        except KeyError:  # a project sent: its package is the same file
+            return []
+        name = manifest.files.get("catalogue")
+        if not name or name not in z.namelist():
+            return []
+        theirs = catalogue.Catalogue.model_validate_json(z.read(name))
+    ours = catalogue.load(data)
+    new = [t for t in theirs.types if ours.get(t.code) is None]
+    if new:
+        ours.types.extend(new)
+        catalogue.save(data, ours)
+    return [t.code for t in new]
 
 
 def _remove(folder: Path, data: Path) -> None:
@@ -226,11 +255,27 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             ws.objects[r.id] = r
             if p.get("hidden") or p.get("ignored"):
                 ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None, ignored=bool(p.get("ignored")) or None)
+    # furniture and equipment, back where the package has them: its heading (where
+    # its front faces on earth) back to its turn on the plan
+    if "items" in manifest.files and manifest.files["items"] in z.namelist():
+        for f in json.loads(z.read(manifest.files["items"]))["features"]:
+            p = f["properties"]
+            local = to_local[p["building_id"]]
+            x, y = local.point(p["display_point"])
+            rotation = (180.0 - (p["heading"] - local.p.bearing)) % 360
+            ws.items[f["id"]] = Item(id=f["id"], type=p["type"], floor_id=p["floor_id"], x=x, y=y,
+                                     rotation=round(rotation, 2), values=dict(p.get("values") or {}),
+                                     created_at=exported_at)
     for rid in changes.get("all_retired") or []:
         # kept so that their IDs are never given again; what they were is not known
+        if is_item_id(rid):
+            ws.items.setdefault(rid, Item(id=rid, type="", floor_id="", x=0.0, y=0.0, status="retired",
+                                          retired_at=exported_at))
+            continue
         ws.objects.setdefault(rid, ObjectRecord(id=rid, kind="space", type="unspecified", type_source="package",
                                                 geometry={"type": "Point", "coordinates": [0.0, 0.0]},
                                                 status="retired", retired_at=exported_at))
+    ws.next_item_seq = max((int(i.split("-")[1][1:]) for i in ws.items), default=0) + 1
 
     # a building not on the map stands where the package's site plan has it: its
     # anchor (the drawing point at the site's centre) and turn give its position

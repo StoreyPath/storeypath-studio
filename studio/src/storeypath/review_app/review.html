@@ -73,6 +73,26 @@
       </form>
     </section>
 
+    <section id="asset-editor" hidden>
+      <div class="editor-head">
+        <h3 id="as-title"></h3>
+        <button id="as-close" type="button" class="icon" title="Close (Esc)" aria-label="Close">×</button>
+      </div>
+      <div class="id-row"><code id="as-id"></code></div>
+      <div id="as-meta" class="meta"></div>
+      <div class="as-grid">
+        <label>Type <select id="as-type"></select></label>
+        <label>Turned <span class="unit"><input id="as-rotation" type="number" step="1"> °</span></label>
+        <label>Floor <select id="as-floor"></select></label>
+      </div>
+      <div id="as-fields" class="as-grid"></div>
+      <p class="meta">Drag it to move it. R turns it 90°, [ and ] by 15°, the arrows move it (Shift: further).</p>
+      <div class="row flags">
+        <button id="as-delete" type="button" title="Delete (Del)">Delete</button>
+        <span id="as-flags" class="meta"></span>
+      </div>
+    </section>
+
     <section id="item-editor" hidden>
       <div class="editor-head">
         <h3 id="it-title"></h3>
@@ -133,6 +153,7 @@
         <g id="spaces"></g>
         <g id="doors"></g>
         <g id="drawn"></g>
+        <g id="assets"></g>
         <g id="preview" class="preview"></g>
       </g>
       <g id="labels"></g>
@@ -146,6 +167,9 @@
       </div>
       <button id="update3d" type="button" hidden title="Show the changes made since the 3D view was built">Update 3D</button>
       <button id="fit" type="button" class="only2d" title="Show the whole floor (F)">Fit</button>
+      <label class="only2d" title="Furniture and equipment: choose a type, then click on the plan where it goes (Esc to stop)">Place
+        <select id="place-type"><option value="">an item…</option></select>
+      </label>
       <label class="only2d" title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
       <label id="drawing-label" class="only2d" title="The floor's drawing under the spaces: as printed, or its lines">Drawing
         <select id="drawing-mode">
