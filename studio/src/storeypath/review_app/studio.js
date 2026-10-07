@@ -906,9 +906,10 @@ function exportCard(code, p) {
       return el("li", {}, el("code", { class: "grow" }, f),
         el("a", { href: url, download: f }, "Download"),
         el("a", { href: `/viewer/examples/world/index.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
-          title: "Walk through the building, or orbit it as a dollhouse" }, "Walk in 3D"),
+          title: "The building as built: walls, doors and windows; walk through it, or orbit it as a dollhouse" }, "3D"),
         el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
-          title: "Floors as a stacked map, with search" }, "Map view"));
+          title: "Each room as a block coloured by its type, floors stacked on a map, with search: a check of the rooms, not the building's walls" },
+        "Rooms by type"));
     })) : el("p", { class: "empty" }, "No packages yet."),
   );
 }
