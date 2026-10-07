@@ -282,6 +282,23 @@ def test_an_item_is_in_a_building_of_the_package(tmp_path):
     assert validate_package(out) == [f"{item}: in unknown building {location}"]
 
 
+# Zones
+
+
+def test_a_zone_is_listed_by_its_own_space_alone(tmp_path):
+    zone = first("zones.geojson")
+    own = zone["properties"]["space_id"]
+    with zipfile.ZipFile(HQ) as z:
+        spaces = json.loads(z.read("spaces.geojson"))["features"]
+    i, other = next((i, s["id"]) for i, s in enumerate(spaces)
+                    if s["id"] != own and s["properties"]["floor_id"] == zone["properties"]["floor_id"])
+
+    def twice(fc):
+        fc["features"][i]["properties"]["zones"].append(zone["id"])
+    errors = validate_package(rewritten(tmp_path, **{"spaces.geojson": edited(twice)}))
+    assert errors == [f"{other}: lists zone {zone['id']}, which is part of {own}"]
+
+
 # An item's heading
 
 

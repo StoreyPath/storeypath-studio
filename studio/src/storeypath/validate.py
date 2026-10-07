@@ -147,10 +147,13 @@ def validate_package(path: str | Path) -> list[str]:
                 errors.append(f"{f.id}: zone of unknown space {space}")
             elif f.id not in zones_of.get(space, set()):
                 errors.append(f"{f.id}: not listed in the zones of its space {space}")
+        space_of = {f.id: f.properties.space_id for f in collections.get("zones", [])}
         for space, zs in zones_of.items():
-            for zone in zs:
+            for zone in sorted(zs):
                 if ids.get(zone) != "zone":
                     errors.append(f"{space}: lists unknown zone {zone}")
+                elif space_of.get(zone) != space:  # a zone is part of one space: the one it names
+                    errors.append(f"{space}: lists zone {zone}, which is part of {space_of.get(zone)}")
         for f in collections.get("openings", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
             for s in f.properties.connects:
