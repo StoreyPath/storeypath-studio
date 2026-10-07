@@ -2,16 +2,13 @@
 
 DXF is read directly with ezdxf. DWG is converted to DXF first by an external
 program the user installs (not bundled, to keep this project permissively
-licensed): the ODA File Converter when it is there (the more complete reader of
-the two), else LibreDWG's ``dwg2dxf``; ``STOREYPATH_DWG_CONVERTER`` (``oda`` or
-``libredwg``) chooses one.
+licensed): LibreDWG's ``dwg2dxf`` or the ODA File Converter.
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
-import os
 import shutil
 import statistics
 import subprocess
@@ -127,39 +124,8 @@ def _parse(path: Path) -> Drawing:
     raise DrawingError(f"unsupported file type {suffix!r}: expected .dwg or .dxf")
 
 
-ODA_MACOS = Path("/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter")
-
-
-def _oda_ready() -> bool:
-    """Whether the ODA File Converter is there: on the PATH, set for ezdxf, at
-    ``STOREYPATH_ODA``, or installed as a macOS app (where ezdxf does not look)."""
-    if not ezdxf.options.get("odafc-addon", "unix_exec_path"):
-        for candidate in (os.environ.get("STOREYPATH_ODA"), ODA_MACOS):
-            if candidate and Path(candidate).is_file():
-                ezdxf.options.set("odafc-addon", "unix_exec_path", str(candidate))
-                break
-    return odafc.is_installed()
-
-
-def dwg_converter() -> str | None:
-    """The program DWG is read with: "oda", "libredwg", or None (DWG cannot be read)."""
-    choice = os.environ.get("STOREYPATH_DWG_CONVERTER", "").strip().lower()
-    oda, libredwg = _oda_ready(), shutil.which("dwg2dxf") is not None
-    if choice == "libredwg":
-        return "libredwg" if libredwg else None
-    if choice == "oda":
-        return "oda" if oda else None
-    return "oda" if oda else "libredwg" if libredwg else None
-
-
 def _read_dwg(path: Path) -> Drawing:
-    converter = dwg_converter()
-    if converter == "oda":
-        try:
-            return odafc.readfile(str(path))
-        except odafc.ODAFCError as e:
-            raise DrawingError(f"the ODA File Converter failed on {path.name}: {e}") from e
-    if converter == "libredwg":
+    if shutil.which("dwg2dxf"):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / (path.stem + ".dxf")
             result = subprocess.run(
@@ -168,6 +134,8 @@ def _read_dwg(path: Path) -> Drawing:
             if not out.exists():
                 raise DrawingError(f"dwg2dxf failed on {path.name}: {result.stderr.strip()}")
             return ezdxf.readfile(out)
+    if odafc.is_installed():
+        return odafc.readfile(str(path))
     raise DrawingError(
         "reading DWG needs a converter: install LibreDWG (provides dwg2dxf) or the "
         "ODA File Converter, or save the drawing as DXF"

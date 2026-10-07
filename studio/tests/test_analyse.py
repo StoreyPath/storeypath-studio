@@ -409,34 +409,3 @@ def test_room_codes_on_a_room_tag_layer_are_read_as_the_rooms_labels(tmp_path):
     ex = extract_floor(drawing, a.profile)
     assert len(ex.spaces) == len(cells)
     assert all(s.label and s.label.startswith("RM-GF-") and s.number == s.label and not s.name for s in ex.spaces)
-
-
-def test_dwg_is_read_with_the_oda_converter_when_it_is_there(monkeypatch):
-    # The ODA File Converter reads more of a drawing than LibreDWG: chosen first,
-    # unless STOREYPATH_DWG_CONVERTER says otherwise.
-    import storeypath.cad as cad
-
-    monkeypatch.setattr(cad, "_oda_ready", lambda: True)
-    monkeypatch.setattr(cad.shutil, "which", lambda name: "/usr/bin/dwg2dxf" if name == "dwg2dxf" else None)
-    monkeypatch.delenv("STOREYPATH_DWG_CONVERTER", raising=False)
-    assert cad.dwg_converter() == "oda"
-    monkeypatch.setenv("STOREYPATH_DWG_CONVERTER", "libredwg")
-    assert cad.dwg_converter() == "libredwg"
-    monkeypatch.setattr(cad, "_oda_ready", lambda: False)
-    monkeypatch.setenv("STOREYPATH_DWG_CONVERTER", "oda")
-    assert cad.dwg_converter() is None  # asked for, not there
-    monkeypatch.delenv("STOREYPATH_DWG_CONVERTER")
-    assert cad.dwg_converter() == "libredwg"
-
-
-@pytest.mark.skipif(not __import__("storeypath.cad", fromlist=["x"])._oda_ready(), reason="the ODA File Converter is not installed")
-def test_a_dwg_converted_by_oda_reads_as_its_dxf(tmp_path):
-    from collections import Counter
-
-    from ezdxf.addons import odafc
-
-    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))
-    src = ezdxf.readfile(tmp_path / "plan.dxf")
-    odafc.export_dwg(src, str(tmp_path / "plan.dwg"), version="R2018")
-    back = read_drawing(tmp_path / "plan.dwg")
-    assert Counter(e.dxftype() for e in back.modelspace()) == Counter(e.dxftype() for e in src.modelspace())

@@ -216,7 +216,9 @@ class Studio:
             return self._project_locks.setdefault(ws_path, threading.RLock())
 
     def status(self) -> dict:
-        from .cad import dwg_converter
+        from shutil import which
+
+        from .cad import odafc
 
         return {
             "version": version("storeypath"),
@@ -224,8 +226,7 @@ class Studio:
             "model_ready": self.model.ready,
             "symbols": self.symbols.name if self.symbols.available() else None,
             "vision": self.vision.name if self.vision.available() else None,
-            "dwg": dwg_converter() is not None,
-            "dwg_converter": dwg_converter(),  # "oda", "libredwg" or None
+            "dwg": bool(which("dwg2dxf")) or odafc.is_installed(),
             "data": str(self.data),
             # the 2D plan page: the plan engine compiled (npm run build in viewer/svg)
             "plan": (asset_dir("viewer") / "svg" / "dist" / "index.js").is_file(),
