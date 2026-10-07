@@ -308,7 +308,7 @@ TITLE_SYSTEM = (
     "- detail: a construction detail that is not a plan\n"
     "- schedule: a table of doors, windows or finishes\n"
     "- other: anything else\n"
-    "For a floor plan also give the floor as a number: basement -1, ground floor 0 "
+    "For a floor plan also give the floor as a number: basement -1 (a second basement -2), ground floor 0 "
     "(rez-de-chaussée, Erdgeschoss, planta baja, الأرضي), first floor 1 (الأول), second 2, "
     "and so on; null when the title does not say. A penthouse is above the numbered "
     "floors: null, unless its title gives a number. Give the name of the building when the "

@@ -394,6 +394,22 @@ def test_rooms_labelled_by_numbers_alone_keep_them():
     assert sorted(z.number for z in [*two.zones, *(s for s in two.spaces if s.number)]) == ["204", "205"]
 
 
+@pytest.mark.parametrize("title, read", [
+    ("SECOND BASEMENT FLOOR PLAN", ("floor_plan", -2)),
+    ("FIRST BASEMENT FLOOR PLAN", ("floor_plan", -1)),
+    ("BASEMENT FLOOR PLAN", ("floor_plan", -1)),
+    ("BASEMENT 2 FLOOR PLAN", ("floor_plan", -2)),
+    ("FIRST & SECOND FLOOR PLAN", None),  # several floors: for the language model
+    ("TYPICAL FLOOR PLAN (1ST-4TH)", None),
+    ("BASEMENT & GROUND FLOOR PLAN", None),
+    ("MODIFIED GROUND FLOOR PLAN", ("floor_plan", 0)),
+])
+def test_basements_are_counted_down_and_titles_of_several_floors_left_to_the_model(title, read):
+    from storeypath.sheets import read_title
+
+    assert read_title(title) == read
+
+
 # ---- lifts and stairs through the floors ---------------------------------------------
 
 

@@ -44,6 +44,10 @@ ORDINAL_WORDS = [
     (re.compile(r"\b(third|3rd)\b", re.I), 3),
     (re.compile(r"\b(fourth|4th)\b", re.I), 4),
 ]
+# Which basement: SECOND BASEMENT, BASEMENT 2, BASEMENT LEVEL 2
+NTH_BASEMENT = re.compile(r"\b(?:(first|1st|second|2nd|third|3rd|fourth|4th)\s+(?:basement|cellar)"
+                          r"|(?:basement|cellar)\s*(?:level\s*)?-?\s*(\d))\b", re.I)
+NTH = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
 ROOF_WORDS = re.compile(r"\b(roof|terrace|penthouse)\b", re.IGNORECASE)
 NOT_PLAN_WORDS = re.compile(r"\b(elevation|section|facade|detail)\b", re.IGNORECASE)
 
@@ -263,12 +267,17 @@ def read_title(title: str | None):
 
 
 def _ordinal(title: str | None) -> int | None:
+    """The floor a title names, from its words: a second basement is -2. None when it
+    names none, or several (FIRST & SECOND FLOOR PLAN, TYPICAL (1ST-4TH)): those are
+    for the language model."""
     if not title:
         return None
-    for pattern, ordinal in ORDINAL_WORDS:
-        if pattern.search(title):
-            return ordinal
-    return None
+    found = set()
+    for m in list(NTH_BASEMENT.finditer(title)):
+        found.add(-(int(m[2]) if m[2] else NTH[m[1].lower()]))
+        title = title[:m.start()] + " " * (m.end() - m.start()) + title[m.end():]  # read: not read again below
+    found |= {ordinal for pattern, ordinal in ORDINAL_WORDS if pattern.search(title)}
+    return found.pop() if len(found) == 1 else None
 
 
 def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
