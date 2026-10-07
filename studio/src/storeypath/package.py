@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.5.0"
+FORMAT_VERSION = "0.6.0"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -27,6 +27,8 @@ FILES = {
     "openings": "openings.geojson",
     "objects": "objects.csv",
     "changes": "changes.json",
+    "items": "items.geojson",
+    "catalogue": "catalogue.json",
 }
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
@@ -146,6 +148,28 @@ class OpeningProps(_Props):
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
+class ItemProps(_Props):
+    kind: Literal["item"]
+    type: str = Field(description="the item's type: a code of catalogue.json (DESK-MANAGER, COPIER, …)")
+    category: Literal["furniture", "equipment", "appliance"]
+    name: str = Field(description="its type's English name, for readers that do not read the catalogue")
+    floor_id: str
+    building_id: str
+    space_id: str | None = Field(None, description="the space it stands in (null: in none of them)")
+    zone_id: str | None = Field(None, description="the zone it stands in, when its space is divided")
+    display_point: LonLat = Field(description="its middle")
+    heading: float = Field(description="the way its front faces: degrees clockwise from north")
+    width_m: float
+    depth_m: float
+    height_m: float
+    mount: Literal["floor", "wall", "ceiling"]
+    elevation_m: float | None = Field(None, description=(
+        "how high above the floor its bottom is (null for one on the ceiling: just under it)"))
+    values: dict[str, str | float] = Field(default_factory=dict, description=(
+        "its details entered in StoreyPath, by the catalogue's field keys (the others belong to the "
+        "system that manages the asset)"))
+
+
 P = TypeVar("P", bound=_Props)
 
 
@@ -243,7 +267,11 @@ COLLECTIONS: dict[str, type[_Props]] = {
 
 def json_schemas() -> dict[str, dict]:
     """File name → JSON Schema for every JSON file in a package."""
+    from .catalogue import Catalogue
+
     out = {"manifest.schema.json": Manifest.model_json_schema(), "changes.schema.json": Changes.model_json_schema()}
     for role, props in COLLECTIONS.items():
         out[f"{role}.schema.json"] = FeatureCollection[props].model_json_schema()
+    out["items.schema.json"] = FeatureCollection[ItemProps].model_json_schema()
+    out["catalogue.schema.json"] = Catalogue.model_json_schema()
     return out

@@ -19,11 +19,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .ids import (
+    ITEM_CODE_RE,
     child_id,
     default_floor_code,
     format_object_code,
     generate_project_code,
     make_id,
+    make_item_id,
     parse_id,
     validate_segment,
 )
@@ -223,6 +225,24 @@ class Project(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class Item(BaseModel):
+    """A piece of furniture or equipment placed on a floor (catalogue.py: its type).
+    Its ID is the project's and its own number, not its place: carried to another
+    room or floor, it keeps it. Taken away, it is retired, and its ID is never
+    issued again."""
+
+    id: str  # PROJECT-I000142
+    type: str  # catalogue type code
+    floor_id: str
+    x: float  # local metres, the floor's frame (as the spaces)
+    y: float
+    rotation: float = 0.0  # degrees, counter-clockwise: the way its front faces, from the plan's +x
+    values: dict[str, str | float] = Field(default_factory=dict)  # its StoreyPath fields
+    status: Literal["active", "retired"] = "active"
+    created_at: datetime = Field(default_factory=utcnow)
+    retired_at: datetime | None = None
+
+
 class Workspace(BaseModel):
     format: Literal["storeypath-workspace"] = WORKSPACE_FORMAT
     format_version: int = WORKSPACE_VERSION
@@ -233,6 +253,8 @@ class Workspace(BaseModel):
     readings: dict[str, Reading] = Field(default_factory=dict)  # text → what it means
     vision: dict[str, dict[str, Any]] = Field(default_factory=dict)  # what the vision model saw, per room shape
     exports: list[ExportRecord] = Field(default_factory=list)
+    items: dict[str, Item] = Field(default_factory=dict)  # furniture and equipment, by ID
+    next_item_seq: int = 1
 
     # ---- files -------------------------------------------------------------
 
@@ -312,6 +334,8 @@ class Workspace(BaseModel):
 
     def add_location(self, code: str, name: str, address: str | None = None) -> str:
         validate_segment(code)
+        if ITEM_CODE_RE.match(code):
+            raise ValueError(f"location code {code} has the form of an item's (I and six digits): choose another")
         if any(loc.code == code for loc in self.locations):
             raise ValueError(f"location code {code} already used in this project")
         self.locations.append(Location(code=code, name=name, address=address))
@@ -380,6 +404,20 @@ class Workspace(BaseModel):
         code = format_object_code(b.next_object_seq)
         b.next_object_seq += 1
         return code
+
+    def add_item(self, type_code: str, floor_id: str, x: float, y: float, rotation: float = 0.0,
+                 values: dict | None = None) -> Item:
+        """A new item on a floor, with the next item number of the project."""
+        self.floor(floor_id)  # raises when there is no such floor
+        item = Item(id=make_item_id(self.id, self.next_item_seq), type=type_code, floor_id=floor_id,
+                    x=x, y=y, rotation=rotation % 360, values=dict(values or {}))
+        self.next_item_seq += 1
+        self.items[item.id] = item
+        return item
+
+    def floor_items(self, floor_id: str, *, include_retired: bool = False) -> list[Item]:
+        return [i for i in self.items.values()
+                if i.floor_id == floor_id and (include_retired or i.status == "active")]
 
     def floor_objects(self, floor_id: str, *, include_retired: bool = False) -> list[ObjectRecord]:
         prefix = floor_id + "-"

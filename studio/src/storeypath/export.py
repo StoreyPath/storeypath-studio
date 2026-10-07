@@ -24,6 +24,7 @@ from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, make_id
+from .catalogue import Catalogue, default_catalogue
 from .package import (
     FILES,
     OBJECTS_CSV_COLUMNS,
@@ -233,9 +234,40 @@ def _walls_and_parapets(walls, spaces, thickness: float | None):
     return walls.difference(low), low
 
 
-def build_features(ws: Workspace) -> dict[str, list[dict]]:
+WALL_ELEVATION_M = 1.2  # a wall item's bottom above the floor, when its type does not say
+
+
+def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> dict:
+    """An item as a feature: its footprint (its width along its rotation, its front
+    facing the plan's -y turned with it), where its front faces on earth, and the
+    zone or space its middle stands in."""
+    w, d = (t.width, t.depth) if t else (1.0, 0.6)
+    r = math.radians(it.rotation)
+    ux, uy = math.cos(r), math.sin(r)  # along its width
+    fx, fy = math.sin(r), -math.cos(r)  # its front
+    corners = [(it.x + sx * ux * w / 2 + sy * fx * d / 2, it.y + sx * uy * w / 2 + sy * fy * d / 2)
+               for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    middle = shapely.Point(it.x, it.y)
+    zone = next((rec for geom, rec in units if rec.kind == "zone" and geom.covers(middle)), None)
+    space = zone.parent if zone else next((rec.id for geom, rec in units if rec.kind == "space" and geom.covers(middle)), None)
+    mount = t.mount if t else "floor"
+    elevation = t.elevation if t and t.elevation is not None else (0.0 if mount == "floor" else WALL_ELEVATION_M if mount == "wall" else None)
+    own = {f.key for f in t.fields if f.owner == "storeypath"} if t else set()
+    return _feature(it.id, _rounded(g.geometry(Polygon(corners))), {
+        "kind": "item", "type": it.type, "category": t.category if t else "furniture",
+        "name": t.name_en if t else it.type, "floor_id": it.floor_id, "building_id": b_id,
+        "space_id": space, "zone_id": zone.id if zone else None,
+        "display_point": _lonlat(g, (it.x, it.y)),
+        "heading": round((bearing + math.degrees(math.atan2(fx, fy))) % 360, 2),
+        "width_m": w, "depth_m": d, "height_m": t.height if t else 0.75, "mount": mount,
+        "elevation_m": elevation, "values": {k: v for k, v in it.values.items() if k in own},
+    })
+
+
+def build_features(ws: Workspace, cat: Catalogue | None = None) -> dict[str, list[dict]]:
     placed = placements(ws)
-    out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "zones", "openings")}
+    cat = cat or default_catalogue()
+    out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "zones", "openings", "items")}
     for loc in ws.locations:
         loc_id = make_id(ws.id, loc.code)
         footprints = []
@@ -305,6 +337,12 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
+            for f in sorted(b.floors, key=lambda f: f.ordinal):  # the furniture and equipment on each floor
+                f_id = child_id(b_id, f.code)
+                units = [(shape(r.geometry), r) for r in ws.floor_objects(f_id)
+                         if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+                for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
+                    out["items"].append(_item_feature(it, cat.get(it.type), g, placed[b_id][0].bearing, b_id, units))
             footprint = None
             if outlines and g is not None:
                 footprint = g.geometry(unary_union(outlines))
@@ -340,10 +378,11 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
     w.writeheader()
     w.writerow({"id": ws.id, "kind": "project", "name": ws.project.name, "project_id": ws.id})
     ordinals = {f["id"]: f["properties"]["ordinal"] for f in features["floors"]}
-    for role in ("location", "buildings", "floors", "spaces", "zones", "openings"):
+    for role in ("location", "buildings", "floors", "spaces", "zones", "openings", "items"):
         for f in features[role]:
             p = f["properties"]
-            segs = f["id"].split("-")
+            # an item's ID says nothing of where it is: its floor does
+            segs = (p["floor_id"] if role == "items" else f["id"]).split("-")
             ids = {lvl: "-".join(segs[:n]) for n, lvl in
                    ((2, "location_id"), (3, "building_id"), (4, "floor_id")) if len(segs) >= n}
             pt = p.get("display_point") or (f["geometry"]["coordinates"] if f["geometry"] and f["geometry"]["type"] == "Point" else None)
@@ -370,7 +409,8 @@ def in_buildings(buildings: list[str] | None):
 
 
 def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None,
-                   buildings: list[str] | None = None, bake: bool = True, say=None) -> Manifest:
+                   buildings: list[str] | None = None, bake: bool = True, say=None,
+                   catalogue: Catalogue | None = None) -> Manifest:
     """Write the package to ``out_path`` (a path, or a binary file object). With
     ``record`` the export is entered in the workspace, so the next one lists what
     changed since; without it (a preview) the workspace is left as it was.
@@ -385,7 +425,8 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     With ``bake`` its floors are pre-built in 3D (``world/``, bake.py) when Node.js is
     here; when it is not, the package is written without them. ``say`` is told
     which (else it is logged)."""
-    features = build_features(ws)
+    cat = catalogue or default_catalogue()
+    features = build_features(ws, cat)
     if buildings is not None:
         known = {make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings}
         if unknown := sorted(set(buildings) - known):
@@ -395,7 +436,9 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
         buildings = sorted(set(buildings))
         locations = {b.rsplit("-", 1)[0] for b in buildings}
         scoped = in_buildings(buildings)
-        features = {role: [f for f in fs if (f["id"] in locations if role == "location" else scoped(f["id"]))]
+        features = {role: [f for f in fs if (f["id"] in locations if role == "location"
+                                             else scoped(f["properties"]["floor_id"]) if role == "items"  # where it is
+                                             else scoped(f["id"]))]
                     for role, fs in features.items()}
     scoped = in_buildings(buildings)
     hashes = {f["id"]: _hash(f) for fs in features.values() for f in fs}
@@ -403,7 +446,8 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     prev = ws.exports[-1] if ws.exports else None
     sequence = (prev.sequence + 1) if prev else 1
     prev_hashes = prev.objects if prev else {}
-    all_retired = sorted(i for i, r in ws.objects.items() if r.status == "retired" and scoped(i))
+    all_retired = sorted([i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)]
+                         + [i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id)])
     changes = Changes(
         sequence=sequence,
         previous_sequence=prev.sequence if prev else None,
@@ -437,7 +481,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     if bake:  # the package as it is so far, for the baker to read
         with tempfile.TemporaryDirectory(prefix="storeypath-export-") as tmp:
             plain = Path(tmp) / "package.storeypath"
-            _write(plain, ws, manifest, features, changes, {})
+            _write(plain, ws, manifest, features, changes, {}, cat)
             world, why = bake_world(plain)
         if world:
             manifest.files["world"] = WORLD_DIR
@@ -446,7 +490,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    _write(out_path, ws, manifest, features, changes, {**world, **(extra or {})})
+    _write(out_path, ws, manifest, features, changes, {**world, **(extra or {})}, cat)
 
     if record:
         kept = {} if buildings is None else {i: h for i, h in prev_hashes.items() if not scoped(i) and i not in hashes}
@@ -456,7 +500,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
 
 
 def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict]], changes: Changes,
-           extra: dict) -> None:
+           extra: dict, cat: Catalogue) -> None:
     """The package's files, and ``extra`` (name → bytes or a path), into a ZIP."""
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", manifest.model_dump_json(indent=2))
@@ -464,6 +508,7 @@ def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict
             z.writestr(FILES[role], json.dumps({"type": "FeatureCollection", "features": fs}, ensure_ascii=False))
         z.writestr(FILES["objects"], _objects_csv(ws, features))
         z.writestr(FILES["changes"], changes.model_dump_json(indent=2))
+        z.writestr(FILES["catalogue"], json.dumps(cat.model_dump(), ensure_ascii=False, indent=1))
         z.writestr("FORMAT.md", format_spec())
         for name, schema in json_schemas().items():
             z.writestr(f"schema/{name}", json.dumps(schema, indent=2))

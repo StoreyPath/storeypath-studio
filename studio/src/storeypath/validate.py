@@ -10,8 +10,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .ids import LEVELS, parse_id
-from .package import COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, Changes, FeatureCollection, Manifest
+from .catalogue import Catalogue
+from .ids import LEVELS, is_item_id, parse_id
+from .package import COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, Changes, FeatureCollection, ItemProps, Manifest
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -113,6 +114,39 @@ def validate_package(path: str | Path) -> list[str]:
                     errors.append(f"{f.id}: connects to unknown space {s}")
                 elif not s.startswith(f.properties.floor_id + "-"):
                     errors.append(f"{f.id}: connects to {s} on another floor")
+
+        # Items (format 0.6): furniture and equipment, when the package has them. Their
+        # IDs are the project's and their own number; where they are is data.
+        if "items" in manifest.files:
+            codes = None
+            if "catalogue" in manifest.files and (text := read(manifest.files["catalogue"])) is not None:
+                try:
+                    codes = {t.code for t in Catalogue.model_validate_json(text).types}
+                except ValidationError as e:
+                    errors.append(f"{manifest.files['catalogue']}: {_first_errors(e)}")
+            text = read(manifest.files["items"])
+            if text is not None:
+                try:
+                    items = FeatureCollection[ItemProps].model_validate_json(text).features
+                except ValidationError as e:
+                    errors.append(f"{manifest.files['items']}: {_first_errors(e)}")
+                    items = []
+                if manifest.counts.get("items") != len(items):
+                    errors.append(f"{manifest.files['items']}: manifest counts {manifest.counts.get('items')}, file has {len(items)}")
+                for f in items:
+                    q = f.properties
+                    if not is_item_id(f.id) or not f.id.startswith(project + "-"):
+                        errors.append(f"{f.id}: not an item ID of project {project} ({project}-I and six digits)")
+                    if f.id in ids:
+                        errors.append(f"duplicate ID {f.id}")
+                    ids[f.id] = "item"
+                    if ids.get(q.floor_id) != "floor" or not q.floor_id.startswith(q.building_id + "-"):
+                        errors.append(f"{f.id}: on unknown floor {q.floor_id} (or not of building {q.building_id})")
+                    for key, kind in ((q.space_id, "space"), (q.zone_id, "zone")):
+                        if key is not None and (ids.get(key) != kind or not key.startswith(q.floor_id + "-")):
+                            errors.append(f"{f.id}: in unknown {kind} {key} (or not on its floor)")
+                    if codes is not None and q.type not in codes:
+                        errors.append(f"{f.id}: type {q.type} is not in the catalogue")
 
         text = read(FILES["objects"])
         if text is not None:

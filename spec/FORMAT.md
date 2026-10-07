@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.5
+# StoreyPath package format — version 0.6
 
 A StoreyPath package (`*.storeypath`) describes one project: its locations, buildings,
 floors, the spaces on each floor (offices, corridors, elevators, …), the zones that
@@ -20,6 +20,8 @@ A copy of this document is included in every package.
 | `openings.geojson` | Doors and other ways through, and which spaces each one connects |
 | `objects.csv` | Every ID in one flat table, with its parent IDs — for building ID mappings |
 | `changes.json` | IDs added, changed and retired since the previous export |
+| `items.geojson` | Furniture and equipment on the floors: desks, photocopiers, access points, sofas, TVs, … (format 0.6) |
+| `catalogue.json` | The types of items: their codes, names, sizes, how they are mounted, and the details each carries (format 0.6) |
 | `schema/*.schema.json` | JSON Schema for every JSON file |
 | `world/<floor-id>.glb` | Optional: each floor already built in 3D, as binary glTF (Pre-built 3D) |
 | `FORMAT.md` | This document |
@@ -169,6 +171,53 @@ position (openings).
 
 A system that skipped an export can use `all_retired` to clean up its mappings.
 
+## Items
+
+Items are the furniture and equipment people place on floors: desks (by grade:
+a manager's, a junior staff member's), central photocopiers, wireless access points,
+sofas, TVs. `items.geojson` holds them; `catalogue.json` says what each type is.
+
+**An item's ID does not say where it is.** It is the project's code and the item's
+own number, `I` and six digits: `K7Q2XM-I000142`. A desk carried to another office,
+or another floor, keeps its ID; where it stands is in its properties. Like every ID,
+an item's is never issued again once it is retired.
+
+```json
+{ "type": "Feature", "id": "K7Q2XM-I000142",
+  "geometry": { "type": "Polygon", "coordinates": [ … ] },     // its footprint
+  "properties": {
+    "kind": "item", "type": "DESK-MANAGER", "category": "furniture", "name": "Manager's desk",
+    "floor_id": "K7Q2XM-RUH-HQ-F02", "building_id": "K7Q2XM-RUH-HQ",
+    "space_id": "K7Q2XM-RUH-HQ-F02-0142", "zone_id": null,       // where its middle stands
+    "display_point": [46.67, 24.71], "heading": 270.0,          // its front faces west
+    "width_m": 1.8, "depth_m": 0.9, "height_m": 0.75,
+    "mount": "floor", "elevation_m": 0.0,                        // wall: its bottom; ceiling: null
+    "values": { } } }
+```
+
+- `type` is a code of `catalogue.json`; `name` is that type's English name, for a reader
+  that does not read the catalogue.
+- `space_id`, and `zone_id` when the space is divided, are where its middle stands at
+  export: null when it is in none.
+- `heading` is the way its front faces, in degrees clockwise from north (a desk's
+  front is where its user sits).
+- `values` are its details entered in StoreyPath, by the catalogue's field keys.
+
+`catalogue.json` (`schema/catalogue.schema.json`) lists the types: a `code` that is
+kept for good and never given to another type (a type no longer used is `retired`),
+English and Arabic names, a `category` (furniture, equipment, appliance), a size, how
+it is mounted (`floor`, `wall`, `ceiling`), a colour, and its `fields`. Each field
+says who enters it: `owner: "storeypath"` (what is physical: a colour, a size, a
+model) or `"system"` (the system that manages the asset: its network, its asset tag).
+A reader keeps the `system` fields itself, by the item's ID; the package never
+carries them. The catalogue is the organization's: the same for every project.
+
+Items go through `changes.json` as everything else: one moved, turned or given other
+details is `changed`, so a system can keep the history of where each item has been.
+In a package of part of a project, an item is held when its floor is; one carried
+out of the part is not listed until a package holds where it went (or the whole
+project).
+
 ## Part of a project
 
 A package may hold only some of a project's buildings: `manifest.json → scope`
@@ -280,6 +329,11 @@ colours; StoreyPath's viewer draws each piece with its own, by `material` and
 - `world/` and `manifest.json → files.world`: the floors pre-built in 3D (Pre-built
   3D), when the exporter could build them. Nothing else changes: a reader of 0.4
   reads a 0.5 package as it is, ignoring the folder.
+
+## Changes from 0.5
+
+- `items.geojson` and `catalogue.json`: furniture and equipment, with IDs of their own
+  that do not change when they move (Items). Readers of 0.5 ignore them.
 
 ## Readers
 

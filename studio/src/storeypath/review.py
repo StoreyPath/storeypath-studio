@@ -34,7 +34,7 @@ from .export import _label_point
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
-from .workspace import DrawnOpening, ObjectRecord, Override, ResizedOpening, Workspace
+from .workspace import DrawnOpening, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
 
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml",
@@ -76,8 +76,9 @@ def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | No
 class Review:
     """The editor's operations on one workspace file."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, catalogue=None):
         self.path = Path(path)
+        self._catalogue = catalogue  # () -> the Studio's catalogue of item types (catalogue.py)
         self._lock = threading.RLock()
         self._ws: Workspace | None = None
         self._mtime: int | None = None
@@ -136,7 +137,100 @@ class Review:
                 "doors": [self._door(ws, r, areas, f.edits.resized) for r in objects if r.kind == "opening"],
                 # for drawing walls and doors onto: the walls as found, and what was drawn
                 "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
+                # furniture and equipment on the floor, retired ones too (to be restored)
+                "items": [self._item(i) for i in sorted(ws.floor_items(floor_id, include_retired=True), key=lambda i: i.id)],
             }
+
+    # ---- items: furniture and equipment ---------------------------------------------
+
+    def catalogue(self):
+        from .catalogue import default_catalogue
+
+        return self._catalogue() if self._catalogue else default_catalogue()
+
+    def _item(self, it) -> dict:
+        t = self.catalogue().get(it.type)
+        return {"id": it.id, "type": it.type, "x": it.x, "y": it.y, "rotation": it.rotation,
+                "values": it.values, "retired": it.status == "retired",
+                "name_en": t.name_en if t else it.type, "name_ar": t.name_ar if t else "",
+                "category": t.category if t else "furniture", "color": t.color if t else "#8a8a8a",
+                "width": t.width if t else 1.0, "depth": t.depth if t else 0.6, "mount": t.mount if t else "floor"}
+
+    def _item_values(self, type_code: str, values) -> dict:
+        """An item's details from a request: only its type's StoreyPath fields, each of
+        its kind (the managing system's fields are entered there, not here)."""
+        t = self.catalogue().get(type_code)
+        if t is None or t.retired:
+            raise ValueError(f"no item type {type_code} in the catalogue")
+        if values is None:
+            return {}
+        if not isinstance(values, dict):
+            raise ValueError("values: an object of field → value")
+        fields = {f.key: f for f in t.fields}
+        out = {}
+        for key, value in values.items():
+            f = fields.get(key)
+            if f is None:
+                raise ValueError(f"{t.code} has no field {key}")
+            if f.owner != "storeypath":
+                raise ValueError(f"{t.code}'s {key} is entered in the system that manages the asset, not here")
+            if value is None or value == "":
+                continue  # cleared
+            if f.kind == "number":
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key} is a number") from None
+            elif f.kind == "choice" and value not in f.choices:
+                raise ValueError(f"{key} is one of {', '.join(f.choices)}")
+            elif f.kind == "color" and not (isinstance(value, str) and len(value) == 7 and value.startswith("#")):
+                raise ValueError(f"{key} is a colour, #rrggbb")
+            elif f.kind == "text":
+                value = str(value).strip()[:200]
+            out[key] = value
+        return out
+
+    def add_item(self, floor_id: str, body: dict) -> dict:
+        """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres)."""
+        with self._lock:
+            ws = self._load()
+            self._floor(ws, floor_id)
+            values = self._item_values(body.get("type"), body.get("values"))
+            x, y = _number(body, "x"), _number(body, "y")
+            it = ws.add_item(body["type"], floor_id, x, y, _number(body, "rotation", 0.0), values)
+            self._save(ws)
+            return self._item(it)
+
+    def change_item(self, item_id: str, body: dict) -> dict:
+        """An item moved, turned, given another type or details, carried to another floor
+        (``floor_id``), taken away (``{"retired": true}``) or brought back."""
+        with self._lock:
+            ws = self._load()
+            it = ws.items.get(item_id)
+            if it is None:
+                raise NotFound(f"no item {item_id}")
+            if "retired" in body:
+                if not isinstance(body["retired"], bool):
+                    raise ValueError("retired is true or false")
+                it.status = "retired" if body["retired"] else "active"
+                it.retired_at = utcnow() if body["retired"] else None
+            if "floor_id" in body:
+                self._floor(ws, body["floor_id"])
+                it.floor_id = body["floor_id"]
+            if "type" in body:
+                self._item_values(body["type"], None)  # a type of the catalogue
+                it.type = body["type"]
+                own = {f.key for f in self.catalogue().get(it.type).fields if f.owner == "storeypath"}
+                it.values = {k: v for k, v in it.values.items() if k in own}  # what the new type has
+            if "values" in body:
+                it.values = self._item_values(it.type, body["values"])
+            for key in ("x", "y"):
+                if key in body:
+                    setattr(it, key, _number(body, key))
+            if "rotation" in body:
+                it.rotation = _number(body, "rotation") % 360
+            self._save(ws)
+            return self._item(it)
 
     def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None, resized=()) -> dict:
         eff = ws.effective(r)
@@ -331,6 +425,17 @@ def _ring(value) -> list[list[float]]:
     if poly.area < DRAWN_SPACE_MIN_M2:
         raise ValueError(f"a space is at least {DRAWN_SPACE_MIN_M2:g} m²")
     return pts
+
+
+def _number(body: dict, key: str, default: float | None = None) -> float:
+    value = body.get(key, default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} is a number") from None
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError(f"{key} is a number")
+    return number
 
 
 def _points(value, n: int) -> list[list[float]]:

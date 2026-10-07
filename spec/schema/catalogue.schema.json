@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "ItemField": {
+      "description": "A detail an item of this type carries.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "name_en": {
+          "title": "Name En",
+          "type": "string"
+        },
+        "name_ar": {
+          "default": "",
+          "title": "Name Ar",
+          "type": "string"
+        },
+        "kind": {
+          "default": "text",
+          "enum": [
+            "text",
+            "number",
+            "choice",
+            "color"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "owner": {
+          "default": "storeypath",
+          "enum": [
+            "storeypath",
+            "system"
+          ],
+          "title": "Owner",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "name_en"
+      ],
+      "title": "ItemField",
+      "type": "object"
+    },
+    "ItemType": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "name_en": {
+          "title": "Name En",
+          "type": "string"
+        },
+        "name_ar": {
+          "default": "",
+          "title": "Name Ar",
+          "type": "string"
+        },
+        "category": {
+          "default": "furniture",
+          "enum": [
+            "furniture",
+            "equipment",
+            "appliance"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "width": {
+          "default": 1.0,
+          "title": "Width",
+          "type": "number"
+        },
+        "depth": {
+          "default": 0.6,
+          "title": "Depth",
+          "type": "number"
+        },
+        "height": {
+          "default": 0.75,
+          "title": "Height",
+          "type": "number"
+        },
+        "mount": {
+          "default": "floor",
+          "enum": [
+            "floor",
+            "wall",
+            "ceiling"
+          ],
+          "title": "Mount",
+          "type": "string"
+        },
+        "elevation": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elevation"
+        },
+        "color": {
+          "default": "#8a8a8a",
+          "title": "Color",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/ItemField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "retired": {
+          "default": false,
+          "title": "Retired",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "name_en"
+      ],
+      "title": "ItemType",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "format": {
+      "const": "storeypath-catalogue",
+      "default": "storeypath-catalogue",
+      "title": "Format",
+      "type": "string"
+    },
+    "format_version": {
+      "default": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "types": {
+      "items": {
+        "$ref": "#/$defs/ItemType"
+      },
+      "title": "Types",
+      "type": "array"
+    }
+  },
+  "title": "Catalogue",
+  "type": "object"
+}

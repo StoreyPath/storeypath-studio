@@ -89,6 +89,23 @@ def parse_id(value: str) -> ParsedId:
     return ParsedId(segments)
 
 
+# Items (furniture and equipment) are not part of the place hierarchy: a desk carried
+# to another floor keeps its ID, and where it is, is data. PROJECT-I000142.
+ITEM_CODE_RE = re.compile(r"^I\d{6}$")
+
+
+def make_item_id(project: str, sequence: int) -> str:
+    if sequence < 1:
+        raise ValueError("item sequence starts at 1")
+    return make_id(project, f"I{sequence:06d}")
+
+
+def is_item_id(value: str) -> bool:
+    """Whether ``value`` is an item's ID (two segments, the second I and six digits)."""
+    segments = value.split(SEPARATOR)
+    return len(segments) == 2 and bool(ITEM_CODE_RE.match(segments[1]))
+
+
 def format_object_code(sequence: int) -> str:
     if sequence < 1:
         raise ValueError("object sequence starts at 1")

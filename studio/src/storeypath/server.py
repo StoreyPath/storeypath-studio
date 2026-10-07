@@ -188,8 +188,27 @@ class Studio:
         path = self.path(code)
         with self._lock:
             if path not in self._reviews:
-                self._reviews[path] = Review(path)
+                self._reviews[path] = Review(path, catalogue=self.catalogue)
             return self._reviews[path]
+
+    def catalogue(self):
+        """The item types of every project here (catalogue.json in the data folder)."""
+        from . import catalogue
+
+        return catalogue.load(self.data)
+
+    def save_catalogue(self, body: dict) -> dict:
+        """The catalogue replaced: types may be added, changed or retired, never taken
+        out (their codes stay with the items that have them)."""
+        from . import catalogue
+
+        with self._lock:
+            old = catalogue.load(self.data)
+            new = catalogue.Catalogue.model_validate({**body, "format": catalogue.CATALOGUE_FORMAT})
+            if gone := sorted({t.code for t in old.types} - {t.code for t in new.types}):
+                raise ValueError(f"types are retired, not removed: {', '.join(gone)}")
+            catalogue.save(self.data, new)
+            return new.model_dump()
 
     def _changing(self, ws_path: Path) -> threading.RLock:
         """The lock held while a job changes this project."""
@@ -795,7 +814,7 @@ class Studio:
                 part = "" if buildings is None else "-" + (buildings[0].rsplit("-", 1)[-1] if len(buildings) == 1 else "PART")
                 out = folder / f"{ws.id}-{seq:03d}{part}.storeypath"
                 job.say(f"writing {out.name}")
-                manifest = export_package(ws, out, buildings=buildings, say=job.say)
+                manifest = export_package(ws, out, buildings=buildings, say=job.say, catalogue=self.catalogue())
                 ws.save(ws_path)
             errors = validate_package(out)
             for e in errors:
@@ -866,7 +885,8 @@ class Studio:
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
         try:
-            export_package(ws, buf, record=False, buildings=[building] if building else None, bake=False)
+            export_package(ws, buf, record=False, buildings=[building] if building else None, bake=False,
+                           catalogue=self.catalogue())
         except ExportError as e:
             raise NotFound(str(e)) from None
         return buf.getvalue()
@@ -1203,6 +1223,14 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             case "POST", ["projects", code, "floors", floor_id, "edits"]:
                 studio.review(code).edit(floor_id, body)
                 return studio.convert(code, floor_id)
+            case "GET", ["catalogue"]:
+                return studio.catalogue().model_dump()
+            case "POST", ["catalogue"]:
+                return studio.save_catalogue(body)
+            case "POST", ["projects", code, "floors", floor_id, "items"]:
+                return studio.review(code).add_item(floor_id, body)
+            case "POST", ["projects", code, "items", item_id]:
+                return studio.review(code).change_item(item_id, body)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
                 return studio.convert(code, floor_id)
             case "POST", ["projects", code, "objects", object_id]:
