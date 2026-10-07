@@ -368,6 +368,10 @@ class Workspace(BaseModel):
         loc = self.location(location_id)
         if any(b.code == code for b in loc.buildings):
             raise ValueError(f"building code {code} already used in {location_id}")
+        if loc.placement is not None:  # on the map: its buildings stay where they are on it
+            from .export import settle
+
+            settle(loc)
         loc.buildings.append(Building(code=code, name=name))
         return child_id(location_id, code)
 

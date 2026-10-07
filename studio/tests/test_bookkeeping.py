@@ -604,6 +604,52 @@ def test_a_project_sent_ships_no_file_from_outside_its_folder(campus, tmp_path):
     assert sent.floor(f"{hq}-F00").source.path == sent.floor(f"{hq}-F01").source.path == "drawings/secret.dxf"
 
 
+def test_a_building_of_a_placed_site_does_not_move_when_another_changes(campus, tmp_path):
+    # The site placed on the map, its buildings standing as drawn: the ANNEX given a
+    # wider floor, and a new building added, move nothing else on the map.
+    from shapely.geometry import box, mapping
+
+    from storeypath.export import placements
+    from storeypath.server import Studio
+    from test_review import NoModel
+
+    ws, ws_path, hq, annex = campus
+    data, path = _in_studio(ws, ws_path)
+    loc = ws.locations[0]
+    for b in loc.buildings:
+        b.placement = None
+    ws.save(path)
+    Studio(data, model=NoModel()).place_site(ws.id, f"{ws.id}-{loc.code}", {"lat": 24.7127, "lon": 46.6761})
+    ws = Workspace.load(path)
+    export_package(ws, tmp_path / "hq-1.storeypath", building=hq)
+    before = placements(ws)[hq][0]
+    ws.floor(ws.add_floor(annex, 5)).outline = mapping(box(0, 0, 400, 300))
+    new = ws.add_building(f"{ws.id}-{loc.code}", "WING", "Wing")
+    ws.floor(ws.add_floor(new, 0)).outline = mapping(box(-500, -500, -300, -200))
+    assert placements(ws)[hq][0] == before
+    export_package(ws, tmp_path / "hq-2.storeypath", building=hq)
+    assert _read(tmp_path / "hq-2.storeypath")[0]["changed"] == []
+
+
+def test_a_building_added_to_a_placed_site_moves_no_other(campus):
+    # A site placed by an earlier Studio, never settled: a building added to it.
+    from shapely.geometry import box, mapping
+
+    from storeypath.export import placements
+    from storeypath.workspace import Placement
+
+    ws, _, hq, annex = campus
+    loc = ws.locations[0]
+    for b in loc.buildings:
+        b.placement = None
+    loc.placement = Placement(lon=46.6761, lat=24.7127)
+    before = placements(ws)
+    new = ws.add_building(f"{ws.id}-{loc.code}", "WING", "Wing")
+    ws.floor(ws.add_floor(new, 0)).outline = mapping(box(-500, -500, -300, -200))
+    after = placements(ws)
+    assert after[hq] == before[hq] and after[annex] == before[annex]
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 
