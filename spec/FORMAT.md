@@ -278,13 +278,17 @@ The node names it; its `extras` say what it is: `material`, `view`, and `type` a
 | `sills` | `wallPlain` | | the wall under windows |
 | `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
 | `door`, `doorFrame` | `door`, `doorFrame` | `full` | door leaves, open as the plan draws them, and their frames |
+| `items`, `items:high` | `item` | `full` for `high` | the floor's items, each drawn as a simple shape of its kind (a desk: its top, ends, modesty panel and a chair): those wholly below `options.cutHeight`, and the others (on a wall, under the ceiling) |
+| `items:light`, `items:light:high` | `item` | `full` for `high` | the same items as a box each (`"form": "light"`), for a view of many floors |
 | `obstacles` | | | lines (mode `LINES`) at the floor, not drawn: what someone walking bumps into (walls, windows, open leaves) |
 
 `view` says when a piece shows: `full` unless the walls are cut low, as on a plan;
 `cut` only then; `walk` when walking on that floor; `xray` in the see-through view;
 with none, always. The pieces of spaces and zones hidden or ignored in review are
 meshes of their own (`floor:shaft:hidden`, `"hidden": true`), shown only when asked
-for. A plain glTF viewer shows every mesh at once.
+for. A plain glTF viewer shows every mesh at once. The items' pieces are kept apart
+from the rest, so that a viewer leaves them out until they are asked for; a floor
+with no items has none.
 
 The walls and parapets cut low are not in the file: they are `wall`, `wallTop`,
 `parapet` and `parapetTop` with every vertex higher than `elevation` +
@@ -296,9 +300,11 @@ height above the floor, in metres).
 
 The floor finishes and volumes have a vertex attribute `_ROOM` (unsigned integer),
 an index into `rooms` below: the space or zone each vertex belongs to, so that a
-click on a floor tells which room it is. The materials in the file are plain
-colours; StoreyPath's viewer draws each piece with its own, by `material` and
-`type`.
+click on a floor tells which room it is. The items' pieces have `_ITEM`, an index
+into `items` below, likewise; their colours are the vertices' (`COLOR_0`: their
+type's colour, and shades of it), and they have no normals (flat-shaded, as glTF
+draws a mesh without them). The materials in the file are plain colours;
+StoreyPath's viewer draws each piece with its own, by `material` and `type`.
 
 **Extras.** The scene's `extras.storeypath`:
 
@@ -306,10 +312,12 @@ colours; StoreyPath's viewer draws each piece with its own, by `material` and
 |---|---|
 | `project_id`, `building_id`, `floor_id` | what it is |
 | `export_sequence` | the export it was built for: a file whose sequence is not the manifest's is stale; build that floor instead |
+| `builder` | the version of StoreyPath's builder that made it: 2 since items (format 0.6); a viewer builds a floor itself from a file of another version (a file without it is of 1, and has no items) |
 | `origin` | `lon`, `lat`, `kx`, `ky`: the frame above |
 | `options` | the sizes it was built with, in metres: `slab` (thickness), `doorHead`, `windowSill`, `windowHead`, `wallThickness` (where the floor gives none), `cutHeight` |
 | `elevation`, `wall_height` | the floor's elevation, and how high its walls rise above it |
 | `rooms` | the IDs `_ROOM` indexes |
+| `items` | the IDs `_ITEM` indexes (format 0.6) |
 
 ## Changes from 0.2
 
@@ -338,6 +346,8 @@ colours; StoreyPath's viewer draws each piece with its own, by `material` and
 
 - `items.geojson` and `catalogue.json`: furniture and equipment, with IDs of their own
   that do not change when they move (Items). Readers of 0.5 ignore them.
+- Pre-built 3D: each floor's items in pieces of their own, and the extras' `builder`
+  and `items`. A viewer builds a floor itself from a file of an earlier builder.
 
 ## Readers
 
@@ -348,7 +358,9 @@ local metres must agree with `localframe.json` to a millimetre; positions read f
 a package are within about a centimetre of Studio's (7 decimals of a degree).
 `campus-world` and `simple-office-world` are `campus` and `simple-office` with
 their floors pre-built: a reader reads them as it reads those, and the viewer shows
-them as it shows those.
+them as it shows those. `campus` has items: desks of several grades (one in a zone,
+one in a building turned on the map), a photocopier, two access points, a sofa and
+a TV.
 
 ## Versioning
 

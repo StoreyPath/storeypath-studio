@@ -54,6 +54,7 @@ install `three` and `jszip` alongside it.
 |---|---|---|
 | `labels` | `true` | room names in the dollhouse view |
 | `showHidden` | `false` | spaces marked hidden or ignored in Studio |
+| `items` | `null` | furniture and equipment: `true`, `false`, or `null`: shown when one floor is |
 | `explode` | `0` | m between floors in the dollhouse view |
 | `slab`, `doorHead`, `windowSill`, `windowHead`, `cutHeight` | `0.22`, `2.1`, `0.9`, `2.2`, `1.25` | m |
 
@@ -65,15 +66,24 @@ install `three` and `jszip` alongside it.
 | `setMode("dollhouse" \| "walk")` | orbit, or stand at the front door to walk in |
 | `startWalking()` | take the mouse to look around (call it from a click: pointer lock) |
 | `changeFloor(+1 \| -1)` | when walking: up or down a floor |
-| `select(id, { go })` | highlight a space and fly (or, walking, go) to it |
+| `select(id, { go })` | highlight a space, zone or item and fly (or, walking, go) to it |
 | `setXray(on)`, `setCutaway(on)`, `setLabels(on)`, `setShowHidden(on)`, `setExplode(m)` | |
-| `plan(floorId)` | a floor's walls, rooms and obstacles in local meters, for drawing a minimap |
+| `setItems(on)` | furniture and equipment: `true`, `false`, or `null` (shown when one floor is) |
+| `plan(floorId)` | a floor's walls, rooms, items and obstacles in local meters, for drawing a minimap |
 | `destroy()` | |
 
 Properties: `package`, `building`, `floor`, `mode`, `selected`, `room` (the space
 the walker is in), `walkFloor`, `atStairs`, `walking` (mouse taken), `player`
 (`{ x, z, dx, dz, floor }`, for a minimap), `prebuilt` (the floors shown from the
-package's pre-built 3D).
+package's pre-built 3D), `items` (whether items are drawn now).
+
+Items (format 0.6: desks, photocopiers, access points, sofas, TVs, …) are drawn
+in their type's colour as simple shapes of their kind, on their floor, at their
+footprint and heading. They cost nothing until shown: their geometry is made (or
+taken from the pre-built file) the first time a floor shows them, detailed when
+one floor is shown, a box each when more are, in two meshes a floor (below the
+cut, and above it: on a wall, under the ceiling). A click on one chooses it, as on
+a room (`select` with the item's feature); the walker bumps into those on the floor.
 
 A floor is built from the package's features by
 [src/world/build.js](src/world/build.js), merged into a few dozen meshes (one for

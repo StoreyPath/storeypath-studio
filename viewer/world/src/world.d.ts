@@ -24,6 +24,67 @@ export interface Feature<P = Record<string, unknown>> {
 	properties: P;
 }
 
+/** A piece of furniture or equipment (items.geojson, format 0.6). Its ID is the
+ * project's and its own number (PROJECT-I000142), not its place. */
+export interface ItemProperties {
+	kind: 'item';
+	/** A code of the catalogue (DESK-MANAGER, COPIER, …). */
+	type: string;
+	category: 'furniture' | 'equipment' | 'appliance';
+	/** Its type's English name. */
+	name: string;
+	floor_id: string;
+	building_id: string;
+	/** Where its middle stands: null when in none. */
+	space_id: string | null;
+	zone_id: string | null;
+	display_point: LonLat;
+	/** The way its front faces (where a desk's user sits), degrees clockwise from north. */
+	heading: number;
+	width_m: number;
+	depth_m: number;
+	height_m: number;
+	mount: 'floor' | 'wall' | 'ceiling';
+	/** Its bottom above the floor; null for one on the ceiling (just under it). */
+	elevation_m: number | null;
+	/** Its details entered in StoreyPath, by the catalogue's field keys. */
+	values: Record<string, string | number>;
+}
+
+/** A detail the items of a type carry, and who enters it: StoreyPath, or the system that manages the asset. */
+export interface ItemField {
+	key: string;
+	name_en: string;
+	name_ar: string;
+	kind: 'text' | 'number' | 'choice' | 'color';
+	choices: string[];
+	owner: 'storeypath' | 'system';
+}
+
+/** A type of item (catalogue.json). */
+export interface ItemType {
+	code: string;
+	name_en: string;
+	name_ar: string;
+	category: 'furniture' | 'equipment' | 'appliance';
+	/** Metres: along its front, front to back, and tall. */
+	width: number;
+	depth: number;
+	height: number;
+	mount: 'floor' | 'wall' | 'ceiling';
+	elevation: number | null;
+	/** #rrggbb */
+	color: string;
+	fields: ItemField[];
+	retired: boolean;
+}
+
+export interface Catalogue {
+	format: 'storeypath-catalogue';
+	format_version: number;
+	types: ItemType[];
+}
+
 export interface Manifest {
 	format: 'storeypath-package';
 	format_version: string;
@@ -38,7 +99,16 @@ export interface Manifest {
 export declare class StoreyPathPackage {
 	constructor(
 		manifest: Manifest,
-		collections: { location: Feature[]; buildings: Feature[]; floors: Feature[]; spaces: Feature[]; openings: Feature[]; zones?: Feature[] },
+		collections: {
+			location: Feature[];
+			buildings: Feature[];
+			floors: Feature[];
+			spaces: Feature[];
+			openings: Feature[];
+			zones?: Feature[];
+			items?: Feature<ItemProperties>[];
+			catalogue?: Catalogue | null;
+		},
 		/** The archive (a JSZip), for the files read only when needed: the pre-built 3D. */
 		zip?: unknown
 	);
@@ -53,6 +123,10 @@ export declare class StoreyPathPackage {
 	readonly openings: Feature[];
 	/** What is used: the zones of divided spaces and the other spaces. */
 	readonly units: Feature[];
+	/** Furniture and equipment (format 0.6; none in older packages). */
+	readonly items: Feature<ItemProperties>[];
+	/** The types of items, or null when the package has none. */
+	readonly catalogue: Catalogue | null;
 	readonly project: { id: string; name: string };
 	/** The feature with this ID, or null. */
 	get(id: string): Feature | null;
@@ -65,6 +139,10 @@ export declare class StoreyPathPackage {
 	spacesOn(floorId: string): Feature[];
 	zonesOf(spaceId: string): Feature[];
 	unitsOn(floorId: string): Feature[];
+	/** The items on a floor: an item's ID says nothing of where it is, its properties do. */
+	itemsOn(floorId: string): Feature<ItemProperties>[];
+	/** An item type of the catalogue by its code (an item's `type`), or null. */
+	itemType(code: string): ItemType | null;
 	groundFloor(buildingId: string): Feature | null;
 	hierarchy(id: string): {
 		project: { id: string; name: string };
@@ -101,6 +179,8 @@ export interface WorldOptions {
 	labels?: boolean;
 	/** Spaces hidden or ignored in review (false). */
 	showHidden?: boolean;
+	/** Furniture and equipment: shown, not drawn at all, or (null, the default) shown when one floor is. */
+	items?: boolean | null;
 	/** Fog colour (0xeef1f2). */
 	fog?: number;
 }
@@ -112,7 +192,7 @@ export interface WorldEvents {
 	buildingchange: { id: string };
 	floorchange: { id: string | null };
 	modechange: { mode: WorldMode };
-	/** A space or zone chosen (by a click or `select`), or none. */
+	/** A space, zone or item chosen (by a click or `select`), or none. An item's feature has `kind: 'item'` (ItemProperties). */
 	select: { id: string | null; feature: Feature | null };
 	/** The walker went into another space. */
 	roomchange: { id: string | null; type: string | null; name: string | null; number: string | null; stairs: boolean };
@@ -123,6 +203,8 @@ export interface WorldEvents {
 export interface WorldPlan {
 	walls: [number, number][][];
 	spaces: { id: string; type: string; name: string | null; rings: [number, number][][] }[];
+	/** The floor's furniture and equipment: each footprint's corners, and its type's colour. */
+	items: { id: string; type: string; mount: 'floor' | 'wall' | 'ceiling'; color: string; ring: [number, number][] }[];
 	/** What the walker bumps into: walls, windows, open door leaves, [x1, z1, x2, z2] each. */
 	obstacles: [number, number, number, number][];
 	bounds: unknown;
@@ -164,7 +246,12 @@ export declare class StoreyPathWorld extends EventTarget {
 	setLabels(on: boolean): void;
 	setShowHidden(on: boolean): void;
 	setExplode(meters: number): void;
-	/** Highlight a space or zone (null: none); `go` (default true) takes the view to it. */
+	/** Furniture and equipment: shown (true), not drawn at all (false), or (null, the default) shown when one
+	 * floor is shown: detailed on one floor, a box each on more. */
+	setItems(on: boolean | null): void;
+	/** Whether furniture and equipment are drawn now. */
+	readonly items: boolean;
+	/** Highlight a space, zone or item (null: none); `go` (default true) takes the view to it. */
 	select(id: string | null, options?: { go?: boolean }): void;
 	/** Up (+1) or down (−1) a floor from where the walker stands. */
 	changeFloor(step: number): boolean;

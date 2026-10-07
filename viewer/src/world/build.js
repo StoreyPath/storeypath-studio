@@ -15,6 +15,10 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
+/** This builder's version: a floor pre-built by another (before 2, without its
+ * items) is built again. */
+export const BUILDER = 2;
+
 /** What shapes the geometry; a world built with others builds its floors itself. */
 export const GEOMETRY = {
   slab: 0.22, // m, floor slab thickness
@@ -32,6 +36,8 @@ const PANE = 1.0; // m: a mullion about this often across a window
 const DOUBLE_DOOR = 1.3; // m: a door wider than this, drawn without its swings, has two leaves
 const OUTDOOR = new Set(["terrace", "balcony"]); // open to the sky, behind parapets
 const PARAPET = 1.1; // m, when the package gives no parapet height
+const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe
+const WALL_ITEM = 1.2; // m, the bottom of an item on a wall, when the package does not say
 
 /** The pieces of a floor: the material each is drawn with (a name in materials.js;
  * "floor" and "volume" by the space type) and when it shows: "full", not in the
@@ -56,6 +62,13 @@ export const PIECES = {
   ceiling: { material: "ceiling", view: "walk" },
   floor: { material: "floor" }, // floor:<type>, each space type's finish
   volume: { material: "volume", view: "xray" }, // volume:<type>
+  // the furniture and equipment (buildItems), coloured by vertex, kept apart from the
+  // rest: those standing below the cut, and those above it (on a wall, under the
+  // ceiling); each detailed, or light (a box each) for a whole building
+  items: { material: "item" },
+  "items:high": { material: "item", view: "full" },
+  "items:light": { material: "item", form: "light" },
+  "items:light:high": { material: "item", view: "full", form: "light" },
 };
 const TEXTURED = new Set(["floor", "wall"]); // the materials with a texture: the rest need no uv
 // the pieces cut low (cutPieces), from the full ones
@@ -249,6 +262,26 @@ export function planFloor(pkg, floor, origin, options = {}) {
   // the parapets: the low walls around terraces, balconies and the roof
   plan.parapets = polygons(props.parapets);
   plan.wallRings = plan.walls.flat(1).concat(plan.parapets.flat(1));
+
+  // the furniture and equipment (format 0.6): where each stands, the way its front
+  // faces (x east, n north), its size, how high its bottom is and its colour; and
+  // the edges of those on the floor, which the walker bumps into
+  plan.items = [];
+  plan.itemObstacles = [];
+  for (const item of pkg.itemsOn?.(floor.id) ?? []) {
+    const p = item.properties;
+    if (!p.display_point) continue;
+    const [x, n] = local(p.display_point);
+    const h = ((p.heading ?? 0) * Math.PI) / 180;
+    const it = { id: item.id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
+      width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
+      color: pkg.itemType?.(p.type)?.color ?? ITEM_COLOR };
+    it.y = it.mount === "ceiling" ? wallHeight - it.height - 0.01 : p.elevation_m ?? (it.mount === "wall" ? WALL_ITEM : 0);
+    plan.items.push(it);
+    if (it.mount !== "floor") continue;
+    const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => itemPoint(it, (a * it.width) / 2, (b * it.depth) / 2));
+    c.forEach((q, i) => plan.itemObstacles.push([q[0], q[1], c[(i + 1) % 4][0], c[(i + 1) % 4][1]]));
+  }
 
   const b = plan.bounds;
   for (const rings of [...plan.outline, ...plan.walls, ...plan.units.flatMap((u) => u.rings)]) {
@@ -486,6 +519,166 @@ function upright(geometry) {
     if (n.getX(i) === 0 && n.getY(i) === 0 && n.getZ(i) === 0) n.setY(i, 1);
   }
   return geometry;
+}
+
+// ---- furniture and equipment ---------------------------------------------------
+
+/** A point of an item, ``across`` its width and ``ahead`` towards its front (metres
+ * from its middle), in local [x, z]. */
+export function itemPoint(it, across, ahead) {
+  return [it.x - across * it.fn + ahead * it.fx, -(it.n + across * it.fx + ahead * it.fn)];
+}
+
+/** Boxes and discs written straight into arrays, each with its corners shared by its
+ * faces: no normals (the material is flat-shaded), no texture, a colour and an item
+ * index a vertex; so a floor of thousands of desks is built in milliseconds and kept
+ * small in a pre-built file. */
+class Shapes {
+  constructor() {
+    this.position = [];
+    this.color = [];
+    this.item = [];
+    this.index = [];
+  }
+
+  /** The vertex of an item at (across, up, ahead) in its own frame (ahead: towards
+   * its front), in its colour. */
+  #vertex(it, k, across, up, ahead, rgb) {
+    const [x, z] = itemPoint(it, across, ahead);
+    this.position.push(x, it.base + up, z);
+    this.color.push(rgb[0], rgb[1], rgb[2]);
+    this.item.push(k);
+  }
+
+  /** A box across x0–x1, up y0–y1 and ahead z0–z1 of item ``k`` (``it``). */
+  box(it, k, [x0, x1], [y0, y1], [z0, z1], rgb) {
+    const at = this.position.length / 3;
+    for (let i = 0; i < 8; i++) this.#vertex(it, k, i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0, rgb);
+    for (const v of BOX_FACES) this.index.push(at + v);
+  }
+
+  /** A disc of radius ``r`` from y0 to y1, its middle at the item's. */
+  disc(it, k, r, [y0, y1], rgb, sides = 16) {
+    const at = this.position.length / 3;
+    for (let i = 0; i < sides; i++) {
+      const a = (i / sides) * Math.PI * 2;
+      this.#vertex(it, k, r * Math.cos(a), y0, r * Math.sin(a), rgb);
+      this.#vertex(it, k, r * Math.cos(a), y1, r * Math.sin(a), rgb);
+    }
+    for (let i = 0; i < sides; i++) {
+      const j = (i + 1) % sides;
+      this.index.push(at + 2 * i, at + 2 * i + 1, at + 2 * j + 1, at + 2 * i, at + 2 * j + 1, at + 2 * j);
+      if (i > 1) this.index.push(at, at + 2 * (i - 1), at + 2 * i, at + 1, at + 2 * i + 1, at + 2 * (i - 1) + 1);
+    }
+  }
+
+  geometry(Index) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(this.position, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(Uint8Array.from(this.color), 3, true));
+    g.setAttribute("_item", new THREE.BufferAttribute(Index.from(this.item), 1));
+    g.setIndex(this.position.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(this.index, 1)
+      : new THREE.Uint16BufferAttribute(this.index, 1));
+    return g;
+  }
+}
+// a box's corners: bit 1 across, bit 2 up, bit 4 ahead; its faces outwards
+const BOX_FACES = [1, 3, 7, 1, 7, 5, 0, 4, 6, 0, 6, 2, 2, 6, 7, 2, 7, 3, 0, 1, 5, 0, 5, 4, 4, 5, 7, 4, 7, 6, 0, 2, 3, 0, 3, 1];
+
+/** A colour as the vertex colours keep it: 0–255 in linear light. */
+function rgb(color, { dark = 0, light = 0 } = {}) {
+  const c = new THREE.Color(color);
+  if (dark) c.multiplyScalar(1 - dark);
+  if (light) c.lerp(new THREE.Color(1, 1, 1), light);
+  return [c.r, c.g, c.b].map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
+}
+const CHAIR = "#3d4048";
+const SCREEN = "#0e1117";
+
+/** How each kind of item is drawn, by its type code's first part (DESK-MANAGER is a
+ * desk); others by how they are mounted. Each gets the item (w, d, h: its size) and
+ * draws it in its own frame, its front ahead. */
+const DRAW = {
+  // a top on two end panels with a modesty panel at the back, and a chair
+  DESK(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const top = Math.min(0.035, h / 4), under = rgb(c, { dark: 0.55 }), chair = rgb(CHAIR);
+    s.box(it, k, [-w / 2, w / 2], [h - top, h], [-d / 2, d / 2], rgb(c));
+    for (const side of [-1, 1]) {
+      s.box(it, k, side < 0 ? [-w / 2 + 0.02, -w / 2 + 0.06] : [w / 2 - 0.06, w / 2 - 0.02], [0, h - top], [-d / 2 + 0.04, d / 2 - 0.04], under);
+    }
+    s.box(it, k, [-w / 2 + 0.06, w / 2 - 0.06], [Math.max(0, h - 0.45), h - top], [-d / 2 + 0.04, -d / 2 + 0.06], under);
+    s.box(it, k, [-0.24, 0.24], [0.42, 0.48], [d / 2 + 0.14, d / 2 + 0.6], chair);
+    s.box(it, k, [-0.22, 0.22], [0.48, 0.95], [d / 2 + 0.56, d / 2 + 0.62], chair);
+    s.box(it, k, [-0.03, 0.03], [0, 0.42], [d / 2 + 0.34, d / 2 + 0.4], chair);
+  },
+  // a seat between two arms, before a back
+  SOFA(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const arm = Math.min(0.2, w / 6), back = Math.min(0.22, d / 3), seat = Math.min(0.42, h * 0.55);
+    s.box(it, k, [-w / 2 + arm, w / 2 - arm], [0, seat], [-d / 2 + back, d / 2], rgb(c, { light: 0.12 }));
+    s.box(it, k, [-w / 2, w / 2], [0, h], [-d / 2, -d / 2 + back], rgb(c));
+    for (const x of [-w / 2, w / 2 - arm]) s.box(it, k, [x, x + arm], [0, Math.min(h, seat + 0.2)], [-d / 2 + back, d / 2], rgb(c));
+  },
+  // a thin dark panel, its screen ahead
+  TV(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const t = Math.min(d, 0.05), b = Math.min(0.03, w / 10, h / 10);
+    s.box(it, k, [-w / 2, w / 2], [0, h], [-d / 2, -d / 2 + t], rgb(c));
+    s.box(it, k, [-w / 2 + b, w / 2 - b], [b, h - b], [-d / 2 + t, -d / 2 + t + 0.004], rgb(SCREEN));
+  },
+  // a box with a lighter lid
+  COPIER(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const lid = Math.min(0.08, h / 6);
+    s.box(it, k, [-w / 2, w / 2], [0, h - lid], [-d / 2, d / 2], rgb(c));
+    s.box(it, k, [-w / 2 + 0.02, w / 2 - 0.02], [h - lid, h], [-d / 2 + 0.02, d / 2 - 0.02], rgb(c, { light: 0.6 }));
+  },
+  // a small disc, under the ceiling
+  ACCESS(s, it, k, c) {
+    s.disc(it, k, Math.min(it.width, it.depth) / 2, [0, it.height], rgb(c));
+  },
+};
+DRAW.SCREEN = DRAW.TV;
+DRAW.PRINTER = DRAW.COPIER;
+
+/** Anything else: a box; on the ceiling, a disc when it is round enough. */
+function drawPlain(s, it, k, c) {
+  if (it.mount === "ceiling" && Math.abs(it.width - it.depth) < 0.1 * Math.max(it.width, it.depth)) return DRAW.ACCESS(s, it, k, c);
+  s.box(it, k, [-it.width / 2, it.width / 2], [0, it.height], [-it.depth / 2, it.depth / 2], rgb(c));
+}
+
+/** A floor's furniture and equipment as pieces, as buildPieces gives its other
+ * ones: ``form`` "detailed" (each drawn as DRAW says), or "light", a box each, for
+ * a whole building at once. Two pieces at most: what stands below the cut
+ * (``items``), and what is above it, on a wall or under the ceiling (``items:high``);
+ * ``_item`` indexes ``plan.items``. */
+export function buildItems(plan, form = "detailed", options = {}) {
+  const o = { ...GEOMETRY, ...options };
+  const low = new Shapes(), high = new Shapes();
+  plan.items.forEach((it, k) => {
+    const s = it.y + it.height <= o.cutHeight ? low : high;
+    const placed = { ...it, base: plan.elevation + it.y };
+    if (form === "light") drawPlain(s, { ...placed, mount: "floor" }, k, it.color);
+    else (DRAW[it.type.split("-")[0]] ?? drawPlain)(s, placed, k, it.color);
+  });
+  const Index = plan.items.length > 65535 ? Uint32Array : Uint16Array;
+  const pieces = [];
+  for (const [shapes, above] of [[low, false], [high, true]]) {
+    if (!shapes.index.length) continue;
+    const name = ["items", form === "light" && "light", above && "high"].filter(Boolean).join(":");
+    pieces.push({ name, ...PIECES[name], geometry: shapes.geometry(Index) });
+  }
+  return pieces;
+}
+
+/** A box round an item (``it``, of plan.items), ``pad`` metres wider each way: its
+ * highlight. */
+export function itemBox(plan, it, pad = 0.05) {
+  const g = new THREE.BoxGeometry(it.width + 2 * pad, it.height + 2 * pad, it.depth + 2 * pad);
+  g.rotateY(Math.PI - Math.atan2(it.fx, it.fn));
+  g.translate(it.x, plan.elevation + it.y + it.height / 2, -it.n);
+  return g;
 }
 
 /** A floor built: its plan and its geometry. */

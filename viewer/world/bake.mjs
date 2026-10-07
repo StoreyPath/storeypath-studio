@@ -37,10 +37,10 @@ const { GLTFExporter } = await import("three/addons/exporters/GLTFExporter.js");
 const { mergeVertices } = await import("three/addons/utils/BufferGeometryUtils.js");
 const { loadPackage } = await import("../src/package.js");
 const { TYPE_COLORS } = await import("../src/theme.js");
-const { GEOMETRY, buildFloor, originOf } = await import("../src/world/build.js");
+const { BUILDER, GEOMETRY, buildFloor, buildItems, originOf } = await import("../src/world/build.js");
 
 // Colours near the world's, so the files look right in any glTF viewer; the world
-// draws each piece with its own materials, by name.
+// draws each piece with its own materials, by name. Items are coloured by vertex.
 const COLORS = { slab: 0xd8d4cc, wall: 0xf1ede6, wallPlain: 0xf1ede6, wallTop: 0xcfc9bf, wallCut: 0x3a3a3f,
   ceiling: 0xfbfaf7, glass: 0xbcd6e4, frame: 0x5b5f66, door: 0x9a7350, doorFrame: 0x6b4a32 };
 const SEE_THROUGH = { glass: 0.28, volume: 0.22 };
@@ -51,22 +51,25 @@ function material({ material: key, type }) {
     const see = SEE_THROUGH[key];
     materials.set(name, new THREE.MeshStandardMaterial({ name, roughness: 0.9,
       color: type ? TYPE_COLORS[type] || TYPE_COLORS.unspecified : COLORS[key] ?? 0xffffff,
-      ...(see ? { transparent: true, opacity: see } : {}) }));
+      ...(see ? { transparent: true, opacity: see } : {}), ...(key === "item" ? { vertexColors: true } : {}) }));
   }
   return materials.get(name);
 }
 
 /** A floor as binary glTF: one mesh a piece, named as build.js names it, with
- * what it is in its extras; the walker's obstacles as lines; and in the scene's
- * extras, what the world needs to use it (FORMAT.md, "Pre-built 3D"). */
+ * what it is in its extras (its items in both forms, apart from the rest); the
+ * walker's obstacles as lines; and in the scene's extras, what the world needs to
+ * use it (FORMAT.md, "Pre-built 3D"). */
 async function bakeFloor(pkg, floor, origin) {
   const { plan, pieces, rooms, obstacles } = buildFloor(pkg, floor, origin, GEOMETRY);
+  pieces.push(...buildItems(plan, "detailed", GEOMETRY), ...buildItems(plan, "light", GEOMETRY));
   const scene = new THREE.Scene();
   scene.name = floor.id;
   scene.userData.storeypath = {
     project_id: pkg.project.id, building_id: floor.properties.building_id, floor_id: floor.id,
-    export_sequence: pkg.manifest.export?.sequence ?? null,
+    export_sequence: pkg.manifest.export?.sequence ?? null, builder: BUILDER,
     origin, options: { ...GEOMETRY }, elevation: plan.elevation, wall_height: plan.wallHeight, rooms,
+    items: plan.items.map((i) => i.id),
   };
   for (const p of pieces) {
     // a vertex shared by its triangles, not repeated for each: a smaller file, and
@@ -74,7 +77,7 @@ async function bakeFloor(pkg, floor, origin) {
     const mesh = new THREE.Mesh(p.geometry.index ? p.geometry : mergeVertices(p.geometry, 1e-6), material(p));
     mesh.name = p.name;
     mesh.userData = { material: p.material, ...(p.view && { view: p.view }), ...(p.type && { type: p.type }),
-      ...(p.hidden && { hidden: true }) };
+      ...(p.hidden && { hidden: true }), ...(p.form && { form: p.form }) };
     scene.add(mesh);
   }
   const e = plan.elevation;
@@ -86,7 +89,7 @@ async function bakeFloor(pkg, floor, origin) {
   scene.add(walls);
   const glb = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false });
   scene.traverse((o) => o.geometry?.dispose());
-  return { glb, pieces: pieces.length, rooms: rooms.length };
+  return { glb, pieces: pieces.length, rooms: rooms.length, items: plan.items.length };
 }
 
 const [source, out] = process.argv.slice(2);
@@ -100,9 +103,9 @@ for (const building of pkg.buildings) {
   const origin = originOf(pkg, building.id);
   for (const floor of pkg.floorsOf(building.id)) {
     const t = performance.now();
-    const { glb, pieces, rooms } = await bakeFloor(pkg, floor, origin);
+    const { glb, pieces, rooms, items } = await bakeFloor(pkg, floor, origin);
     writeFileSync(join(out, `${floor.id}.glb`), new Uint8Array(glb));
-    console.log(`${floor.id}.glb: ${pieces} pieces, ${rooms} rooms, ${Math.round(glb.byteLength / 1024)} KiB, `
+    console.log(`${floor.id}.glb: ${pieces} pieces, ${rooms} rooms, ${items} items, ${Math.round(glb.byteLength / 1024)} KiB, `
       + `${Math.round(performance.now() - t)} ms`);
   }
 }

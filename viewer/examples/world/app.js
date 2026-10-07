@@ -1,15 +1,31 @@
 // A walk-through page built on StoreyPathWorld: orbit the building as a
 // dollhouse, or walk through it in the first person. Open with ?pkg=<url>.
-// Other parameters: building=<id>, floor=<id>, mode=walk, xray=1, cutaway=1, hidden=1.
+// Other parameters: building=<id>, floor=<id>, mode=walk, xray=1, cutaway=1, hidden=1,
+// items=1 or 0 (furniture and equipment; without it, shown when one floor is). The
+// toggles are kept in the address as they change, so a reload shows the same.
 
 import { StoreyPathWorld } from "../../src/world/world.js";
 import { TYPE_COLORS, typeLabel } from "../../src/theme.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const world = new StoreyPathWorld("#world", { showHidden: params.get("hidden") === "1" });
+const flag = (name) => (params.get(name) === "1" ? true : params.get(name) === "0" ? false : null);
+const world = new StoreyPathWorld("#world", { showHidden: params.get("hidden") === "1", items: flag("items") });
 window.storeypathWorld = world; // for the console
 let showMap = true;
+
+/** A toggle kept in the address (null: taken out of it). */
+function remember(name, value) {
+  const url = new URL(location.href);
+  if (value === null) url.searchParams.delete(name);
+  else url.searchParams.set(name, value ? "1" : "0");
+  history.replaceState(null, "", url);
+}
+
+/** The Items box says whether items are drawn now: as asked, or as the view has them. */
+function renderItemsBox() {
+  $("items").checked = world.items;
+}
 
 async function open(source) {
   $("loading").hidden = false;
@@ -50,16 +66,19 @@ world.addEventListener("load", async ({ detail: { package: pkg } }) => {
   if (params.get("xray") === "1") $("xray").click();
   if (params.get("cutaway") === "1") $("cutaway").click();
   if (params.get("mode") === "walk") world.setMode("walk");
+  renderItemsBox();
 });
 
 world.addEventListener("buildingchange", () => {
   $("building").value = world.building;
   renderFloors();
+  renderItemsBox();
 });
 
 world.addEventListener("floorchange", () => {
   const current = world.mode === "walk" ? world.walkFloor : world.floor;
   for (const b of $("floors").children) b.classList.toggle("active", (b.dataset.id || null) === current);
+  renderItemsBox();
 });
 
 world.addEventListener("modechange", ({ detail: { mode } }) => {
@@ -72,6 +91,7 @@ world.addEventListener("modechange", ({ detail: { mode } }) => {
   $("enter").hidden = !walking;
   $("crosshair").hidden = true;
   renderFloors();
+  renderItemsBox();
 });
 
 world.addEventListener("walklock", ({ detail: { locked } }) => {
@@ -90,7 +110,8 @@ world.addEventListener("select", ({ detail: { id, feature } }) => {
     $("details").hidden = true;
     return;
   }
-  renderDetails(feature);
+  if (feature.properties.kind === "item") renderItem(feature);
+  else renderDetails(feature);
 });
 
 // ---- panels ---------------------------------------------------------------------------
@@ -138,6 +159,46 @@ function renderDetails(feature) {
     <p style="margin:12px 0 0"><button type="button" id="walk-here" class="primary">Walk here</button></p>`;
   $("details").hidden = false;
   for (const b of $("details").querySelectorAll(".doors button[data-id]")) b.onclick = () => world.select(b.dataset.id);
+  $("walk-here").onclick = () => {
+    world.setMode("walk");
+    world.select(feature.id);
+  };
+}
+
+/** An item chosen: its type (from the package's catalogue), name, where it stands,
+ * and its details: those entered in StoreyPath, and those the system that manages
+ * the asset keeps (never in a package). */
+function renderItem(feature) {
+  const p = feature.properties;
+  const pkg = world.package;
+  const type = pkg.itemType(p.type);
+  const floor = pkg.get(p.floor_id);
+  const room = pkg.get(p.zone_id) ?? pkg.get(p.space_id);
+  const where = room ? room.properties.name || room.properties.number || typeLabel(room.properties.type) : "";
+  const value = (f) => {
+    const v = p.values?.[f.key];
+    if (v === undefined || v === null || v === "") return '<span class="muted">—</span>';
+    return f.kind === "color" ? `<span class="swatch" style="background:${esc(v)}"></span>${esc(v)}` : esc(v);
+  };
+  const fields = type?.fields ?? [];
+  const ours = fields.filter((f) => f.owner !== "system");
+  const theirs = fields.filter((f) => f.owner === "system");
+  $("details").innerHTML = `
+    <h3>${esc(type?.name_en ?? p.name)}</h3>
+    ${type?.name_ar ? `<div class="muted" dir="rtl" lang="ar">${esc(type.name_ar)}</div>` : ""}
+    <div class="type"><span class="swatch" style="background:${esc(type?.color ?? "#8a8a8a")}"></span>${esc(p.category)} · <code>${esc(p.type)}</code></div>
+    <dl>
+      <dt>ID</dt><dd><code>${esc(feature.id)}</code></dd>
+      <dt>Floor</dt><dd>${esc(floor?.properties.name ?? p.floor_id)}</dd>
+      ${where ? `<dt>In</dt><dd>${esc(where)}</dd>` : ""}
+      <dt>Size</dt><dd>${[p.width_m, p.depth_m, p.height_m].map((v) => Number(v).toFixed(2)).join(" × ")} m</dd>
+      <dt>Mounted</dt><dd>${esc(p.mount)}${p.elevation_m ? `, ${Number(p.elevation_m).toFixed(2)} m up` : ""}</dd>
+      <dt>Faces</dt><dd>${Math.round(p.heading)}° from north</dd>
+      ${ours.map((f) => `<dt>${esc(f.name_en)}</dt><dd>${value(f)}</dd>`).join("")}
+    </dl>
+    ${theirs.length ? `<p class="muted" style="margin:8px 0 0">Kept by the system that manages it: ${theirs.map((f) => esc(f.name_en)).join(", ")}</p>` : ""}
+    <p style="margin:12px 0 0"><button type="button" id="walk-here" class="primary">Walk here</button></p>`;
+  $("details").hidden = false;
   $("walk-here").onclick = () => {
     world.setMode("walk");
     world.select(feature.id);
@@ -193,6 +254,13 @@ function drawMinimap() {
     ctx.fillStyle = (TYPE_COLORS[s.type] || TYPE_COLORS.unspecified) + (s.id === world.room?.id ? "ff" : "88");
     ctx.fill("evenodd");
   }
+  if (world.items) {
+    for (const it of plan.items) {
+      path([it.ring]);
+      ctx.fillStyle = it.color;
+      ctx.fill();
+    }
+  }
   path(plan.walls);
   ctx.fillStyle = "#2b2d33";
   ctx.fill("evenodd");
@@ -224,12 +292,23 @@ $("enter-button").onclick = () => world.startWalking();
 $("enter").onclick = (e) => {
   if (e.target === $("enter")) world.startWalking();
 };
-$("xray").onchange = (e) => world.setXray(e.target.checked);
-$("cutaway").onchange = (e) => world.setCutaway(e.target.checked);
+$("xray").onchange = (e) => {
+  world.setXray(e.target.checked);
+  remember("xray", e.target.checked || null);
+};
+$("cutaway").onchange = (e) => {
+  world.setCutaway(e.target.checked);
+  remember("cutaway", e.target.checked || null);
+};
 $("labels").onchange = (e) => world.setLabels(e.target.checked);
+$("items").onchange = (e) => {
+  world.setItems(e.target.checked);
+  remember("items", e.target.checked);
+};
 $("show-hidden").checked = params.get("hidden") === "1";
 $("show-hidden").onchange = (e) => {
   world.setShowHidden(e.target.checked);
+  remember("hidden", e.target.checked || null);
   planFloor = null;
 };
 $("explode").oninput = (e) => world.setExplode(e.target.value);
@@ -243,6 +322,7 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "KeyF" && !walking) world.setMode("walk");
   else if (e.code === "KeyO" && walking) world.setMode("dollhouse");
   else if (e.code === "KeyX") $("xray").click();
+  else if (e.code === "KeyI") $("items").click();
   else if (e.code === "KeyC" && !walking) $("cutaway").click();
   else if (e.code === "KeyM" && walking) {
     showMap = !showMap;

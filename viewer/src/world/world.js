@@ -11,6 +11,12 @@
 // textures or models are downloaded. A floor's geometry is built by build.js, here,
 // or comes pre-built in the package (format 0.5: world/<floor-id>.glb, baked by
 // the same build.js in Node), which is quicker to show on a slow machine.
+//
+// Furniture and equipment (format 0.6: desks, photocopiers, access points, …) are
+// drawn only when asked for, or when one floor is shown: a building of thousands of
+// desks costs nothing until then. Their geometry is made (or taken from the
+// pre-built file) the first time a floor shows them: detailed when one floor is
+// shown, a box each when more are.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -19,7 +25,10 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 import { loadPackage } from "../package.js";
 import { TYPE_COLORS } from "../theme.js";
-import { GEOMETRY, buildPieces, cutPieces, flat, inside, originOf, planFloor, toLocal as localOf } from "./build.js";
+import {
+  BUILDER, GEOMETRY, buildItems, buildPieces, cutPieces, flat, inside, itemBox, itemPoint, originOf, planFloor,
+  toLocal as localOf,
+} from "./build.js";
 import { Materials } from "./materials.js";
 import { Obstacles, Walker } from "./walk.js";
 
@@ -28,6 +37,7 @@ const DEFAULTS = {
   explode: 0, // m between floors in the dollhouse view
   labels: true,
   showHidden: false,
+  items: null, // furniture and equipment: true, false, or null: shown when one floor is
   fog: 0xeef1f2,
 };
 const LABEL_STYLE = {
@@ -37,7 +47,7 @@ const LABEL_STYLE = {
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
 // what casts and takes shadows, by material; the order drawn in, after the rest
-const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door"]);
+const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door", "item"]);
 const TAKES = new Set([...CASTS, "floor", "glass"]);
 const ORDER = { volume: 2, glass: 4 };
 
@@ -259,16 +269,30 @@ export class StoreyPathWorld extends EventTarget {
     this.#applyVisibility();
   }
 
-  /** Select a space (highlight it); in the walk view, go there. */
+  /** Furniture and equipment: shown (true), not drawn at all (false), or (null, the
+   * default) shown when one floor is: on the floor shown on its own, on the walker's
+   * floor, in a building of one floor. */
+  setItems(on) {
+    this.#o.items = on === null || on === undefined ? null : Boolean(on);
+    this.#applyVisibility();
+  }
+
+  /** Whether furniture and equipment are drawn now. */
+  get items() {
+    return this.#o.items ?? this.#shownFloors() <= 1;
+  }
+
+  /** Select a space, a zone or an item (highlight it); in the walk view, go there. */
   select(id, { go = true } = {}) {
-    const found = id ? this.#findSpace(id) : null;
+    const found = id ? this.#findSpace(id) ?? this.#findItem(id) : null;
     this.#highlight(found);
     this.#selected = found ? id : null;
     if (found && go) {
-      if (this.#mode === "walk") this.#walkTo(found.floor.id, found.space.centre.x, found.space.centre.z);
+      const { x, z } = found.space?.centre ?? found.at;
+      if (this.#mode === "walk") this.#walkTo(found.floor.id, x, z);
       else {
         if (this.#floor && this.#floor !== found.floor.id) this.setFloor(found.floor.id);
-        this.#flyTo(found.space.centre, found.floor.elevation + this.#offset(found.floor), found.space.size);
+        this.#flyTo({ x, z }, found.floor.elevation + this.#offset(found.floor), found.space?.size ?? 4);
       }
     }
     this.#emit("select", { id: this.#selected, feature: found ? this.#pkg.get(id) : null });
@@ -307,7 +331,8 @@ export class StoreyPathWorld extends EventTarget {
   }
 
   /** A floor's plan in local meters (x east, z south), for a minimap: its walls,
-   * spaces, and what the walker bumps into ([x1, z1, x2, z2] each). */
+   * spaces, items (their footprints) and what the walker bumps into besides them
+   * ([x1, z1, x2, z2] each). */
   plan(floorId) {
     const f = this.#floors.get(floorId);
     if (!f) return null;
@@ -316,6 +341,8 @@ export class StoreyPathWorld extends EventTarget {
       walls: f.wallRings.map(xz),
       spaces: f.spaces.filter((s) => this.#o.showHidden || !s.tucked)
         .map((s) => ({ id: s.id, type: s.type, name: s.name, rings: s.rings.flat(1).map(xz) })),
+      items: f.items.map((i) => ({ id: i.id, type: i.type, mount: i.mount, color: i.color,
+        ring: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => itemPoint(i, (a * i.width) / 2, (b * i.depth) / 2)) })),
       obstacles: f.obstacles.segments,
       bounds: f.bounds,
     };
@@ -380,15 +407,15 @@ export class StoreyPathWorld extends EventTarget {
   #bounds = new THREE.Box3();
 
   /** Read a building's pre-built floors (world/<floor-id>.glb), each kept when it
-   * was built from this package, in this frame, with these options; otherwise (or
-   * unreadable) the floor is built here. */
+   * was built from this package, by this builder, in this frame, with these options;
+   * otherwise (or unreadable) the floor is built here. */
   async #readBaked(pkg, buildingId) {
     const baked = this.#baked;
     const floors = pkg.floorsOf(buildingId).filter((f) => !baked.has(f.id) && pkg.hasWorld(f.id));
     const origin = originOf(pkg, buildingId);
     const o = this.#o;
     const matches = (x, floor) => x && x.floor_id === floor.id && x.project_id === pkg.project.id
-      && x.export_sequence === pkg.manifest.export?.sequence
+      && x.export_sequence === pkg.manifest.export?.sequence && x.builder === BUILDER
       && Object.keys(GEOMETRY).every((k) => x.options?.[k] === o[k])
       && ["lon", "lat", "kx", "ky"].every((k) => Math.abs(x.origin?.[k] - origin[k]) <= 1e-9 * Math.max(1, Math.abs(origin[k])));
     try {
@@ -409,9 +436,10 @@ export class StoreyPathWorld extends EventTarget {
     }
   }
 
-  /** A pre-built floor's pieces, room IDs and obstacles, as buildPieces gives them. */
+  /** A pre-built floor's pieces, room IDs and obstacles, as buildPieces gives them;
+   * its items' pieces by form, as buildItems gives them, and the IDs they index. */
   #bakedPieces(gltf) {
-    const pieces = [], obstacles = [];
+    const pieces = [], obstacles = [], items = { detailed: [], light: [] };
     gltf.scene.traverse((m) => {
       const d = m.userData;
       if (m.isLineSegments && d.name === "obstacles") {
@@ -419,12 +447,15 @@ export class StoreyPathWorld extends EventTarget {
         for (let i = 0; i + 1 < p.count; i += 2) obstacles.push([p.getX(i), p.getZ(i), p.getX(i + 1), p.getZ(i + 1)]);
         m.geometry.dispose();
       } else if (m.isMesh && d.material) {
-        pieces.push({ name: d.name ?? m.name, material: d.material, view: d.view, type: d.type, hidden: d.hidden,
-          geometry: m.geometry });
+        const piece = { name: d.name ?? m.name, material: d.material, view: d.view, type: d.type, hidden: d.hidden,
+          geometry: m.geometry };
+        if (d.material === "item") items[d.form === "light" ? "light" : "detailed"].push({ ...piece, form: d.form });
+        else pieces.push(piece);
       }
       if (m.material) m.material.dispose(); // the file's own: the world's are used
     });
-    return { pieces, rooms: gltf.scene.userData.storeypath.rooms, obstacles };
+    const x = gltf.scene.userData.storeypath;
+    return { pieces, rooms: x.rooms, obstacles, items: { ids: x.items ?? [], ...items } };
   }
 
   /** The material a piece is drawn with. */
@@ -439,23 +470,22 @@ export class StoreyPathWorld extends EventTarget {
     const o = this.#o;
     const plan = planFloor(this.#pkg, floor, this.#origin, o);
     const baked = this.#baked.get(floor.id);
-    const { pieces, rooms, obstacles } = baked ? this.#bakedPieces(baked) : buildPieces(plan, o);
+    const { pieces, rooms, obstacles, items } = baked ? this.#bakedPieces(baked) : buildPieces(plan, o);
     if (baked) this.#baked.delete(floor.id); // its geometry is the floor's now: read again when built again
     const e = plan.elevation;
     pieces.push(...cutPieces(pieces, e, o));
     const group = new THREE.Group();
     group.name = floor.id;
     const built = { id: floor.id, group, elevation: e, height: plan.height, ordinal: plan.ordinal, prebuilt: Boolean(baked),
-      spaces: [], pieces: [], rooms, wallRings: plan.wallRings, bounds: plan.bounds, bounds3: new THREE.Box3() };
+      spaces: [], pieces: [], rooms, wallRings: plan.wallRings, bounds: plan.bounds, bounds3: new THREE.Box3(),
+      // the furniture and equipment: as planned, the IDs their geometry indexes, the
+      // pre-built pieces of each form, and each form's meshes once shown
+      plan, items: plan.items, itemIds: items?.ids ?? plan.items.map((i) => i.id), bakedItems: items ?? null,
+      itemMeshes: {}, itemObstacles: null };
 
     // slab, walls, floors, doors and windows: one mesh a piece
     for (const p of pieces) {
-      const mesh = new THREE.Mesh(p.geometry, this.#material(p));
-      mesh.name = p.name;
-      mesh.userData = { material: p.material, view: p.view, hidden: Boolean(p.hidden) };
-      mesh.castShadow = CASTS.has(p.material);
-      mesh.receiveShadow = TAKES.has(p.material);
-      mesh.renderOrder = ORDER[p.material] ?? 0;
+      const mesh = this.#mesh(p);
       mesh.visible = p.view !== "walk" && p.view !== "xray";
       group.add(mesh);
       built.pieces.push(mesh);
@@ -478,7 +508,40 @@ export class StoreyPathWorld extends EventTarget {
     return built;
   }
 
-  /** Highlight a space (``found``: its floor and space), or none. */
+  /** A piece as a mesh, drawn with the world's material for it. */
+  #mesh(p) {
+    const mesh = new THREE.Mesh(p.geometry, this.#material(p));
+    mesh.name = p.name;
+    mesh.userData = { material: p.material, view: p.view, hidden: Boolean(p.hidden), form: p.form };
+    mesh.castShadow = CASTS.has(p.material);
+    mesh.receiveShadow = TAKES.has(p.material);
+    mesh.renderOrder = ORDER[p.material] ?? 0;
+    return mesh;
+  }
+
+  /** A floor's items in a form ("detailed" or "light"), made the first time they are
+   * shown: from the pre-built file, or here. */
+  #itemsIn(f, form) {
+    if (!f.itemMeshes[form]) {
+      const pieces = f.bakedItems?.[form]?.length ? f.bakedItems[form] : buildItems(f.plan, form, this.#o);
+      f.itemMeshes[form] = pieces.map((p) => {
+        const mesh = this.#mesh(p);
+        f.group.add(mesh);
+        return mesh;
+      });
+    }
+    return f.itemMeshes[form];
+  }
+
+  /** What the walker bumps into on a floor: its walls, and its items when they are shown. */
+  #obstaclesOf(f, items) {
+    if (!items || !f.items.length) return f.obstacles;
+    f.itemObstacles ??= new Obstacles([...f.obstacles.segments, ...f.plan.itemObstacles]);
+    return f.itemObstacles;
+  }
+
+  /** Highlight a space (``found``: its floor and space) or an item (its floor and
+   * item), or none. */
   #highlight(found) {
     if (this.#lit) {
       this.#lit.removeFromParent();
@@ -486,11 +549,12 @@ export class StoreyPathWorld extends EventTarget {
       this.#lit = null;
     }
     if (!found) return;
-    const lit = new THREE.Mesh(flat(found.space.rings, found.floor.elevation + 0.02), this.#materials.highlight);
+    const geometry = found.item ? itemBox(found.floor.plan, found.item) : flat(found.space.rings, found.floor.elevation + 0.02);
+    const lit = new THREE.Mesh(geometry, this.#materials.highlight);
     lit.name = "highlight";
     lit.renderOrder = 3;
-    lit.userData.space = found.space;
-    lit.visible = this.#o.showHidden || !found.space.tucked;
+    lit.userData.space = found.space ?? null;
+    lit.visible = this.#o.showHidden || !found.space?.tucked;
     found.floor.group.add(lit);
     this.#lit = lit;
   }
@@ -520,26 +584,40 @@ export class StoreyPathWorld extends EventTarget {
     return this.#mode === "dollhouse" && !this.#floor ? floor.ordinal * this.#o.explode : 0;
   }
 
+  /** How many floors are shown: walking, the walker's (the floors under it are seen
+   * only through openings); otherwise one, or all. */
+  #shownFloors() {
+    return this.#mode === "walk" || this.#floor ? 1 : this.#floors.size;
+  }
+
   #applyVisibility() {
     const walking = this.#mode === "walk";
     const wf = walking ? this.#floors.get(this.#walkFloor) : null;
+    // furniture and equipment: detailed on one floor, a box each on more
+    const one = this.#shownFloors() <= 1;
+    const items = this.#o.items ?? one;
+    const form = one ? "detailed" : "light";
     for (const f of this.#floors.values()) {
       // Walking: the floors up to yours, open to the sky. Dollhouse: one or all.
       const shown = walking ? Boolean(wf) && f.ordinal <= wf.ordinal : !this.#floor || f.id === this.#floor;
       f.group.visible = shown;
       f.group.position.y = this.#offset(f);
       const cut = !walking && this.#cutaway;
-      for (const m of f.pieces) {
-        const { view, hidden } = m.userData;
-        m.visible = (this.#o.showHidden || !hidden) && (view === "full" ? !cut : view === "cut" ? cut
-          : view === "walk" ? walking && f === wf : view === "xray" ? this.#xray : true);
-      }
+      const seen = ({ view, hidden }) => (this.#o.showHidden || !hidden) && (view === "full" ? !cut : view === "cut" ? cut
+        : view === "walk" ? walking && f === wf : view === "xray" ? this.#xray : true);
+      for (const m of f.pieces) m.visible = seen(m.userData);
       for (const s of f.spaces) {
         const visible = this.#o.showHidden || !s.tucked;
         s.label.visible = visible && this.#o.labels && !walking && (!this.#floor ? f === this.#topShown() : true);
       }
+      const furnished = items && shown && (!walking || f === wf) && f.items.length > 0;
+      if (furnished) this.#itemsIn(f, form);
+      for (const [name, meshes] of Object.entries(f.itemMeshes)) {
+        for (const m of meshes) m.visible = furnished && name === form && seen(m.userData);
+      }
+      if (f === wf) this.#walker.obstacles = this.#obstaclesOf(f, furnished);
     }
-    if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space.tucked;
+    if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space?.tucked;
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
     for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door]) {
@@ -627,6 +705,18 @@ export class StoreyPathWorld extends EventTarget {
     for (const floor of this.#floors.values()) {
       const space = floor.spaces.find((s) => s.id === id);
       if (space) return { floor, space };
+    }
+    return null;
+  }
+
+  /** An item: its floor, its plan, and where to go to it (before its front, for one
+   * on the floor). */
+  #findItem(id) {
+    for (const floor of this.#floors.values()) {
+      const item = floor.items.find((i) => i.id === id);
+      if (!item) continue;
+      const ahead = item.mount === "floor" ? item.depth / 2 + 0.9 : 0;
+      return { floor, item, at: { x: item.x + item.fx * ahead, z: -(item.n + item.fn * ahead) } };
     }
     return null;
   }
@@ -725,16 +815,20 @@ export class StoreyPathWorld extends EventTarget {
       if (this.#mode !== "dollhouse" || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
       const r = canvas.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.#camera);
-      // the floor finishes, merged: the room is the one the triangle hit is of
+      // the floor finishes and the items shown, merged: the room or item is the one
+      // the triangle hit is of
       const targets = [];
       for (const f of this.#floors.values()) {
         if (!f.group.visible) continue;
         for (const m of f.pieces) if (m.visible && m.userData.material === "floor") targets.push(m);
+        for (const meshes of Object.values(f.itemMeshes)) for (const m of meshes) if (m.visible) targets.push(m);
       }
       const hit = ray.intersectObjects(targets, false)[0];
       const floor = hit && [...this.#floors.values()].find((f) => f.group === hit.object.parent);
-      const room = hit?.object.geometry.getAttribute("_room")?.getX(hit.face.a);
-      this.select(floor?.rooms[room] ?? null, { go: false });
+      const g = hit?.object.geometry;
+      const id = !floor ? null : hit.object.userData.material === "item" ? floor.itemIds[g.getAttribute("_item").getX(hit.face.a)]
+        : floor.rooms[g.getAttribute("_room")?.getX(hit.face.a)];
+      this.select(id ?? null, { go: false });
     });
   }
 

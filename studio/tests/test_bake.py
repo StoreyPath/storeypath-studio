@@ -48,6 +48,27 @@ def test_a_package_exported_with_node_has_each_floor_pre_built(converted):
 
 
 @with_node
+def test_a_floors_items_are_pre_built_apart_from_the_rest(converted):
+    # Format 0.6: the items in pieces of their own (a viewer leaves them out until
+    # asked for), in both forms, with the IDs their vertices index; the builder's
+    # version, so that a viewer builds again a floor made before items.
+    ws, d, f_id, *_ = converted
+    desk = ws.add_item("DESK-MANAGER", f_id, 3.0, 3.0, rotation=90)
+    ap = ws.add_item("ACCESS-POINT", f_id, 4.0, 4.0)
+    export_package(ws, d / "out.storeypath", record=False)
+    with zipfile.ZipFile(d / "out.storeypath") as z:
+        gltf = _gltf(z.read(f"world/{f_id}.glb"))
+    x = gltf["scenes"][0]["extras"]["storeypath"]
+    assert x["builder"] == 2 and x["items"] == [desk.id, ap.id]
+    nodes = {n["name"]: n for n in gltf["nodes"]}
+    assert {"items", "items:high", "items:light", "items:light:high"} <= set(nodes)  # the desk below the cut, the AP above
+    assert nodes["items:light"]["extras"] == {"material": "item", "form": "light"}
+    assert nodes["items:high"]["extras"] == {"material": "item", "view": "full"}
+    attributes = gltf["meshes"][nodes["items"]["mesh"]]["primitives"][0]["attributes"]
+    assert {"POSITION", "COLOR_0", "_ITEM"} == set(attributes)
+
+
+@with_node
 def test_pre_building_adds_the_world_and_changes_nothing_else(converted, monkeypatch):
     ws, d, *_ = converted
     export_package(ws, d / "with.storeypath", record=False)
