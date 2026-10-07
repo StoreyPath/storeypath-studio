@@ -224,6 +224,32 @@ def test_a_floor_building_or_location_may_have_no_geometry(tmp_path):
     assert validate_package(out) == []
 
 
+# Files are found through the manifest
+
+
+def _moved(role, to):
+    return edited(lambda m: m["files"].update({role: to}))
+
+
+@pytest.mark.parametrize("role, name", [("spaces", "spaces.geojson"), ("objects", "objects.csv"),
+                                        ("changes", "changes.json"), ("floors", "floors.geojson")])
+def test_each_file_is_found_by_its_role_in_the_manifest(tmp_path, role, name):
+    with zipfile.ZipFile(HQ) as z:
+        text = z.read(name).decode()
+    moved = rewritten(tmp_path, **{"manifest.json": _moved(role, f"data/{name}"), name: None,
+                                   f"data/{name}": lambda _: text})
+    assert validate_package(moved) == []
+
+    # the manifest names one file, the package holds another of the usual name: that one is not read
+    stale = rewritten(tmp_path, **{"manifest.json": _moved(role, f"data/{name}")})
+    assert f"missing file data/{name}" in validate_package(stale)
+
+
+def test_a_file_the_manifest_does_not_name_is_found_by_its_usual_name(tmp_path):
+    out = rewritten(tmp_path, **{"manifest.json": edited(lambda m: m["files"].pop("zones"))})
+    assert validate_package(out) == []
+
+
 def test_the_models_refuse_numbers_that_are_not_finite():
     from pydantic import ValidationError
 

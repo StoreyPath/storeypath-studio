@@ -79,21 +79,26 @@ def validate_package(path: str | Path) -> list[str]:
         project = manifest.project.id
         one_building = version >= ONE_BUILDING_FROM
 
+        def file_of(role: str) -> str:
+            """A file of the package: by its role in the manifest's files, else by the name
+            the format gives it."""
+            return manifest.files.get(role) or FILES[role]
+
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}
         for role, feature in COLLECTIONS.items():  # each kind's geometry checked by its model
-            fc = load(FILES[role], FeatureCollection[feature])
+            fc = load(file_of(role), FeatureCollection[feature])
             if fc is None:
                 continue
             collections[role] = fc.features
             if manifest.counts.get(role) != len(fc.features):
-                errors.append(f"{FILES[role]}: manifest counts {manifest.counts.get(role)}, file has {len(fc.features)}")
+                errors.append(f"{file_of(role)}: manifest counts {manifest.counts.get(role)}, file has {len(fc.features)}")
             for f in fc.features:
                 kind = f.properties.kind
                 try:
                     pid = parse_id(f.id)
                 except ValueError as e:
-                    errors.append(f"{FILES[role]}: {e}")
+                    errors.append(f"{file_of(role)}: {e}")
                     continue
                 if f.id in ids:
                     errors.append(f"duplicate ID {f.id}")
@@ -113,7 +118,7 @@ def validate_package(path: str | Path) -> list[str]:
             if manifest.scope is None or len(manifest.scope.buildings) != 1:
                 errors.append("a package of this format holds one building: its manifest's scope names it")
             if len(collections.get("buildings", [])) != 1:
-                errors.append(f"{FILES['buildings']}: a package of this format holds one building, "
+                errors.append(f"{file_of('buildings')}: a package of this format holds one building, "
                               f"this one {len(collections.get('buildings', []))}")
         if manifest.scope is not None:  # exactly the buildings it lists
             held = {f.id for f in collections.get("buildings", [])}
@@ -182,32 +187,34 @@ def validate_package(path: str | Path) -> list[str]:
                             errors.append(f"{f.id}: its map position is {off:.2f} m from its position in its building")
 
         unknown: set[str] = set()
-        text = read(FILES["objects"])
+        name = file_of("objects")
+        text = read(name)
         if text is not None:
             rows = list(csv.DictReader(io.StringIO(text)))
-            unknown = {r["id"] for r in rows if r.get("kind") not in KNOWN_KINDS}  # a later format's
-            listed = {r["id"] for r in rows if r.get("kind") != "project"} - unknown
+            unknown = {r.get("id") for r in rows if r.get("kind") not in KNOWN_KINDS}  # a later format's
+            listed = {r.get("id") for r in rows if r.get("kind") != "project"} - unknown
             if listed != set(ids):
                 errors.append(
-                    f"{FILES['objects']}: rows do not match the features "
+                    f"{name}: rows do not match the features "
                     f"({len(listed - set(ids))} extra, {len(set(ids) - listed)} missing)"
                 )
 
-        changes = load(FILES["changes"], Changes)
+        name = file_of("changes")
+        changes = load(name, Changes)
         if changes is not None:
             for i in changes.added + changes.changed:
                 if i not in ids and i not in unknown:
-                    errors.append(f"{FILES['changes']}: {i} is listed as added/changed but not in the package")
+                    errors.append(f"{name}: {i} is listed as added/changed but not in the package")
             for i in changes.all_retired:
                 if i in ids:
-                    errors.append(f"{FILES['changes']}: retired ID {i} is still in the package")
+                    errors.append(f"{name}: retired ID {i} is still in the package")
             for m in changes.moved_away:
                 if not is_item_id(m.id) or m.id in ids:
-                    errors.append(f"{FILES['changes']}: {m.id} is listed as moved away but is not an item gone from here")
+                    errors.append(f"{name}: {m.id} is listed as moved away but is not an item gone from here")
                 if not m.building_id.startswith(project + "-") or m.building_id in ids:
-                    errors.append(f"{FILES['changes']}: {m.id} moved to {m.building_id}, not another building of the project")
+                    errors.append(f"{name}: {m.id} moved to {m.building_id}, not another building of the project")
             if changes.sequence != manifest.export.sequence:
-                errors.append(f"{FILES['changes']}: sequence does not match the manifest")
+                errors.append(f"{name}: sequence does not match the manifest")
     return errors
 
 
