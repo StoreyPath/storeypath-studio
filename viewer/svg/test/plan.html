@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan tests</title>
+<link rel="stylesheet" href="/dist/plan.css">
+<style>
+  html, body { margin: 0; background: #fff; }
+  #plan { position: absolute; left: 50px; top: 30px; width: 800px; height: 600px; }
+</style>
+</head>
+<body>
+<div id="plan"></div>
+<script type="module">
+  import * as sp from "/dist/index.js";
+  const frames = (n = 2) => new Promise((r) => {
+    const step = () => (--n <= 0 ? r() : requestAnimationFrame(step));
+    requestAnimationFrame(step);
+  });
+  // a fresh plan for each test: window.engine, its select events in window.chosen
+  window.fresh = async (options = {}, plan = null) => {
+    window.engine?.destroy();
+    const engine = (window.engine = new sp.FloorPlanEngine("#plan", { motion: false, ...options }));
+    window.chosen = [];
+    window.cameras = 0;
+    engine.addEventListener("select", (e) => window.chosen.push(e.detail.id));
+    engine.addEventListener("camerachange", () => window.cameras++);
+    engine.setFloor(plan ?? sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01"));
+    await frames();
+  };
+  // where a plan point is in the page (CSS pixels)
+  window.onPage = (p) => {
+    const r = window.engine.svg.getBoundingClientRect();
+    const [x, y] = window.engine.toScreen(p);
+    return [x + r.left, y + r.top];
+  };
+  window.frames = frames;
+  window.sp = sp;
+  window.ready = fetch("/fixture/campus.json").then((r) => r.json()).then((pkg) => (window.pkg = pkg));
+</script>
+</body>
+</html>

@@ -10,6 +10,9 @@ does no editing; packages are made with [StoreyPath Studio](../studio).
 - **`StoreyPathViewer`**, the map view: floors on a map, search, and spaces
   highlighted by their StoreyPath ID — for example where employees sit. Built on
   [MapLibre GL JS](https://maplibre.org/).
+- **`FloorPlanEngine`** in [`svg/`](svg/), one floor as a plain SVG plan: no WebGL
+  and no dependencies, for machines with no GPU (VDI desktops, kiosks). Strict
+  TypeScript, with its own build and tests.
 
 Plain ES modules, no build step. Neither downloads anything but the package.
 

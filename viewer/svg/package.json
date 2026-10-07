@@ -1,0 +1,39 @@
+{
+  "name": "@storeypath/viewer-svg",
+  "version": "0.1.0",
+  "description": "StoreyPath floor plans in plain SVG: no WebGL, no dependencies. For machines with no GPU (VDI desktops, kiosks).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./plan.css": "./dist/plan.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp src/plan.css dist/plan.css",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node test/run.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "keywords": [
+    "indoor-mapping",
+    "floor-plans",
+    "wayfinding",
+    "svg"
+  ],
+  "license": "Apache-2.0",
+  "author": "Khalefa <storeypath@alahmad.org>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StoreyPath/storeypath.git",
+    "directory": "viewer/svg"
+  }
+}

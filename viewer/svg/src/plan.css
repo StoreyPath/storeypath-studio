@@ -1,0 +1,80 @@
+/* StoreyPath floor plans in SVG. Theme with these variables on the container (or
+   any ancestor); everything else can be restyled through the classes. */
+
+.sp-plan {
+  --sp-background: transparent;
+  --sp-outline: #f4f3ef;
+  --sp-unit-stroke: rgba(0, 0, 0, 0.28);
+  --sp-zone-stroke: rgba(0, 0, 0, 0.35);
+  --sp-container: rgba(0, 0, 0, 0.45);
+  --sp-wall: #3d3d42;
+  --sp-parapet: #8c8c93;
+  --sp-door: #c9771a;
+  --sp-window: #2a9cb0;
+  --sp-way: #c9771a;
+  --sp-label: #1d1d1f;
+  --sp-label-halo: rgba(255, 255, 255, 0.9);
+  --sp-select: #ff8a00;
+  --sp-highlight: #0f9d74;
+  --sp-dim-opacity: 0.28;
+  --sp-pin: #d62d50;
+  --sp-pin-dot: #ffffff;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--sp-background);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  outline: none;
+}
+
+.sp-plan.sp-dragging { cursor: grabbing; }
+.sp-plan:focus-visible { box-shadow: inset 0 0 0 2px var(--sp-select); }
+
+.sp-outline path { fill: var(--sp-outline); stroke: none; }
+
+.sp-unit {
+  stroke: var(--sp-unit-stroke);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.sp-unit[tabindex]:focus-visible { outline: none; stroke: var(--sp-select); stroke-width: 2.5; }
+.sp-unit.sp-zone { stroke: var(--sp-zone-stroke); stroke-dasharray: 3 3; }
+.sp-unit.sp-dim { opacity: var(--sp-dim-opacity); }
+.sp-unit.sp-highlight { stroke: var(--sp-highlight); stroke-width: 2.5; }
+.sp-unit.sp-selected { stroke: var(--sp-select); stroke-width: 3; stroke-dasharray: none; }
+.sp-selection path { fill: none; stroke: var(--sp-select); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+
+.sp-containers path { fill: none; stroke: var(--sp-container); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+
+.sp-wall { fill: var(--sp-wall); stroke: none; pointer-events: none; }
+.sp-parapet { fill: var(--sp-parapet); stroke: none; pointer-events: none; }
+
+.sp-openings * { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
+.sp-door { stroke: var(--sp-door); stroke-width: 1.5; }
+.sp-swing { stroke-linejoin: round; }
+.sp-window { stroke: var(--sp-window); stroke-width: 2.5; }
+.sp-way { stroke: var(--sp-way); stroke-width: 2.5; stroke-dasharray: 4 4; }
+
+.sp-labels { pointer-events: none; }
+.sp-labels text {
+  fill: var(--sp-label);
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--sp-label-halo);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  unicode-bidi: plaintext;
+}
+.sp-labels .sp-label-sub { font-weight: 400; font-size: 0.85em; }
+
+.sp-pin path { fill: var(--sp-pin); stroke: var(--sp-pin-dot); stroke-width: 1.5; }
+.sp-pin circle { fill: var(--sp-pin-dot); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-unit { transition: none; }
+}
