@@ -54,7 +54,7 @@ export interface PlanItem {
   /** The item's ID (a StoreyPath item ID, or the system's own). */
   id: string;
   /** Its type's code (DESK-MANAGER, COPIER, ACCESS-POINT, …): its first part says how
-   * it is drawn (DESK, SOFA, TV, COPIER, ACCESS); others by how they are mounted. */
+   * it is drawn (DESK, SOFA, TV, COPIER, ACCESS, BED); others by how they are mounted. */
   type?: string;
   /** furniture, equipment or appliance. */
   category?: string;

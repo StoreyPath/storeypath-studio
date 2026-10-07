@@ -101,7 +101,7 @@ def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str) -
 
 def default_catalogue() -> Catalogue:
     """What a new Studio starts with: desks by grade, central photocopiers, access
-    points, sofas and TVs. People add more as they need them."""
+    points, sofas, TVs and beds. People add more as they need them."""
     return Catalogue(types=[
         _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b"),
         _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532"),
@@ -125,12 +125,19 @@ def default_catalogue() -> Catalogue:
         ItemType(code="TV", name_en="TV screen", name_ar="شاشة تلفاز", category="appliance",
                  width=1.4, depth=0.1, height=0.8, mount="wall", color="#2b2b30",
                  fields=[ItemField(key="size_in", name_en="Size (inches)", name_ar="المقاس (بوصة)", kind="number")]),
+        # for an office with a bed (long shifts): a 180 or 160 by 200 cm mattress in its
+        # frame; its height the headboard's top
+        ItemType(code="BED-KING", name_en="King-size bed", name_ar="سرير مقاس كينج", category="furniture",
+                 width=1.9, depth=2.1, height=1.0, mount="floor", color="#8a5a6e"),
+        ItemType(code="BED-QUEEN", name_en="Queen-size bed", name_ar="سرير مقاس كوين", category="furniture",
+                 width=1.7, depth=2.1, height=1.0, mount="floor", color="#a87b8c"),
     ])
 
 
 def load(folder: str | Path) -> Catalogue:
     """The Studio's catalogue (in ``folder``, its data folder): written with the
-    default types the first time."""
+    default types the first time, and given the default types a newer Studio brings
+    that it lacks (types are retired, never taken away: one missing was never there)."""
     path = Path(folder) / FILE_NAME
     if not path.is_file():
         cat = default_catalogue()
@@ -138,6 +145,11 @@ def load(folder: str | Path) -> Catalogue:
         return cat
     cat = Catalogue.model_validate_json(path.read_text(encoding="utf-8"))
     cat.check()
+    known = {t.code for t in cat.types}
+    new = [t for t in default_catalogue().types if t.code not in known]
+    if new:
+        cat.types.extend(new)
+        save(folder, cat)
     return cat
 
 

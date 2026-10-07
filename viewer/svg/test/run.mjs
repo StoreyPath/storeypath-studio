@@ -99,7 +99,7 @@ test("a floor's items: where each stands, the way it faces in the drawing, its t
   const plan = floorFromPackage(pkg, "EWBSSN-DEMO-HQ-F00");
   equal(plan.items.length, pkg.items.filter((i) => i.properties.floor_id === "EWBSSN-DEMO-HQ-F00").length, "items");
   equal([...new Set(plan.items.map((i) => i.type))].sort(),
-    ["ACCESS-POINT", "COPIER", "DESK-DIRECTOR", "DESK-JUNIOR", "DESK-MANAGER", "DESK-SENIOR", "SOFA", "TV"], "types");
+    ["ACCESS-POINT", "BED-KING", "COPIER", "DESK-DIRECTOR", "DESK-JUNIOR", "DESK-MANAGER", "DESK-SENIOR", "SOFA", "TV"], "types");
   const of = (type) => plan.items.find((i) => i.type === type);
   // placed in Studio facing the drawing's -y (the director's) and +x (against a west
   // wall): the building is turned 20° on the map, the drawing is not
@@ -153,7 +153,7 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
     const count = (s) => document.querySelectorAll(s).length;
     const ap = document.querySelector(".sp-item-ap");
     return { layers, items: count(".sp-items [data-sp-item]"), desks: count(".sp-item-desk"), chairs: count(".sp-item-desk .sp-item-chair"),
-      sofa: count(".sp-item-sofa .sp-item-mark"), tv: count(".sp-item-tv .sp-item-view"), copier: count(".sp-item-copier .sp-item-mark"),
+      sofa: count(".sp-item-sofa .sp-item-mark"), tv: count(".sp-item-tv .sp-item-view"), copier: count(".sp-item-copier .sp-item-mark"), bed: count(".sp-item-bed .sp-item-mark"),
       ap: [ap.classList.contains("sp-item-overhead"), ap.querySelectorAll("path").length, /scale\(1,-1\)/.test(ap.getAttribute("transform"))],
       fronts: count(".sp-item-front"), buttons: count('.sp-items [role="button"][tabindex="0"]'),
       fill: getComputedStyle(document.querySelector(".sp-item-copier .sp-item-body")).fill,
@@ -161,7 +161,8 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
   });
   equal(got.layers.indexOf("sp-items"), got.layers.indexOf("sp-containers") + 1, "over the spaces");
   truly(got.layers.indexOf("sp-items") < got.layers.indexOf("sp-walls") && got.labelsLast, `under the walls and labels: ${got.layers}`);
-  equal([got.items, got.desks, got.chairs, got.sofa, got.tv, got.copier, got.fronts, got.buttons], [8, 4, 4, 1, 1, 1, 7, 8], "drawn");
+  equal([got.items, got.desks, got.chairs, got.sofa, got.tv, got.copier, got.fronts, got.buttons], [9, 4, 4, 1, 1, 1, 8, 9], "drawn");
+  equal(got.bed, 4, "the bed: its headboard, two pillows and where its covers turn down");
   equal(got.ap, [true, 2, true], "the access point: overhead, a wifi mark, upright on the screen");
   equal(got.fill, "rgb(59, 110, 165)", "the copier in its type's colour");
 });

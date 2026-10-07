@@ -168,7 +168,8 @@ def furnish(ws) -> None:
     against the corridor's wall, between two doors, and an access point in the
     corridor; a sofa in the reception. On its first floor: a head of section's desk,
     the open office's three desks and its access point, and a desk in a zone of the
-    divided hall. In the Annex, turned 110° on the map: the president's desk."""
+    divided hall. In the Annex, turned 110° on the map: the president's desk. Back on
+    the Headquarters' ground floor: a king-size bed in an office."""
     from shapely.geometry import shape
 
     floors = {f"{b.code}-{f.code}": fid for _, b, f, fid in ws.iter_floors()}
@@ -211,6 +212,10 @@ def furnish(ws) -> None:
 
     f_id, (x0, y0, x1, y1) = room("ANNEX-F00", "001")
     place("DESK-PRESIDENT", f_id, (x0 + x1) / 2, y0 + 2.0)
+
+    # placed last, so the others keep their numbers
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "006")  # an office for long shifts: its bed's head on the south wall
+    place("BED-KING", f_id, (x0 + x1) / 2, y0 + 0.05 + 1.05, rotation=180)
 
 
 def items() -> None:

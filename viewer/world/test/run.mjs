@@ -75,7 +75,7 @@ test("the baker writes a floor's items apart, in both forms, with the IDs they i
     execFileSync(process.execPath, [join(root, "bake.mjs"), join(packages, "campus.storeypath"), out]);
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
-    truly(x.builder === 2 && x.items.length === 8 && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
+    truly(x.builder === 2 && x.items.length === 9 && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
     const want = { items: {}, "items:high": { view: "full" }, "items:light": { form: "light" },
       "items:light:high": { view: "full", form: "light" } };
@@ -166,7 +166,7 @@ test("the package reader reads items and their catalogue; an older package has n
       where: [where.building?.id, where.floor?.id, where.object?.id], floor, id: copier.id,
       old: [old.items.length, old.catalogue, old.itemsOn(old.floors[0].id).length, old.itemType("COPIER")] };
   });
-  truly(r.items === r.counted && r.items === 15 && r.on === 8 && r.floors && r.got, JSON.stringify(r));
+  truly(r.items === r.counted && r.items === 16 && r.on === 9 && r.floors && r.got, JSON.stringify(r));
   truly(r.copier.mount === "floor" && r.copier.color === "#3b6ea5" && r.copier.fields.some((f) => f.owner === "system")
     && r.none === null && r.types >= 11, JSON.stringify(r.copier));
   truly(r.where[1] === r.floor && r.where[0] === r.floor.split("-").slice(0, 3).join("-") && r.where[2] === r.id,

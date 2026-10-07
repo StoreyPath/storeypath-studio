@@ -594,6 +594,8 @@ function rgb(color, { dark = 0, light = 0 } = {}) {
 }
 const CHAIR = "#3d4048";
 const SCREEN = "#0e1117";
+const BED_FRAME = "#5a4334";
+const LINEN = "#ecebe6";
 
 /** How each kind of item is drawn, by its type code's first part (DESK-MANAGER is a
  * desk); others by how they are mounted. Each gets the item (w, d, h: its size) and
@@ -633,6 +635,23 @@ const DRAW = {
     const lid = Math.min(0.08, h / 6);
     s.box(it, k, [-w / 2, w / 2], [0, h - lid], [-d / 2, d / 2], rgb(c));
     s.box(it, k, [-w / 2 + 0.02, w / 2 - 0.02], [h - lid, h], [-d / 2 + 0.02, d / 2 - 0.02], rgb(c, { light: 0.6 }));
+  },
+  // a frame, a mattress and a headboard at the back; pillows against it and the
+  // covers, in the item's colour, turned down below them
+  BED(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const head = Math.min(0.08, d / 20), top = Math.min(0.55, h * 0.6), base = top * 0.55;
+    const frame = rgb(BED_FRAME), linen = rgb(LINEN);
+    const back = -d / 2 + head;
+    s.box(it, k, [-w / 2, w / 2], [0, h], [-d / 2, back], frame);
+    s.box(it, k, [-w / 2, w / 2], [0, base], [back, d / 2], frame);
+    s.box(it, k, [-w / 2 + 0.03, w / 2 - 0.03], [base, top], [back + 0.02, d / 2 - 0.03], linen);
+    s.box(it, k, [-w / 2 + 0.01, w / 2 - 0.01], [top - 0.12, top + 0.03], [back + 0.62, d / 2 - 0.01], rgb(c));
+    const n = w >= 1.3 ? 2 : 1, gap = 0.08, pw = (w - 0.12 - gap * (n - 1)) / n;
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + 0.06 + i * (pw + gap);
+      s.box(it, k, [x, x + pw], [top - 0.01, top + 0.12], [back + 0.06, back + 0.46], linen);
+    }
   },
   // a small disc, under the ceiling
   ACCESS(s, it, k, c) {

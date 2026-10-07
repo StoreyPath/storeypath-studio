@@ -7,15 +7,31 @@ from storeypath.ids import is_item_id
 from storeypath.workspace import Workspace
 
 
-def test_the_catalogue_starts_with_desks_by_grade_copiers_access_points_sofas_and_tvs(tmp_path):
+def test_the_catalogue_starts_with_desks_by_grade_copiers_access_points_sofas_tvs_and_beds(tmp_path):
     cat = catalogue.load(tmp_path)  # written the first time
     codes = [t.code for t in cat.types]
-    assert {"DESK-PRESIDENT", "DESK-MANAGER", "DESK-JUNIOR", "COPIER", "ACCESS-POINT", "SOFA", "TV"} <= set(codes)
+    assert {"DESK-PRESIDENT", "DESK-MANAGER", "DESK-JUNIOR", "COPIER", "ACCESS-POINT", "SOFA", "TV",
+            "BED-KING", "BED-QUEEN"} <= set(codes)
     ap = cat.get("ACCESS-POINT")
     assert ap.mount == "ceiling" and {f.key: f.owner for f in ap.fields}["ssid"] == "system"  # the network: wayfinder's
     assert {f.key: f.owner for f in ap.fields}["color"] == "storeypath"
     assert all(t.name_ar for t in cat.types)
     assert catalogue.load(tmp_path) == cat  # read back as written
+
+
+def test_a_catalogue_written_by_an_older_studio_gains_the_new_types_and_keeps_its_own(tmp_path):
+    # a Studio's catalogue from before beds, its sofa made wider and a type of its own
+    older = catalogue.default_catalogue()
+    older.types = [t for t in older.types if not t.code.startswith("BED-")]
+    older.get("SOFA").width = 2.4
+    older.types.append(catalogue.ItemType(code="PLANT", name_en="Plant", name_ar="نبتة"))
+    older.get("TV").retired = True
+    catalogue.save(tmp_path, older)
+    cat = catalogue.load(tmp_path)
+    codes = [t.code for t in cat.types]
+    assert codes[-2:] == ["BED-KING", "BED-QUEEN"] and "PLANT" in codes
+    assert cat.get("SOFA").width == 2.4 and cat.get("TV").retired  # its own changes kept
+    assert catalogue.load(tmp_path) == cat  # and written: the next load adds nothing
 
 
 def test_a_type_code_and_a_field_key_are_checked():
