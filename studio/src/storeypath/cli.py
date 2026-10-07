@@ -578,7 +578,7 @@ def export(
     """Write the exchange package."""
     ws = _load(workspace)
     try:
-        manifest = export_package(ws, output)
+        manifest = export_package(ws, output, say=typer.echo)
     except ExportError as e:
         _fail(str(e))
     ws.save(workspace)

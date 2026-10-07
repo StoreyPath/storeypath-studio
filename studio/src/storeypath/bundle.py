@@ -99,7 +99,7 @@ def export_project(ws_path: Path, out) -> None:
                 ship(p)
     extra: dict[str, bytes | Path] = {WORKSPACE_FILE: shipped.model_dump_json(indent=1).encode()}
     extra.update({DRAWINGS + name: p for name, p in files.items()})
-    export_package(ws, out, record=False, extra=extra)
+    export_package(ws, out, record=False, extra=extra, bake=False)  # for another Studio: quick, no 3D
 
 
 # ---- a project from a file -----------------------------------------------------

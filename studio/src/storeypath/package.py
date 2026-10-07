@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.4.0"
+FORMAT_VERSION = "0.5.0"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {

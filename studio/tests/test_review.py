@@ -13,6 +13,7 @@ import ezdxf
 import pytest
 from shapely.geometry import LineString, shape
 
+from storeypath.package import FORMAT_VERSION
 from storeypath.review import NotFound, Review
 from storeypath.samples import office_floor, write_floor_dxf, write_sheet_dxf
 from storeypath.server import Studio, make_server
@@ -863,7 +864,7 @@ def test_a_package_of_one_building(studio, tmp_path):
     assert done["file"] == f"{code}-001-LABS.storeypath" and done["counts"]["buildings"] == 1
     with urllib.request.urlopen(f"{base}/api/projects/{code}/exports/{done['file']}") as res:
         manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
-    assert manifest["scope"] == {"buildings": [labs]} and manifest["format_version"].startswith("0.4")
+    assert manifest["scope"] == {"buildings": [labs]} and manifest["format_version"] == FORMAT_VERSION
 
     with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath?building={labs}") as res:
         assert json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))["counts"]["buildings"] == 1

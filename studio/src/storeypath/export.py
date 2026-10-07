@@ -6,7 +6,9 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
+import tempfile
 import zipfile
 from importlib.metadata import version
 from pathlib import Path
@@ -18,6 +20,7 @@ from shapely.geometry import MultiPolygon, Polygon, mapping, shape
 from shapely.ops import polylabel, unary_union
 
 from .assets import format_spec
+from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, make_id
@@ -39,6 +42,8 @@ from .types import OpeningType, SpaceType
 from .workspace import ExportRecord, Placement, SitePosition, Workspace, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
+
+log = logging.getLogger(__name__)
 
 
 class ExportError(Exception):
@@ -365,7 +370,7 @@ def in_buildings(buildings: list[str] | None):
 
 
 def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None,
-                   buildings: list[str] | None = None) -> Manifest:
+                   buildings: list[str] | None = None, bake: bool = True, say=None) -> Manifest:
     """Write the package to ``out_path`` (a path, or a binary file object). With
     ``record`` the export is entered in the workspace, so the next one lists what
     changed since; without it (a preview) the workspace is left as it was.
@@ -375,7 +380,11 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     With ``buildings`` (IDs) the package holds only those buildings, their floors and
     what is on them, and their locations; its manifest says so (``scope``). What
     changed is listed for them alone, and the record of what was exported keeps
-    the other buildings as they were last exported."""
+    the other buildings as they were last exported.
+
+    With ``bake`` its floors are pre-built in 3D (``world/``, bake.py) when Node.js is
+    here; when it is not, the package is written without them. ``say`` is told
+    which (else it is logged)."""
     features = build_features(ws)
     if buildings is not None:
         known = {make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings}
@@ -424,10 +433,32 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
         scope=Scope(buildings=buildings) if buildings is not None else None,
     )
 
+    world: dict[str, bytes] = {}
+    if bake:  # the package as it is so far, for the baker to read
+        with tempfile.TemporaryDirectory(prefix="storeypath-export-") as tmp:
+            plain = Path(tmp) / "package.storeypath"
+            _write(plain, ws, manifest, features, changes, {})
+            world, why = bake_world(plain)
+        if world:
+            manifest.files["world"] = WORLD_DIR
+        (say or log.info)(f"3D pre-built: {len(world)} floor(s)" if world else f"3D not pre-built: {why}")
+
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+    _write(out_path, ws, manifest, features, changes, {**world, **(extra or {})})
+
+    if record:
+        kept = {} if buildings is None else {i: h for i, h in prev_hashes.items() if not scoped(i) and i not in hashes}
+        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name,
+                                       objects={**kept, **hashes}, buildings=buildings))
+    return manifest
+
+
+def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict]], changes: Changes,
+           extra: dict) -> None:
+    """The package's files, and ``extra`` (name → bytes or a path), into a ZIP."""
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", manifest.model_dump_json(indent=2))
         for role, fs in features.items():
             z.writestr(FILES[role], json.dumps({"type": "FeatureCollection", "features": fs}, ensure_ascii=False))
@@ -436,14 +467,8 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
         z.writestr("FORMAT.md", format_spec())
         for name, schema in json_schemas().items():
             z.writestr(f"schema/{name}", json.dumps(schema, indent=2))
-        for name, data in (extra or {}).items():
+        for name, data in extra.items():
             if isinstance(data, Path):
                 z.write(data, name)
             else:
                 z.writestr(name, data)
-
-    if record:
-        kept = {} if buildings is None else {i: h for i, h in prev_hashes.items() if not scoped(i) and i not in hashes}
-        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name,
-                                       objects={**kept, **hashes}, buildings=buildings))
-    return manifest

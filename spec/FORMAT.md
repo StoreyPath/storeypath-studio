@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.4
+# StoreyPath package format — version 0.5
 
 A StoreyPath package (`*.storeypath`) describes one project: its locations, buildings,
 floors, the spaces on each floor (offices, corridors, elevators, …), the zones that
@@ -21,6 +21,7 @@ A copy of this document is included in every package.
 | `objects.csv` | Every ID in one flat table, with its parent IDs — for building ID mappings |
 | `changes.json` | IDs added, changed and retired since the previous export |
 | `schema/*.schema.json` | JSON Schema for every JSON file |
+| `world/<floor-id>.glb` | Optional: each floor already built in 3D, as binary glTF (Pre-built 3D) |
 | `FORMAT.md` | This document |
 | `studio/` | Only in a project sent to be continued in another StoreyPath Studio: the project itself (its workspace, with every correction and edit, and its drawings). Other readers ignore it. |
 
@@ -190,6 +191,66 @@ export (of the whole project or a part of it): an ID outside the scope is never
 listed, nor retired. Export numbers run on across the project's packages, whole
 or in part, so a later package always has a higher `sequence`.
 
+## Pre-built 3D
+
+A package may carry its floors already built in 3D, as StoreyPath's viewer builds
+them from the features, so that a viewer on a slow machine shows a building
+without building it: `world/<floor-id>.glb`, one binary glTF 2.0 file a floor,
+listed in the manifest as `"world": "world/"`. Studio builds them when it exports,
+when it can; a floor without a file is built from its features, as before. Readers
+that do not draw in 3D ignore the folder.
+
+**Frame.** One unit is a metre. x is east, y up and z south, from the building's
+local origin (`origin` in the extras below): the middle of the box round its floors'
+outlines in longitude and latitude (its footprint's, with no floors; 0, 0 with
+neither), where a point (lon, lat) is at x = (lon − origin.lon) · kx and
+z = −(lat − origin.lat) · ky, with kx = 111320 · cos(origin.lat) and ky = 110540
+metres a degree. y is the height above the building's ground floor: a floor stands
+at its `elevation`. Every floor of a building has the same origin, so the files
+stack as they are, and every node's transform is the identity.
+
+**Meshes.** One mesh a piece of the floor, each one primitive with one material.
+The node names it; its `extras` say what it is: `material`, `view`, and `type` and
+`hidden` where they apply.
+
+| Name | `material` | `view` | What |
+|---|---|---|---|
+| `slab` | `slab` | | the floor slab, under the floor's outline |
+| `floor:<type>` | `floor` | | the floor finish of the spaces and zones of that `type` |
+| `volume:<type>` | `volume` | `xray` | each space of that `type` as a volume, up to its ceiling (to its parapets, when open to the sky) |
+| `ceiling` | `ceiling` | `walk` | the ceiling, over every space but those open to the sky |
+| `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces and tops, full height |
+| `wallLow`, `wallCut` | `wall`, `wallCut` | `cut` | the walls cut low (`options.cutHeight`): faces, and the cut |
+| `parapet`, `parapetTop`, `parapetLow`, `parapetCut` | the same | `full`, `cut` | the parapets, likewise |
+| `heads` | `wallPlain` | `full` | the wall over doors, doorways and windows |
+| `sills` | `wallPlain` | | the wall under windows |
+| `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
+| `door`, `doorFrame` | `door`, `doorFrame` | `full` | door leaves, open as the plan draws them, and their frames |
+| `obstacles` | | | lines (mode `LINES`), not drawn: what someone walking bumps into (walls, windows, open leaves) |
+
+`view` says when a piece shows: `full` unless the walls are cut low; `cut` only
+then; `walk` when walking on that floor; `xray` in the see-through view; with none,
+always. The pieces of spaces and zones hidden or ignored in review are meshes of
+their own (`floor:shaft:hidden`, `"hidden": true`), shown only when asked for. A
+plain glTF viewer shows every mesh at once.
+
+The floor finishes and volumes have a vertex attribute `_ROOM` (unsigned integer),
+an index into `rooms` below: the space or zone each vertex belongs to, so that a
+click on a floor tells which room it is. The materials in the file are plain
+colours; StoreyPath's viewer draws each piece with its own, by `material` and
+`type`.
+
+**Extras.** The scene's `extras.storeypath`:
+
+| Key | |
+|---|---|
+| `project_id`, `building_id`, `floor_id` | what it is |
+| `export_sequence` | the export it was built for: a file whose sequence is not the manifest's is stale; build that floor instead |
+| `origin` | `lon`, `lat`, `kx`, `ky`: the frame above |
+| `options` | the sizes it was built with, in metres: `slab` (thickness), `doorHead`, `windowSill`, `windowHead`, `wallThickness` (where the floor gives none), `cutHeight` |
+| `elevation`, `wall_height` | the floor's elevation, and how high its walls rise above it |
+| `rooms` | the IDs `_ROOM` indexes |
+
 ## Changes from 0.2
 
 - `zones.geojson` and the `zone` kind: open areas are one space divided into zones,
@@ -207,6 +268,12 @@ or in part, so a later package always has a higher `sequence`.
   project). A reader of 0.3 that imports packages would take the buildings left
   out as removed: it must read `scope` before it applies a 0.4 package.
 
+## Changes from 0.4
+
+- `world/` and `manifest.json → files.world`: the floors pre-built in 3D (Pre-built
+  3D), when the exporter could build them. Nothing else changes: a reader of 0.4
+  reads a 0.5 package as it is, ignoring the folder.
+
 ## Readers
 
 `spec/conformance/` holds packages and coordinate pairs that every reader must read
@@ -214,6 +281,9 @@ the same way: Studio's own validator, the Go module in `go/` (for systems writte
 Go), the viewer. A reader turning longitude and latitude back into a building's
 local metres must agree with `localframe.json` to a millimetre; positions read from
 a package are within about a centimetre of Studio's (7 decimals of a degree).
+`campus-world` and `simple-office-world` are `campus` and `simple-office` with
+their floors pre-built: a reader reads them as it reads those, and the viewer shows
+them as it shows those.
 
 ## Versioning
 

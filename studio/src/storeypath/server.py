@@ -795,7 +795,7 @@ class Studio:
                 part = "" if buildings is None else "-" + (buildings[0].rsplit("-", 1)[-1] if len(buildings) == 1 else "PART")
                 out = folder / f"{ws.id}-{seq:03d}{part}.storeypath"
                 job.say(f"writing {out.name}")
-                manifest = export_package(ws, out, buildings=buildings)
+                manifest = export_package(ws, out, buildings=buildings, say=job.say)
                 ws.save(ws_path)
             errors = validate_package(out)
             for e in errors:
@@ -866,7 +866,7 @@ class Studio:
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
         try:
-            export_package(ws, buf, record=False, buildings=[building] if building else None)
+            export_package(ws, buf, record=False, buildings=[building] if building else None, bake=False)
         except ExportError as e:
             raise NotFound(str(e)) from None
         return buf.getvalue()
