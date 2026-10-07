@@ -174,7 +174,7 @@ function renderItem(feature) {
   const type = pkg.itemType(p.type);
   const floor = pkg.get(p.floor_id);
   const room = pkg.get(p.zone_id) ?? pkg.get(p.space_id);
-  const where = room ? room.properties.name || room.properties.number || typeLabel(room.properties.type) : "";
+  const where = room ? [room.properties.name, room.properties.number].filter(Boolean).join(" ") || typeLabel(room.properties.type) : "";
   const value = (f) => {
     const v = p.values?.[f.key];
     if (v === undefined || v === null || v === "") return '<span class="muted">—</span>';
