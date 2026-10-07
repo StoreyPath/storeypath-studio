@@ -9,6 +9,12 @@ module in go/, the viewer's JavaScript) must read the same way.
   test fixture: the same rooms and numbers, F0-301 to F0-322, an L-shaped office),
   with an open office divided into two numbered zones and a shaft hidden in
   review: for systems that import packages to test with;
+- packages/simple-office-2.storeypath: the same project's next export, after the
+  drawing was revised (the storage room F0-321 taken into the server room F0-320)
+  and more review: F0-302 renumbered F0-302A, the pantry F0-305 deleted, F0-304
+  renamed BOARD ROOM, the prayer room F0-322 retyped a meeting room, and the open
+  office's south half divided again (F0-331 smaller, a new zone F0-332): for
+  systems to test what they make of a later export;
 - localframe.json: points in Studio's local drawing metres and where they are on
   earth, for each building's placement, as Studio's projection gives them: a
   reader that turns lon/lat back into local metres must agree to a millimetre.
@@ -94,6 +100,8 @@ def campus(work: Path) -> None:
 
 
 def simple_office(work: Path) -> None:
+    from dataclasses import replace
+
     import ezdxf
     from ezdxf.enums import TextEntityAlignment
     from shapely.geometry import shape
@@ -106,13 +114,17 @@ def simple_office(work: Path) -> None:
 
     origin = (40.0, 20.0)
     drawing = work / "simple-office.dxf"
+
+    def label_south_half(path: Path) -> None:
+        # the open office's south half has its own number
+        doc = ezdxf.readfile(path)
+        for i, line in enumerate(("OPEN OFFICE", "F0-331")):
+            doc.modelspace().add_text(line, height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
+                ((origin[0] + 26.4) * 1000, (origin[1] + 3.8 - 0.6 * i) * 1000), align=TextEntityAlignment.MIDDLE_CENTER)
+        doc.saveas(path)
+
     write_floor_dxf(drawing, cells(), origin=origin, title="GROUND FLOOR PLAN")
-    # the open office's south half has its own number
-    doc = ezdxf.readfile(drawing)
-    for i, line in enumerate(("OPEN OFFICE", "F0-331")):
-        doc.modelspace().add_text(line, height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
-            ((origin[0] + 26.4) * 1000, (origin[1] + 3.8 - 0.6 * i) * 1000), align=TextEntityAlignment.MIDDLE_CENTER)
-    doc.saveas(drawing)
+    label_south_half(drawing)
 
     ws = Workspace.new("Simple Office")
     loc = ws.add_location("MAIN", "Main site")
@@ -132,8 +144,32 @@ def simple_office(work: Path) -> None:
         if r.kind == "zone":
             ws.overrides[r.id] = Override(type="office")  # team areas: people sit there
     out = HERE / "packages" / "simple-office.storeypath"
-    export_package(ws, out, record=False)
-    print(f"wrote {out}")
+    export_package(ws, out, record=True)
+
+    # export 2: the drawing revised, the storage room taken into the server room
+    revised = []
+    for c in cells():
+        if c.label and "F0-321" in c.label:
+            continue
+        if c.label and "F0-320" in c.label:
+            c = replace(c, x1=18)
+        revised.append(c)
+    write_floor_dxf(drawing, revised, origin=origin, title="GROUND FLOOR PLAN")
+    label_south_half(drawing)
+    # in review: the open office's south half divided again, and corrections
+    ws.floor(f_id).edits.dividers.append([[(x0 + x1) / 2, origin[1] + 6.5], [(x0 + x1) / 2, y0 - 0.1]])
+    convert_floor(ws, f_id, work)
+    by_number = {r.number: r for r in ws.floor_objects(f_id) if r.number}
+    ws.overrides[by_number["F0-302"].id] = Override(number="F0-302A")
+    ws.overrides[by_number["F0-305"].id] = Override(hidden=True)  # deleted in review: kept, with its ID
+    ws.overrides[by_number["F0-304"].id] = Override(name="BOARD ROOM")
+    ws.overrides[by_number["F0-322"].id] = Override(type="meeting_room")
+    for r in ws.floor_objects(f_id):
+        if r.kind == "zone" and r.id not in ws.overrides:
+            ws.overrides[r.id] = Override(type="office", number="F0-332", name="OPEN OFFICE")
+    second = HERE / "packages" / "simple-office-2.storeypath"
+    export_package(ws, second, record=True)
+    print(f"wrote {out} and {second}")
 
 
 if __name__ == "__main__":
