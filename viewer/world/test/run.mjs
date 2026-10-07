@@ -11,7 +11,7 @@ import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { launch, serve } from "../../svg/test/harness.mjs";
+import { launch, repack, serve } from "../../svg/test/harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -27,7 +27,7 @@ register(`data:text/javascript,${encodeURIComponent(`
     const path = to(specifier);
     return path ? { url: ${JSON.stringify(vendor)} + path, shortCircuit: true } : next(specifier, context);
   }`)}`);
-const { loadPackage } = await import("../../src/package.js");
+const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
 const { originOf, planFloor, toLocal } = await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
 
@@ -50,6 +50,29 @@ test("the module carries three.js and JSZip: it imports nothing", () => {
   truly(!/\bimport\s*[\s{*"']/.test(code.replace(/import\.meta/g, "")), "dist/world.js imports another module");
   truly(!/\bfrom\s*["'][^"'\s]+["']\s*;/.test(code), "dist/world.js imports another module"); // not a message's "from"
   truly(!/\bimport\s*\(/.test(code), "dist/world.js loads another module");
+});
+
+// spec/FORMAT.md, "Versioning": a reader reads its own major version, not newer than it
+test("a package of a newer minor version, or of no version, is refused; older ones and newer patches are read", async () => {
+  const path = join(packages, "campus-hq.storeypath");
+  const version = (await loadPackage(readFileSync(path))).manifest.format_version;
+  truly(version.split(".").slice(0, 2).join(".") === FORMAT_VERSION, `the viewer reads ${FORMAT_VERSION}, the conformance packages are ${version}`);
+  const said = async (version) => {
+    const bytes = repack(path, (files) => { files.get("manifest.json").format_version = version; });
+    return loadPackage(bytes).then((pkg) => (pkg.manifest.format_version === version ? "read" : "read, another version"),
+      (e) => e.message);
+  };
+  for (const v of ["0.7.0", "0.7.12", "0.7", "0.6.0", "0.3.1", "0.7.1-rc.1", "0.7.0+build.5"]) {
+    truly(await said(v) === "read", `${v}: ${await said(v)}`);
+  }
+  for (const v of ["0.8.0", "0.8", "0.99.0", "0.8.0-rc1", "1.0.0", "2.7.0"]) {
+    const want = `This package is format ${v}, newer than this viewer's 0.7: update the viewer.`;
+    truly(await said(v) === want, `${v}: ${await said(v)}`);
+  }
+  for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
+    "٠.٧", "０.７", 0.7, null, undefined]) {
+    truly(/is not a version this viewer can read/.test(await said(v)), `${JSON.stringify(v)}: ${await said(v)}`);
+  }
 });
 
 /** A binary glTF's JSON. */

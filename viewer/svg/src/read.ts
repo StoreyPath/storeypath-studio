@@ -4,7 +4,26 @@
 import type { PackageLike } from "./package.js";
 
 export const FORMAT = "storeypath-package";
-export const SUPPORTED_MAJOR_VERSION = 0;
+/** The format version this viewer reads, any patch of it (spec/FORMAT.md, "Versioning"). */
+export const FORMAT_VERSION = "0.7";
+export const SUPPORTED_MAJOR_VERSION = Number(FORMAT_VERSION.split(".")[0]);
+
+const VERSION = /^(\d+)\.(\d+)(\.\d+)?([-+][0-9A-Za-z.-]+)?$/;
+
+/** Refuses a package's format version this viewer does not read: one that is not a
+ * version, one of another major version, or (before 1.0, where a minor version may
+ * change what a package means) one of a newer minor version, saying to update the
+ * viewer. Older versions, and newer patches (properties added), are read. */
+export function checkVersion(version: unknown): void {
+  const m = typeof version === "string" ? VERSION.exec(version) : null;
+  if (!m) throw new Error(`The package's format version ${JSON.stringify(version) ?? "(none)"} is not a version this viewer can read.`);
+  const major = Number(m[1]), minor = Number(m[2]);
+  const [MAJOR, MINOR] = FORMAT_VERSION.split(".").map(Number) as [number, number];
+  if (major > MAJOR || (major === MAJOR && MAJOR === 0 && minor > MINOR)) {
+    throw new Error(`This package is format ${version}, newer than this viewer's ${FORMAT_VERSION}: update the viewer.`);
+  }
+  if (major !== MAJOR) throw new Error(`This package is format ${version}, older than this viewer reads (${MAJOR}.x).`);
+}
 
 interface Manifest {
   format: string;
@@ -25,9 +44,7 @@ export async function readPackage(source: ArrayBuffer | Uint8Array | Blob): Prom
   };
   const manifest = (await json("manifest.json")) as Manifest;
   if (manifest.format !== FORMAT) throw new Error("This is not a StoreyPath package.");
-  if (Number(String(manifest.format_version).split(".")[0]) !== SUPPORTED_MAJOR_VERSION) {
-    throw new Error(`Package format ${manifest.format_version} is not supported.`);
-  }
+  checkVersion(manifest.format_version);
   const features = async (role: string): Promise<never[]> => {
     const name = manifest.files[role];
     return name ? ((await json(name)) as { features: never[] }).features : [];

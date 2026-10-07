@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, normalize } from "node:path";
-import { inflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 
 /** The files in a ZIP archive: name → bytes. */
 export function unzip(buf) {
@@ -31,9 +31,52 @@ export function unzip(buf) {
   return files;
 }
 
-/** A package as floorFromPackage takes it, found through its manifest. */
-export function readPackage(path) {
+/** A ZIP archive of files (name → bytes), each deflated. */
+export function zip(files) {
+  const local = [], central = [];
+  let offset = 0;
+  for (const [name, data] of files) {
+    const raw = Buffer.from(data), packed = deflateRawSync(raw), path = Buffer.from(name, "utf8");
+    const head = Buffer.alloc(30), entry = Buffer.alloc(46);
+    head.writeUInt32LE(0x04034b50, 0);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(20, 4); // made by, and
+    for (const [b, at] of [[head, 4], [entry, 6]]) { // needed: 2.0; names in UTF-8, deflated
+      b.writeUInt16LE(20, at);
+      b.writeUInt16LE(0x800, at + 2);
+      b.writeUInt16LE(8, at + 4);
+      b.writeUInt32LE(crc32(raw), at + 10);
+      b.writeUInt32LE(packed.length, at + 14);
+      b.writeUInt32LE(raw.length, at + 18);
+      b.writeUInt16LE(path.length, at + 22);
+    }
+    entry.writeUInt32LE(offset, 42);
+    local.push(head, path, packed);
+    central.push(entry, path);
+    offset += head.length + path.length + packed.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(files.size, 8);
+  end.writeUInt16LE(files.size, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...local, directory, end]);
+}
+
+/** A package file changed: ``change`` gets its JSON files (name → parsed) to change in place. */
+export function repack(path, change) {
   const files = unzip(readFileSync(path));
+  const json = new Map([...files].filter(([name]) => /\.(json|geojson)$/.test(name))
+    .map(([name, data]) => [name, JSON.parse(data.toString("utf8"))]));
+  change(json);
+  for (const [name, value] of json) files.set(name, JSON.stringify(value));
+  return zip(files);
+}
+
+/** A package (its file, or its bytes) as floorFromPackage takes it, found through its manifest. */
+export function readPackage(path) {
+  const files = unzip(Buffer.isBuffer(path) ? path : readFileSync(path));
   const json = (name) => JSON.parse(files.get(name).toString("utf8"));
   const manifest = json("manifest.json");
   const features = (role) => (manifest.files[role] ? json(manifest.files[role]).features : []);

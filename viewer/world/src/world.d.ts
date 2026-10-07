@@ -5,6 +5,8 @@
 export { webglSupport, type WebGLSupport } from './support.js';
 
 export declare const FORMAT: 'storeypath-package';
+/** The format version this viewer reads, any patch of it. */
+export declare const FORMAT_VERSION: string;
 export declare const SUPPORTED_MAJOR_VERSION: number;
 /** Default colour of each space type (CSS colours). */
 export declare const TYPE_COLORS: Readonly<Record<string, string>>;
@@ -166,8 +168,13 @@ export declare class StoreyPathPackage {
 	world(floorId: string): Promise<ArrayBuffer | null>;
 }
 
-/** Read a package from a URL, Blob, File or ArrayBuffer. */
+/** Read a package from a URL, Blob, File or ArrayBuffer. A package of a format version
+ * this viewer does not read is refused (see checkVersion). */
 export declare function loadPackage(source: string | URL | Blob | ArrayBuffer | Uint8Array): Promise<StoreyPathPackage>;
+/** Throws when this viewer does not read packages of a format version: one that is not
+ * a version, one of another major version, or (before 1.0) one of a newer minor version
+ * than FORMAT_VERSION, saying to update the viewer. Older ones, and newer patches, are read. */
+export declare function checkVersion(version: unknown): void;
 
 export interface WorldOptions {
 	/** Floor slab thickness, m (0.22). */

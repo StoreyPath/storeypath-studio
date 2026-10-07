@@ -5,11 +5,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launch, readPackage, serve } from "./harness.mjs";
+import { launch, readPackage, repack, serve } from "./harness.mjs";
 import { LocalFrame } from "../dist/frame.js";
 import { floorFromPackage } from "../dist/package.js";
 import { inside } from "../dist/geometry.js";
-import { readPackage as readInBrowsers } from "../dist/read.js";
+import { FORMAT_VERSION, readPackage as readInBrowsers } from "../dist/read.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -88,6 +88,30 @@ test("readPackage reads a package file as the test's own ZIP reader does", async
     said = e.message;
   }
   truly(/not a StoreyPath package/.test(said), `a file that is not a package: ${said}`);
+});
+
+// spec/FORMAT.md, "Versioning": a reader reads its own major version, not newer than it
+test("a package of a newer minor version, or of no version, is refused; older ones and newer patches are read", async () => {
+  const path = join(conformance, "packages/campus-hq.storeypath");
+  equal(`${readPackage(path).manifest.format_version}`.split(".").slice(0, 2).join("."), FORMAT_VERSION,
+    "the viewer reads the version of the conformance packages");
+  const said = async (version) => {
+    const bytes = repack(path, (files) => { files.get("manifest.json").format_version = version; });
+    try {
+      const read = await readInBrowsers(bytes);
+      return read.manifest.format_version === version ? "read" : "read, another version";
+    } catch (e) {
+      return e.message;
+    }
+  };
+  for (const v of ["0.7.0", "0.7.12", "0.7", "0.6.0", "0.3.1", "0.7.1-rc.1", "0.7.0+build.5"]) equal(await said(v), "read", v);
+  for (const v of ["0.8.0", "0.8", "0.99.0", "0.8.0-rc1", "1.0.0", "2.7.0"]) {
+    equal(await said(v), `This package is format ${v}, newer than this viewer's 0.7: update the viewer.`, v);
+  }
+  for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
+    "٠.٧", "０.７", 0.7, null, undefined]) {
+    truly(/is not a version this viewer can read/.test(await said(v)), `${JSON.stringify(v)}: ${await said(v)}`);
+  }
 });
 
 test("a package with its floors pre-built in 3D (0.5, world/) reads as one without", async () => {
