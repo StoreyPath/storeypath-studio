@@ -298,6 +298,27 @@ def test_what_was_set_in_review_survives_a_package_opened_in_another_studio(camp
     assert (spaces[meeting.id]["capacity"], spaces[meeting.id]["capacity_from"]) == (0, "review")
 
 
+def test_the_ids_a_building_retired_stay_retired_through_its_package(campus, tmp_path):
+    # Opened as a new project and into the project here alike: what the building's
+    # all_retired listed is listed by its next package, the TV's ID among them.
+    from storeypath.bundle import open_file
+
+    ws, ws_path, hq, _ = campus
+    tv = ws.add_item("TV", *_ground(ws, hq))
+    export_package(ws, tmp_path / "hq-1.storeypath", building=hq)
+    tv.status = "retired"
+    export_package(ws, tmp_path / "hq-2.storeypath", building=hq)
+    listed = set(_read(tmp_path / "hq-2.storeypath")[0]["all_retired"])
+    assert tv.id in listed
+    data, path = _in_studio(ws, ws_path)
+    for where in (tmp_path / "B", data):
+        open_file(where, tmp_path / "hq-2.storeypath", replace=True)
+        out = tmp_path / f"again-{where.name}.storeypath"
+        export_package(_opened(where, ws.id), out, building=hq)
+        changes, _ = _read(out)
+        assert listed <= set(changes["all_retired"]) and changes["retired"] == []
+
+
 def test_what_a_package_says_and_this_studio_does_not_keep_is_listed_as_changed(campus, tmp_path):
     # The package's export is taken as the last one, as rebuilt here: what the rebuilt
     # project does not say as the package does is listed as changed next, not hidden.

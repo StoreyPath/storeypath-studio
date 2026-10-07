@@ -496,7 +496,8 @@ def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True) ->
             if role == "buildings":
                 f = {**f, "placement": placed[f["id"]][0].model_dump()}
             elif role == "location":
-                f = {**f, "geometry": None, "properties": {k: v for k, v in f["properties"].items() if k != "display_point"}}
+                said = {k: v for k, v in f["properties"].items() if k != "display_point"}
+                f = {**f, "geometry": None, "properties": said}
             out[f["id"]] = _hash(f)
     return out
 
@@ -683,17 +684,17 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     _write(out_path, ws, manifest, features, changes, world, cat)
 
     if record:
-        held = dict(held_before)
+        held_now = dict(held_before)
         for b in buildings:  # (one: a package holds one building)
             location = b.rsplit("-", 1)[0]
-            held[b] = LastPackage(
+            held_now[b] = LastPackage(
                 sequence=sequence,
                 objects={i: h for i, h in hashes.items()
                          if i == location or _in_building(i, b) or places.get(i) == b},
                 retired=[i for i in all_retired if _in_building(i, b) or is_item_id(i)])
         ws.exports.append(ExportRecord(
             sequence=sequence, exported_at=now, file=Path(out_path).name, buildings=buildings,
-            held=held, items_held=sorted(known | here)))
+            held=held_now, items_held=sorted(known | here)))
     return manifest
 
 

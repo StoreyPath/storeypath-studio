@@ -407,10 +407,10 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
     one it retired is retired here when it stands in its building; the others are
     left as they are (one carried to another building waits for that building's
     package). Refused (ItemClash), with nothing changed, when an item of the package
-    has the ID of another item here. The package's export is entered as the last one, when it
-    is later than the last here; its building is next compared with it when it is
-    later than the last package of that building here (packages may be opened in any
-    order, and the same one twice)."""
+    has the ID of another item here. The package's export is entered as the last
+    one, when it is later than the last here; its building is next compared with it
+    unless the last package of that building here is a later one (packages may be
+    opened in any order, and the same one twice)."""
     from .export import last_packages
     from .ids import make_id
     from .workspace import utcnow
