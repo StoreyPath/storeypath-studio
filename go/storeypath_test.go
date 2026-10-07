@@ -1056,3 +1056,73 @@ func TestAPackageNewerThanTheReaderIsRefused(t *testing.T) {
 		t.Errorf("0.8.0: %v", problems)
 	}
 }
+
+func TestAFormatVersionIsReadStrictly(t *testing.T) {
+	// Read loosely, "0.8a.0" and "0.8-rc1" were 0.0 and 0.8 read as 0.0: a
+	// newer package read, without the rules of 0.7. What is not a format
+	// version is refused, and every rule applies to it.
+	for v, want := range map[string]string{
+		"0.7.0": "", "0.6.0": "", "0.4.1": "", "0.7.9": "", "0.7": "", "0.7.0-rc1": "", "0.7.0+build.5": "", "0.07.0": "",
+		"0.8.0": "newer", "0.8": "newer", "0.8-rc1": "newer", "0.10.0": "newer", "0.99999999999999999999.0": "newer",
+		"1.0.0": "unsupported", "99999999999999999999.0.0": "unsupported",
+		"0.8a.0": "not a format version", "0.x": "not a format version", "0.-1.0": "not a format version",
+		"0. 8.0": "not a format version", "0.1_0.0": "not a format version", "": "not a format version",
+		"abc": "not a format version", "0": "not a format version", " 0.7.0": "not a format version",
+		"0.7.0 ": "not a format version", "0.+8.0": "not a format version", "v0.7.0": "not a format version",
+		"0.7.0.1": "not a format version", "٠.٧.٠": "not a format version", "0.7.0-": "not a format version",
+		"0.7.0-rc 1": "not a format version", "0.7.0-rc1\n": "not a format version",
+	} {
+		err := CheckVersion(v)
+		if (want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), want)) {
+			t.Errorf("%q: %v, want %q", v, err, want)
+		}
+	}
+	// campus (0.6: two buildings, items with no position in their building) labelled
+	// so: not read as 0.0, but refused, and held to 0.7's rules
+	for _, v := range []string{"0.8a.0", "0.8-rc1"} {
+		p := rewriteFrom(t, "campus.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = v }))
+		if got := codes(p.Validate()); !slices.Contains(got, ProblemVersion) || !slices.Contains(got, ProblemScope) {
+			t.Errorf("campus as %s: %v", v, got)
+		}
+	}
+}
+
+func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
+	// A server can refuse a package by its manifest before reading the rest: here
+	// a package whose spaces.geojson Read refuses, as too large.
+	feature := `{"type":"Feature","id":"X","geometry":null,"properties":{"kind":"space"}},`
+	data := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileSpaces:
+			return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat(feature, (8<<20)/len(feature)) + `{}]}`)
+		case FileManifest:
+			var doc map[string]any
+			json.Unmarshal(d, &doc)
+			doc["format_version"] = "0.8.0"
+			d, _ = json.Marshal(doc)
+		}
+		return d
+	}, zip.Deflate)
+	if _, err := readZip(data, DefaultLimits); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Read: %v", err)
+	}
+	m, err := ReadManifest(bytes.NewReader(data), int64(len(data)), DefaultLimits)
+	if err != nil || m.Project.ID != "SD8YHE" || m.FormatVersion != "0.8.0" || CheckVersion(m.FormatVersion) == nil {
+		t.Errorf("ReadManifest: %+v %v", m, err)
+	}
+	if _, err := ReadManifest(bytes.NewReader(data), int64(len(data)), Limits{MaxFileBytes: 100}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a manifest larger than the limit: %v", err)
+	}
+	if _, err := ReadManifest(bytes.NewReader([]byte("not a zip")), 9, DefaultLimits); err == nil {
+		t.Error("not a ZIP: a manifest")
+	}
+	noManifest := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n == FileManifest {
+			return nil
+		}
+		return d
+	}, zip.Deflate)
+	if _, err := ReadManifest(bytes.NewReader(noManifest), int64(len(noManifest)), DefaultLimits); err == nil {
+		t.Error("no manifest.json: a manifest")
+	}
+}

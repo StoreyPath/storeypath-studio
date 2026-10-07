@@ -309,6 +309,39 @@ func readAll(r io.Reader, size uint64) ([]byte, error) {
 	}
 }
 
+// manifest reads the package's manifest.json.
+func (a *archive) manifest() (Manifest, error) {
+	var m Manifest
+	data, ok, err := a.read(FileManifest)
+	if err != nil {
+		return m, err
+	}
+	if !ok {
+		if a.entries["project.json"] != nil || a.entries["studio/project.spproj"] != nil {
+			return m, errors.New("not a package: a StoreyPath project file, for StoreyPath Studio to continue " +
+				"the project; export a building's package (.storeypath) from Studio instead")
+		}
+		return m, errors.New("not a package: no manifest.json")
+	}
+	if err := decodeJSON(data, &m, a.limits.MaxFeatures); err != nil {
+		return Manifest{}, fmt.Errorf("manifest.json: %w", err)
+	}
+	return m, nil
+}
+
+// ReadManifest reads a package's manifest.json alone, within limits, so that a
+// server can refuse a package before reading the rest of it: one of a format
+// version it does not read (CheckVersion(m.FormatVersion)), of another project,
+// of a building it does not keep. It fails as Read does when the manifest cannot
+// be read.
+func ReadManifest(r io.ReaderAt, size int64, limits Limits) (Manifest, error) {
+	a, err := openArchive(r, size, limits)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return a.manifest()
+}
+
 // Read reads a package from a reader of size bytes, within limits. It fails only
 // when the package cannot be read at all (not a ZIP, no readable manifest, over
 // its limits: ErrTooLarge); anything else is left for Validate to report.
@@ -322,20 +355,8 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 	for name := range a.entries {
 		p.files[name] = true
 	}
-
-	data, ok, err := a.read(FileManifest)
-	if err != nil {
+	if p.Manifest, err = a.manifest(); err != nil {
 		return nil, err
-	}
-	if !ok {
-		if a.entries["project.json"] != nil || a.entries["studio/project.spproj"] != nil {
-			return nil, errors.New("not a package: a StoreyPath project file, for StoreyPath Studio to continue " +
-				"the project; export a building's package (.storeypath) from Studio instead")
-		}
-		return nil, errors.New("not a package: no manifest.json")
-	}
-	if err := decodeJSON(data, &p.Manifest, max); err != nil {
-		return nil, fmt.Errorf("manifest.json: %w", err)
 	}
 
 	// Each file is where the manifest's files say, or where it usually is when they

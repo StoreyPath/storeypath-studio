@@ -3,6 +3,7 @@ package storeypath
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -324,30 +325,56 @@ func geometryOf(id string, g *Geometry, file string, point bool, add func(code, 
 	}
 }
 
-func major(version string) string { return strings.SplitN(version, ".", 2)[0] }
+// versionRE: a format version as the format writes it: major.minor, a patch
+// number if any, then a pre-release or build after - or + (ASCII only).
+var versionRE = regexp.MustCompile(`^([0-9]+)\.([0-9]+)(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?$`)
 
-// CheckVersion says whether this module reads packages of a format version: one
-// of another major version, or (before 1.0, where a minor version may change
-// what a package means, as 0.4's scope and 0.7's one building per package did)
-// of a newer minor version, is refused with a message to update the reader.
-// Older versions, and newer patch versions (properties added), are read.
-func CheckVersion(version string) error {
-	if major(version) != major(FormatVersion) {
-		return fmt.Errorf("unsupported format version %s (this reader reads %s.x)", version, major(FormatVersion))
+// parseVersion is a format version's major and minor numbers, ok false for what
+// is not a format version. A number too large to hold is taken as the largest.
+func parseVersion(version string) (major, minor int, ok bool) {
+	m := versionRE.FindStringSubmatch(version)
+	if m == nil {
+		return 0, 0, false
 	}
-	if major(FormatVersion) == "0" && minor(version) > minor(FormatVersion) {
-		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", version, FormatVersion)
+	number := func(s string) int {
+		n, err := strconv.Atoi(s)
+		if err != nil { // only too large, after the pattern
+			return math.MaxInt
+		}
+		return n
+	}
+	return number(m[1]), number(m[2]), true
+}
+
+// CheckVersion says whether this module reads packages of a format version: what
+// is not a format version (major.minor.patch) is refused, as is one of another
+// major version, or (before 1.0, where a minor version may change what a package
+// means, as 0.4's scope and 0.7's one building per package did) of a newer minor
+// version, with a message to update the reader. Older versions, and newer patch
+// versions (properties added), are read.
+func CheckVersion(version string) error {
+	major, minor, ok := parseVersion(version)
+	if !ok {
+		return fmt.Errorf("%q is not a format version (major.minor.patch)", clip(version))
+	}
+	ownMajor, ownMinor, _ := parseVersion(FormatVersion)
+	if major != ownMajor {
+		return fmt.Errorf("unsupported format version %s (this reader reads %d.x)", clip(version), ownMajor)
+	}
+	if ownMajor == 0 && minor > ownMinor {
+		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", clip(version), FormatVersion)
 	}
 	return nil
 }
 
-// minor is a format version's minor number ("0.7.0" → 7; 0 when it has none).
+// minor is a format version's minor number ("0.7.0" → 7). What is not a format
+// version is taken as the newest, so that every rule applies to it (and Validate
+// reports it).
 func minor(version string) int {
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) < 2 {
-		return 0
+	_, n, ok := parseVersion(version)
+	if !ok {
+		return math.MaxInt
 	}
-	n, _ := strconv.Atoi(parts[1])
 	return n
 }
 
