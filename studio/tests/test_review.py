@@ -886,3 +886,38 @@ def test_a_space_studio_set_aside_is_restored_by_a_person(review):
     again = r.correct(hall.id, {"ignored": True})
     ws = Workspace.load(path)
     assert again["ignored"] is True and ws.effective(ws.objects[hall.id])["ignored"] is True
+
+
+def test_a_space_drawn_where_the_drawing_encloses_none(review):
+    # A colonnade between columns: no walls, so no space is found there. A person
+    # draws its outline in review; it becomes a space through every re-read, never
+    # over a room (what a room covers is left out), and can be taken away again.
+    from storeypath.convert import DRAWN_NOTE, convert_floor
+
+    r, path, f_id = review
+    ws = Workspace.load(path)
+    x0, y0, x1, y1 = shape(ws.floor(f_id).outline).bounds
+    outside = [[x1 + 1, y0], [x1 + 5, y0], [x1 + 5, y0 + 4], [x1 + 1, y0 + 4]]  # beyond the walls
+    over = [[x1 - 2, y0 + 6], [x1 + 3, y0 + 6], [x1 + 3, y0 + 9], [x1 - 2, y0 + 9]]  # 2 m of it over rooms
+    r.edit(f_id, {"add": {"space": outside}})
+    r.edit(f_id, {"add": {"space": over}})
+    with pytest.raises(ValueError, match="at least"):
+        r.edit(f_id, {"add": {"space": [[0, 0], [0.5, 0], [0.5, 0.5]]}})
+    with pytest.raises(ValueError, match="cross itself"):
+        r.edit(f_id, {"add": {"space": [[0, 0], [4, 4], [4, 0], [0, 4]]}})
+
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    drawn = [o for o in ws.floor_objects(f_id) if o.kind == "space" and DRAWN_NOTE in o.issues]
+    assert len(drawn) == 2
+    areas = sorted(round(shape(o.geometry).area, 1) for o in drawn)
+    assert areas[1] == 16.0 and 0 < areas[0] < 15.0  # the one over rooms without what they cover
+    whole = next(o for o in drawn if round(shape(o.geometry).area, 1) == 16.0)
+    assert shape(ws.floor(f_id).outline).contains(shape(whole.geometry).representative_point())  # the floor takes it in
+    ids = {o.id for o in drawn}
+    convert_floor(ws, f_id, path.parent)
+    assert {o.id for o in ws.floor_objects(f_id) if o.kind == "space" and DRAWN_NOTE in o.issues} == ids  # kept, same IDs
+    ws.save(path)
+
+    r.edit(f_id, {"remove": {"at": [x1 + 3, y0 + 2]}})  # inside the first: taken away
+    assert len(Workspace.load(path).floor(f_id).edits.spaces) == 1

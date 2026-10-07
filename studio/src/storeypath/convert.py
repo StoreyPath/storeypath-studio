@@ -83,6 +83,7 @@ def convert_floor(
     extraction = extract_floor(doc, profile, src.units, src.region, src.offset,
                                skip_label=lambda t: reader.is_room_name(t) is False, drawn_walls=floor.edits.walls,
                                drawn_dividers=floor.edits.dividers)
+    _drawn_spaces(extraction, floor.edits.spaces, profile.spaces.min_area)
     _read_room_types(extraction, reader)
     sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
@@ -342,6 +343,32 @@ def _allocate_id(ws: Workspace, floor_id: str, building_id: str) -> str:
 def _opening_type(source: str) -> str:
     return {"door": "door", "glazing": "door", "assumed": "door", "window": "window",
             "drawn door": "door", "drawn window": "window", "drawn opening": "opening"}.get(source, "opening")
+
+
+DRAWN_NOTE = "drawn in review: where the drawing encloses no space"
+
+
+def _drawn_spaces(ex: FloorExtraction, drawn, min_area: float) -> None:
+    """The spaces a person drew where the drawing encloses none (a colonnade between
+    columns), without what the rooms found already cover: added as spaces, and to
+    the floor's outline."""
+    from shapely import union_all
+    from shapely.geometry import Polygon
+
+    from .geometry import as_polygons
+
+    rooms = union_all([s.polygon for s in ex.spaces if not s.ignored]) if ex.spaces else None
+    added = []
+    for ring in drawn:
+        area = Polygon(ring).buffer(0)
+        if rooms is not None and not rooms.is_empty:
+            area = area.difference(rooms)
+        for part in as_polygons(area):
+            if part.area >= min_area:
+                ex.spaces.append(ExtractedSpace(polygon=part, layer="drawn", issues=[DRAWN_NOTE]))
+                added.append(part)
+    if added and ex.outline is not None:
+        ex.outline = union_all([ex.outline, *added])
 
 
 def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:

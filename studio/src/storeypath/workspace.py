@@ -88,12 +88,16 @@ class FloorEdits(BaseModel):
     """What a person drew on a floor in review, kept through every conversion: walls
     the drawing leaves out (they part spaces as drawn walls do), doors, windows and
     openings it does not show, lines dividing a space where there is no wall (its
-    zones), and the drawing's openings given another size."""
+    zones), the drawing's openings given another size, and spaces drawn where the
+    drawing encloses none."""
 
     walls: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
     openings: list[DrawnOpening] = Field(default_factory=list)
     dividers: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
     resized: list[ResizedOpening] = Field(default_factory=list)  # openings of the drawing, another size
+    # areas a person drew as spaces where the drawing encloses none (a colonnade
+    # between columns): each a ring [[x, y], …], local meters
+    spaces: list[list[list[float]]] = Field(default_factory=list)
 
 
 class Floor(BaseModel):

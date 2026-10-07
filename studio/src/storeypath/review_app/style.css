@@ -184,6 +184,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 .preview line.window { stroke: #22b8cf; stroke-width: 5; }
 .preview line.opening { stroke: #f08c00; stroke-width: 6; stroke-dasharray: 5 4; }
 .preview line.divide { stroke: #0ca678; stroke-dasharray: 3 4; }
+.preview path.space-outline { fill: rgba(12, 166, 120, .18); stroke: #0ca678; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
 .preview circle { fill: #d6336c; }
 #map.drawing-tool .pane { cursor: crosshair; }
 #map.busy .pane { cursor: progress; }

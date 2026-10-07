@@ -27,7 +27,7 @@ import threading
 from pathlib import Path
 from typing import NamedTuple
 
-from shapely.geometry import LineString, Point, shape
+from shapely.geometry import LineString, Point, Polygon, shape
 
 from .cad import DrawingError, meters_per_unit, read_drawing
 from .export import _label_point
@@ -173,13 +173,21 @@ class Review:
                 if not 0.3 <= LineString(span).length <= 6:
                     raise ValueError("an opening is 0.3 to 6 m wide")
                 f.edits.openings.append(DrawnOpening(type=o["type"], span=span))
+            elif isinstance(body.get("add"), dict) and "space" in body["add"]:
+                f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
                 self._resize(ws, floor_id, f, body["resize"])
             elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
                 at = Point(_points([body["remove"]["at"]], 1)[0])
-                lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings}
-                drawn = [(LineString(x.span if kind == "opening" else x).distance(at), kind, i)
-                         for kind, items in lists.items() for i, x in enumerate(items)]
+                lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings,
+                         "space": f.edits.spaces}
+
+                def reach(kind, x):  # a drawn space: anywhere inside it
+                    if kind == "space":
+                        return Polygon(x).distance(at)
+                    return LineString(x.span if kind == "opening" else x).distance(at)
+
+                drawn = [(reach(kind, x), kind, i) for kind, items in lists.items() for i, x in enumerate(items)]
                 near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
                 if not near:
                     raise NotFound("nothing drawn there")
@@ -187,7 +195,8 @@ class Review:
                 lists[kind].pop(i)
             else:
                 raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}}, '
-                                 '{"resize": {"at": [x, y], "width", "sill", "height"}} or {"remove": {"at": [x, y]}}')
+                                 '{"add": {"space": [[x, y], …]}}, {"resize": {"at": [x, y], "width", "sill", '
+                                 '"height"}} or {"remove": {"at": [x, y]}}')
             self._save(ws)
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
@@ -300,6 +309,28 @@ class Review:
                 doc, profile, meters_per_unit(doc, src.units), src.region, src.offset
             )
         return self._drawings[key]
+
+
+DRAWN_SPACE_MIN_M2 = 1.0
+
+
+def _ring(value) -> list[list[float]]:
+    """A space's outline from a request: three or more points [x, y] (local meters),
+    a simple shape of at least DRAWN_SPACE_MIN_M2."""
+    try:
+        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
+    except (TypeError, ValueError):
+        raise ValueError("a space is its corners: [[x, y], [x, y], [x, y], …]") from None
+    if len(pts) > 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3 or len(pts) > 500:
+        raise ValueError("a space has 3 to 500 corners")
+    poly = Polygon(pts)
+    if not poly.is_valid:
+        raise ValueError("a space's outline must not cross itself")
+    if poly.area < DRAWN_SPACE_MIN_M2:
+        raise ValueError(f"a space is at least {DRAWN_SPACE_MIN_M2:g} m²")
+    return pts
 
 
 def _points(value, n: int) -> list[list[float]]:

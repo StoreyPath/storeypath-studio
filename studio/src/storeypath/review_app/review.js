@@ -31,7 +31,8 @@ const state = {
   filter: "",
   item: null, // a door, window or drawn line chosen: {kind: "door", id}, or {kind: "wall" or "divider", at}
   tool: null, // drawing: "wall", "divide", "door", "window" or "opening"
-  wallStart: null, // a wall or dividing line being drawn: where it starts
+  wallStart: null, // a wall or dividing line being drawn: where it starts (a space: its last corner)
+  corners: [], // a space being drawn: its corners so far
   busy: false, // an edit is being saved and the floor read again
   segments: null, // the floor's wall edges, for snapping to
 };
@@ -687,6 +688,12 @@ function bindPane(pane) {
     state.view = { ...state.view, tx: drag.tx + dx, ty: drag.ty + dy };
     updateView();
   });
+  pane.addEventListener("dblclick", (e) => {
+    if (state.tool === "space" && state.corners.length >= 3) {
+      e.preventDefault();
+      closeSpace();
+    }
+  });
   const end = (e) => {
     if (!drag) return;
     const { moved, target } = drag;
@@ -948,6 +955,7 @@ const HINTS = {
   door: "Door: click on a wall where it goes. Esc to stop.",
   window: "Window: click on a wall where it goes. Esc to stop.",
   opening: "Opening (a way through, no door): click on a wall where it goes. Esc to stop.",
+  space: "Space: click its corners (they snap to walls); click the first again, double-click or Enter to close it. Backspace takes the last corner back, Esc stops.",
 };
 const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
 const LINES = { wall: "wall", divide: "divider" }; // the tools that draw a line, and what it is
@@ -960,6 +968,7 @@ function planPoint(sx, sy) {
 function setTool(tool) {
   state.tool = tool && state.tool !== tool ? tool : null;
   state.wallStart = null;
+  state.corners = [];
   $("map").classList.toggle("drawing-tool", Boolean(state.tool));
   clearPreview();
   if (state.tool) {
@@ -1051,7 +1060,18 @@ function preview(p) {
   if (state.busy) return;
   const r = 5 / state.view.k;
   let shapes = [];
-  if (state.tool in LINES) {
+  if (state.tool === "space") {
+    const end = snapWall(p);
+    const pts = [...state.corners, end];
+    const closing = state.corners.length >= 3 && closesSpace(end);
+    shapes = [];
+    if (pts.length >= 2) {
+      const d = `M${pts.map(([x, y]) => `${x},${y}`).join("L")}${closing ? "Z" : ""}`;
+      shapes.push(() => svg("path", { d, class: "space-outline" }));
+    }
+    for (const [x, y] of state.corners) shapes.push(() => svg("circle", { cx: x, cy: y, r }));
+    shapes.push(() => svg("circle", { cx: end[0], cy: end[1], r: closing ? r * 1.8 : r }));
+  } else if (state.tool in LINES) {
     const end = snapWall(p);
     shapes = state.wallStart
       ? [() => svg("line", { x1: state.wallStart[0], y1: state.wallStart[1], x2: end[0], y2: end[1], class: state.tool }),
@@ -1065,8 +1085,34 @@ function preview(p) {
   for (const id of ["preview", "preview-print"]) $(id).replaceChildren(...shapes.map((make) => make()));
 }
 
+/** Whether a point closes the space being drawn: on its first corner (a few pixels). */
+function closesSpace(p) {
+  const first = state.corners[0];
+  return Boolean(first) && Math.hypot(p[0] - first[0], p[1] - first[1]) <= 10 / state.view.k;
+}
+
+/** The space being drawn, closed and saved; the floor is read again with it. */
+function closeSpace() {
+  const ring = state.corners;
+  if (ring.length < 3) return toast("A space needs at least three corners", true);
+  state.corners = [];
+  state.wallStart = null;
+  setTool(null);
+  submitEdit({ add: { space: ring } }, "Adding the space…");
+}
+
 function toolClick(p) {
   if (state.busy) return;
+  if (state.tool === "space") {
+    const at = snapWall(p);
+    if (state.corners.length >= 3 && closesSpace(at)) return closeSpace();
+    const last = state.corners.at(-1);
+    if (last && Math.hypot(at[0] - last[0], at[1] - last[1]) < 0.05) return; // a double-click's second click
+    state.corners.push(at);
+    state.wallStart = at; // the next corner squares to this one
+    preview(p);
+    return;
+  }
   if (state.tool in LINES) {
     const at = snapWall(p);
     if (!state.wallStart) {
@@ -1281,6 +1327,11 @@ function openMenu(cx, cy, p) {
   items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall || !readable(), hint: off }));
   items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { disabled: !readable(), hint: readable() ? "W" : "needs its drawing" }));
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? "V" : "needs its drawing" }));
+  items.push(menuItem("Draw a space from here", () => startSpace(p), { disabled: !readable(), hint: readable() ? "S" : "needs its drawing" }));
+  const drawnSpace = (state.floor?.edits?.spaces || []).find((ring) => inRing(p, ring));
+  if (drawnSpace) {
+    items.push(menuItem("Take the drawn space away", () => submitEdit({ remove: { at: p } }, "Taking it away…"), { danger: true }));
+  }
   $("menu").replaceChildren(...items);
   placeMenu(cx, cy);
   $("menu").querySelector("button:not(:disabled)")?.focus();
@@ -1317,6 +1368,24 @@ function addOpening(type, p) {
       .sort((a, b) => a.d - b.d)[0];
     if (added && added.d < 0.5) selectItem({ kind: "door", id: added.x.id });
   });
+}
+
+function startSpace(p) {
+  setTool("space");
+  const at = snapWall(p);
+  state.corners = [at];
+  state.wallStart = at;
+  preview(p);
+}
+
+/** Whether a point is inside a ring of [x, y] points. */
+function inRing(p, ring) {
+  let inside = false;
+  for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
+    const [xj, yj] = ring[j], [xk, yk] = ring[k];
+    if ((yj > p[1]) !== (yk > p[1]) && p[0] < ((xk - xj) * (p[1] - yj)) / (yk - yj) + xj) inside = !inside;
+  }
+  return inside;
 }
 
 function startLine(tool, p) {
@@ -1413,6 +1482,14 @@ function setupPanel() {
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (state.tool === "space" && (e.key === "Backspace" || e.key === "Enter")) {
+      e.preventDefault();
+      if (e.key === "Enter") return closeSpace();
+      state.corners.pop(); // the last corner taken back
+      state.wallStart = state.corners.at(-1) ?? null;
+      clearPreview();
+      return;
+    }
     if (e.key === "Delete" || e.key === "Backspace") {
       // what is chosen: a door, window, opening or drawn line; else a space
       if (state.item) deleteItem();
@@ -1424,14 +1501,15 @@ function setupPanel() {
       return;
     }
     if (e.key === "n" || e.key === "N") nextToReview();
-    else if (view3d.shown && "fFwWvVdDoO".includes(e.key)) {
+    else if (view3d.shown && "fFwWvVdDoOsS".includes(e.key)) {
       if (e.key.toLowerCase() !== "f") toast("Switch to 2D to draw walls, dividers and doors");
     } else if (e.key === "f" || e.key === "F") fit();
-    else if (!readable() && "wWvVdDoO".includes(e.key)) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
+    else if (!readable() && "wWvVdDoOsS".includes(e.key)) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
     else if (e.key === "w" || e.key === "W") setTool("wall");
     else if (e.key === "v" || e.key === "V") setTool("divide");
     else if (e.key === "d" || e.key === "D") setTool("door");
     else if (e.key === "o" || e.key === "O") setTool("opening");
+    else if (e.key === "s" || e.key === "S") setTool("space");
   });
 }
 
