@@ -544,6 +544,66 @@ def test_a_project_kept_as_a_file_of_the_data_folder_is_replaced_not_doubled(cam
     assert _projects(data) == [ws.id]
 
 
+def _crafted(out, ws):
+    from storeypath.bundle import PROJECT_MANIFEST, WORKSPACE_FILE
+
+    with zipfile.ZipFile(out, "w") as z:
+        z.writestr(PROJECT_MANIFEST, json.dumps({"format": "storeypath-project",
+                                                 "project": {"id": ws.id, "name": ws.project.name}}))
+        z.writestr(WORKSPACE_FILE, ws.model_dump_json())
+    return out
+
+
+def test_a_project_file_reads_drawings_of_the_project_alone(tmp_path):
+    # Its floors' drawing paths (absolute, or leaving the project) become the project's
+    # drawings of those names: sending the project on never ships a file from elsewhere.
+    from storeypath.bundle import export_project, open_file
+    from storeypath.workspace import SourceDrawing
+
+    secret = tmp_path / "outside" / "secret-notes.txt"
+    secret.parent.mkdir()
+    secret.write_text("private: not part of any project\n")
+    ws = Workspace.new("Innocent project")
+    loc = ws.add_location("SITE", "Site")
+    b = ws.add_building(loc, "HQ", "HQ")
+    ws.add_floor(b, 0, source=SourceDrawing(path=str(secret)))
+    ws.add_floor(b, 1, source=SourceDrawing(path="../../outside/secret-notes.txt", profile="../../outside/p.yaml"))
+    ws.add_floor(b, 2, source=SourceDrawing(path="C:\\plans\\level-2.dxf"))
+    data = tmp_path / "data"
+    open_file(data, _crafted(tmp_path / "crafted.storeypath-project", ws))
+    opened = next((data / ws.id).glob("*.spproj"))
+    floors = [f for *_, f, _ in Workspace.load(opened).iter_floors()]
+    assert [f.source.path for f in floors] == ["drawings/secret-notes.txt"] * 2 + ["drawings/level-2.dxf"]
+    assert floors[1].source.profile == "auto"
+    export_project(opened, tmp_path / "sent.storeypath-project")
+    with zipfile.ZipFile(tmp_path / "sent.storeypath-project") as z:
+        assert not [n for n in z.namelist() if n.startswith("studio/drawings/")]
+
+    nameless = Workspace.new("Nameless")
+    nameless.add_floor(nameless.add_building(nameless.add_location("SITE", "Site"), "HQ", "HQ"), 0,
+                       source=SourceDrawing(path="../.."))
+    with pytest.raises(ValueError, match="not a file of the project"):
+        open_file(tmp_path / "data2", _crafted(tmp_path / "nameless.storeypath-project", nameless))
+
+
+def test_a_project_sent_ships_no_file_from_outside_its_folder(campus, tmp_path):
+    from storeypath.bundle import export_project
+    from storeypath.workspace import SourceDrawing
+
+    ws, ws_path, hq, _ = campus
+    secret = tmp_path / "secret.dxf"
+    secret.write_text("0\nEOF\n")
+    ws.floor(f"{hq}-F00").source = SourceDrawing(path=str(secret))
+    ws.floor(f"{hq}-F01").source = SourceDrawing(path="../../secret.dxf")
+    ws.save(ws_path)
+    export_project(ws_path, tmp_path / "sent.storeypath-project")
+    with zipfile.ZipFile(tmp_path / "sent.storeypath-project") as z:
+        shipped = [n for n in z.namelist() if n.startswith("studio/drawings/")]
+        sent = Workspace.model_validate_json(z.read("studio/project.spproj"))
+    assert shipped and all(z_name.split("/")[-1].startswith(("hq-", "annex-")) for z_name in shipped)
+    assert sent.floor(f"{hq}-F00").source.path == sent.floor(f"{hq}-F01").source.path == "drawings/secret.dxf"
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 

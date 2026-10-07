@@ -86,9 +86,10 @@ class ItemClash(ValueError):
 
 def export_project(ws_path: Path, out) -> None:
     """The project as one file for another Studio (*.storeypath-project): the
-    workspace and its drawings (every floor's, wherever it is, and the others added
-    to it), the workspace pointing at them there, and the item types of this
-    Studio's catalogue. Not entered as an export (it is for people, not systems)."""
+    workspace and its drawings (every floor's in the project's folder, and the
+    others added to it; a file outside the folder is never sent), the workspace
+    pointing at them there, and the item types of this Studio's catalogue. Not
+    entered as an export (it is for people, not systems)."""
     from importlib.metadata import version
 
     from . import catalogue
@@ -96,9 +97,13 @@ def export_project(ws_path: Path, out) -> None:
 
     ws_path = Path(ws_path)
     folder = ws_path.parent
+    root = folder.resolve()
     ws = Workspace.load(ws_path)
     shipped = ws.model_copy(deep=True)
     files: dict[str, Path] = {}  # name in drawings/ -> the file
+
+    def inside(path: Path) -> bool:  # only what is in the project's folder is sent
+        return path.resolve().is_relative_to(root) and path.is_file()
 
     def ship(path: Path) -> str:
         path = path.resolve()
@@ -110,20 +115,20 @@ def export_project(ws_path: Path, out) -> None:
             name, n = f"{path.stem}-{n}{path.suffix}", n + 1
         files[name] = path
         words = path.with_name(path.name + ".words.txt")
-        if words.is_file():
-            files[name + ".words.txt"] = words
+        if inside(words):
+            files[name + ".words.txt"] = words.resolve()
         return name
 
     for _, _, f, _ in shipped.iter_floors():
         if f.source is None:
             continue
         path = Path(f.source.path) if Path(f.source.path).is_absolute() else folder / f.source.path
-        if path.is_file():
-            f.source.path = f"drawings/{ship(path)}"
+        # the file names its drawing in drawings/ either way: no path of this computer
+        f.source.path = f"drawings/{ship(path) if inside(path) else _bare_name(f.source.path) or 'drawing'}"
     drawings = folder / "drawings"
     if drawings.is_dir():
         for p in sorted(drawings.iterdir()):
-            if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in DRAWING_TYPES:
+            if inside(p) and not p.name.startswith(".") and p.suffix.lower() in DRAWING_TYPES:
                 ship(p)
     data = ws_path.parent.parent  # the Studio's data folder: its catalogue of item types, when it has one
     cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else catalogue.default_catalogue()
@@ -175,6 +180,7 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
         names = {i.filename for i in infos}
         if WORKSPACE_FILE in names:
             ws = Workspace.model_validate_json(z.read(WORKSPACE_FILE))
+            _within_project(ws)
             how = "project"
         else:
             errors = validate_package(source)
@@ -237,6 +243,32 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
             "item_types_added": learned}
+
+
+def _bare_name(path: str) -> str:
+    """A file's name alone, from a path of any system ("" when there is none)."""
+    name = re.split(r"[\\/]", path.strip())[-1]
+    return "" if name in (".", "..") else name
+
+
+def _within_project(ws: Workspace) -> None:
+    """A project file's floors read drawings of the project alone: each the drawing of
+    its name in the project's drawings/ folder (where the file's drawings are put),
+    whatever path the file gives; a floor whose path names no file is refused. A
+    profile file of the sender's is not here: such a floor reads its drawing by
+    itself (auto)."""
+    from .profile import AUTO
+
+    for *_, f, f_id in ws.iter_floors():
+        if f.source is None:
+            continue
+        name = _bare_name(f.source.path)
+        if not name:
+            raise ValueError(f"{f_id}: its drawing {f.source.path!r} is not a file of the project")
+        f.source.path = f"drawings/{name}"
+        p = f.source.profile
+        if p != AUTO and (re.search(r"[\\/]", p) or Path(p).suffix.lower() in (".yaml", ".yml")):
+            f.source.profile = AUTO
 
 
 def find_project(data: Path, code: str) -> Path | None:
