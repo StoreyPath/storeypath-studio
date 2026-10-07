@@ -132,15 +132,54 @@ type Object struct {
 	DrawingLabel                                           string
 }
 
-// Limits on what Open reads, against broken or hostile files.
+// Limits on what Read takes in, against broken or hostile files. A server reading
+// uploaded packages should set them from the size of upload it accepts. A field
+// left zero takes DefaultLimits' value.
 type Limits struct {
 	MaxFiles      int   // entries in the ZIP
 	MaxFileBytes  int64 // one file, uncompressed
 	MaxTotalBytes int64 // the files read, uncompressed
+	// MaxRatio: how many times its size in the ZIP one file may be, uncompressed
+	// (a package's files are 10 to 20 times); a file of up to 1 MiB may be more.
+	MaxRatio int64
+	// MaxFeatures: the entries of any one list in a JSON file (the features of a
+	// collection, the points of a ring, the IDs of a list in changes.json, the
+	// types of the catalogue). objects.csv, which lists every feature, may have
+	// this many rows more than the features read.
+	MaxFeatures int
 }
 
-// DefaultLimits are generous for a large campus.
-var DefaultLimits = Limits{MaxFiles: 1000, MaxFileBytes: 512 << 20, MaxTotalBytes: 2 << 30}
+// DefaultLimits are generous for the largest building: its package is a few MB.
+var DefaultLimits = Limits{MaxFiles: 1000, MaxFileBytes: 64 << 20, MaxTotalBytes: 256 << 20, MaxRatio: 100, MaxFeatures: 200_000}
+
+// ratioFloor: a file this small is not held to MaxRatio (a short file of repeated
+// text may compress far better than a package's files do).
+const ratioFloor = 1 << 20
+
+// ErrTooLarge is wrapped by the error Read returns for a package over its Limits,
+// so that a server can tell a package too large to read from a broken one.
+var ErrTooLarge = errors.New("too large")
+
+// orDefault is the limits with each field left zero (or negative) taken from
+// DefaultLimits.
+func (l Limits) orDefault() Limits {
+	if l.MaxFiles <= 0 {
+		l.MaxFiles = DefaultLimits.MaxFiles
+	}
+	if l.MaxFileBytes <= 0 {
+		l.MaxFileBytes = DefaultLimits.MaxFileBytes
+	}
+	if l.MaxTotalBytes <= 0 {
+		l.MaxTotalBytes = DefaultLimits.MaxTotalBytes
+	}
+	if l.MaxRatio <= 0 {
+		l.MaxRatio = DefaultLimits.MaxRatio
+	}
+	if l.MaxFeatures <= 0 {
+		l.MaxFeatures = DefaultLimits.MaxFeatures
+	}
+	return l
+}
 
 // Package is an opened package. Its features are in file order; the lookups find
 // them by ID, floor, building and space.
@@ -166,8 +205,13 @@ type Package struct {
 	byID     map[string]any
 }
 
-// Open reads a package file.
+// Open reads a package file, within DefaultLimits.
 func Open(path string) (*Package, error) {
+	return OpenWithLimits(path, DefaultLimits)
+}
+
+// OpenWithLimits reads a package file within limits.
+func OpenWithLimits(path string, limits Limits) (*Package, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -177,90 +221,143 @@ func Open(path string) (*Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Read(f, st.Size(), DefaultLimits)
+	return Read(f, st.Size(), limits)
 }
 
-// Read reads a package from a reader of size bytes, within limits. It fails only
-// when the package cannot be read at all (not a ZIP, no readable manifest, too
-// large); anything else is left for Validate to report.
-func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
+// archive is a package's ZIP, its files read within limits.
+type archive struct {
+	entries map[string]*zip.File
+	limits  Limits
+	total   int64 // bytes read so far, uncompressed
+}
+
+func openArchive(r io.ReaderAt, size int64, limits Limits) (*archive, error) {
+	limits = limits.orDefault()
 	z, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("not a readable package: %w", err)
 	}
 	if len(z.File) > limits.MaxFiles {
-		return nil, fmt.Errorf("the package has %d files, more than %d", len(z.File), limits.MaxFiles)
+		return nil, fmt.Errorf("%w: the package has %d files, more than %d", ErrTooLarge, len(z.File), limits.MaxFiles)
 	}
-	p := &Package{files: map[string]bool{}, read: map[string]bool{}, kinds: map[string][]string{}, byID: map[string]any{}}
-	entries := map[string]*zip.File{}
+	a := &archive{entries: map[string]*zip.File{}, limits: limits}
 	for _, f := range z.File {
-		entries[f.Name] = f
-		p.files[f.Name] = true
+		a.entries[f.Name] = f
 	}
-	var total int64
-	read := func(name string) ([]byte, bool, error) {
-		f, ok := entries[name]
-		if !ok {
-			return nil, false, nil
+	return a, nil
+}
+
+// read is a file of the package (ok false when it has none), within the limits:
+// its size, how many times its size in the ZIP it is, and the total read. They
+// are checked against the size its ZIP header gives, before anything is
+// uncompressed: archive/zip holds a file to that size.
+func (a *archive) read(name string) (data []byte, ok bool, err error) {
+	f, ok := a.entries[name]
+	if !ok {
+		return nil, false, nil
+	}
+	size, l := f.UncompressedSize64, a.limits
+	if size > uint64(l.MaxFileBytes) {
+		return nil, true, fmt.Errorf("%w: %s is larger than %d bytes", ErrTooLarge, name, l.MaxFileBytes)
+	}
+	if size > ratioFloor && (size-1)/uint64(l.MaxRatio) >= f.CompressedSize64 { // size > MaxRatio × compressed
+		return nil, true, fmt.Errorf("%w: %s is more than %d times its size in the package", ErrTooLarge, name, l.MaxRatio)
+	}
+	if a.total+int64(size) > l.MaxTotalBytes {
+		return nil, true, fmt.Errorf("%w: the package is larger than %d bytes", ErrTooLarge, l.MaxTotalBytes)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, true, err
+	}
+	defer rc.Close()
+	if data, err = readAll(rc, size); err != nil {
+		return nil, true, fmt.Errorf("%s: %w", name, err)
+	}
+	a.total += int64(len(data))
+	return data, true, nil
+}
+
+// readAll reads a file of the ZIP to its end, which must be at the size its
+// header gives (archive/zip checks that, and the file's CRC, at its end).
+func readAll(r io.Reader, size uint64) ([]byte, error) {
+	data := make([]byte, size+1)
+	n := 0
+	for {
+		m, err := r.Read(data[n:])
+		if n += m; err == io.EOF {
+			return data[:n], nil
+		} else if err != nil {
+			return nil, err
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, true, err
+		if n == len(data) { // longer than its header says
+			return nil, zip.ErrFormat
 		}
-		defer rc.Close()
-		data, err := io.ReadAll(io.LimitReader(rc, limits.MaxFileBytes+1))
-		if err != nil {
-			return nil, true, err
-		}
-		if int64(len(data)) > limits.MaxFileBytes {
-			return nil, true, fmt.Errorf("%s is larger than %d bytes", name, limits.MaxFileBytes)
-		}
-		if total += int64(len(data)); total > limits.MaxTotalBytes {
-			return nil, true, fmt.Errorf("the package is larger than %d bytes", limits.MaxTotalBytes)
-		}
-		return data, true, nil
+	}
+}
+
+// Read reads a package from a reader of size bytes, within limits. It fails only
+// when the package cannot be read at all (not a ZIP, no readable manifest, over
+// its limits: ErrTooLarge); anything else is left for Validate to report.
+func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
+	a, err := openArchive(r, size, limits)
+	if err != nil {
+		return nil, err
+	}
+	max := a.limits.MaxFeatures
+	p := &Package{files: map[string]bool{}, read: map[string]bool{}, kinds: map[string][]string{}, byID: map[string]any{}}
+	for name := range a.entries {
+		p.files[name] = true
 	}
 
-	data, ok, err := read(FileManifest)
+	data, ok, err := a.read(FileManifest)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		if entries["project.json"] != nil || entries["studio/project.spproj"] != nil {
+		if a.entries["project.json"] != nil || a.entries["studio/project.spproj"] != nil {
 			return nil, errors.New("not a package: a StoreyPath project file, for StoreyPath Studio to continue " +
 				"the project; export a building's package (.storeypath) from Studio instead")
 		}
 		return nil, errors.New("not a package: no manifest.json")
 	}
-	if err := json.Unmarshal(data, &p.Manifest); err != nil {
+	if err := decodeJSON(data, &p.Manifest, max); err != nil {
 		return nil, fmt.Errorf("manifest.json: %w", err)
 	}
 
+	// bad: a file the package has, unreadable as its kind; a limit passed fails Read
+	bad := func(name string, err error) error {
+		if errors.Is(err, ErrTooLarge) {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		return nil
+	}
 	collections := []struct {
 		file string
 		read func([]byte) error
 	}{
 		{FileLocation, func(b []byte) error {
-			return decode(b, "location", &p.Locations, func(f *Location, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "location", max, &p.Locations, func(f *Location, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 		{FileBuildings, func(b []byte) error {
-			return decode(b, "building", &p.Buildings, func(f *Building, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "building", max, &p.Buildings, func(f *Building, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 		{FileFloors, func(b []byte) error {
-			return decode(b, "floor", &p.Floors, func(f *Floor, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "floor", max, &p.Floors, func(f *Floor, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 		{FileSpaces, func(b []byte) error {
-			return decode(b, "space", &p.Spaces, func(f *Space, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "space", max, &p.Spaces, func(f *Space, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 		{FileZones, func(b []byte) error {
-			return decode(b, "zone", &p.Zones, func(f *Zone, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "zone", max, &p.Zones, func(f *Zone, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 		{FileOpenings, func(b []byte) error {
-			return decode(b, "opening", &p.Openings, func(f *Opening, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+			return decode(b, "opening", max, &p.Openings, func(f *Opening, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
 	}
 	for _, c := range collections {
-		data, ok, err := read(c.file)
+		data, ok, err := a.read(c.file)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +366,9 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 			continue
 		}
 		if err := c.read(data); err != nil {
-			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: c.file, Message: c.file + ": " + err.Error()})
+			if err := bad(c.file, err); err != nil {
+				return nil, err
+			}
 		} else {
 			p.read[c.file] = true
 		}
@@ -277,48 +376,58 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 
 	// furniture and equipment, and their types (format 0.6), when the manifest lists them
 	if name := p.Manifest.Files["items"]; name != "" {
-		data, ok, err := read(name)
+		data, ok, err := a.read(name)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
-		} else if err := decode(data, "item", &p.Items, func(f *Item, id string, g *Geometry) { f.ID, f.Geometry = id, g }); err != nil {
-			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		} else if err := decode(data, "item", max, &p.Items, func(f *Item, id string, g *Geometry) { f.ID, f.Geometry = id, g }); err != nil {
+			if err := bad(name, err); err != nil {
+				return nil, err
+			}
 		} else {
 			p.read[name] = true
 		}
 	}
 	if name := p.Manifest.Files["catalogue"]; name != "" {
-		data, ok, err := read(name)
+		data, ok, err := a.read(name)
 		if err != nil {
 			return nil, err
 		}
 		var c Catalogue
 		if !ok {
 			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
-		} else if err := json.Unmarshal(data, &c); err != nil {
-			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		} else if err := decodeJSON(data, &c, max); err != nil {
+			if err := bad(name, err); err != nil {
+				return nil, err
+			}
 		} else {
 			p.Catalogue = &c
 		}
 	}
 
-	if data, ok, err := read(FileObjects); err != nil {
+	// objects.csv lists every feature read, and may have rows of kinds a later format adds
+	features := len(p.Locations) + len(p.Buildings) + len(p.Floors) + len(p.Spaces) + len(p.Zones) + len(p.Openings) + len(p.Items)
+	if data, ok, err := a.read(FileObjects); err != nil {
 		return nil, err
 	} else if !ok {
 		p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: FileObjects, Message: "missing file " + FileObjects})
-	} else if p.Objects, err = readObjects(data); err != nil {
-		p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: FileObjects, Message: err.Error()})
+	} else if p.Objects, err = readObjects(data, features+1+max); err != nil {
+		if err := bad(FileObjects, err); err != nil {
+			return nil, err
+		}
 	}
-	if data, ok, err := read(FileChanges); err != nil {
+	if data, ok, err := a.read(FileChanges); err != nil {
 		return nil, err
 	} else if !ok {
 		p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: FileChanges, Message: "missing file " + FileChanges})
 	} else {
 		var c Changes
-		if err := json.Unmarshal(data, &c); err != nil {
-			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: FileChanges, Message: err.Error()})
+		if err := decodeJSON(data, &c, max); err != nil {
+			if err := bad(FileChanges, err); err != nil {
+				return nil, err
+			}
 		} else {
 			p.Changes = &c
 		}
@@ -327,8 +436,61 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 	return p, nil
 }
 
-// decode reads a feature collection into features of one kind.
-func decode[T any](data []byte, kind string, out *[]*T, set func(*T, string, *Geometry)) error {
+// decodeJSON reads a JSON file into v, once no list in it is longer than max.
+func decodeJSON(data []byte, v any, max int) error {
+	if err := checkLists(data, max); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+// maxDepth: how deeply the lists and objects of a JSON file may nest (as deeply as
+// encoding/json reads).
+const maxDepth = 10000
+
+// checkLists fails when a list in a JSON file has more than max entries, before it
+// is decoded: what decoding costs is in proportion to its entries. It counts the
+// commas of each list, outside strings; whether the file is JSON at all is left to
+// the decoder.
+func checkLists(data []byte, max int) error {
+	var commas []int // for each list or object open, the commas in it so far (-1: an object)
+	for i := 0; i < len(data); i++ {
+		switch data[i] {
+		case '"':
+			for i++; i < len(data) && data[i] != '"'; i++ {
+				if data[i] == '\\' {
+					i++
+				}
+			}
+		case '[', '{':
+			if len(commas) == maxDepth {
+				return errors.New("nested too deeply")
+			}
+			if data[i] == '[' {
+				commas = append(commas, 0)
+			} else {
+				commas = append(commas, -1)
+			}
+		case ']', '}':
+			if len(commas) > 0 {
+				commas = commas[:len(commas)-1]
+			}
+		case ',':
+			if n := len(commas); n > 0 && commas[n-1] >= 0 {
+				if commas[n-1]++; commas[n-1] >= max {
+					return fmt.Errorf("%w: a list of more than %d entries", ErrTooLarge, max)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// decode reads a feature collection into features of one kind, of at most max.
+func decode[T any](data []byte, kind string, max int, out *[]*T, set func(*T, string, *Geometry)) error {
+	if err := checkLists(data, max); err != nil {
+		return err
+	}
 	var fc struct {
 		Type     string `json:"type"`
 		Features []struct {
@@ -363,17 +525,18 @@ func decode[T any](data []byte, kind string, out *[]*T, set func(*T, string, *Ge
 	return nil
 }
 
-func readObjects(data []byte) ([]Object, error) {
+// readObjects reads objects.csv, of at most max rows after its header.
+func readObjects(data []byte, max int) ([]Object, error) {
 	r := csv.NewReader(bytes.NewReader(data))
-	rows, err := r.ReadAll()
-	if err != nil {
+	r.ReuseRecord = true
+	header, err := r.Read()
+	if err == io.EOF {
+		return nil, errors.New("no header row")
+	} else if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, errors.New("no header row")
-	}
 	col := map[string]int{}
-	for i, name := range rows[0] {
+	for i, name := range header {
 		col[strings.TrimSpace(name)] = i
 	}
 	get := func(row []string, name string) string {
@@ -382,8 +545,17 @@ func readObjects(data []byte) ([]Object, error) {
 		}
 		return ""
 	}
-	out := make([]Object, 0, len(rows)-1)
-	for _, row := range rows[1:] {
+	var out []Object
+	for {
+		row, err := r.Read()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		if len(out) == max {
+			return nil, fmt.Errorf("%w: more than %d rows", ErrTooLarge, max)
+		}
 		out = append(out, Object{
 			ID: get(row, "id"), Kind: get(row, "kind"), Type: get(row, "type"), Name: get(row, "name"),
 			Number: get(row, "number"), Project: get(row, "project_id"), Location: get(row, "location_id"),

@@ -3,7 +3,9 @@ package storeypath
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"os"
@@ -296,6 +298,19 @@ func rewrite(t *testing.T, edit func(name string, data []byte) []byte) *Package 
 // rewriteFrom is a corpus package with its files edited (nil: left out), read.
 func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) []byte) *Package {
 	t.Helper()
+	data := zipFrom(t, name, edit, zip.Deflate)
+	p, err := Read(bytes.NewReader(data), int64(len(data)), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// zipFrom is a corpus package with its files edited (nil: left out), as a ZIP
+// whose files are compressed by method (zip.Store: not at all; zip.Deflate: at
+// best compression).
+func zipFrom(t *testing.T, name string, edit func(name string, data []byte) []byte, method uint16) []byte {
+	t.Helper()
 	src, err := zip.OpenReader(filepath.Join(corpus, "packages", name))
 	if err != nil {
 		t.Fatal(err)
@@ -303,6 +318,9 @@ func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) 
 	defer src.Close()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
+	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.BestCompression)
+	})
 	for _, f := range src.File {
 		rc, _ := f.Open()
 		data, _ := io.ReadAll(rc)
@@ -310,15 +328,16 @@ func rewriteFrom(t *testing.T, name string, edit func(name string, data []byte) 
 		if data = edit(f.Name, data); data == nil {
 			continue
 		}
-		out, _ := w.Create(f.Name)
+		out, _ := w.CreateHeader(&zip.FileHeader{Name: f.Name, Method: method})
 		out.Write(data)
 	}
 	w.Close()
-	p, err := Read(bytes.NewReader(buf.Bytes()), int64(buf.Len()), DefaultLimits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return buf.Bytes()
+}
+
+// readZip reads a package from its bytes, within limits.
+func readZip(data []byte, limits Limits) (*Package, error) {
+	return Read(bytes.NewReader(data), int64(len(data)), limits)
 }
 
 // editJSON changes one JSON file of the package.
@@ -484,6 +503,61 @@ func TestLimitsKeepOutWhatIsTooBig(t *testing.T) {
 	}
 	if _, err := Read(bytes.NewReader([]byte("not a zip")), 9, DefaultLimits); err == nil {
 		t.Error("not a ZIP read")
+	}
+	if _, err := OpenWithLimits(filepath.Join(corpus, "packages", "campus.storeypath"), Limits{MaxFileBytes: 200}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("OpenWithLimits: %v", err)
+	}
+}
+
+func TestAPackageThatExpandsIsRefused(t *testing.T) {
+	// A few hundred KB uploaded, a spaces.geojson of tiny features repeated: under
+	// MaxFileBytes, but hundreds of times its size in the ZIP. Read refuses it
+	// before decoding it.
+	feature := `{"type":"Feature","id":"SD8YHE-DEMO-HQ-F00-0001","geometry":null,"properties":{"kind":"space"}},`
+	bomb := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileSpaces {
+			return d
+		}
+		return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat(feature, (32<<20)/len(feature)) + `{}]}`)
+	}, zip.Deflate)
+	if _, err := readZip(bomb, DefaultLimits); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "times its size") {
+		t.Errorf("%d KB expanding to 32 MB: %v", len(bomb)>>10, err)
+	}
+	// stored as it is, the same file is within the ratio: then it has too many features
+	stored := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileSpaces {
+			return d
+		}
+		return []byte(`{"type":"FeatureCollection","features":[` + strings.Repeat("{},", DefaultLimits.MaxFeatures) + `{}]}`)
+	}, zip.Store)
+	if _, err := readZip(stored, DefaultLimits); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("%d features: %v", DefaultLimits.MaxFeatures+1, err)
+	}
+	if _, err := readZip(stored, Limits{MaxFeatures: DefaultLimits.MaxFeatures + 1}); err != nil {
+		t.Errorf("%d features, within limits: %v", DefaultLimits.MaxFeatures+1, err)
+	}
+	// objects.csv lists the features, and may have MaxFeatures rows more
+	rows := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileObjects {
+			return d
+		}
+		return append(d, strings.Repeat("X-P000001,plant,PALM,,,,,,,,,,,,,,\n", 1000)...)
+	}, zip.Store)
+	if _, err := readZip(rows, Limits{MaxFeatures: 999}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("1000 rows more than the features: %v", err)
+	}
+	if _, err := readZip(rows, Limits{MaxFeatures: 1000}); err != nil {
+		t.Errorf("1000 rows more than the features, within limits: %v", err)
+	}
+	// a small file may compress far better than a package's files: not refused
+	padded := zipFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		if n != FileChanges {
+			return d
+		}
+		return append(d, bytes.Repeat([]byte(" "), 900<<10)...)
+	}, zip.Deflate)
+	if p, err := readZip(padded, DefaultLimits); err != nil || len(p.Validate()) != 0 {
+		t.Errorf("changes.json padded to 900 KB: %v", err)
 	}
 }
 

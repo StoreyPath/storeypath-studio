@@ -29,9 +29,16 @@ for _, b := range pkg.Buildings {
 
 ## What it gives
 
-- `Open` / `Read`: a package from a file or a reader, within `Limits` (files,
-  bytes) against broken or hostile ZIPs. Fails only when a package cannot be read
-  at all; everything else is reported by `Validate`.
+- `Open` / `Read`: a package from a file or a reader, within `Limits` against
+  broken or hostile ZIPs: files in the ZIP, bytes per file and in all, how many
+  times its size in the ZIP a file may be (a package's files are 10 to 20), and
+  entries in any one list (features, a ring's points, IDs). Fails only when a
+  package cannot be read at all (`ErrTooLarge` when over its limits); everything
+  else is reported by `Validate`. `DefaultLimits` (64 MiB a file, 256 MiB in all,
+  100 times, 200,000 entries) are generous for the largest building, whose
+  package is a few MB. **A server reading uploaded packages should pass its own
+  limits, tied to the size of upload it accepts** (`OpenWithLimits`, `Read`): what
+  reading costs is in proportion to them, not to the upload.
 - `Validate`: the checks Studio's validator makes, each `Problem` with a stable
   `Code` (`MISSING_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`, `ITEM`,
   `ITEM_TYPE`, …), the file and the ID it is about.
