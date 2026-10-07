@@ -250,6 +250,38 @@ def test_a_file_the_manifest_does_not_name_is_found_by_its_usual_name(tmp_path):
     assert validate_package(out) == []
 
 
+# Placements
+
+
+def test_every_building_is_placed_by_the_manifest(tmp_path):
+    building = first("buildings.geojson")["id"]
+    out = rewritten(tmp_path, **{"manifest.json": edited(lambda m: m["placements"].pop(building))})
+    # its items' positions cannot be checked without it: the package is refused, not passed
+    assert validate_package(out) == [f"building {building} has no placement in the manifest"]
+
+    def one_less(m):
+        m["placements"].pop(sorted(m["placements"])[0])
+    errors = validate_package(rewritten(tmp_path, PACKAGES / "campus.storeypath", **{"manifest.json": edited(one_less)}))
+    assert len(errors) == 1 and "has no placement" in errors[0]  # 0.6 too: every format has placed each building
+
+
+def test_the_manifest_places_only_the_buildings_of_the_package(tmp_path):
+    building = first("buildings.geojson")["id"]
+    other = building.rsplit("-", 1)[0] + "-ELSEWHERE"
+
+    def another(m):
+        m["placements"][other] = m["placements"][building]
+    out = rewritten(tmp_path, **{"manifest.json": edited(another)})
+    assert validate_package(out) == [f"the manifest places building {other}, which is not in the package"]
+
+
+def test_an_item_is_in_a_building_of_the_package(tmp_path):
+    location = first("location.geojson")["id"]
+    out = rewritten(tmp_path, **{"items.geojson": _props(0, building_id=location)})  # its floor's ID starts with it
+    item = first("items.geojson")["id"]
+    assert validate_package(out) == [f"{item}: in unknown building {location}"]
+
+
 def test_the_models_refuse_numbers_that_are_not_finite():
     from pydantic import ValidationError
 

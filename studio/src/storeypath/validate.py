@@ -126,6 +126,12 @@ def validate_package(path: str | Path) -> list[str]:
                 errors.append(f"scope lists building {b}, which is not in the package")
             for b in sorted(held - set(manifest.scope.buildings)):
                 errors.append(f"building {b} is in the package but not in its scope")
+        if "buildings" in collections:  # the manifest places every building of the package, and no other
+            held = {f.id for f in collections["buildings"]}
+            for b in sorted(held - set(manifest.placements)):
+                errors.append(f"building {b} has no placement in the manifest")
+            for b in sorted(set(manifest.placements) - held):
+                errors.append(f"the manifest places building {b}, which is not in the package")
         for f in collections.get("buildings", []):
             expect_parent(f.id, f.properties.location_id, "location")
         for f in collections.get("floors", []):
@@ -170,7 +176,9 @@ def validate_package(path: str | Path) -> list[str]:
                     if f.id in ids:
                         errors.append(f"duplicate ID {f.id}")
                     ids[f.id] = "item"
-                    if ids.get(q.floor_id) != "floor" or not q.floor_id.startswith(q.building_id + "-"):
+                    if ids.get(q.building_id) != "building":
+                        errors.append(f"{f.id}: in unknown building {q.building_id}")
+                    elif ids.get(q.floor_id) != "floor" or not q.floor_id.startswith(q.building_id + "-"):
                         errors.append(f"{f.id}: on unknown floor {q.floor_id} (or not of building {q.building_id})")
                     for key, kind in ((q.space_id, "space"), (q.zone_id, "zone")):
                         if key is not None and (ids.get(key) != kind or not key.startswith(q.floor_id + "-")):
@@ -179,6 +187,7 @@ def validate_package(path: str | Path) -> list[str]:
                         errors.append(f"{f.id}: type {q.type} is not in the catalogue")
                     if one_building and q.local is None:
                         errors.append(f"{f.id}: no position in its building (local)")
+                    # (a building without a placement, or not in the package, is a problem of its own above)
                     elif q.local is not None and (p := manifest.placements.get(q.building_id)) is not None:
                         lon, lat = _lonlat(p, q.local.x_m, q.local.y_m)
                         off = math.hypot((lon - q.display_point[0]) * 111_320 * math.cos(math.radians(lat)),
