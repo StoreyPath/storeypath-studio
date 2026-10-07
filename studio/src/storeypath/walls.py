@@ -183,8 +183,10 @@ def spaces_from_walls(
             pockets.append(region)  # a recess in the facade
             continue
         open_edges.append(stretch)
-        # Region edges sit SNAP_M off the wall lines; put them back on the lines.
-        spaces += as_polygons(region.buffer(SNAP_M, join_style="mitre").simplify(SIMPLIFY_M))
+        # Region edges sit SNAP_M off the wall lines; put them back on the lines. At a
+        # very sharp corner that can break hairline slivers off: they are not rooms.
+        spaces += [p for p in as_polygons(region.buffer(SNAP_M, join_style="mitre").simplify(SIMPLIFY_M))
+                   if p.area >= min_area]
 
     outline = envelope.difference(unary_union(pockets)) if pockets else envelope
     outline = outline.buffer(-SNAP_M, join_style="mitre")

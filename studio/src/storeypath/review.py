@@ -131,7 +131,8 @@ class Review:
                 "converted_at": f.converted_at.isoformat() if f.converted_at else None,
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
                 # spaces and their zones; a space divided into zones is used through them
-                "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone")],
+                # a shape with nothing in it (a sliver read by an older Studio) is not shown
+            "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone") and not shape(r.geometry).is_empty],
                 "doors": [self._door(ws, r, areas, f.edits.resized) for r in objects if r.kind == "opening"],
                 # for drawing walls and doors onto: the walls as found, and what was drawn
                 "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),

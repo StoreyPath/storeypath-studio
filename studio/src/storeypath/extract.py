@@ -374,7 +374,8 @@ def extract_floor(
             wall_lines, wall_fills, door_shapes, opening_lines, [lb.point for lb in labels], profile.walls,
             profile.spaces.min_area,
         )
-        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in _without_spikes(found.polygons)]
+        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in _without_spikes(found.polygons)
+                  if p.area >= profile.spaces.min_area]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
         outline, used = found.outline, "walls"
         outside = found.pockets

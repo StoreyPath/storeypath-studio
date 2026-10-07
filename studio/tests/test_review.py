@@ -830,3 +830,14 @@ def test_a_building_whose_first_reading_failed_is_read_again_and_put_beside(stud
     pos = site_positions(loc)
     fps = {b.name: site_footprint(b, pos[b.code]) for b in loc.buildings}
     assert fps["Clinic"] is not None and fps["Admin"].intersection(fps["Clinic"]).area < 1e-6
+
+
+def test_a_room_with_an_empty_shape_does_not_stop_the_floor_showing(review):
+    # An older Studio could keep a sliver as a room with nothing in its outline.
+    r, path, f_id = review
+    ws = Workspace.load(path)
+    room = next(o for o in ws.floor_objects(f_id) if o.kind == "space")
+    room.geometry = {"type": "Polygon", "coordinates": []}
+    ws.save(path)
+    floor = r.floor(f_id)
+    assert len(floor["spaces"]) == 23 and room.id not in {s["id"] for s in floor["spaces"]}

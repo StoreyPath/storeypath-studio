@@ -383,3 +383,20 @@ def test_a_flight_of_stairs_is_found_by_its_treads():
     tiles = [LineString([(x, 0), (x, 2.4)]) for x in [i * 0.3 for i in range(9)]] + \
         [LineString([(0, y), (2.4, y)]) for y in [i * 0.3 for i in range(9)]]  # a tiled floor is a grid, not a stair
     assert stair_flights(tiles) == []
+
+
+def test_slivers_broken_off_a_room_are_not_rooms(monkeypatch):
+    # Putting a room's outline back on the wall lines can, at a very sharp corner,
+    # break hairline slivers off it (a large building floor had five, the smallest with
+    # nothing in it at all): only the room is kept.
+    import storeypath.walls as walls
+    from shapely.geometry import Polygon
+
+    def with_slivers(geom):
+        return [*as_parts(geom), Polygon([(0, 0), (0.03, 0.0001), (0, 0.0002)]), Polygon()]
+
+    as_parts = walls.as_polygons
+    monkeypatch.setattr(walls, "as_polygons", with_slivers)
+    lines = [LineString([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]), LineString([(0, 5), (10, 5)])]
+    found = spaces_from_walls(lines, [], [], [], [], WallsConfig(), 0.5)
+    assert sorted(round(p.area) for p in found.polygons) == [50, 50]
