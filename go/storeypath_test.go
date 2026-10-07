@@ -857,6 +857,24 @@ func TestItemsArePlacedInTheirBuilding(t *testing.T) {
 	}
 }
 
+func TestAnItemsHeadingIsTheWayItFacesInItsBuilding(t *testing.T) {
+	// heading = bearing + 180 - rotation_deg: an item turned round on the map, but
+	// not in its building, passed. In campus-hq-2 the building is turned on the map.
+	for _, name := range []string{"campus-hq.storeypath", "campus-hq-2.storeypath"} {
+		turned := func(by float64) *Package {
+			return rewriteFrom(t, name, editJSON(FileItems, func(doc map[string]any) {
+				props(features(doc)[0])["heading"] = props(features(doc)[0])["heading"].(float64) + by
+			}))
+		}
+		for by, ok := range map[float64]bool{180: false, 1: false, -0.6: false, 0.3: true, -0.3: true, 360: true, -720.2: true} {
+			problems := turned(by).Validate()
+			if ok != (len(problems) == 0) || (!ok && (problems[0].Code != ProblemItem || !strings.Contains(problems[0].Message, "heading"))) {
+				t.Errorf("%s: heading turned by %v: %v", name, by, problems)
+			}
+		}
+	}
+}
+
 func TestEveryBuildingHasAPlacement(t *testing.T) {
 	// Without its building's placement an item's map position was not checked
 	// against its position in the building, and nothing said so.

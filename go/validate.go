@@ -55,7 +55,7 @@ const (
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
 	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
 	ProblemScope        = "SCOPE"         // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
-	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position away from it
+	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
 	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
 )
@@ -71,8 +71,13 @@ var knownKinds = map[string]bool{"project": true, "location": true, "building": 
 	"space": true, "zone": true, "opening": true, "item": true}
 
 // localAgreesM: how far an item's map position may be from its position in its
-// building (the package keeps 7 decimals of a degree, about a centimetre).
-const localAgreesM = 0.05
+// building (the package keeps 7 decimals of a degree, about a centimetre), and
+// headingAgreesDeg how far its heading may be from the way it faces in its building
+// (each kept to 2 decimals).
+const (
+	localAgreesM     = 0.05
+	headingAgreesDeg = 0.5
+)
 
 // kindRoles: the role of the file each kind of feature is in.
 var kindRoles = map[string]string{
@@ -276,6 +281,13 @@ func (p *Package) Validate() []Problem {
 			off := math.Hypot(dlon*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
 			if off > localAgreesM {
 				add(ProblemItem, itemsFile, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
+			}
+			// its front faces rotation_deg counter-clockwise from the drawings' -y,
+			// which the building's bearing turns to: on the map, clockwise from north
+			faces := f.Placement.Bearing + 180 - it.Local.Rotation
+			if math.Abs(math.Remainder(it.Heading-faces, 360)) > headingAgreesDeg {
+				add(ProblemItem, itemsFile, it.ID, "%s: its heading %.2f° is not the way it faces in its building (%.2f°)",
+					it.ID, it.Heading, math.Mod(math.Mod(faces, 360)+360, 360))
 			}
 		}
 		geometryOf(it.ID, it.Geometry, itemsFile, false, add)
