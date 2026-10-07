@@ -767,7 +767,11 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
 
     made: list = []
     rooms = looked = 0
-    for k in merged:
+    last = time.monotonic()
+    for done, k in enumerate(merged):
+        if say is not None and time.monotonic() - last >= PROGRESS_S:
+            last = time.monotonic()
+            say(f"vision: the pieces of {done} of {len(merged)} merged rooms looked at")
         unit = units[k]
         accepted = sorted((cut for kk, cut, _, seen, _ in lines if kk == k and seen and _two_rooms(seen)),
                           key=lambda c: c.length)
