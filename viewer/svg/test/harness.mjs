@@ -71,13 +71,15 @@ const CHROMES = [
   "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser",
 ];
 
-/** Headless Chrome and one page in it. */
-export async function launch() {
+/** Headless Chrome and one page in it; with ``webgl``, WebGL drawn in software
+ * (SwiftShader), for the 3D world's tests. */
+export async function launch({ webgl = false } = {}) {
   const chrome = CHROMES.find((c) => c && existsSync(c));
   if (!chrome) throw new Error("no Chrome or Chromium found: set CHROME to one");
   const profile = mkdtempSync(join(tmpdir(), "sp-svg-test-"));
   const proc = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
-    "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "about:blank"],
+    "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
+    ...(webgl ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] : ["--disable-gpu"]), "about:blank"],
   { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = await new Promise((resolve, reject) => {
     let said = "";

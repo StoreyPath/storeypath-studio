@@ -13,6 +13,10 @@ does no editing; packages are made with [StoreyPath Studio](../studio).
 - **`FloorPlanEngine`** in [`svg/`](svg/), one floor as a plain SVG plan: no WebGL
   and no dependencies, for machines with no GPU (VDI desktops, kiosks). Strict
   TypeScript, with its own build and tests.
+- **`@storeypath/viewer-world`** in [`world/`](world/): the 3D world as one ES
+  module with three.js and JSZip inside, type declarations, and `webglSupport()`
+  to ask first whether the machine can show it well; for applications that
+  install it as a package rather than serve these files.
 
 Plain ES modules, no build step. Neither downloads anything but the package.
 
