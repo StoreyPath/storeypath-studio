@@ -52,8 +52,12 @@ def validate_package(path: str | Path) -> list[str]:
             errors.append(f"unknown format {manifest.format!r}")
         if (why := version_problem(manifest.format_version)) is not None:
             errors.append(why)
+        try:
+            version = version_tuple(manifest.format_version)
+        except ValueError:  # not a version: which format's rules it follows is not known
+            return errors
         project = manifest.project.id
-        one_building = version_tuple(manifest.format_version) >= ONE_BUILDING_FROM
+        one_building = version >= ONE_BUILDING_FROM
 
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}

@@ -7,6 +7,7 @@ them. See spec/FORMAT.md for the human-readable description.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Generic, Literal, TypeVar, Union
 
@@ -295,23 +296,34 @@ class Changes(BaseModel):
 
 
 def version_problem(version: str) -> str | None:
-    """Why this Studio does not read packages of a format version, or None: one of
-    another major version, or (before 1.0, where a minor version may change what a
-    package means) of a newer minor version. Older ones, and newer patches, are read."""
-    if version.split(".")[0] != FORMAT_VERSION.split(".")[0]:
-        return f"unsupported format version {version} (this Studio reads {FORMAT_VERSION.split('.')[0]}.x)"
-    if FORMAT_VERSION.startswith("0.") and version_tuple(version) > version_tuple(FORMAT_VERSION):
+    """Why this Studio does not read packages of a format version, or None: one that
+    is not a version, one of another major version, or (before 1.0, where a minor
+    version may change what a package means) of a newer minor version. Older ones,
+    and newer patches, are read."""
+    try:
+        major, minor = version_tuple(version)
+    except ValueError as e:
+        return str(e)
+    ours = version_tuple(FORMAT_VERSION)
+    if major != ours[0]:
+        return f"unsupported format version {version} (this Studio reads {ours[0]}.x)"
+    if ours[0] == 0 and (major, minor) > ours:
         return f"format version {version} is newer than this Studio's {FORMAT_VERSION}: update StoreyPath Studio to read it"
     return None
 
 
+# major.minor, a patch number, and a pre-release or build label (semantic versioning);
+# ASCII digits only
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)(\.\d+)?([-+][0-9A-Za-z.-]+)?", re.ASCII)
+
+
 def version_tuple(version: str) -> tuple[int, int]:
-    """A format version's major and minor numbers ("0.7.0" → (0, 7))."""
-    parts = (version.split(".") + ["0", "0"])[:2]
-    try:
-        return int(parts[0]), int(parts[1])
-    except ValueError:
-        return (0, 0)
+    """A format version's major and minor numbers ("0.7.0" → (0, 7)). Anything that
+    is not a version (" 8", "1_0", "0.8a.0") is a ValueError, never read as another."""
+    m = _VERSION_RE.fullmatch(version) if isinstance(version, str) else None
+    if m is None:
+        raise ValueError(f"format version {version!r} is not a version (major.minor.patch, as {FORMAT_VERSION})")
+    return int(m[1]), int(m[2])
 
 
 COLLECTIONS: dict[str, type[_Props]] = {
