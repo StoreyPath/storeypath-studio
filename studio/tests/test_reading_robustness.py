@@ -226,6 +226,44 @@ def test_floors_drawn_in_other_units_are_lined_up_in_metres(tmp_path):
     assert abs(x - 30.0) < 0.05 and abs(y - 10.0) < 0.05
 
 
+# ---- lifts and stairs through the floors ---------------------------------------------
+
+
+def test_a_lift_corrected_in_review_shares_its_code_with_the_floor_above(tmp_path):
+    from shapely.affinity import translate
+    from shapely.geometry import shape
+
+    from storeypath.geometry import iou
+    from storeypath.ids import parse_id
+    from storeypath.workspace import Override
+
+    lower = office_floor(2)
+    lifts = [translate(c.shape, 125, 48) for c in lower if c.expected_type == "elevator"]
+    for c in lower:  # the drawing of floor 2 does not say they are lifts
+        if c.expected_type == "elevator":
+            c.label, c.blocks = None, []
+    write_floor_dxf(tmp_path / "l2.dxf", lower)
+    write_floor_dxf(tmp_path / "l3.dxf", office_floor(3))
+    ws = Workspace.new("T")
+    b = ws.add_building(ws.add_location("S", "S"), "HQ", "HQ")
+    f2 = ws.add_floor(b, 2, source=SourceDrawing(path="l2.dxf"))
+    f3 = ws.add_floor(b, 3, source=SourceDrawing(path="l3.dxf"))
+    convert_floor(ws, f2, tmp_path)
+    corrected = 0
+    for r in ws.floor_objects(f2):
+        if r.kind == "space" and any(iou(shape(r.geometry), lift) > 0.8 for lift in lifts):
+            assert r.type != "elevator"
+            ws.overrides[r.id] = Override(type="elevator")  # a person says what it is
+            corrected += 1
+    assert corrected == len(lifts) > 0
+    convert_floor(ws, f3, tmp_path)
+
+    def codes(f):
+        return sorted(parse_id(r.id).code for r in ws.floor_objects(f) if ws.effective(r)["type"] == "elevator")
+
+    assert codes(f3) == codes(f2)
+
+
 # ---- files that cannot be read, or only in part ------------------------------------
 
 

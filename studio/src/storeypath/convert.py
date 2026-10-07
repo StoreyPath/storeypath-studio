@@ -347,13 +347,14 @@ def _match_spaces(existing: list[ObjectRecord], spaces: list[ExtractedSpace]) ->
 
 def _new_space_id(ws: Workspace, floor_id: str, building_id: str, space: ExtractedSpace) -> str:
     """Elevators and stairs that line up with one on another floor of the same
-    building reuse its object code, as long as that full ID was never issued."""
+    building reuse its object code, as long as that full ID was never issued. The
+    other floor's is taken as a person corrected it (a lift the drawing left untyped)."""
     if space.type in VERTICAL_TYPES:
         floor_prefix = floor_id + "-"
         for r in ws.objects.values():
             if (
                 r.status == "active"
-                and r.type in VERTICAL_TYPES
+                and ws.effective(r)["type"] in VERTICAL_TYPES
                 and r.id.startswith(building_id + "-")
                 and not r.id.startswith(floor_prefix)
                 and iou(space.polygon, shape(r.geometry)) >= VERTICAL_MIN_IOU
