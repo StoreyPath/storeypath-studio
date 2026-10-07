@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // A Problem found in a package: a stable Code a program can act on, the file and
@@ -18,6 +19,22 @@ type Problem struct {
 }
 
 func (p Problem) String() string { return p.Message }
+
+// shownLength: the longest a string from a package is shown in a problem (longer
+// than any ID), so a file of hostile strings cannot make problems as large.
+const shownLength = 100
+
+// clip is a string from a package as a problem shows it: cut short at shownLength.
+func clip(s string) string {
+	if len(s) <= shownLength {
+		return s
+	}
+	i := shownLength
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + "…"
+}
 
 // Problem codes. They never change meaning; new ones may be added.
 const (
@@ -69,7 +86,12 @@ var collectionFiles = map[string]string{
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
 	add := func(code, file, id, format string, args ...any) {
-		out = append(out, Problem{Code: code, File: file, ID: id, Message: fmt.Sprintf(format, args...)})
+		for i, arg := range args {
+			if s, ok := arg.(string); ok {
+				args[i] = clip(s)
+			}
+		}
+		out = append(out, Problem{Code: code, File: file, ID: clip(id), Message: fmt.Sprintf(format, args...)})
 	}
 	m := p.Manifest
 	if m.Format != FormatName {

@@ -510,14 +510,14 @@ func decode[T any](data []byte, kind string, max int, out *[]*T, set func(*T, st
 			Kind string `json:"kind"`
 		}
 		if err := json.Unmarshal(f.Properties, &k); err != nil {
-			return fmt.Errorf("feature %d (%s): %w", i, f.ID, err)
+			return fmt.Errorf("feature %d (%s): %w", i, clip(f.ID), err)
 		}
 		if k.Kind != kind {
-			return fmt.Errorf("feature %d (%s): kind %q, expected %q", i, f.ID, k.Kind, kind)
+			return fmt.Errorf("feature %d (%s): kind %q, expected %q", i, clip(f.ID), clip(k.Kind), kind)
 		}
 		v := new(T)
 		if err := json.Unmarshal(f.Properties, v); err != nil {
-			return fmt.Errorf("feature %d (%s): %w", i, f.ID, err)
+			return fmt.Errorf("feature %d (%s): %w", i, clip(f.ID), err)
 		}
 		set(v, f.ID, f.Geometry)
 		*out = append(*out, v)

@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -571,10 +572,49 @@ func TestIDs(t *testing.T) {
 		id.Parent() != "K7Q2XM-RUH-HQ-F02" || floor != "K7Q2XM-RUH-HQ-F02" {
 		t.Errorf("%v: level %s, project %s, code %s, parent %s", id, id.Level(), id.Project(), id.Code(), id.Parent())
 	}
-	for _, bad := range []string{"", "k7q2xm", "A-B-C-D-E-F", "A--B", "A-B C"} {
+	for _, bad := range []string{"", "k7q2xm", "A-B-C-D-E-F", "A--B", "A-B C", strings.Repeat("A", 17)} {
 		if _, err := ParseID(bad); err == nil {
 			t.Errorf("%q read as an ID", bad)
 		}
+	}
+	longest := strings.TrimSuffix(strings.Repeat(strings.Repeat("A", 16)+"-", 5), "-")
+	if _, err := ParseID(longest); err != nil || len(longest) != maxIDLength {
+		t.Errorf("the longest ID (%d characters): %v", len(longest), err)
+	}
+	if id := strings.Repeat("A", 16) + "-I000001"; !IsItemID(id) || len(id) != maxItemIDLength {
+		t.Errorf("the longest item ID %s", id)
+	}
+}
+
+func TestAnIDTooLongIsRefusedBeforeItIsTakenApart(t *testing.T) {
+	// 16 MiB of hyphens: refused by its length, without splitting it (which took
+	// gigabytes), and shown cut short in the problem.
+	hyphens := strings.Repeat("-", 16<<20)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := ParseID(hyphens)
+	isItem := IsItemID(hyphens)
+	runtime.ReadMemStats(&after)
+	if err == nil || isItem || len(err.Error()) > 200 || after.TotalAlloc-before.TotalAlloc > 1<<20 {
+		t.Errorf("ParseID: %d bytes of error, %d bytes allocated", len(err.Error()), after.TotalAlloc-before.TotalAlloc)
+	}
+	// stored, not compressed: compressed, it is more than MaxRatio times its size
+	p, err := readZip(zipFrom(t, "campus-hq.storeypath", editJSON(FileSpaces, func(doc map[string]any) {
+		features(doc)[0].(map[string]any)["id"] = hyphens
+	}), zip.Store), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range p.Validate() {
+		if len(pr.Message) > 300 || len(pr.ID) > 300 {
+			t.Errorf("a problem of %d bytes (ID %d bytes)", len(pr.Message), len(pr.ID))
+		}
+		if pr.Code == ProblemBadID && !strings.Contains(pr.Message, "at most 84 characters") {
+			t.Errorf("%s", pr.Message)
+		}
+	}
+	if !slices.Contains(codes(p.Validate()), ProblemBadID) {
+		t.Error("an ID of 16 MiB: not a problem")
 	}
 }
 
