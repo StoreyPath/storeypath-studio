@@ -489,6 +489,16 @@ def building_ids(ws: Workspace) -> list[str]:
     return [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings]
 
 
+def item_number(item_id: str) -> int:
+    """An item's own number (``K7Q2XM-I000142`` → 142)."""
+    return int(item_id.split("-")[1][1:])
+
+
+def next_item_number(ws: Workspace) -> int:
+    """The number the project gives its next item: after every one it has given."""
+    return max([ws.next_item_seq, *(item_number(i) + 1 for i in ws.items if is_item_id(i))])
+
+
 def _in_building(i: str, b_id: str) -> bool:
     return i == b_id or i.startswith(b_id + "-")
 
@@ -625,7 +635,8 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     manifest = Manifest(
         generator=Generator(name="storeypath", version=version("storeypath")),
         project=ProjectInfo(id=ws.id, name=ws.project.name),
-        export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
+        export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence,
+                          next_item=next_item_number(ws)),
         files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],

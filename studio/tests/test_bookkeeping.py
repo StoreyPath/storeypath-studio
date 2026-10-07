@@ -178,6 +178,87 @@ def test_a_workspace_of_an_earlier_studio_goes_on_from_what_it_kept(campus, tmp_
     assert changes["previous_sequence"] == 2 and desk.id in changes["changed"]
 
 
+def _without_next_item(source, out):
+    """A copy of a package as a Studio before format 0.7's next item number wrote it."""
+    with zipfile.ZipFile(source) as z, zipfile.ZipFile(out, "w") as w:
+        for info in z.infolist():
+            data = z.read(info)
+            if info.filename == "manifest.json":
+                m = json.loads(data)
+                del m["export"]["next_item"]
+                data = json.dumps(m).encode()
+            w.writestr(info.filename, data)
+    return out
+
+
+def _opened(data, code):
+    return Workspace.load(next((data / code).glob("*.spproj")))
+
+
+def test_items_are_numbered_after_every_building_of_the_project(campus, tmp_path):
+    # A Studio continuing one building's package numbers its new items after the
+    # project's (the manifest's next_item), not after that building's alone: opening
+    # the other building's package then adds its items beside them.
+    from storeypath.bundle import open_file
+
+    ws, _, hq, annex = campus
+    ws.add_item("DESK-JUNIOR", *_ground(ws, hq))
+    annex_desk = ws.add_item("DESK-SENIOR", *_ground(ws, annex))
+    m = export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    export_package(ws, tmp_path / "annex.storeypath", building=annex)
+    assert m.export.next_item == 3
+    data = tmp_path / "B"
+    open_file(data, tmp_path / "hq.storeypath")
+    b = _opened(data, ws.id)
+    f_id, x, y = _ground(b, hq)
+    copier = b.add_item("COPIER", f_id, x + 1, y)
+    assert copier.id == f"{ws.id}-I000003"
+    b.save(next((data / ws.id).glob("*.spproj")))
+    open_file(data, tmp_path / "annex.storeypath")
+    b = _opened(data, ws.id)
+    assert b.items[copier.id].type == "COPIER" and b.items[annex_desk.id].type == "DESK-SENIOR"
+
+
+def test_items_moved_away_and_retired_are_counted_when_a_package_does_not_say(campus, tmp_path):
+    from storeypath.bundle import open_file
+
+    ws, _, hq, annex = campus
+    desk = ws.add_item("DESK-JUNIOR", *_ground(ws, hq))
+    tv = ws.add_item("TV", *_ground(ws, hq))
+    export_package(ws, tmp_path / "hq-1.storeypath", building=hq)
+    _carry(desk, _ground(ws, annex))
+    tv.status = "retired"
+    export_package(ws, tmp_path / "hq-2.storeypath", building=hq)
+    old = _without_next_item(tmp_path / "hq-2.storeypath", tmp_path / "old.storeypath")
+    assert validate_package(old) == []
+    open_file(tmp_path / "B", old)  # it holds no item: one moved away, one retired
+    assert _opened(tmp_path / "B", ws.id).next_item_seq == 3
+
+
+def test_a_package_whose_item_has_the_id_of_another_item_here_is_refused(campus, tmp_path):
+    # Two Studios numbering items apart (a package of a Studio before next_item): the
+    # ANNEX's desk and the copier added here have one ID. Nothing is changed here.
+    from storeypath.bundle import ItemClash, open_file
+
+    ws, _, hq, annex = campus
+    ws.add_item("DESK-JUNIOR", *_ground(ws, hq))
+    ws.add_item("DESK-SENIOR", *_ground(ws, annex))
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    export_package(ws, tmp_path / "annex.storeypath", building=annex)
+    data = tmp_path / "B"
+    open_file(data, _without_next_item(tmp_path / "hq.storeypath", tmp_path / "old-hq.storeypath"))
+    path = next((data / ws.id).glob("*.spproj"))
+    b = Workspace.load(path)
+    f_id, x, y = _ground(b, hq)
+    copier = b.add_item("COPIER", f_id, x + 1, y)
+    assert copier.id == f"{ws.id}-I000002"
+    b.save(path)
+    before = path.read_bytes()
+    with pytest.raises(ItemClash, match="two items with one ID"):
+        open_file(data, tmp_path / "annex.storeypath")
+    assert path.read_bytes() == before
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 

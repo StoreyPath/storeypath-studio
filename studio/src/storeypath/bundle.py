@@ -31,7 +31,7 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import compared
+from .export import compared, item_number
 from .ids import format_object_code, is_item_id, parse_id
 from .package import FILES, Manifest
 from .workspace import (
@@ -69,6 +69,11 @@ class ProjectExists(Exception):
         what = f"its building {building}" if building else "it"
         super().__init__(f"{name} ({code}) is here already, and {what}" if building else f"{name} ({code}) is here already")
         self.code, self.name, self.building = code, name, building
+
+
+class ItemClash(ValueError):
+    """A package's item has the ID of another item of the project here (two Studios
+    numbered items apart): the package is not opened."""
 
 
 # ---- a project to send ---------------------------------------------------------
@@ -220,6 +225,11 @@ def _building_ids(ws: Workspace) -> list[str]:
     return building_ids(ws)
 
 
+def _building_of(item: Item) -> str:
+    """The building an item stands in ("" for one whose floor is not known)."""
+    return item.floor_id.rsplit("-", 1)[0] if item.floor_id else ""
+
+
 def _merge(here: Workspace, pkg: Workspace) -> None:
     """A package's buildings (rebuilt, ``pkg``) into the project here: each added, or
     put in place of the one with its code. A floor put in place of one keeps that
@@ -234,6 +244,14 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
     from .ids import make_id
     from .workspace import utcnow
 
+    ours = set(_building_ids(pkg))
+    for i, it in pkg.items.items():  # nothing is changed when the package's items are not the ones here
+        mine = here.items.get(i)
+        if it.status == "active" and mine is not None and mine.type and mine.type != it.type \
+                and _building_of(mine) not in ours:
+            raise ItemClash(f"the package's item {i} is a {it.type} in {_building_of(it)}, and the item {i} "
+                            f"here is a {mine.type} in {_building_of(mine) or 'no building'}: two items with one "
+                            "ID (the project's items were numbered apart). Nothing was opened")
     held, known = last_packages(here)  # as it was before the package
     theirs, their_known = last_packages(pkg)
     for loc in pkg.locations:
@@ -269,8 +287,8 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
             mine = here.items.get(i)
             if mine is None:
                 here.items[i] = it
-            elif mine.status != "retired":
-                mine.status, mine.retired_at = "retired", now
+            elif mine.status != "retired" and (not mine.floor_id or _building_of(mine) in ours):
+                mine.status, mine.retired_at = "retired", now  # (one in another building here is left as it is)
         else:
             here.items[i] = it
     here.next_item_seq = max(here.next_item_seq, pkg.next_item_seq)
@@ -406,7 +424,10 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         ws.objects.setdefault(rid, ObjectRecord(id=rid, kind="space", type="unspecified", type_source="package",
                                                 geometry={"type": "Point", "coordinates": [0.0, 0.0]},
                                                 status="retired", retired_at=exported_at))
-    ws.next_item_seq = max((int(i.split("-")[1][1:]) for i in ws.items), default=0) + 1
+    # new items are numbered after every number the project gave: the next it says (an
+    # earlier package does not), and after the items it has, retired and moved away
+    given = [*ws.items, *(m["id"] for m in changes.get("moved_away") or []), *(changes.get("all_retired") or [])]
+    ws.next_item_seq = max([manifest.export.next_item or 1, *(item_number(i) + 1 for i in given if is_item_id(i))])
 
     # a building not on the map stands where the package's site plan has it: its
     # anchor (the drawing point at the site's centre) and turn give its position

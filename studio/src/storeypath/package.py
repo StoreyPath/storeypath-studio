@@ -233,6 +233,10 @@ class ExportInfo(BaseModel):
     sequence: int = Field(description="1 for the project's first export, then 2, 3, …")
     exported_at: datetime
     previous_sequence: int | None = Field(None, description=PREVIOUS_SEQUENCE)
+    next_item: int | None = Field(None, ge=1, description=(
+        "the number the project gives the next item placed in any of its buildings (format 0.7): every lower "
+        "number may be taken, by an item of another building or one retired. A system continuing the "
+        "project from this package numbers its new items from it"))
 
 
 class SourceInfo(BaseModel):
