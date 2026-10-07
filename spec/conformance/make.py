@@ -204,7 +204,7 @@ def furnish(ws) -> None:
     f_id, (x0, y0, x1, y1) = room("HQ-F01", "117")  # the open office
     for k in range(3):
         place("DESK-JUNIOR", f_id, x0 + 1.9 + 1.5 * k, y1 - 2.4, rotation=180)
-    place("ACCESS-POINT", f_id, (x0 + x1) / 2, (y0 + y1) / 2)
+    place("ACCESS-POINT", f_id, x1 - 2.5, y0 + 2.5)  # clear of its label
     hall = max((r for r in ws.floor_objects(f_id) if r.kind == "zone"), key=lambda r: shape(r.geometry).bounds[0])
     hx0, hy0, hx1, hy1 = shape(hall.geometry).bounds  # the east zone of the divided hall, against its north wall
     place("DESK-JUNIOR", f_id, hx1 - 3.9, hy1 - 0.35)
