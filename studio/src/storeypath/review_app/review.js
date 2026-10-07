@@ -812,6 +812,7 @@ function markListSelection() {
 
 function select(id, { fly = false } = {}) {
   if (id && state.item) selectItem(null);
+  if (id && state.asset) selectAsset(null);
   const previous = state.byId.get(state.selected);
   state.selected = id && state.byId.has(id) ? id : null;
   if (previous) styleSpace(previous);
@@ -824,7 +825,7 @@ function select(id, { fly = false } = {}) {
   }
   renderEditor();
   markListSelection();
-  if (view3d.shown && view3d.world && view3d.building) view3d.world.select(state.selected, { go: fly });
+  pick3d(state.selected, { go: fly });
   const hash = new URLSearchParams({ floor: state.floor.id });
   if (s) hash.set("space", s.id);
   history.replaceState(null, "", `#${hash}`);
@@ -1660,6 +1661,7 @@ function selectAsset(id) {
   }
   renderAssets();
   renderAssetEditor();
+  if (id || !state.selected) pick3d(id);
 }
 
 function renderAssetEditor() {
@@ -1746,7 +1748,18 @@ function setupAssets() {
 // plan. Walls, dividers and doors are drawn on the plan; what is saved shows in 3D
 // when it is built again (Update 3D, or another floor of another building).
 
-const view3d = { world: null, building: null, stale: true, shown: false, busy: null };
+const view3d = { world: null, building: null, stale: true, shown: false, busy: null, picking: false };
+
+/** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
+function pick3d(id, { go = false } = {}) {
+  if (!view3d.shown || !view3d.world || !view3d.building) return;
+  view3d.picking = true;
+  try {
+    view3d.world.select(id, { go });
+  } finally {
+    view3d.picking = false;
+  }
+}
 
 function changed3d() {
   view3d.stale = true;
@@ -1777,6 +1790,9 @@ async function refresh3d() {
         view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
         view3d.world.setLabels($("show-labels").checked);
         view3d.world.addEventListener("select", ({ detail: { id } }) => {
+          if (view3d.picking) return; // our own choice, echoed back
+          if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
+          if (id === null && state.asset) return selectAsset(null);
           if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
         });
       }
@@ -1787,7 +1803,7 @@ async function refresh3d() {
         view3d.stale = false;
       }
       view3d.world.setFloor(state.floor.id);
-      if (state.selected) view3d.world.select(state.selected, { go: false });
+      if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
       $("status").textContent = "";
       $("update3d").hidden = true;
     } catch (e) {
