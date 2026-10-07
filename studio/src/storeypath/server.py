@@ -773,7 +773,10 @@ class Studio:
     def place_site(self, code: str, location_id: str, body: dict) -> dict:
         """The location's site on the map: its centre at ``lat``, ``lon``, its up at
         ``bearing``; every building not placed by itself goes with it. ``clear``
-        takes it off the map."""
+        takes it off the map. Its buildings keep the places they have on it: one
+        changed or added later moves no other on the map."""
+        from .export import site_positions
+
         ws_path = self.path(code)
         with self._changing(ws_path):
             ws = Workspace.load(ws_path)
@@ -784,6 +787,7 @@ class Studio:
                 lat, lon = _number(body, "lat"), _number(body, "lon")
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError("latitude is -90…90 and longitude -180…180")
+                _settle(loc, site_positions(loc))
                 loc.placement = Placement(lat=lat, lon=lon, x=0.0, y=0.0, bearing=_number(body, "bearing", 0.0) % 360)
             ws.save(ws_path)
         return {"placement": loc.placement.model_dump() if loc.placement else None}

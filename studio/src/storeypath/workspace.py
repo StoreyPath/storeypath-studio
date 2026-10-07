@@ -212,15 +212,33 @@ class Reading(BaseModel):
     asked: str | None = None  # a model's answer: the model and question it came from
 
 
+class LastPackage(BaseModel):
+    """A building as the last package that held it had it: what the building's next
+    package lists its changes against."""
+
+    sequence: int  # that package's export number
+    # ID -> content hash (export.compared: in the building's own frame) of everything it
+    # held: its location, the building, its floors, spaces, zones, openings and items
+    objects: dict[str, str] = Field(default_factory=dict)
+    retired: list[str] = Field(default_factory=list)  # the IDs its all_retired listed
+
+
 class ExportRecord(BaseModel):
     sequence: int
     exported_at: datetime
     file: str
-    objects: dict[str, str]  # ID -> content hash, used for the next export's change list: the whole
-    # project as last exported, a package of some buildings updating only theirs
     buildings: list[str] | None = None  # the package held only these buildings
-    places: dict[str, str] = Field(default_factory=dict)  # item ID -> the building it was in when last
-    # exported (merged as objects is): one carried out of a building since is listed as moved away
+    # each building of the project as the last package that held it had it, as of this
+    # export (building ID -> it); None in a record of a Studio before this was kept: it is
+    # then worked out from objects and places (export.last_packages)
+    held: dict[str, LastPackage] | None = None
+    # every item ID a package of the project has held, as of this export: an item new to
+    # them is added; one they have held, carried into a building, is changed
+    items_held: list[str] | None = None
+    # before held: the whole project as last exported (ID -> content hash), and each item's
+    # building when last exported (item ID -> building ID)
+    objects: dict[str, str] = Field(default_factory=dict)
+    places: dict[str, str] = Field(default_factory=dict)
 
 
 class Project(BaseModel):
@@ -280,7 +298,10 @@ class Workspace(BaseModel):
         os.replace(part, path)
 
     def save_as_new_project(self, path: str | Path, name: str) -> Workspace:
-        """A copy that is a *different* project: new project code, fresh history."""
+        """A copy that is a *different* project: new project code, fresh history. Every
+        ID is the new project's: its objects', and its items' (each keeping its own
+        number) on the new project's floors. What texts were read as is kept (it is
+        by text, not by ID)."""
         copy = Workspace.model_validate(self.model_dump())
         old, new = self.project.code, generate_project_code()
 
@@ -296,6 +317,10 @@ class Workspace(BaseModel):
             for i, r in copy.objects.items()
         }
         copy.overrides = {recode(i): o for i, o in copy.overrides.items()}
+        copy.items = {
+            recode(i): it.model_copy(update={"id": recode(i), "floor_id": recode(it.floor_id) if it.floor_id else ""})
+            for i, it in copy.items.items()
+        }
         copy.exports = []
         copy.save(path)
         return copy
@@ -350,6 +375,10 @@ class Workspace(BaseModel):
         loc = self.location(location_id)
         if any(b.code == code for b in loc.buildings):
             raise ValueError(f"building code {code} already used in {location_id}")
+        if loc.placement is not None:  # on the map: its buildings stay where they are on it
+            from .export import settle
+
+            settle(loc)
         loc.buildings.append(Building(code=code, name=name))
         return child_id(location_id, code)
 

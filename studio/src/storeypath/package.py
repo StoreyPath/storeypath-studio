@@ -262,10 +262,19 @@ class ProjectInfo(_Model):
     name: str
 
 
+PREVIOUS_SEQUENCE = ("the sequence of the last export that held this building (format 0.7; null for its first): "
+                     "what changes.json lists changes since. A gap from the last package of the building a "
+                     "reader has applied means it missed one")
+
+
 class ExportInfo(_Model):
     sequence: int = Field(description="1 for the project's first export, then 2, 3, …")
     exported_at: datetime
-    previous_sequence: int | None = None
+    previous_sequence: int | None = Field(None, description=PREVIOUS_SEQUENCE)
+    next_item: int | None = Field(None, ge=1, description=(
+        "the number the project gives the next item placed in any of its buildings (format 0.7): every lower "
+        "number may be taken, by an item of another building or one retired. A system continuing the "
+        "project from this package numbers its new items from it"))
 
 
 class SourceInfo(_Model):
@@ -319,15 +328,17 @@ class MovedAway(_Model):
 
 
 class Changes(_Model):
-    """What changed since the previous export, so importers can update their ID mappings."""
+    """What changed in the building since it was last exported, so importers can update
+    their ID mappings."""
 
     sequence: int
-    previous_sequence: int | None
+    previous_sequence: int | None = Field(description=PREVIOUS_SEQUENCE)
     added: list[str]
     changed: list[str]
     retired: list[str] = Field(description="IDs removed since the building was last exported")
     all_retired: list[str] = Field(description=(
-        "every ID ever retired in the building it holds (before 0.7: in the buildings it holds)"))
+        "every ID this building has ever retired (from 0.7; before, the project): its own objects', and the "
+        "items its packages held and that were taken away since, wherever they were then"))
     moved_away: list[MovedAway] = Field(default_factory=list, description=(
         "items in this building when it was last exported, carried since to another building of the "
         "project (format 0.7): not retired, they keep their IDs"))
