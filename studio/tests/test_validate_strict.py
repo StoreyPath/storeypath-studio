@@ -360,8 +360,9 @@ def test_the_previous_export_comes_before_this_one(tmp_path):
     errors = validate_package(out)
     assert len(errors) == 1 and "previous_sequence 8 is not before this export's 3" in errors[0], errors
 
-    out = rewritten(tmp_path, HQ.with_name("campus-hq-2.storeypath"),
-                    **{"changes.json": edited(lambda c: c.update(previous_sequence=1))})
+    def other(c):  # another export before this one than the manifest's
+        c["previous_sequence"] = next(n for n in range(1, c["sequence"]) if n != c["previous_sequence"])
+    out = rewritten(tmp_path, HQ.with_name("campus-hq-2.storeypath"), **{"changes.json": edited(other)})
     assert validate_package(out) == ["changes.json: previous_sequence does not match the manifest"]
 
 

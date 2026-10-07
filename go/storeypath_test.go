@@ -1350,7 +1350,8 @@ func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 	m, err := ReadManifest(bytes.NewReader(data), int64(len(data)), DefaultLimits)
-	if err != nil || m.Project.ID != "SD8YHE" || m.FormatVersion != "0.8.0" || CheckVersion(m.FormatVersion) == nil {
+	if err != nil || m.Project.ID != open(t, "campus-hq.storeypath").Manifest.Project.ID || m.FormatVersion != "0.8.0" ||
+		CheckVersion(m.FormatVersion) == nil {
 		t.Errorf("ReadManifest: %+v %v", m, err)
 	}
 	if _, err := ReadManifest(bytes.NewReader(data), int64(len(data)), Limits{MaxFileBytes: 100}); !errors.Is(err, ErrTooLarge) {
