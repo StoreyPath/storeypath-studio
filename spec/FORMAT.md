@@ -28,7 +28,13 @@ A copy of this document is included in every package.
 | `world/<floor-id>.glb` | Optional: each floor already built in 3D, as binary glTF (Pre-built 3D) |
 | `FORMAT.md` | This document |
 
-Readers must locate files through `manifest.json → files`, not by fixed names.
+Readers locate each file through `manifest.json → files`, by its role (`location`,
+`buildings`, `floors`, `spaces`, `zones`, `openings`, `objects`, `changes`, `items`,
+`catalogue`); the names in the table are the defaults.
+
+**JSON.** Keys are case-sensitive: a key that differs from the format's only in case is
+not that key, and a reader may refuse the file. Every number is finite (NaN and
+Infinity are not JSON), and numbers and booleans are never written as strings.
 
 The files are JSON, GeoJSON and CSV in a ZIP archive, each compressed on its own
 (a floor's plan is typically a tenth of its size in the archive), so a reader takes
@@ -52,6 +58,8 @@ PROJECT-LOCATION-BUILDING-FLOOR-OBJECT        K7Q2XM-RUH-HQ-F02-0142
 - The object's type is **not** part of its ID: correcting a type does not change the ID.
 - Elevators, stairs and escalators keep the same object code on every floor they serve
   (`…-F01-0023`, `…-F02-0023`), which links them vertically.
+- An ID is ASCII and at most 84 characters long (five segments of at most 16); an
+  item's ID is the project's code, `-I` and six digits (Items).
 
 Importing systems should store our ID as the key of their own mapping, and use
 `changes.json` on each new export to add, update and remove mappings.
@@ -61,7 +69,9 @@ Importing systems should store our ID as the key of their own mapping, and use
 GeoJSON in WGS84 longitude/latitude (EPSG:4326, RFC 7946), rounded to 7 decimals
 (about 1 cm). Lengths and heights are in meters. `manifest.json → placements` holds,
 for each building, the anchor and bearing used to place the drawing, so local
-drawing coordinates can be rebuilt if needed.
+drawing coordinates can be rebuilt if needed. It holds exactly one placement for each
+building of the package, and so for every building an item stands in. Longitudes are
+in (-180, 180]: a building across the antimeridian has longitudes on both sides of it.
 
 Placing a building on the map is optional. A building whose placement has
 `"placed": false` is not on the map yet: it is exported around 0°N 0°E with its
@@ -109,8 +119,9 @@ A space is what walls, doors and windows enclose: walls stand on its edges.
 part of a space used for one thing, with no wall between it and the rest of the
 space: a majlis and a dining area in one hall, a passage running into a living room,
 team areas in an open office. The zones of a space divide it exactly (together they
-cover it, without overlapping) and are listed in its `zones`; a space used for one
-thing has none. Zone edges are not walls: draw them as light lines, and walk across
+cover it, without overlapping) and are listed in its `zones`, each once (a space lists
+only its own zones: each one's `space_id` is that space); a space used for one thing
+has none. Zone edges are not walls: draw them as light lines, and walk across
 them freely.
 
 **Names.** `name` and `number` are what StoreyPath read in the space's label and a
@@ -128,7 +139,7 @@ the zones of a space that has them, and the space itself otherwise.
 the number a person set in review (`capacity_from: "review"`), else the workplaces of
 the items standing in it (`"items"`: a desk seats one; a space divided into zones
 counts its zones' too), else null. 0 is a room meant to seat nobody (a meeting room
-set so). `grade` is who it is laid out for: the highest grade among the desks standing
+set so); `capacity` and `capacity_from` are both given or both null. `grade` is who it is laid out for: the highest grade among the desks standing
 in it (`president`, `c_level`, `director`, `manager`, `section_head`, `senior`,
 `junior`), or null. Both are the building's as drawn and furnished: a system placing
 people takes them as defaults, and may keep its own (a capacity it sets, a
@@ -141,7 +152,7 @@ known), `swings` (a door's leaves as the plan draws them, each `[hinge, free edg
 when open]`, when known: which side it hinges on and which way it opens; two for a
 double door), `sill_m` and `height_m` (how high above the floor it starts, and how
 tall it is, from the drawing's schedule of openings, when known), `hidden`, `ignored`.
-Geometry: Point in the wall.
+Geometry: Point in the wall (never null).
 
 `hidden` and `ignored` are set by a person in review. A hidden object is real but
 not shown unless asked for (a shaft, a plant room); an ignored one was judged not
@@ -183,9 +194,9 @@ position (openings).
 
 ```json
 {
-  "sequence": 3,              // this export; 1 for the first
-  "previous_sequence": 2,
-  "added":   ["…"],           // IDs new since the building was last exported
+  "sequence": 3,              // this export; 1 for the project's first
+  "previous_sequence": 1,     // the last export that held this building (null: its first)
+  "added":   ["…"],           // IDs new since then
   "changed": ["…"],           // IDs whose geometry or properties changed
   "retired": ["…"],           // IDs removed since then
   "all_retired": ["…"],       // every ID this building has ever retired
@@ -194,9 +205,27 @@ position (openings).
 }
 ```
 
-What changed is what changed in the building's own frame (Coordinates): moving the
-building on the map lists the building as changed, and nothing in it. A system that
-skipped an export can use `all_retired` to clean up its mappings.
+Every list is about the package's building since it was last exported (0.7; before,
+since the project's previous export). Export numbers run across the project, so
+`previous_sequence` may be several lower than `sequence`: a reader that applied a
+later package of this building than `previous_sequence`, or an earlier one, missed or
+holds another of its exports. `previous_sequence` is before `sequence` and the same as
+the manifest's `export.previous_sequence`.
+
+- `added`: new since then. An item a package of the project held before, carried into
+  this building, is `changed`, not added.
+- `changed`: anything whose geometry or properties changed in the building's own frame
+  (Coordinates): moving the building on the map lists the building as changed, and
+  nothing in it. A location is changed when its name or address changes (its outline
+  follows its buildings).
+- `retired`: removed since then, including an item that package held and that was
+  taken away since, wherever it was then. Nothing listed is in the package.
+- `all_retired`: every ID this building has ever retired: its own objects', and the
+  items its packages held that were taken away since. An ID in use again is not
+  listed. A system that skipped an export uses it to clean up its mappings.
+- `moved_away`: items the building's last package held that stand in another building
+  now (not retired: that building's package holds them). An item is never both moved
+  away and retired.
 
 ## Items
 
@@ -224,7 +253,7 @@ an item's is never issued again once it is retired.
 ```
 
 - `type` is a code of `catalogue.json`; `name` is that type's English name, for a reader
-  that does not read the catalogue.
+  that does not read the catalogue. The geometry is its footprint, a Polygon.
 - `space_id`, and `zone_id` when the space is divided, are where its middle stands at
   export: null when it is in none.
 - `local` (0.7) is where it stands in its building: its middle in the building's own
@@ -235,13 +264,14 @@ an item's is never issued again once it is retired.
   and the floor, not the longitude and latitude.
 - The footprint, `display_point` and `heading` follow from `local` and the building's
   placement, for maps: `heading` is the way its front faces, in degrees clockwise
-  from north (a desk's front is where its user sits).
+  from north (a desk's front is where its user sits): (the placement's `bearing` + 180
+  − `rotation_deg`) mod 360, which readers check to half a degree.
 - `values` are its details entered in StoreyPath, by the catalogue's field keys.
 
 `catalogue.json` (`schema/catalogue.schema.json`) lists the types: a `code` that is
 kept for good and never given to another type (a type no longer used is `retired`),
 English and Arabic names, a `category` (furniture, equipment, appliance), a size, how
-it is mounted (`floor`, `wall`, `ceiling`), a colour, `workplaces` (how many people work
+it is mounted (`floor`, `wall`, `ceiling`), a colour (`#rrggbb`), `workplaces` (how many people work
 at one: a desk, 1; 0 for most else) and `grade` (who a desk is for, 0.7), and its `fields`. Each field
 says who enters it: `owner: "storeypath"` (what is physical: a colour, a size, a
 model) or `"system"` (the system that manages the asset: an access point's network).
@@ -251,6 +281,11 @@ carries them. The catalogue is the organization's: the same for every project.
 Items are for asset management: where things are, and where they have been. They
 are not inventory: nothing in a package says who holds what. An inventory system
 keys its own records to the items' IDs, as every system keys its own to StoreyPath's.
+
+`manifest.json → export.next_item` (0.7) is the number the project gives the next item
+placed in any of its buildings; every lower number may be taken, by an item of another
+building or a retired one. A system continuing the project from one building's package
+numbers new items from it.
 
 Items go through `changes.json` as everything else: one moved, turned or given other
 details in its building is `changed`, so a system can keep the history of where each
@@ -378,12 +413,14 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
 
 - `world/` and `manifest.json → files.world`: the floors pre-built in 3D (Pre-built
   3D), when the exporter could build them. Nothing else changes: a reader of 0.4
-  reads a 0.5 package as it is, ignoring the folder.
+  read a 0.5 package as it is, ignoring the folder (readers of 0.7 and later refuse a
+  newer minor version instead: Versioning).
 
 ## Changes from 0.6
 
 - One building per package (One building per package): `scope` always names the one
-  building. A reader of 0.4 to 0.6 reads a 0.7 package as a part of a project.
+  building. A reader of 0.4 to 0.6, which read a newer minor version under the earlier
+  rule, takes a 0.7 package as a part of a project.
 - What `changes.json` compares is each building in its own frame: moving a building
   on the map lists the building as changed, not what is in it (Coordinates).
 - Items' `local`: where an item stands in its building, the position it is placed by
@@ -392,6 +429,11 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
   not a package carrying `studio/`.
 - Spaces' and zones' `capacity`, `capacity_from` and `grade` (Capacity); the
   catalogue's `workplaces` and `grade`.
+- `changes.json` is about the building: `previous_sequence` is the last export that held
+  it, `all_retired` its own; `manifest.json → export.next_item`.
+- Readers refuse a package of a newer minor version (Versioning), and check more: one
+  placement for each building, items' headings, zones listed by their own space,
+  finite numbers, case-sensitive keys.
 
 ## Changes from 0.5
 
@@ -410,8 +452,9 @@ a package are within about a centimetre of Studio's (7 decimals of a degree).
 `campus-hq`, `campus-annex`, `campus-hq-2` and `campus-annex-2` are one project of
 this format, exported a building at a time: its first two exports, then the
 Headquarters' after it was moved on the map, a desk carried to the Annex and a TV
-taken away (only the building changed; the desk moved away; the TV retired; every
-item's `local` as it was), then the Annex's, the desk in it. They have items:
+taken away (the building changed, and the office the desk left, which seats one fewer;
+nothing else; the desk moved away; the TV retired; every item's `local` as it was),
+then the Annex's, the desk in it. They have items:
 desks of several grades (one in a zone, one in a building turned on the map), a
 photocopier, two access points, a sofa, a TV and a bed. The others are packages of
 earlier formats, which readers still read: `campus` (0.6, the whole campus, with
@@ -419,6 +462,11 @@ items), `campus-world` and `simple-office-world` (pre-built in 3D: a reader read
 them as it reads `campus` and `simple-office`, and the viewer shows them as it shows
 those), `campus-whole-1`, `campus-part`, `campus-whole-3` (0.4), `simple-office`,
 `simple-office-2` and `unplaced`.
+
+A reader that takes packages from uploads bounds what it reads. A building's package
+is a few megabytes; the Go module reads by default at most 64 MiB a file and 256 MiB in
+all, a file at most 100 times its size in the archive (files above 1 MiB), and at most
+200,000 entries in any list, and refuses longer IDs before taking them apart.
 
 ## Versioning
 
@@ -430,4 +478,6 @@ them. Before 1.0 a minor version may change what a package means (0.4's `scope`,
 one building per package), so a reader refuses a package of a newer minor version
 (0.8 for a reader of 0.7), saying it must be updated; a newer patch version (0.7.1)
 only adds properties and is read. From 1.0, a reader reads any package of its major
-version.
+version. A format version is ASCII `major.minor`, an optional `.patch`, and an optional
+`-` or `+` suffix (`^[0-9]+\.[0-9]+(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?$`); a reader refuses
+anything else as not a format version.
