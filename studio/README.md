@@ -11,8 +11,8 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). From this folder:
 
 ```sh
 uv sync
-uv run storeypath demo demo/                  # sample drawings → workspace → package
-uv run storeypath view demo/demo.storeypath   # open it in the viewer
+uv run storeypath demo demo/                  # sample drawings → workspace → packages (one per building)
+uv run storeypath view demo/demo-HQ.storeypath   # open one in the viewer
 ```
 
 DWG drawings and the language model need two more programs, `dwg2dxf` and

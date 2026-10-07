@@ -226,47 +226,6 @@ def test_a_space_carries_the_text_its_drawing_writes_in_it(converted, tmp_path):
     assert rows[unlabelled.id]["drawing_label"] == ""
 
 
-def test_one_building_is_exported_without_the_rest_seeming_gone(tmp_path):
-    # A project of two buildings: a package of one says so (scope), lists the changes
-    # in that building alone, and leaves the other as it was last exported, so the
-    # next whole export does not list the other's rooms as new.
-    from storeypath.samples import build_demo
-
-    ws_path, _ = build_demo(tmp_path / "demo")
-    ws = Workspace.load(ws_path)
-    if not ws.exports:
-        export_package(ws, tmp_path / "whole-1.storeypath")
-    ids = {b.code: f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings}
-    hq, annex = ids["HQ"], ids["ANNEX"]
-    rooms = {code: next(r for r in sorted(ws.objects.values(), key=lambda r: r.id)
-                        if r.kind == "space" and r.id.startswith(b + "-")) for code, b in ids.items()}
-    for code, room in rooms.items():
-        ws.overrides[room.id] = Override(name=f"RENAMED {code}")
-
-    m = export_package(ws, tmp_path / "hq.storeypath", buildings=[hq])
-    assert validate_package(tmp_path / "hq.storeypath") == []
-    assert m.scope.buildings == [hq] and list(m.placements) == [hq]
-    assert all(s.floor_id.startswith(hq + "-") for s in m.sources)
-    with zipfile.ZipFile(tmp_path / "hq.storeypath") as z:
-        changes = json.loads(z.read("changes.json"))
-        feature_ids = [f["id"] for name in ("buildings.geojson", "floors.geojson", "spaces.geojson", "openings.geojson")
-                       for f in json.loads(z.read(name))["features"]]
-        locations = [f["id"] for f in json.loads(z.read("location.geojson"))["features"]]
-    assert feature_ids and all(i == hq or i.startswith(hq + "-") for i in feature_ids)
-    assert locations == [hq.rsplit("-", 1)[0]]
-    assert changes["changed"] == [rooms["HQ"].id] and changes["retired"] == [] and changes["added"] == []
-
-    m = export_package(ws, tmp_path / "whole-3.storeypath")  # the whole project again
-    assert m.scope is None
-    with zipfile.ZipFile(tmp_path / "whole-3.storeypath") as z:
-        changes = json.loads(z.read("changes.json"))
-    assert changes["changed"] == [rooms["ANNEX"].id]  # the Annex's rename, not yet exported
-    assert changes["added"] == [] and changes["retired"] == []
-
-    with pytest.raises(ExportError, match="no building"):
-        export_package(ws, tmp_path / "x.storeypath", buildings=[f"{ws.id}-DEMO-NOPE"])
-
-
 def test_corners_closer_than_the_rounding_are_written_once(converted, tmp_path):
     # Two corners 3 mm apart round to one point (1 cm): a ring that repeats it has a
     # zero-length edge, which strict readers take for the ring crossing itself.

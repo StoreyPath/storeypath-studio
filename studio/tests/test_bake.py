@@ -112,9 +112,9 @@ def test_without_node_the_package_is_as_before_and_says_why(converted, monkeypat
 
 
 @with_node
-def test_a_project_with_no_floors_is_exported_as_before(tmp_path):
+def test_a_building_with_no_floors_is_exported_as_before(tmp_path):
     ws = Workspace.new("Empty")
-    ws.add_location("SITE", "Site")
+    ws.add_building(ws.add_location("SITE", "Site"), "HQ", "Headquarters")
     said = []
     manifest = export_package(ws, tmp_path / "empty.storeypath", say=said.append)
     assert said == ["3D not pre-built: the package has no floors"] and "world" not in manifest.files

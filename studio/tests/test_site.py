@@ -89,17 +89,24 @@ def test_side_by_side_and_back_through_a_package(tmp_path):
     loc.buildings[1].site.rotation = 15.0
     a, b = site_footprint(loc.buildings[0], loc.buildings[0].site), site_footprint(loc.buildings[1], loc.buildings[1].site)
     assert a.intersection(b).area < 1e-6
-    # sent as a package, opened elsewhere: the same site plan
-    out = tmp_path / "campus.storeypath"
-    export_package(ws, out, record=False)
+    # sent as packages, a building each, opened elsewhere one after the other (the
+    # second into the project the first made): the same site plan
     data = tmp_path / "data"
     data.mkdir()
-    opened = open_file(data, out)
+    m1 = {}
+    for i in ids:
+        out = tmp_path / f"{i}.storeypath"
+        export_package(ws, out, building=i, record=False)
+        m1.update(json.loads(zipfile.ZipFile(out).read("manifest.json"))["placements"])
+        opened = open_file(data, out)
+    assert opened["how"] == "building" and opened["replaced"] == []
     there = Workspace.load(data / opened["code"] / f"{opened['code']}.spproj")
-    again = io.BytesIO()
-    export_package(there, again, record=False)
-    m1 = json.loads(zipfile.ZipFile(out).read("manifest.json"))["placements"]
-    m2 = json.loads(zipfile.ZipFile(again).read("manifest.json"))["placements"]
+    assert [b.code for b in there.locations[0].buildings] == ["B0", "B1"]
+    m2 = {}
+    for i in ids:
+        again = io.BytesIO()
+        export_package(there, again, building=i, record=False)
+        m2.update(json.loads(zipfile.ZipFile(again).read("manifest.json"))["placements"])
     for k in m1:
         for f in ("lon", "lat", "bearing"):
             assert abs(m1[k][f] - m2[k][f]) < 1e-9

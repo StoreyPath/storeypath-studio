@@ -1,4 +1,26 @@
 {
+  "$defs": {
+    "MovedAway": {
+      "properties": {
+        "id": {
+          "description": "an item's ID",
+          "title": "Id",
+          "type": "string"
+        },
+        "building_id": {
+          "description": "the building of the project it is in now",
+          "title": "Building Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "building_id"
+      ],
+      "title": "MovedAway",
+      "type": "object"
+    }
+  },
   "description": "What changed since the previous export, so importers can update their ID mappings.",
   "properties": {
     "sequence": {
@@ -44,6 +66,14 @@
         "type": "string"
       },
       "title": "All Retired",
+      "type": "array"
+    },
+    "moved_away": {
+      "description": "items in this building when it was last exported, carried since to another building of the project (format 0.7): not retired, they keep their IDs",
+      "items": {
+        "$ref": "#/$defs/MovedAway"
+      },
+      "title": "Moved Away",
       "type": "array"
     }
   },

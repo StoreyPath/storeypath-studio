@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import zipfile
 from pathlib import Path
 
@@ -12,10 +13,15 @@ from pydantic import ValidationError
 
 from .catalogue import Catalogue
 from .ids import LEVELS, is_item_id, parse_id
-from .package import COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, Changes, FeatureCollection, ItemProps, Manifest
+from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
+                      ItemProps, Manifest, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
+# the kinds of objects.csv rows this reader knows; rows of others (a later format's) are
+# left alone, as a reader leaves unknown files and properties
+KNOWN_KINDS = {"project", *KIND_LEVEL, "item"}
+LOCAL_AGREES_M = 0.05  # an item's map position and its position in its building
 
 
 def validate_package(path: str | Path) -> list[str]:
@@ -47,6 +53,7 @@ def validate_package(path: str | Path) -> list[str]:
         if manifest.format_version.split(".")[0] != FORMAT_VERSION.split(".")[0]:
             errors.append(f"unsupported format version {manifest.format_version}")
         project = manifest.project.id
+        one_building = version_tuple(manifest.format_version) >= ONE_BUILDING_FROM
 
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}
@@ -83,7 +90,13 @@ def validate_package(path: str | Path) -> list[str]:
             elif not child.startswith(parent + "-"):
                 errors.append(f"{child}: ID does not start with its parent {parent}")
 
-        if manifest.scope is not None:  # a part of a project: exactly the buildings it lists
+        if one_building:  # from 0.7, a package holds one building, and names it
+            if manifest.scope is None or len(manifest.scope.buildings) != 1:
+                errors.append("a package of this format holds one building: its manifest's scope names it")
+            if len(collections.get("buildings", [])) != 1:
+                errors.append(f"{FILES['buildings']}: a package of this format holds one building, "
+                              f"this one {len(collections.get('buildings', []))}")
+        if manifest.scope is not None:  # exactly the buildings it lists
             held = {f.id for f in collections.get("buildings", [])}
             for b in sorted(set(manifest.scope.buildings) - held):
                 errors.append(f"scope lists building {b}, which is not in the package")
@@ -147,11 +160,21 @@ def validate_package(path: str | Path) -> list[str]:
                             errors.append(f"{f.id}: in unknown {kind} {key} (or not on its floor)")
                     if codes is not None and q.type not in codes:
                         errors.append(f"{f.id}: type {q.type} is not in the catalogue")
+                    if one_building and q.local is None:
+                        errors.append(f"{f.id}: no position in its building (local)")
+                    elif q.local is not None and (p := manifest.placements.get(q.building_id)) is not None:
+                        lon, lat = _lonlat(p, q.local.x_m, q.local.y_m)
+                        off = math.hypot((lon - q.display_point[0]) * 111_320 * math.cos(math.radians(lat)),
+                                         (lat - q.display_point[1]) * 110_574)
+                        if off > LOCAL_AGREES_M:
+                            errors.append(f"{f.id}: its map position is {off:.2f} m from its position in its building")
 
+        unknown: set[str] = set()
         text = read(FILES["objects"])
         if text is not None:
             rows = list(csv.DictReader(io.StringIO(text)))
-            listed = {r["id"] for r in rows if r.get("kind") != "project"}
+            unknown = {r["id"] for r in rows if r.get("kind") not in KNOWN_KINDS}  # a later format's
+            listed = {r["id"] for r in rows if r.get("kind") != "project"} - unknown
             if listed != set(ids):
                 errors.append(
                     f"{FILES['objects']}: rows do not match the features "
@@ -163,16 +186,29 @@ def validate_package(path: str | Path) -> list[str]:
             try:
                 changes = Changes.model_validate_json(text)
                 for i in changes.added + changes.changed:
-                    if i not in ids:
+                    if i not in ids and i not in unknown:
                         errors.append(f"{FILES['changes']}: {i} is listed as added/changed but not in the package")
                 for i in changes.all_retired:
                     if i in ids:
                         errors.append(f"{FILES['changes']}: retired ID {i} is still in the package")
+                for m in changes.moved_away:
+                    if not is_item_id(m.id) or m.id in ids:
+                        errors.append(f"{FILES['changes']}: {m.id} is listed as moved away but is not an item gone from here")
+                    if not m.building_id.startswith(project + "-") or m.building_id in ids:
+                        errors.append(f"{FILES['changes']}: {m.id} moved to {m.building_id}, not another building of the project")
                 if changes.sequence != manifest.export.sequence:
                     errors.append(f"{FILES['changes']}: sequence does not match the manifest")
             except ValidationError as e:
                 errors.append(f"{FILES['changes']}: {_first_errors(e)}")
     return errors
+
+
+def _lonlat(p, x: float, y: float) -> tuple[float, float]:
+    """A point of a building's own frame on the map, by its placement."""
+    from .georef import Georeferencer
+    from .workspace import Placement
+
+    return Georeferencer(Placement(lon=p.lon, lat=p.lat, x=p.x, y=p.y, bearing=p.bearing)).lonlat(x, y)
 
 
 def _first_errors(e: ValidationError, n: int = 3) -> str:

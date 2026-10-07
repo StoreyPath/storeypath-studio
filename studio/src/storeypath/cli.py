@@ -18,6 +18,7 @@ from .assets import asset_dir
 from .cad import DrawingError
 from .convert import convert_floor
 from .export import ExportError, export_package
+from .ids import make_id
 from .package import json_schemas
 from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
 from .types import SpaceType
@@ -574,11 +575,20 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
 def export(
     workspace: WorkspaceArg,
     output: Annotated[Path, typer.Option("-o", "--output", help="package file (*.storeypath)")],
+    building: Annotated[Optional[str], typer.Option(
+        help="the building to export, by its ID or code (a package holds one building; "
+             "may be left out when the project has one)")] = None,
 ):
-    """Write the exchange package."""
+    """Write the exchange package of one building."""
     ws = _load(workspace)
+    if building is not None and building.count("-") < 2:  # a code: its ID
+        found = [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings
+                 if b.code == building.upper()]
+        if len(found) != 1:
+            _fail(f"no single building {building} in this project")
+        building = found[0]
     try:
-        manifest = export_package(ws, output, say=typer.echo)
+        manifest = export_package(ws, output, building=building, say=typer.echo)
     except ExportError as e:
         _fail(str(e))
     ws.save(workspace)
@@ -656,8 +666,9 @@ def demo(directory: Path):
 
     if directory.exists() and any(directory.iterdir()):
         _fail(f"{directory} is not empty")
-    ws_path, pkg_path = build_demo(directory)
-    typer.echo(f"workspace: {ws_path}\npackage:   {pkg_path}\nnext: storeypath view {pkg_path}")
+    ws_path, packages = build_demo(directory)
+    typer.echo(f"workspace: {ws_path}\npackages:  {', '.join(map(str, packages))} (one per building)\n"
+               f"next: storeypath view {packages[0]}")
 
 
 def main() -> None:

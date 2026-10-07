@@ -1,5 +1,5 @@
-"""Projects sent as one file: a package that carries the project, and a project
-rebuilt from a package."""
+"""Projects sent as one file (a project file, for another Studio), and projects
+rebuilt from packages: a building at a time, into the project when it is here."""
 
 import json
 import zipfile
@@ -64,12 +64,22 @@ def _same(again, before):
                 assert g["geometry"] == f["geometry"], i
 
 
+def _of(features, building):
+    """Of a project's features, those a package of one building holds."""
+    location = building.rsplit("-", 1)[0]
+    return {role: {i: f for i, f in fs.items() if (i == location if role == "location"
+                                                    else i == building or i.startswith(building + "-"))}
+            for role, fs in features.items()}
+
+
 def _changes(path):
     with zipfile.ZipFile(path) as z:
         return json.loads(z.read("changes.json"))
 
 
 def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
+    # A package of an earlier format, of the whole campus: rebuilt, then exported a
+    # building at a time (one per package), each with nothing changed.
     source = PACKAGES / "campus.storeypath"
     opened = open_file(tmp_path, source)
     assert opened["how"] == "package" and opened["code"] == "EWBSSN" and opened["floors"] == 5 and opened["drawings"] == 0
@@ -80,14 +90,15 @@ def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
     hq = ws.building("EWBSSN-DEMO-HQ")
     assert hq.placement is not None and len(hq.floors) == 3 and all(f.source is None for f in hq.floors)
 
-    out = tmp_path / "again.storeypath"
-    export_package(ws, out)
-    assert validate_package(out) == []
-    changes = _changes(out)
     previous = _changes(source)["sequence"]
-    assert changes["sequence"] == previous + 1 and changes["previous_sequence"] == previous
-    assert (changes["added"], changes["changed"], changes["retired"]) == ([], [], [])  # nothing was changed
-    _same(_features(out), before)
+    for n, b in enumerate(("EWBSSN-DEMO-HQ", "EWBSSN-DEMO-ANNEX"), 1):
+        out = tmp_path / f"{b}.storeypath"
+        export_package(ws, out, building=b)
+        assert validate_package(out) == []
+        changes = _changes(out)
+        assert changes["sequence"] == previous + n and changes["previous_sequence"] == previous + n - 1
+        assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
+        _same(_features(out), _of(before, b))
 
 
 def test_an_unplaced_building_stays_unplaced(tmp_path):
@@ -125,12 +136,14 @@ def test_a_project_travels_whole_and_continues(review, tmp_path):
     ws.floor(f_id).edits.walls.append([[0.0, 0.0], [1.0, 0.0]])
     export_package(ws, path.parent / "exports" / "first.storeypath")  # one export, recorded
     ws.save(path)
-    sent = tmp_path / "sent.storeypath"
+    sent = tmp_path / "sent.storeypath-project"
     export_project(path, sent)
-    assert validate_package(sent) == []  # still a package any system reads
+    assert validate_package(sent) == ["missing file manifest.json"]  # not a package: no other system reads it
     with zipfile.ZipFile(sent) as z:
         names = set(z.namelist())
-        assert "studio/project.spproj" in names and json.loads(z.read("manifest.json"))["files"]["studio"] == "studio/"
+        about = json.loads(z.read("project.json"))
+    assert {"studio/project.spproj", "catalogue.json"} <= names and "manifest.json" not in names
+    assert about["format"] == "storeypath-project" and about["project"] == {"id": ws.id, "name": ws.project.name}
 
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -158,3 +171,45 @@ def test_what_is_not_a_package_is_refused(tmp_path):
         z.writestr("manifest.json", "{}")
     with pytest.raises(ValueError):
         open_file(tmp_path, bad)
+
+
+def test_a_buildings_package_opens_into_its_project(tmp_path):
+    # The campus's packages, a building each, opened one after the other: one project
+    # with both, its items where they stand in each building. A building's later
+    # package is put in place of that building only when asked; its floors keep the
+    # drawings they had here; the items it retired are retired, one it says moved
+    # away waits where it was until its new building's package comes.
+    from storeypath.workspace import SourceDrawing
+
+    data = tmp_path / "data"
+    data.mkdir()
+    first = open_file(data, PACKAGES / "campus-hq.storeypath")
+    second = open_file(data, PACKAGES / "campus-annex.storeypath")
+    assert first["how"] == "package" and second["how"] == "building" and second["replaced"] == []
+    code = first["code"]
+    ws_path = data / code / f"{code}.spproj"
+    ws = Workspace.load(ws_path)
+    hq, annex = (f"{code}-DEMO-{b}" for b in ("HQ", "ANNEX"))
+    assert [b.code for loc in ws.locations for b in loc.buildings] == ["HQ", "ANNEX"]
+    with zipfile.ZipFile(PACKAGES / "campus-hq.storeypath") as z:
+        placed = {f["id"]: f["properties"]["local"] for f in json.loads(z.read("items.geojson"))["features"]}
+    assert all((ws.items[i].x, ws.items[i].y, ws.items[i].rotation) == (p["x_m"], p["y_m"], p["rotation_deg"])
+               for i, p in placed.items())
+    assert len([i for i in ws.items.values() if i.status == "active"]) == 16
+    ws.building(hq).floors[0].source = SourceDrawing(path="drawings/hq-ground.dxf")
+    ws.save(ws_path)
+
+    with zipfile.ZipFile(PACKAGES / "campus-hq-2.storeypath") as z:
+        changes = json.loads(z.read("changes.json"))
+    (gone,), (away,) = changes["retired"], changes["moved_away"]
+    with pytest.raises(ProjectExists) as e:
+        open_file(data, PACKAGES / "campus-hq-2.storeypath")
+    assert e.value.building == hq
+    assert open_file(data, PACKAGES / "campus-hq-2.storeypath", replace=True)["replaced"] == [hq]
+    ws = Workspace.load(ws_path)
+    assert ws.building(hq).floors[0].source.path == "drawings/hq-ground.dxf"  # it can be read again
+    assert ws.items[gone].status == "retired" and ws.items[away["id"]].floor_id.startswith(hq + "-")
+    assert ws.building(annex).floors and ws.exports[-1].sequence == 3
+    open_file(data, PACKAGES / "campus-annex-2.storeypath", replace=True)
+    ws = Workspace.load(ws_path)
+    assert ws.items[away["id"]].floor_id.startswith(annex + "-") and ws.exports[-1].sequence == 4

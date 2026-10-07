@@ -114,10 +114,10 @@
       "type": "object"
     },
     "Scope": {
-      "description": "The part of the project a package holds, when it is not all of it.",
+      "description": "The building a package holds (from format 0.7, exactly one; before, the part of\nthe project it held when not all of it).",
       "properties": {
         "buildings": {
-          "description": "IDs of the buildings in the package; the rest of the project is not in it, and its absence says nothing about them",
+          "description": "IDs of the buildings in the package (from 0.7: one); the rest of the project is not in it, and its absence says nothing about it",
           "items": {
             "type": "string"
           },
@@ -171,7 +171,7 @@
       "type": "string"
     },
     "format_version": {
-      "default": "0.6.0",
+      "default": "0.7.0",
       "title": "Format Version",
       "type": "string"
     },
@@ -244,7 +244,7 @@
         }
       ],
       "default": null,
-      "description": "Only some of the project's buildings; absent: all of it"
+      "description": "The building it holds (from 0.7, always one); before 0.7, absent: the whole project"
     }
   },
   "required": [

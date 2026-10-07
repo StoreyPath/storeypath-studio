@@ -281,8 +281,8 @@ function renderFloorMeta() {
   $("walk3d").hidden = !f.converted_at;
   $("open-print").hidden = !f.source;
   $("open-print").href = `/api/${BASE}/floors/${encodeURIComponent(f.id)}/print.png`;
-  $("walk3d").href = "/viewer/examples/world/index.html?" + new URLSearchParams({
-    pkg: `/api/${BASE}/preview.storeypath`, floor: f.id }); // the project as it is now
+  $("walk3d").href = "/viewer/examples/world/index.html?" + new URLSearchParams({ // its building as it is now
+    pkg: `/api/${BASE}/preview.storeypath?building=${encodeURIComponent(f.id.split("-").slice(0, 3).join("-"))}`, floor: f.id });
 
   const box = $("warnings");
   box.hidden = !f.warnings.length;

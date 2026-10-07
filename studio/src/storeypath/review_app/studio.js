@@ -846,27 +846,34 @@ function placementForm(code, b) {
       el("label", {}, "Latitude", lat), el("label", {}, "Longitude", lon), el("label", {}, "Bearing of up (°)", bearing), save));
 }
 
-// ---- a project sent, or a package -------------------------------------------------
+// ---- a project sent, or a building's package ---------------------------------------
 
-/** Open a .storeypath: a project sent from another Studio (as it was), or any package
- * (rebuilt from it: the same IDs; its floors have no drawing until one is added). */
+/** Open a .storeypath-project (a project sent from another Studio, as it was) or a
+ * .storeypath (a building's package, rebuilt from it with the same IDs, its floors
+ * without their drawing until one is added; into its project when that is here). */
 function openCard() {
-  const input = el("input", { type: "file", accept: ".storeypath", hidden: true });
+  const input = el("input", { type: "file", accept: ".storeypath,.storeypath-project", hidden: true });
   const drop = el("label", { class: "drop" }, input,
-    el("strong", {}, "Open a project or a package"), el("br"),
-    "Drop a .storeypath here, or click to choose it: a project sent from another Studio, or any package.");
+    el("strong", {}, "Open a project or a building's package"), el("br"),
+    "Drop a file here, or click to choose it: a project sent from another Studio (.storeypath-project), or a building's package (.storeypath).");
   const open = async (file, replace = null) => {
     try {
       toast(`Opening ${file.name}…`);
       const r = await api(`open${replace !== null ? `?replace=${encodeURIComponent(replace)}` : ""}`, undefined, { raw: file });
+      const floors = `${r.floors} floor${r.floors === 1 ? "" : "s"}`;
       toast(r.how === "project"
-        ? `${r.name} opened as it was sent: ${r.floors} floor${r.floors === 1 ? "" : "s"}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
-        : `${r.name} rebuilt from the package: ${r.floors} floor${r.floors === 1 ? "" : "s"}, the same IDs. To read a floor again, add its drawing to it.`, false, 12000);
+        ? `${r.name} opened as it was sent: ${floors}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
+        : r.how === "building"
+          ? `${r.name}: ${r.replaced.length ? "its building put in place of the one here" : "a building added to it"} from the package (${floors}, the same IDs). Its other buildings are as they were.`
+          : `${r.name} rebuilt from the package: ${floors}, the same IDs. To read a floor again, add its drawing to it.`, false, 12000);
       location.hash = `#/p/${r.code}`;
     } catch (e) {
       if (e.status === 409 && replace === null) {
-        const typed = prompt(`${e.data.name} (${e.data.code}) is here already. Put the file in its place? What is here now ` +
-          `(its drawings, corrections and exports) is lost. Type the project's name to replace it:`);
+        const typed = prompt(e.data.building
+          ? `${e.data.name} (${e.data.code}) is here, with this building already (${e.data.building}). Put the package's in its place? ` +
+            `Its corrections since are lost; its floors keep their drawings, and the project's other buildings are left as they are. Type the project's name to replace it:`
+          : `${e.data.name} (${e.data.code}) is here already. Put the file in its place? What is here now ` +
+            `(its drawings, corrections and exports) is lost. Type the project's name to replace it:`);
         if (typed !== null) return open(file, typed);
         return;
       }
@@ -881,15 +888,13 @@ function openCard() {
 }
 
 function exportCard(code, p) {
-  // the whole project, or one building of it: its package says so, and lists what
-  // changed in that building alone
+  // a package holds one building: it lists what changed in that building alone
   const buildings = p.locations.flatMap((l) => l.buildings.filter((b) => b.floors.some((f) => f.converted)));
-  const what = el("select", { "aria-label": "What to export" },
-    el("option", { value: "" }, "Whole project"),
+  const what = el("select", { "aria-label": "Building to export" },
     ...buildings.map((b) => el("option", { value: b.id }, b.name)));
-  const button = el("button", { class: "primary", type: "button", onclick: async () => {
+  const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
     try {
-      const r = await runJob(api(`projects/${code}/export`, what.value ? { buildings: [what.value] } : {}));
+      const r = await runJob(api(`projects/${code}/export`, { building: what.value }));
       // downloaded at once; its copy stays in the list, the package as it was sent
       const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
       document.body.append(a);
@@ -901,13 +906,13 @@ function exportCard(code, p) {
       toast(e.message, true);
     }
   } }, "Export package");
-  const send = el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/project.storeypath`,
-    download: `${code}-project.storeypath`,
-    title: "One file to send: a package any system reads, carrying this project (its drawings, corrections and edits) for another Studio to continue it" },
+  const send = el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/project.storeypath-project`,
+    download: `${code}.storeypath-project`,
+    title: "One file for another Studio to continue this project: its drawings, corrections and edits (not a package: other systems read a building's)" },
   "Download project");
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, buildings.length > 1 ? what : null, button),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before. A package of one building holds that building alone and says so: a system that reads it leaves the others as they are. Download project gives one file to send to someone who continues the project in their Studio: they open it on their Projects page."),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("p", { class: "muted small" }, "Saved in ", el("code", {}, p.exports_folder), ", newest first:") : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;

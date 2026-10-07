@@ -1,18 +1,23 @@
 """A project as one file to send, and a project from one.
 
-A package (*.storeypath, export.py) is what other systems read. Exported to be
-continued in another Studio, it also carries the project in ``studio/``: the
-workspace (every correction, edit and ID, its export history) and its
-drawings. Other readers ignore that folder.
+A package (*.storeypath, export.py) is what other systems read: one building.
+A project file (*.storeypath-project) is for another Studio to continue the
+project: the workspace (every correction, edit and ID, its export history), its
+drawings, and the item types it uses. It is not a package: no other system
+reads it. (A project file of format 0.6 and before was a package of the whole
+project with the project in ``studio/``; it opens as it did.)
 
-Opening such a file gives the project back as it was. Opening a package
-without it rebuilds the project from what the package holds: the same project
-code and IDs, the spaces, zones and openings with their names, numbers, types
-and flags, the walls, the placements, the IDs retired, and its export number,
-so the next export follows on from it (a system that applied it takes that
-one as the next). Its floors have no drawing: they are reviewed, corrected,
-walked through and exported; to read one again, its drawing is added to it
-(its rooms keep their IDs, lined up on the walls the floor has).
+Opening a project file gives the project back as it was. Opening a package
+rebuilds its building from what the package holds: the same project code and
+IDs, the spaces, zones and openings with their names, numbers, types and flags,
+the walls, the placement, the items where they stand in the building, the IDs
+retired, and its export number, so the next export follows on from it (a system
+that applied it takes that one as the next). Into a project that is here
+already, the building is added, or put in place of the one there (the others
+are left as they are). Its floors have no drawing (one put in place of a floor
+keeps that floor's): they are reviewed, corrected, walked through and exported;
+to read one again, its drawing is added to it (its rooms keep their IDs, lined
+up on the walls the floor has).
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import _hash, build_features, export_package
+from .export import compared
 from .ids import format_object_code, is_item_id, parse_id
 from .package import FILES, Manifest
 from .workspace import (
@@ -43,6 +48,10 @@ from .workspace import (
 )
 
 STUDIO = "studio/"
+PROJECT_EXTENSION = ".storeypath-project"
+PROJECT_MANIFEST = "project.json"  # what a project file is: {"format": "storeypath-project", …}
+PROJECT_FORMAT = "storeypath-project"
+CATALOGUE_FILE = "catalogue.json"
 WORKSPACE_FILE = "studio/project.spproj"
 DRAWINGS = "studio/drawings/"
 DRAWING_TYPES = {".dxf", ".dwg"}
@@ -52,21 +61,28 @@ LOCAL_DECIMALS = 4  # metres: a tenth of a millimetre
 
 
 class ProjectExists(Exception):
-    """The project of a file opened is here already."""
+    """The project of a file opened is here already (or, for a building's package,
+    that building is)."""
 
-    def __init__(self, code: str, name: str):
-        super().__init__(f"{name} ({code}) is here already")
-        self.code, self.name = code, name
+    def __init__(self, code: str, name: str, building: str | None = None):
+        what = f"its building {building}" if building else "it"
+        super().__init__(f"{name} ({code}) is here already, and {what}" if building else f"{name} ({code}) is here already")
+        self.code, self.name, self.building = code, name, building
 
 
 # ---- a project to send ---------------------------------------------------------
 
 
 def export_project(ws_path: Path, out) -> None:
-    """The project as a package that carries it: what any system reads, and in
-    ``studio/`` the workspace and its drawings (every floor's, wherever it is, and
-    the others added to it), the workspace pointing at them there. Not entered as
-    an export (it is for people, not systems)."""
+    """The project as one file for another Studio (*.storeypath-project): the
+    workspace and its drawings (every floor's, wherever it is, and the others added
+    to it), the workspace pointing at them there, and the item types of this
+    Studio's catalogue. Not entered as an export (it is for people, not systems)."""
+    from importlib.metadata import version
+
+    from . import catalogue
+    from .workspace import utcnow
+
     ws_path = Path(ws_path)
     folder = ws_path.parent
     ws = Workspace.load(ws_path)
@@ -98,22 +114,45 @@ def export_project(ws_path: Path, out) -> None:
         for p in sorted(drawings.iterdir()):
             if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in DRAWING_TYPES:
                 ship(p)
-    extra: dict[str, bytes | Path] = {WORKSPACE_FILE: shipped.model_dump_json(indent=1).encode()}
-    extra.update({DRAWINGS + name: p for name, p in files.items()})
-    from . import catalogue
-
     data = ws_path.parent.parent  # the Studio's data folder: its catalogue of item types, when it has one
-    cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else None
-    export_package(ws, out, record=False, extra=extra, bake=False, catalogue=cat)  # for another Studio: quick, no 3D
+    cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else catalogue.default_catalogue()
+    about = {"format": PROJECT_FORMAT, "format_version": 1, "project": {"id": ws.id, "name": ws.project.name},
+             "made_at": utcnow().isoformat(), "generator": {"name": "storeypath", "version": version("storeypath")},
+             "about": "A StoreyPath project, for StoreyPath Studio to continue it (open it on the Projects page). "
+                      "It is not a package: other systems read a building's package (*.storeypath)."}
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(PROJECT_MANIFEST, json.dumps(about, ensure_ascii=False, indent=2))
+        z.writestr(WORKSPACE_FILE, shipped.model_dump_json(indent=1))
+        z.writestr(CATALOGUE_FILE, json.dumps(cat.model_dump(), ensure_ascii=False, indent=1))
+        for name, path in files.items():
+            z.write(path, DRAWINGS + name)
 
 
 # ---- a project from a file -----------------------------------------------------
 
 
+def project_code(source: Path) -> str | None:
+    """The code of the project a file is of (a package or a project file), or None."""
+    try:
+        with zipfile.ZipFile(source) as z:
+            names = set(z.namelist())
+            if PROJECT_MANIFEST in names:
+                return json.loads(z.read(PROJECT_MANIFEST))["project"]["id"]
+            if "manifest.json" in names:
+                return json.loads(z.read("manifest.json"))["project"]["id"]
+            if WORKSPACE_FILE in names:
+                return json.loads(z.read(WORKSPACE_FILE))["project"]["code"]
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
+        return None
+    return None
+
+
 def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
-    """A project from a package file, put in ``data/<code>/``: as it was, when the
-    file carries it, else rebuilt from the package. Raises ProjectExists when the
-    project is here and ``replace`` is not set (then it is put in its place)."""
+    """A project from a file, put in ``data/<code>/``. A project file gives the
+    project as it was; a package, its building rebuilt from it. Raises
+    ProjectExists when the project is here and ``replace`` is not set: a project
+    file is then put in its place; a package's building is added to it, or put in
+    place of that building (the project's others are left as they are)."""
     from .validate import validate_package
 
     with zipfile.ZipFile(source) as z:
@@ -134,9 +173,21 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
         if not re.fullmatch(r"[A-Z0-9]{4,16}", code):
             raise ValueError(f"not a project code: {code!r}")
         folder = data / code
+        existing = next(folder.glob("*.spproj"), None) if folder.exists() else None
+        if how == "package" and existing is not None:
+            here = Workspace.load(existing)
+            b_ids = [b for b in _building_ids(ws)]
+            there = [b for b in b_ids if b in _building_ids(here)]
+            if there and not replace:
+                raise ProjectExists(code, here.project.name, there[0])
+            _merge(here, ws)
+            here.save(existing)
+            learned = _learn_types(data, source)
+            return {"code": code, "name": here.project.name, "how": "building", "buildings": b_ids,
+                    "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
+                    "item_types_added": learned}
         if folder.exists():
             if not replace:
-                existing = next(folder.glob("*.spproj"), None)
                 name = ws.project.name
                 if existing is not None:
                     try:
@@ -162,18 +213,84 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
             "item_types_added": learned}
 
 
+def _building_ids(ws: Workspace) -> list[str]:
+    from .export import building_ids
+
+    return building_ids(ws)
+
+
+def _merge(here: Workspace, pkg: Workspace) -> None:
+    """A package's buildings (rebuilt, ``pkg``) into the project here: each added, or
+    put in place of the one with its code. A floor put in place of one keeps that
+    floor's drawing, so it can be read again (its rooms keep their IDs). Items the
+    package holds are put where it has them; one it retired is retired here; the
+    others are left as they are (one carried to another building waits for that
+    building's package). The package's export is entered as the last one, when it
+    is later than the last here."""
+    from .ids import make_id
+    from .workspace import utcnow
+
+    for loc in pkg.locations:
+        mine = next((l for l in here.locations if l.code == loc.code), None)
+        if mine is None:
+            here.locations.append(loc)
+            continue
+        for b in loc.buildings:
+            b_id = make_id(pkg.id, loc.code, b.code)
+            old = next((x for x in mine.buildings if x.code == b.code), None)
+            if old is not None:
+                drawn = {f.code: f.source for f in old.floors}
+                for f in b.floors:
+                    if f.source is None and drawn.get(f.code) is not None:
+                        f.source = drawn[f.code]
+                        f.warnings = [w for w in f.warnings if "add this floor's drawing" not in w]
+                mine.buildings[mine.buildings.index(old)] = b
+            else:
+                mine.buildings.append(b)
+            prefix = b_id + "-"  # what is in it now is the package's; what it retired stays retired
+            for i in [i for i, r in here.objects.items() if i.startswith(prefix) and r.status != "retired"]:
+                del here.objects[i]
+            for i in [i for i in here.overrides if i.startswith(prefix)]:
+                del here.overrides[i]
+    for i, r in pkg.objects.items():
+        if r.status == "retired" and i in here.objects:
+            continue  # kept as it was retired here, not as the package's bare record of it
+        here.objects[i] = r
+    here.overrides.update(pkg.overrides)
+    now = utcnow()
+    for i, it in pkg.items.items():
+        if it.status == "retired":
+            mine = here.items.get(i)
+            if mine is None:
+                here.items[i] = it
+            elif mine.status != "retired":
+                mine.status, mine.retired_at = "retired", now
+        else:
+            here.items[i] = it
+    here.next_item_seq = max(here.next_item_seq, pkg.next_item_seq)
+    record = pkg.exports[-1] if pkg.exports else None
+    last = here.exports[-1] if here.exports else None
+    if record is not None and (last is None or record.sequence > last.sequence):
+        kept = {} if last is None else {i: h for i, h in last.objects.items() if i not in record.objects}
+        places = {} if last is None else {i: b for i, b in last.places.items() if i not in record.places}
+        here.exports.append(record.model_copy(update={"objects": {**kept, **record.objects},
+                                                      "places": {**places, **record.places}}))
+
+
 def _learn_types(data: Path, source: Path) -> list[str]:
-    """The item types a package's catalogue has and this Studio's lacks, added to it
-    (a type's code is its identity everywhere: one already here is kept as it is)."""
+    """The item types a package's (or a project file's) catalogue has and this
+    Studio's lacks, added to it (a type's code is its identity everywhere: one
+    already here is kept as it is)."""
     from . import catalogue
 
     with zipfile.ZipFile(source) as z:
-        try:
+        names = set(z.namelist())
+        if "manifest.json" in names:
             manifest = Manifest.model_validate_json(z.read("manifest.json"))
-        except KeyError:  # a project sent: its package is the same file
-            return []
-        name = manifest.files.get("catalogue")
-        if not name or name not in z.namelist():
+            name = manifest.files.get("catalogue")
+        else:
+            name = CATALOGUE_FILE  # a project file
+        if not name or name not in names:
             return []
         theirs = catalogue.Catalogue.model_validate_json(z.read(name))
     ours = catalogue.load(data)
@@ -255,14 +372,18 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             ws.objects[r.id] = r
             if p.get("hidden") or p.get("ignored"):
                 ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None, ignored=bool(p.get("ignored")) or None)
-    # furniture and equipment, back where the package has them: its heading (where
-    # its front faces on earth) back to its turn on the plan
+    # furniture and equipment, back where the package has them: where each stands in
+    # its building (0.7); from an earlier package, its map position and heading (where
+    # its front faces on earth) back to the building's frame
     if "items" in manifest.files and manifest.files["items"] in z.namelist():
         for f in json.loads(z.read(manifest.files["items"]))["features"]:
             p = f["properties"]
-            local = to_local[p["building_id"]]
-            x, y = local.point(p["display_point"])
-            rotation = (180.0 - (p["heading"] - local.p.bearing)) % 360
+            if p.get("local"):
+                x, y, rotation = p["local"]["x_m"], p["local"]["y_m"], p["local"]["rotation_deg"]
+            else:
+                local = to_local[p["building_id"]]
+                x, y = local.point(p["display_point"])
+                rotation = (180.0 - (p["heading"] - local.p.bearing)) % 360
             ws.items[f["id"]] = Item(id=f["id"], type=p["type"], floor_id=p["floor_id"], x=x, y=y,
                                      rotation=round(rotation, 2), values=dict(p.get("values") or {}),
                                      created_at=exported_at)
@@ -309,9 +430,14 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
     # was is taken as this workspace exports it: a package keeps positions to about a
     # centimetre, so areas and label points worked out again may differ by as much,
     # which is no change.
-    again = build_features(ws)
-    ws.exports.append(ExportRecord(sequence=manifest.export.sequence, exported_at=exported_at, file=file_name,
-                                   objects={f["id"]: _hash(f) for fs in again.values() for f in fs}))
+    from .catalogue import Catalogue
+
+    cat_file = manifest.files.get("catalogue")
+    cat = Catalogue.model_validate_json(z.read(cat_file)) if cat_file and cat_file in z.namelist() else None
+    ws.exports.append(ExportRecord(
+        sequence=manifest.export.sequence, exported_at=exported_at, file=file_name, objects=compared(ws, cat),
+        buildings=sorted(buildings) if manifest.scope is not None else None,
+        places={i: it.floor_id.rsplit("-", 1)[0] for i, it in ws.items.items() if it.status == "active"}))
     return ws
 
 

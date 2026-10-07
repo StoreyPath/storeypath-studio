@@ -53,6 +53,33 @@
       "title": "Feature[ItemProps]",
       "type": "object"
     },
+    "ItemLocal": {
+      "description": "Where an item stands in its building's own frame: what it is placed by. The\nbuilding's position on the map never changes it.",
+      "properties": {
+        "x_m": {
+          "description": "metres from the origin of the building's drawings, along their x",
+          "title": "X M",
+          "type": "number"
+        },
+        "y_m": {
+          "description": "metres from the origin of the building's drawings, along their y",
+          "title": "Y M",
+          "type": "number"
+        },
+        "rotation_deg": {
+          "description": "the way its front faces, in degrees counter-clockwise: 0 the drawings' -y, 90 their +x",
+          "title": "Rotation Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x_m",
+        "y_m",
+        "rotation_deg"
+      ],
+      "title": "ItemLocal",
+      "type": "object"
+    },
     "ItemProps": {
       "additionalProperties": true,
       "properties": {
@@ -114,8 +141,20 @@
           "description": "the zone it stands in, when its space is divided",
           "title": "Zone Id"
         },
+        "local": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ItemLocal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "where it stands in its building (format 0.7): its middle and turn in the building's own frame, unchanged when the building moves on the map; the footprint, display_point and heading follow from it and the building's placement"
+        },
         "display_point": {
-          "description": "its middle",
+          "description": "its middle, on the map",
           "maxItems": 2,
           "minItems": 2,
           "prefixItems": [

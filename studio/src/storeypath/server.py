@@ -27,15 +27,16 @@ converting, exporting — run as jobs, one at a time, and report progress.
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
-    POST /api/projects/<code>/export           → job; {"buildings": [IDs]} for some of them
+    POST /api/projects/<code>/export {building} → job: that building's package (one
+                                               building per package)
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
-                                               building) as it is now, as a package
-                                               (not recorded as an export)
-    GET  /api/projects/<code>/project.storeypath   the project to send: a package that
-                                               carries it, to be continued elsewhere
-    PUT  /api/open[?replace=<name>]               a project from a file: a package, or a
-                                               project sent (bundle.py)
+                                               building) as it is now, for Studio's viewers
+                                               (not recorded as an export, never sent)
+    GET  /api/projects/<code>/project.storeypath-project   the project to send to another
+                                               Studio, to be continued there
+    PUT  /api/open[?replace=<name>]               a project from a file: a building's
+                                               package, or a project file (bundle.py)
     GET  /api/jobs/<id>
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 """
@@ -796,11 +797,23 @@ class Studio:
         return {"placement": b.placement.model_dump()}
 
     def export(self, code: str, body: dict | None = None) -> Job:
-        """A package of the project, or (``buildings``: IDs) of some of its buildings."""
+        """The package of one of the project's buildings (``building``: its ID; may be
+        left out when the project has one building)."""
         ws_path = self.path(code)
-        buildings = (body or {}).get("buildings")
-        if buildings is not None and (not isinstance(buildings, list) or not all(isinstance(b, str) for b in buildings)):
-            raise ValueError("buildings: a list of building IDs")
+        building = (body or {}).get("building")
+        if building is None and isinstance((body or {}).get("buildings"), list) and len(body["buildings"]) == 1:
+            building = body["buildings"][0]  # as earlier pages sent it
+        if building is not None and not isinstance(building, str):
+            raise ValueError("building: a building's ID")
+        from .export import building_ids
+
+        known = building_ids(Workspace.load(ws_path))  # saved whole (workspace.py): no lock to read it
+        if building is None:
+            if len(known) != 1:
+                raise ValueError(f"choose the building to export: a package holds one building, this project has {len(known)}")
+            building = known[0]
+        elif building not in known:
+            raise ValueError(f"no building {building} in this project")
 
         def run(job: Job):
             from .export import export_package
@@ -811,11 +824,10 @@ class Studio:
                 folder = ws_path.parent / "exports"
                 folder.mkdir(exist_ok=True)
                 seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
-                # by code, as the folder; a part of the project with its building's code
-                part = "" if buildings is None else "-" + (buildings[0].rsplit("-", 1)[-1] if len(buildings) == 1 else "PART")
-                out = folder / f"{ws.id}-{seq:03d}{part}.storeypath"
+                # by code, as the folder, with the building's
+                out = folder / f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
                 job.say(f"writing {out.name}")
-                manifest = export_package(ws, out, buildings=buildings, say=job.say, catalogue=self.catalogue())
+                manifest = export_package(ws, out, building=building, say=job.say, catalogue=self.catalogue())
                 ws.save(ws_path)
             errors = validate_package(out)
             for e in errors:
@@ -831,63 +843,68 @@ class Studio:
         return self.jobs.submit("Exporting", run)
 
     def project_file(self, code: str) -> "Download":
-        """The project as one file to send: a package that carries the project (its
-        workspace and drawings), for another Studio to continue it (bundle.py)."""
+        """The project as one file to send (*.storeypath-project): its workspace,
+        drawings and item types, for another Studio to continue it (bundle.py). Not a
+        package: other systems read a building's."""
         from .bundle import export_project
 
         path = self.path(code)
         buf = io.BytesIO()
         with self._changing(path):
             export_project(path, buf)
-        return Download(buf.getvalue(), f"{Workspace.load(path).id}-project.storeypath")
+        return Download(buf.getvalue(), f"{Workspace.load(path).id}.storeypath-project")
 
     def open(self, body: bytes, replace: str | None = None) -> dict:
-        """A project from a file (a package, or a project sent): put in the data folder.
-        When the project is here already, it is put in its place only when its name is
-        typed (``replace``) and no job is working on it."""
-        from .bundle import ProjectExists, open_file
+        """A project from a file (a building's package, or a project file): put in the
+        data folder. A package of a project here adds its building to it; when that
+        building is here already, or the file is a project file of a project here, it
+        is put in its place only when the project's name is typed (``replace``). No
+        job may be working on the project meanwhile."""
+        from .bundle import ProjectExists, open_file, project_code
 
         if not body:
             raise ValueError("the file is empty")
         tmp = self.data / f".opening-{uuid.uuid4().hex}.storeypath"
         tmp.write_bytes(body)
         try:
+            code = project_code(tmp)
+            path = self._workspaces().get(code) if code else None
+            lock = self._changing(path) if path else None
+            if lock is not None and not lock.acquire(blocking=False):
+                raise ValueError("a job is working on this project: open the file when the job is done")
             try:
-                return open_file(self.data, tmp)
-            except ProjectExists as e:
-                if replace is None:
-                    raise
-                if replace.strip() != e.name.strip():
-                    raise ValueError(f"type the name of the project here, {e.name}, to replace it") from None
-                path = self._workspaces().get(e.code)
-                lock = self._changing(path) if path else None
-                if lock is not None and not lock.acquire(blocking=False):
-                    raise ValueError("a job is working on this project: open the file when the job is done") from None
                 try:
+                    opened = open_file(self.data, tmp)
+                except ProjectExists as e:
+                    if replace is None:
+                        raise
+                    if replace.strip() != e.name.strip():
+                        raise ValueError(f"type the name of the project here, {e.name}, to replace "
+                                         f"{'its building ' + e.building if e.building else 'it'}") from None
                     opened = open_file(self.data, tmp, replace=True)
+                if path is not None:
                     with self._lock:
                         self._reviews.pop(path, None)
-                    return opened
-                finally:
-                    if lock is not None:
-                        lock.release()
+                return opened
+            finally:
+                if lock is not None:
+                    lock.release()
         except zipfile.BadZipFile:
-            raise ValueError("not a StoreyPath file (.storeypath)") from None
+            raise ValueError("not a StoreyPath file (.storeypath or .storeypath-project)") from None
         finally:
             tmp.unlink(missing_ok=True)
 
     def preview(self, code: str, building: str | None = None) -> bytes:
         """The project as a package, as it is now, for the 3D view: built in memory
         and not entered as an export. With ``building``, that building alone."""
-        from .export import ExportError, export_package
+        from .export import ExportError, preview_package
 
         ws = Workspace.load(self.path(code))  # saved whole (workspace.py): no lock to read it
         if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
         try:
-            export_package(ws, buf, record=False, buildings=[building] if building else None, bake=False,
-                           catalogue=self.catalogue())
+            preview_package(ws, buf, buildings=[building] if building else None, catalogue=self.catalogue())
         except ExportError as e:
             raise NotFound(str(e)) from None
         return buf.getvalue()
@@ -1146,7 +1163,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             except NotFound as e:
                 return self._json(404, {"error": str(e)})
             except ProjectExists as e:
-                return self._json(409, {"error": f"{e.name} ({e.code}) is here already", "code": e.code, "name": e.name})
+                return self._json(409, {"error": str(e), "code": e.code, "name": e.name, "building": e.building})
             except (DrawingError, ValueError, KeyError, ModelUnavailable) as e:
                 return self._json(400, {"error": str(e).strip("'\"")})
             except Exception as e:
@@ -1208,7 +1225,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.export_file(code, name)
             case "GET", ["projects", code, "preview.storeypath"]:
                 return studio.preview(code, (query.get("building") or [None])[0])
-            case "GET", ["projects", code, "project.storeypath"]:
+            case "GET", ["projects", code, "project.storeypath"] | ["projects", code, "project.storeypath-project"]:
                 return studio.project_file(code)
             case "PUT", ["open"]:
                 return studio.open(body, (query.get("replace") or [None])[0])

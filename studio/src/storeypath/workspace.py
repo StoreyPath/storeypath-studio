@@ -217,6 +217,8 @@ class ExportRecord(BaseModel):
     objects: dict[str, str]  # ID -> content hash, used for the next export's change list: the whole
     # project as last exported, a package of some buildings updating only theirs
     buildings: list[str] | None = None  # the package held only these buildings
+    places: dict[str, str] = Field(default_factory=dict)  # item ID -> the building it was in when last
+    # exported (merged as objects is): one carried out of a building since is listed as moved away
 
 
 class Project(BaseModel):

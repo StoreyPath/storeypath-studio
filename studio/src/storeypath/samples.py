@@ -283,12 +283,13 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
     msp.add_text(title, height=600, dxfattribs={"layer": "A-ANNO-TTLB"}).set_placement(mm(0, -4.5))
 
 
-def build_demo(directory: str | Path) -> tuple[Path, Path]:
-    """Create sample drawings, a workspace and an exported package. Returns
-    (workspace path, package path). The annex drawings have no room outlines, so
+def build_demo(directory: str | Path) -> tuple[Path, list[Path]]:
+    """Create sample drawings, a workspace and its buildings' packages. Returns
+    (workspace path, package paths: one per building). The annex drawings have no room outlines, so
     its spaces are found from the walls."""
     from .convert import convert_floor
     from .export import export_package
+    from .ids import make_id
     from .workspace import Placement, SourceDrawing, Workspace
 
     directory = Path(directory)
@@ -311,7 +312,10 @@ def build_demo(directory: str | Path) -> tuple[Path, Path]:
     for _, _, _, floor_id in ws.iter_floors():
         convert_floor(ws, floor_id, directory)
     ws_path = directory / "demo.spproj"
-    pkg_path = directory / "demo.storeypath"
-    export_package(ws, pkg_path)
+    packages = []  # one per building
+    for loc in ws.locations:
+        for b in loc.buildings:
+            packages.append(directory / f"demo-{b.code}.storeypath")
+            export_package(ws, packages[-1], building=make_id(ws.id, loc.code, b.code))
     ws.save(ws_path)
-    return ws_path, pkg_path
+    return ws_path, packages

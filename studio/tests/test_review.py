@@ -382,9 +382,9 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     status, _ = call(f"{base}/api/projects/{code}/buildings/{building['id']}/placement",
                      {"lat": 24.7, "lon": 46.6, "bearing": 0, "x": x, "y": y})
     assert status == 200
-    _, job = call(f"{base}/api/projects/{code}/export", {})
+    _, job = call(f"{base}/api/projects/{code}/export", {})  # its one building
     exported = wait(base, job)
-    assert exported["file"] == f"{code}-001.storeypath"  # by code, as the project's folder
+    assert exported["file"] == f"{code}-001-{building['id'].rsplit('-', 1)[-1]}.storeypath"  # by code, as its folder
     status, package = call(f"{base}/api/projects/{code}/exports/{exported['file']}")
     assert status == 200
     with zipfile.ZipFile(io.BytesIO(package)) as z:
@@ -859,7 +859,9 @@ def test_a_package_of_one_building(studio, tmp_path):
     _, p = call(f"{base}/api/projects/{code}")
     labs = next(b["id"] for b in p["locations"][0]["buildings"] if b["name"] == "Labs")
 
-    _, job = call(f"{base}/api/projects/{code}/export", {"buildings": [labs]})
+    status, _ = call(f"{base}/api/projects/{code}/export", {})  # which? a package holds one building
+    assert status == 400
+    _, job = call(f"{base}/api/projects/{code}/export", {"building": labs})
     done = wait(base, job)
     assert done["file"] == f"{code}-001-LABS.storeypath" and done["counts"]["buildings"] == 1
     with urllib.request.urlopen(f"{base}/api/projects/{code}/exports/{done['file']}") as res:
@@ -870,7 +872,7 @@ def test_a_package_of_one_building(studio, tmp_path):
         assert json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))["counts"]["buildings"] == 1
     status, _ = call(f"{base}/api/projects/{code}/preview.storeypath?building={code}-SITE-NOPE")
     assert status == 404
-    status, _ = call(f"{base}/api/projects/{code}/export", {"buildings": labs})
+    status, _ = call(f"{base}/api/projects/{code}/export", {"building": f"{code}-SITE-NOPE"})
     assert status == 400
 
 

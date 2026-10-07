@@ -15,8 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.6.0"
+FORMAT_VERSION = "0.7.0"
 FILE_EXTENSION = ".storeypath"
+# one building per package from 0.7 (before: a whole project, or a part of it)
+ONE_BUILDING_FROM = (0, 7)
 
 FILES = {
     "location": "location.geojson",
@@ -148,6 +150,16 @@ class OpeningProps(_Props):
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
+class ItemLocal(BaseModel):
+    """Where an item stands in its building's own frame: what it is placed by. The
+    building's position on the map never changes it."""
+
+    x_m: float = Field(description="metres from the origin of the building's drawings, along their x")
+    y_m: float = Field(description="metres from the origin of the building's drawings, along their y")
+    rotation_deg: float = Field(description=(
+        "the way its front faces, in degrees counter-clockwise: 0 the drawings' -y, 90 their +x"))
+
+
 class ItemProps(_Props):
     kind: Literal["item"]
     type: str = Field(description="the item's type: a code of catalogue.json (DESK-MANAGER, COPIER, …)")
@@ -157,7 +169,11 @@ class ItemProps(_Props):
     building_id: str
     space_id: str | None = Field(None, description="the space it stands in (null: in none of them)")
     zone_id: str | None = Field(None, description="the zone it stands in, when its space is divided")
-    display_point: LonLat = Field(description="its middle")
+    local: ItemLocal | None = Field(None, description=(
+        "where it stands in its building (format 0.7): its middle and turn in the building's own frame, "
+        "unchanged when the building moves on the map; the footprint, display_point and heading follow "
+        "from it and the building's placement"))
+    display_point: LonLat = Field(description="its middle, on the map")
     heading: float = Field(description="the way its front faces: degrees clockwise from north")
     width_m: float
     depth_m: float
@@ -222,10 +238,11 @@ class PlacementInfo(BaseModel):
 
 
 class Scope(BaseModel):
-    """The part of the project a package holds, when it is not all of it."""
+    """The building a package holds (from format 0.7, exactly one; before, the part of
+    the project it held when not all of it)."""
 
-    buildings: list[str] = Field(description="IDs of the buildings in the package; the rest of the project is "
-                                             "not in it, and its absence says nothing about them")
+    buildings: list[str] = Field(description="IDs of the buildings in the package (from 0.7: one); the rest of "
+                                             "the project is not in it, and its absence says nothing about it")
 
 
 class Manifest(BaseModel):
@@ -241,7 +258,13 @@ class Manifest(BaseModel):
     types: dict[str, list[str]]
     sources: list[SourceInfo]
     placements: dict[str, PlacementInfo]
-    scope: Scope | None = Field(default=None, description="Only some of the project's buildings; absent: all of it")
+    scope: Scope | None = Field(default=None, description=(
+        "The building it holds (from 0.7, always one); before 0.7, absent: the whole project"))
+
+
+class MovedAway(BaseModel):
+    id: str = Field(description="an item's ID")
+    building_id: str = Field(description="the building of the project it is in now")
 
 
 class Changes(BaseModel):
@@ -253,6 +276,18 @@ class Changes(BaseModel):
     changed: list[str]
     retired: list[str] = Field(description="IDs removed since the previous export")
     all_retired: list[str] = Field(description="every ID this project has ever retired")
+    moved_away: list[MovedAway] = Field(default_factory=list, description=(
+        "items in this building when it was last exported, carried since to another building of the "
+        "project (format 0.7): not retired, they keep their IDs"))
+
+
+def version_tuple(version: str) -> tuple[int, int]:
+    """A format version's major and minor numbers ("0.7.0" → (0, 7))."""
+    parts = (version.split(".") + ["0", "0"])[:2]
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return (0, 0)
 
 
 COLLECTIONS: dict[str, type[_Props]] = {

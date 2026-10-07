@@ -32,6 +32,7 @@ from .package import (
     ExportInfo,
     Generator,
     Manifest,
+    MovedAway,
     PlacementInfo,
     ProjectInfo,
     Scope,
@@ -43,6 +44,10 @@ from .types import OpeningType, SpaceType
 from .workspace import ExportRecord, Placement, SitePosition, Workspace, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
+LOCAL_DECIMALS = 4  # metres, in a building's own frame: a tenth of a millimetre
+# every building where its own frame is, for what is compared between exports (moving a
+# building on the map changes none of its rooms, doors or items)
+OWN_FRAME = Placement(lon=0.0, lat=0.0, x=0.0, y=0.0, bearing=0.0)
 
 log = logging.getLogger(__name__)
 
@@ -238,7 +243,8 @@ WALL_ELEVATION_M = 1.2  # a wall item's bottom above the floor, when its type do
 
 
 def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> dict:
-    """An item as a feature: its footprint (its width along its rotation, its front
+    """An item as a feature: where it stands in its building's own frame (what it is
+    placed by), its footprint on the map (its width along its rotation, its front
     facing the plan's -y turned with it), where its front faces on earth, and the
     zone or space its middle stands in."""
     w, d = (t.width, t.depth) if t else (1.0, 0.6)
@@ -257,6 +263,8 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
         "kind": "item", "type": it.type, "category": t.category if t else "furniture",
         "name": t.name_en if t else it.type, "floor_id": it.floor_id, "building_id": b_id,
         "space_id": space, "zone_id": zone.id if zone else None,
+        "local": {"x_m": round(it.x, LOCAL_DECIMALS), "y_m": round(it.y, LOCAL_DECIMALS),
+                  "rotation_deg": round(it.rotation % 360, 2)},
         "display_point": _lonlat(g, (it.x, it.y)),
         "heading": round((bearing + math.degrees(math.atan2(fx, fy))) % 360, 2),
         "width_m": w, "depth_m": d, "height_m": t.height if t else 0.75, "mount": mount,
@@ -264,8 +272,12 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
     })
 
 
-def build_features(ws: Workspace, cat: Catalogue | None = None) -> dict[str, list[dict]]:
+def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bool = False) -> dict[str, list[dict]]:
+    """Every feature of the project, on the map; with ``own_frame``, each building
+    where its own frame is instead (what export compares between exports)."""
     placed = placements(ws)
+    if own_frame:
+        placed = {b: (OWN_FRAME, real) for b, (_, real) in placed.items()}
     cat = cat or default_catalogue()
     out: dict[str, list[dict]] = {k: [] for k in ("location", "buildings", "floors", "spaces", "zones", "openings", "items")}
     for loc in ws.locations:
@@ -408,53 +420,102 @@ def in_buildings(buildings: list[str] | None):
     return lambda i: i in buildings or i.startswith(prefixes)
 
 
-def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None,
-                   buildings: list[str] | None = None, bake: bool = True, say=None,
-                   catalogue: Catalogue | None = None) -> Manifest:
-    """Write the package to ``out_path`` (a path, or a binary file object). With
-    ``record`` the export is entered in the workspace, so the next one lists what
-    changed since; without it (a preview) the workspace is left as it was.
-    ``extra`` adds files (name → bytes or a path): the project itself, in
-    ``studio/``, for another Studio to continue it (bundle.py).
+def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True) -> dict[str, str]:
+    """What is compared between exports, by ID: each feature (``held`` says which) as
+    it is in its building's own frame, so moving a building on the map changes none
+    of its rooms, doors or items; a building, with its place on the map."""
+    placed = placements(ws)
+    out = {}
+    for role, fs in build_features(ws, cat, own_frame=True).items():
+        for f in fs:
+            if held(role, f):
+                out[f["id"]] = _hash({**f, "placement": placed[f["id"]][0].model_dump()} if role == "buildings" else f)
+    return out
 
-    With ``buildings`` (IDs) the package holds only those buildings, their floors and
-    what is on them, and their locations; its manifest says so (``scope``). What
-    changed is listed for them alone, and the record of what was exported keeps
-    the other buildings as they were last exported.
+
+def building_ids(ws: Workspace) -> list[str]:
+    return [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings]
+
+
+def export_package(ws: Workspace, out_path, *, building: str | None = None, record: bool = True,
+                   bake: bool = True, say=None, catalogue: Catalogue | None = None) -> Manifest:
+    """Write the package of one building (its ID; may be left out when the project
+    has one) to ``out_path`` (a path, or a binary file object): the building, its
+    floors and what is on them, and its location; its manifest's ``scope`` names it.
+    With ``record`` the export is entered in the workspace, so the next one lists
+    what changed since; without it the workspace is left as it was.
+
+    What changed is listed for that building alone, compared in its own frame:
+    moving it on the map changes none of its rooms, doors or items (only the
+    building is changed). An item carried from it to another building since it was
+    last exported is listed as moved away.
 
     With ``bake`` its floors are pre-built in 3D (``world/``, bake.py) when Node.js is
     here; when it is not, the package is written without them. ``say`` is told
     which (else it is logged)."""
+    known = building_ids(ws)
+    if building is None:
+        if len(known) != 1:
+            raise ExportError(f"this project has {len(known)} buildings: choose the one to export "
+                              "(a package holds one building)")
+        building = known[0]
+    if building not in known:
+        raise ExportError(f"no building {building} in this project")
+    return _package(ws, out_path, [building], record=record, bake=bake, say=say, catalogue=catalogue)
+
+
+def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = None,
+                    catalogue: Catalogue | None = None) -> Manifest:
+    """The project as it is now, for Studio's own viewers: some buildings (all of them
+    without ``buildings``), not entered as an export and not pre-built. It is never
+    sent anywhere: what is sent is a building's package (export_package)."""
+    known = building_ids(ws)
+    buildings = known if buildings is None else buildings
+    if unknown := sorted(set(buildings) - set(known)):
+        raise ExportError(f"no building {', '.join(unknown)} in this project")
+    if not buildings:
+        raise ExportError("no building to show")
+    return _package(ws, out_path, buildings, record=False, bake=False, catalogue=catalogue)
+
+
+def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bake: bool, say=None,
+             catalogue: Catalogue | None = None) -> Manifest:
     cat = catalogue or default_catalogue()
-    features = build_features(ws, cat)
-    if buildings is not None:
-        known = {make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings}
-        if unknown := sorted(set(buildings) - known):
-            raise ExportError(f"no building {', '.join(unknown)} in this project")
-        if not buildings:
-            raise ExportError("choose a building to export")
-        buildings = sorted(set(buildings))
-        locations = {b.rsplit("-", 1)[0] for b in buildings}
-        scoped = in_buildings(buildings)
-        features = {role: [f for f in fs if (f["id"] in locations if role == "location"
-                                             else scoped(f["properties"]["floor_id"]) if role == "items"  # where it is
-                                             else scoped(f["id"]))]
-                    for role, fs in features.items()}
+    buildings = sorted(set(buildings))
+    locations = {b.rsplit("-", 1)[0] for b in buildings}
     scoped = in_buildings(buildings)
-    hashes = {f["id"]: _hash(f) for fs in features.values() for f in fs}
+
+    def held(role: str, f: dict) -> bool:
+        if role == "location":
+            return f["id"] in locations
+        return scoped(f["properties"]["floor_id"] if role == "items" else f["id"])  # an item: where it is
+
+    everything = build_features(ws, cat)
+    features = {role: [f for f in fs if held(role, f)] for role, fs in everything.items()}
+    placed = placements(ws)
+    hashes = compared(ws, cat, held)
 
     prev = ws.exports[-1] if ws.exports else None
     sequence = (prev.sequence + 1) if prev else 1
     prev_hashes = prev.objects if prev else {}
+    prev_places = prev.places if prev else {}
+    places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
+    here = {f["id"] for f in features["items"]}
+    moved_away = [MovedAway(id=i, building_id=places[i]) for i, b in sorted(prev_places.items())
+                  if b in buildings and i in places and i not in here]
+    gone_items = sorted(i for i, b in prev_places.items()  # taken away since, from here
+                        if b in buildings and i in ws.items and ws.items[i].status == "retired" and i in prev_hashes)
     all_retired = sorted([i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)]
                          + [i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id)])
+    retired = sorted({i for i in prev_hashes if i not in hashes and scoped(i)} | set(gone_items))  # a location stays
     changes = Changes(
         sequence=sequence,
         previous_sequence=prev.sequence if prev else None,
         added=sorted(i for i in hashes if i not in prev_hashes),
         changed=sorted(i for i in hashes if i in prev_hashes and prev_hashes[i] != hashes[i]),
-        retired=sorted(i for i in prev_hashes if i not in hashes and scoped(i)),  # a part's locations stay
+        retired=retired,
         all_retired=all_retired,
+        moved_away=moved_away,
     )
 
     now = utcnow()
@@ -462,7 +523,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
         generator=Generator(name="storeypath", version=version("storeypath")),
         project=ProjectInfo(id=ws.id, name=ws.project.name),
         export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
-        files={**FILES, "spec": "FORMAT.md", "schemas": "schema/", **({"studio": "studio/"} if extra else {})},
+        files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
                "opening": [t.value for t in OpeningType]},
@@ -471,10 +532,9 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
             for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)
         ],
         placements={
-            b_id: PlacementInfo(**p.model_dump(), placed=real) for b_id, (p, real) in placements(ws).items()
-            if scoped(b_id)
+            b_id: PlacementInfo(**p.model_dump(), placed=real) for b_id, (p, real) in placed.items() if scoped(b_id)
         },
-        scope=Scope(buildings=buildings) if buildings is not None else None,
+        scope=Scope(buildings=buildings),
     )
 
     world: dict[str, bytes] = {}
@@ -490,12 +550,17 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    _write(out_path, ws, manifest, features, changes, {**world, **(extra or {})}, cat)
+    _write(out_path, ws, manifest, features, changes, world, cat)
 
     if record:
-        kept = {} if buildings is None else {i: h for i, h in prev_hashes.items() if not scoped(i) and i not in hashes}
-        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name,
-                                       objects={**kept, **hashes}, buildings=buildings))
+        done = set(retired)
+        kept = {i: h for i, h in prev_hashes.items() if i not in hashes and not scoped(i) and i not in done}
+        moved = {m.id for m in moved_away}
+        ws.exports.append(ExportRecord(
+            sequence=sequence, exported_at=now, file=Path(out_path).name, objects={**kept, **hashes},
+            buildings=buildings,
+            places={**{i: b for i, b in prev_places.items() if i not in here and i not in moved and i not in done},
+                    **{i: places[i] for i in here}}))
     return manifest
 
 
