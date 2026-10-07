@@ -387,3 +387,25 @@ def test_level_notes_are_not_room_names(text):
     assert NOT_A_ROOM.match(text)
     # names that say what a space is stay names: a stair, a kitchen, a void
     assert not any(NOT_A_ROOM.match(t) for t in ("STEPS=30 UP", "OPEN KITCHEN", "OPEN TO BELOW", "OPEN BELOW"))
+
+
+def test_room_codes_on_a_room_tag_layer_are_read_as_the_rooms_labels(tmp_path):
+    # A large building's rooms are tagged with codes (RM-GF-33) on A-ROOMTAGS: the texts
+    # are no room names, yet the layer's name says what they are. Each room gets its
+    # code as its number and as the label its drawing writes in it.
+    from dataclasses import replace
+
+    cells = [replace(c, label=None) for c in office_floor(1)]
+    write_floor_dxf(tmp_path / "plan.dxf", cells, area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    doc.layers.add("A-ROOMTAGS")
+    for k, c in enumerate(cells):
+        middle = ((c.x0 + c.x1) / 2 + 125.0) * 1000, ((c.y0 + c.y1) / 2 + 48.0) * 1000
+        doc.modelspace().add_text(f"RM-GF-{k + 1:02d}", dxfattribs={"layer": "A-ROOMTAGS", "insert": middle, "height": 200})
+    doc.saveas(tmp_path / "plan.dxf")
+    drawing = read_drawing(tmp_path / "plan.dxf")
+    a = analyse(drawing, 0.001, None, rules_only)
+    assert "labels" in next(r.roles for r in a.roles if r.layer == "A-ROOMTAGS")
+    ex = extract_floor(drawing, a.profile)
+    assert len(ex.spaces) == len(cells)
+    assert all(s.label and s.label.startswith("RM-GF-") and s.number == s.label and not s.name for s in ex.spaces)

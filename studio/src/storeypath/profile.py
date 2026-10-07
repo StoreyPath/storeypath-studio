@@ -40,7 +40,8 @@ class WallsConfig(BaseModel):
 
 class LabelsConfig(BaseModel):
     layers: list[str]
-    number_pattern: str = r"(?:[A-Z]{0,2}\d{0,2}[-.])?[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}"
+    # 201, B-12, 1.02, 2F-101 and room codes in parts (RM-GF-33, RM-GF-10A)
+    number_pattern: str = r"(?:[A-Z0-9]{1,4}[-.]){0,3}[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}"
 
 
 class DoorsConfig(BaseModel):

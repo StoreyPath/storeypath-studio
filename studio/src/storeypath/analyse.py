@@ -63,7 +63,7 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
     ("equipment", re.compile(r"(^|[^a-z])(a/?c|sac|hvac|mech|fcu|ahu|duct|split|aircon|air.?cond)([^a-z]|$)"
                              r"|تكييف|مكيف", re.I)),
     ("wall", re.compile(r"wall|wand|mur\b|muro|pared|جدار|جدران|حائط", re.I)),
-    ("room_name", re.compile(r"room.?name|area.?iden|spce.?iden|anno.?room|room.?tag|اسماء|أسماء", re.I)),
+    ("room_name", re.compile(r"room.?(name|tag|num|no\b)|area.?iden|spce.?iden|anno.?room|اسماء|أسماء", re.I)),
     ("room_outline", re.compile(r"^a-area$|area.?bdry|spce$|^rooms?$", re.I)),
     ("furniture", re.compile(r"furn|equip|sanit|plumb|fixt|اثاث|أثاث", re.I)),
     ("dimension", re.compile(r"dim|cota|bema[ßs]|أبعاد|ابعاد", re.I)),
@@ -512,7 +512,9 @@ def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None,
         if rooms >= 2 and rooms >= 0.5 * len(known):
             roles.append("labels")
             why.append(f"{rooms} of {len(names)} texts name rooms")
-    elif hint == "room_name" and names:
+    # a layer named for room tags holds them, whatever the texts: room codes (RM-GF-33)
+    # are not room names, yet they say which room is which
+    if "labels" not in roles and hint == "room_name" and names:
         roles.append("labels")
         why.append("layer name")
     if outlines and st.closed_rooms * 4 >= st.entities - len(st.texts) and hint in (None, "room_outline"):
