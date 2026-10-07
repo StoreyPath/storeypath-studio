@@ -536,3 +536,89 @@ def test_a_project_is_deleted_only_when_its_name_is_typed(studio):
     assert status == 200 and done["deleted"] == code
     assert not folder.exists() and code not in [p["code"] for p in call(f"{base}/api/projects")[1]]
     assert call(f"{base}/api/projects/{code}")[0] == 404
+
+
+def _reconvert(path, f_id):
+    from storeypath.convert import convert_floor
+
+    ws = Workspace.load(path)
+    convert_floor(ws, f_id, path.parent)
+    ws.save(path)
+
+
+def _wall_area(floor):
+    return shape(floor["walls"]).area
+
+
+def test_a_window_of_the_drawing_given_another_size_keeps_it_and_its_id(review):
+    # Wider: the gap in the wall grows; narrower: what it no longer takes is wall
+    # again; back to the drawing's size: as before. The window keeps its ID.
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    window = next(d for d in floor["doors"] if d["type"] == "window" and d["span"])
+    width, walls = window["width"], _wall_area(floor)
+    thickness = floor["wall_thickness"]
+    assert window["resize"] is None
+
+    r.edit(f_id, {"resize": {"at": window["middle"], "width": width + 0.6, "sill": 0.45, "height": 1.8}})
+    assert len(Workspace.load(path).floor(f_id).edits.resized) == 1
+    _reconvert(path, f_id)
+    after = r.floor(f_id)
+    w = next(d for d in after["doors"] if d["id"] == window["id"])
+    assert abs(w["width"] - (width + 0.6)) < 1e-6 and abs(LineString(w["span"]).length - (width + 0.6)) < 1e-3
+    assert w["sill"] == 0.45 and w["height"] == 1.8 and w["resize"] == {"width": round(width + 0.6, 3), "sill": 0.45, "height": 1.8}
+    assert LineString(w["span"]).interpolate(0.5, normalized=True).distance(shape({"type": "Point", "coordinates": window["middle"]})) < 1e-3
+    assert abs((walls - _wall_area(after)) - 0.6 * thickness) < 0.05 * thickness + 0.01  # the gap is wider
+
+    r.edit(f_id, {"resize": {"at": w["middle"], "width": width - 0.4, "sill": None, "height": None}})
+    assert len(Workspace.load(path).floor(f_id).edits.resized) == 1  # replaced, not added
+    _reconvert(path, f_id)
+    narrow = r.floor(f_id)
+    w = next(d for d in narrow["doors"] if d["id"] == window["id"])
+    assert abs(w["width"] - (width - 0.4)) < 1e-6 and w["sill"] != 0.45
+    assert abs((_wall_area(narrow) - walls) - 0.4 * thickness) < 0.05 * thickness + 0.01  # wall again where it was open
+
+    r.edit(f_id, {"resize": {"at": w["middle"], "width": None, "sill": None, "height": None}})
+    assert Workspace.load(path).floor(f_id).edits.resized == []
+    _reconvert(path, f_id)
+    back = r.floor(f_id)
+    w = next(d for d in back["doors"] if d["id"] == window["id"])
+    assert abs(w["width"] - width) < 1e-6 and w["resize"] is None and abs(_wall_area(back) - walls) < 1e-3
+
+
+def test_a_door_given_another_width_takes_its_leaf_with_it(review):
+    r, path, f_id = review
+    door = next(d for d in r.floor(f_id)["doors"] if d["type"] == "door" and d["span"] and d["swings"])
+    leaf = lambda d: LineString(d["swings"][0]).length  # noqa: E731
+    assert abs(leaf(door) - door["width"]) < 0.05
+    r.edit(f_id, {"resize": {"at": door["middle"], "width": 1.2}})
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["id"] == door["id"])
+    assert abs(d["width"] - 1.2) < 1e-6 and abs(leaf(d) - 1.2) < 0.05
+    hinge = d["swings"][0][0]
+    assert min(LineString([hinge, end]).length for end in d["span"]) < 1e-3  # hinged on a jamb
+
+
+def test_an_opening_drawn_in_review_is_given_another_size(review):
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    rooms = sorted((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: -s["area"])
+    a, b = rooms[0], next(s for s in rooms[1:] if shape(s["geometry"]).distance(shape(rooms[0]["geometry"])) < 0.5)
+    c = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3)).centroid
+    between = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3))
+    vertical = (between.bounds[3] - between.bounds[1]) > (between.bounds[2] - between.bounds[0])
+    span = [[c.x, c.y - 0.45], [c.x, c.y + 0.45]] if vertical else [[c.x - 0.45, c.y], [c.x + 0.45, c.y]]
+    r.edit(f_id, {"add": {"opening": {"type": "door", "span": span}}})
+    r.edit(f_id, {"resize": {"at": [c.x, c.y], "width": 1.3, "height": 2.4}})
+    drawn = Workspace.load(path).floor(f_id).edits
+    assert drawn.resized == [] and abs(LineString(drawn.openings[0].span).length - 1.3) < 1e-6 and drawn.openings[0].height == 2.4
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    assert abs(d["width"] - 1.3) < 1e-3 and d["height"] == 2.4
+
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"resize": {"at": [c.x, c.y], "width": 0.1}})
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"resize": {"at": [c.x, c.y], "sill": "high"}})
+    with pytest.raises(NotFound):
+        r.edit(f_id, {"resize": {"at": [c.x + 500, c.y + 500], "width": 1.0}})

@@ -34,7 +34,7 @@ from .export import _label_point
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
-from .workspace import DrawnOpening, ObjectRecord, Override, Workspace
+from .workspace import DrawnOpening, ObjectRecord, Override, ResizedOpening, Workspace
 
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml",
@@ -42,6 +42,7 @@ CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/j
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
 REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
+RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
 PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
 PRINT_MAX_PX = 10000  # …within this many pixels a side
 PRINT_MARGIN_M = 3.0  # around the floor's spaces, when the floor has no region of its own
@@ -131,16 +132,21 @@ class Review:
                 "method": f.method, "warnings": f.warnings, "outline": f.outline,
                 # spaces and their zones; a space divided into zones is used through them
                 "spaces": [self._space(ws, r) for r in objects if r.kind in ("space", "zone")],
-                "doors": [self._door(ws, r, areas) for r in objects if r.kind == "opening"],
+                "doors": [self._door(ws, r, areas, f.edits.resized) for r in objects if r.kind == "opening"],
                 # for drawing walls and doors onto: the walls as found, and what was drawn
                 "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
             }
 
-    def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None) -> dict:
+    def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None, resized=()) -> dict:
         eff = ws.effective(r)
+        middle = _middle(r)
         return {"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
                 "span": r.span, "width": r.width, "swings": r.swings, "tag": r.tag,
                 "sill": r.sill, "height": r.height, "drawn": (r.type_source or "").startswith("drawn"),
+                "middle": [round(middle.x, 4), round(middle.y, 4)],
+                # the size given in review to one of the drawing's (null: as drawn)
+                "resize": next((x.model_dump(exclude={"at"}) for x in resized
+                                if Point(x.at).distance(middle) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
                 "divider": _divider(r, areas or {}) if r.type_source in ("split", "doorway") else None}
 
@@ -166,6 +172,8 @@ class Review:
                 if not 0.3 <= LineString(span).length <= 6:
                     raise ValueError("an opening is 0.3 to 6 m wide")
                 f.edits.openings.append(DrawnOpening(type=o["type"], span=span))
+            elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
+                self._resize(ws, floor_id, f, body["resize"])
             elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
                 at = Point(_points([body["remove"]["at"]], 1)[0])
                 lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings}
@@ -177,9 +185,32 @@ class Review:
                 _, kind, i = min(near)
                 lists[kind].pop(i)
             else:
-                raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}} '
-                                 'or {"remove": {"at": [x, y]}}')
+                raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}}, '
+                                 '{"resize": {"at": [x, y], "width", "sill", "height"}} or {"remove": {"at": [x, y]}}')
             self._save(ws)
+
+    def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
+        """A door, window or opening given another width, sill or height (metres; null:
+        as drawn). One drawn in review changes; one of the drawing keeps its new size
+        in the floor's edits, found again by its middle at every conversion."""
+        at = Point(_points([body["at"]], 1)[0])
+        sizes = {key: _size(body.get(key), key, band) for key, band in RESIZE_BANDS.items()}
+        drawn = [(LineString(o.span).distance(at), i) for i, o in enumerate(f.edits.openings)]
+        near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
+        if near:
+            o = f.edits.openings[min(near)[1]]
+            if sizes["width"] is not None:
+                o.span = _resized_span(o.span, sizes["width"])
+            o.sill, o.height = sizes["sill"], sizes["height"]
+            return
+        openings = [(_middle(r).distance(at), r) for r in ws.floor_objects(floor_id) if r.kind == "opening"]
+        found = [o for o in openings if o[0] <= REMOVE_REACH_M]
+        if not found:
+            raise NotFound("no door, window or opening there")
+        middle = _middle(min(found, key=lambda o: o[0])[1])
+        f.edits.resized = [x for x in f.edits.resized if Point(x.at).distance(middle) > REMOVE_REACH_M]
+        if any(v is not None for v in sizes.values()):
+            f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **sizes))
 
     def _space(self, ws: Workspace, r: ObjectRecord) -> dict:
         eff = ws.effective(r)
@@ -275,6 +306,32 @@ def _points(value, n: int) -> list[list[float]]:
     if len(pts) != n:
         raise ValueError(f"expected {n} points [x, y]")
     return pts
+
+
+def _size(value, key: str, band: tuple[float, float]) -> float | None:
+    """A size in metres from a request, within its band; None (as drawn) for null."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} is a number of metres, or null") from None
+    if not band[0] <= v <= band[1]:
+        raise ValueError(f"{key} is {band[0]:g} to {band[1]:g} m")
+    return round(v, 3)
+
+
+def _resized_span(span, width: float) -> list[list[float]]:
+    from .geometry import span_of_width
+
+    return span_of_width(span, width)
+
+
+def _middle(r: ObjectRecord) -> Point:
+    """An opening's middle: of its span when known, else where it is."""
+    if r.span and len(r.span) >= 2:
+        return LineString(r.span).interpolate(0.5, normalized=True)
+    return Point(r.geometry["coordinates"])
 
 
 def _round_box(box) -> list[float]:

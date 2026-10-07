@@ -187,7 +187,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 .preview circle { fill: #d6336c; }
 #map.drawing-tool .pane { cursor: crosshair; }
 #map.busy .pane { cursor: progress; }
-#toolbar .tools { display: inline-flex; gap: 4px; align-items: center; padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line); }
+#toolbar .hint { color: var(--muted); font-size: 12px; padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line); }
 #toolbar button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 #toolbar input[type="number"] { width: 4.5em; }
 #doors .span { stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
@@ -216,7 +216,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #toolbar button { padding: 4px 10px; }
 #status:empty { display: none; }
 
-#toast {
+#toast { pointer-events: none; /* a message: the plan under it still takes clicks */
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(560px, 90vw);
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, .2); font-size: 13px; white-space: pre-line;
@@ -236,3 +236,35 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 .list li button.quick { padding: 0 7px; font-size: 11px; line-height: 18px; border-radius: 6px; color: var(--muted); }
 .list li button.quick:hover { color: var(--text); }
 .flags { align-items: center; }
+
+/* the chosen door, window or opening: its bar and leaves too; deleted ones faint */
+#doors .span.selected, #doors .swing.selected { stroke: var(--select); }
+#doors .span.deleted { opacity: .35; }
+
+/* sizes of a door, window or opening */
+.size-form { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 8px 0; }
+.size-form label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.size-form input { width: 6.5em; margin-left: auto; }
+.size-form .row { margin-top: 4px; }
+
+/* the right-click menu */
+#menu {
+  position: fixed; z-index: 50; min-width: 230px; max-width: 320px; padding: 4px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 13px;
+}
+#menu .heading { padding: 6px 10px 0; font-weight: 600; }
+#menu .meta { padding: 0 10px 6px; font-size: 12px; }
+#menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+#menu button {
+  display: flex; justify-content: space-between; gap: 16px; width: 100%; padding: 7px 10px;
+  border: 0; border-radius: 5px; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer;
+}
+#menu button:hover:not(:disabled), #menu button:focus-visible { background: var(--hover); outline: none; }
+#menu button.danger { color: var(--danger); }
+#menu button:disabled { color: var(--muted); cursor: default; }
+#menu .key { color: var(--muted); font-size: 11px; }
+#menu .size-form { padding: 4px 10px 8px; margin: 0; }
+
+#menu .size-form button { display: inline-flex; width: auto; border: 1px solid var(--line); background: var(--panel); }
+#menu .size-form button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }

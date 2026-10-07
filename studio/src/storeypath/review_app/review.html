@@ -70,8 +70,17 @@
       </div>
       <div class="id-row"><code id="it-id"></code></div>
       <div id="it-meta" class="meta"></div>
+      <form id="it-size" class="size-form" autocomplete="off" hidden>
+        <label>Width <input name="width" type="number" min="0.3" max="8" step="0.05" placeholder="as drawn"> m</label>
+        <label class="sill">Sill <input name="sill" type="number" min="0" max="3" step="0.05" placeholder="as drawn"> m</label>
+        <label>Height <input name="height" type="number" min="0.3" max="10" step="0.05" placeholder="as drawn"> m</label>
+        <div class="row">
+          <button type="submit" class="primary">Change size</button>
+          <button type="button" class="as-drawn" title="Back to the size the drawing gives it">Size as drawn</button>
+        </div>
+      </form>
       <div class="row flags">
-        <button id="it-delete" type="button">Delete</button>
+        <button id="it-delete" type="button" title="Delete (Del)">Delete</button>
         <span id="it-flags" class="meta"></span>
       </div>
     </section>
@@ -131,18 +140,12 @@
       </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
-      <span class="tools" title="Draw what the drawing leaves out: kept through every re-read">
-        <button id="tool-wall" type="button" data-tool="wall" title="Draw a wall: click where it starts and where it ends (W)">Wall</button>
-        <button id="tool-door" type="button" data-tool="door" title="Add a door: click on a wall (D)">Door</button>
-        <button id="tool-window" type="button" data-tool="window" title="Add a window: click on a wall">Window</button>
-        <button id="tool-opening" type="button" data-tool="opening" title="Add an opening, a way through with no door: click on a wall (O)">Opening</button>
-        <button id="tool-divide" type="button" data-tool="divide" title="Divide a space with no wall (its zones, each named and used on its own): click the line's two ends across it (V)">Divide</button>
-        <label id="tool-width-label" hidden>width <input id="tool-width" type="number" min="0.3" max="6" step="0.05" value="0.9"> m</label>
-      </span>
+      <span class="hint" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
       <span id="status" class="meta"></span>
     </div>
   </main>
 
+  <div id="menu" role="menu" aria-label="What can be done here" hidden></div>
   <div id="toast" hidden></div>
 
   <script type="module" src="review.js"></script>

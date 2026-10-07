@@ -104,6 +104,7 @@ def convert_floor(
         type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
+    _resized_openings(extraction, floor.edits.resized)
     report = apply_extraction(ws, floor_id, extraction)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
@@ -338,9 +339,68 @@ def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:
                                [(span, round(span.length, 3))])
         for d in found:
             d.source = f"drawn {o.type}"
+            d.sill, d.height = o.sill, o.height
             ex.doors.append(d)
         if ex.walls is not None:
             ex.walls = ex.walls.difference(span.buffer(thickness, cap_style="flat"))
+
+
+RESIZE_REACH_M = 0.5  # an opening given another size in review is found this near its middle
+
+
+def _resized_openings(ex: FloorExtraction, resized) -> None:
+    """The drawing's doors, windows and openings given another size in review: each
+    the opening nearest its middle, its gap in the walls made to fit (what it no longer
+    takes is wall again, as thick as the wall on either side), a door's leaves with it."""
+    if not resized:
+        return
+    from shapely.geometry import LineString, Point
+    from shapely.ops import unary_union
+
+    from .geometry import leaves_of_width, span_of_width
+
+    thickness = max(ex.wall_thickness or 0.2, 0.1)
+    rooms = unary_union([s.polygon for s in ex.spaces]) if ex.spaces else None
+    middle = lambda d: d.span.interpolate(0.5, normalized=True) if d.span is not None else d.point  # noqa: E731
+    for rz in resized:
+        at = Point(rz.at)
+        near = [(middle(d).distance(at), k) for k, d in enumerate(ex.doors) if not d.source.startswith("drawn")]
+        near = [n for n in near if n[0] <= RESIZE_REACH_M]
+        if not near:
+            continue
+        d = ex.doors[min(near)[1]]
+        if rz.sill is not None:
+            d.sill = rz.sill
+        if rz.height is not None:
+            d.height = rz.height
+        if rz.width is None:
+            continue
+        if d.span is None or d.span.length < 0.05:
+            d.width = rz.width
+            continue
+        old = [list(c) for c in d.span.coords]
+        new = span_of_width(old, rz.width)
+        d.swings = [tuple(map(tuple, leaf)) for leaf in leaves_of_width(d.swings, old, new)] if d.swings else []
+        d.span, d.width = LineString(new), round(rz.width, 3)
+        if ex.walls is not None:
+            fill = _gap_band(ex.walls, LineString(old), thickness)
+            if fill is not None and rooms is not None:
+                fill = fill.difference(rooms)
+            walls = ex.walls.union(fill) if fill is not None else ex.walls
+            ex.walls = walls.difference(LineString(new).buffer(thickness, cap_style="flat"))
+
+
+def _gap_band(walls, span, thickness: float):
+    """The wall a gap interrupts, as if it did not: the hull of the wall's ends on either
+    side of the span (None when there are none)."""
+    from shapely.geometry import LineString
+
+    (x0, y0), (x1, y1) = span.coords[0], span.coords[-1]
+    ux, uy = (x1 - x0) / span.length, (y1 - y0) / span.length
+    e = max(thickness, 0.3)
+    longer = LineString([(x0 - ux * e, y0 - uy * e), (x1 + ux * e, y1 + uy * e)])
+    ends = walls.intersection(longer.buffer(1.5 * thickness + 0.05, cap_style="flat"))
+    return None if ends.is_empty else ends.convex_hull
 
 
 def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now, report) -> None:

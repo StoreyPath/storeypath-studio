@@ -69,17 +69,31 @@ class SourceDrawing(BaseModel):
 class DrawnOpening(BaseModel):
     type: Literal["door", "window", "opening"]  # opening: a way through with no door
     span: list[list[float]]  # jamb to jamb, local meters
+    sill: float | None = None  # metres above the floor, and its height, when given in review
+    height: float | None = None
+
+
+class ResizedOpening(BaseModel):
+    """A door, window or opening of the drawing given another size in review. It is
+    found again, at every conversion, by where it is: its middle (which a new width
+    keeps)."""
+
+    at: list[float]  # [x, y], local meters
+    width: float | None = None  # jamb to jamb; None: as the drawing has it
+    sill: float | None = None  # above the floor; None: as the drawing (its schedule) has it
+    height: float | None = None
 
 
 class FloorEdits(BaseModel):
     """What a person drew on a floor in review, kept through every conversion: walls
     the drawing leaves out (they part spaces as drawn walls do), doors, windows and
-    openings it does not show, and lines dividing a space where there is no wall (its
-    zones)."""
+    openings it does not show, lines dividing a space where there is no wall (its
+    zones), and the drawing's openings given another size."""
 
     walls: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
     openings: list[DrawnOpening] = Field(default_factory=list)
     dividers: list[list[list[float]]] = Field(default_factory=list)  # each [[x, y], [x, y]], local meters
+    resized: list[ResizedOpening] = Field(default_factory=list)  # openings of the drawing, another size
 
 
 class Floor(BaseModel):

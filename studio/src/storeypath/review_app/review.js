@@ -379,13 +379,14 @@ function renderPlan() {
     const r = from(q), k = r / (from(jamb) || 1);
     const shut = [h[0] + (jamb[0] - h[0]) * k, h[1] + (jamb[1] - h[1]) * k];
     const sweep = (q[0] - h[0]) * (shut[1] - h[1]) - (q[1] - h[1]) * (shut[0] - h[0]) > 0 ? 1 : 0;
-    return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`, class: "swing" });
+    return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`, class: `swing${state.item?.id === d.id ? " selected" : ""}` });
   };
   const shown = f.doors.filter((d) => state.showHidden || !d.ignored); // deleted: left out
   $("doors").replaceChildren(
     ...dividers.map((points) => svg("polyline", { points, class: "divider" })),
     ...shown.filter((d) => d.span && !swung.includes(d)).map((d) => svg("line", {
-      x1: d.span[0][0], y1: d.span[0][1], x2: d.span[1][0], y2: d.span[1][1], class: `span ${kind(d)}` })),
+      x1: d.span[0][0], y1: d.span[0][1], x2: d.span[1][0], y2: d.span[1][1],
+      class: `span ${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}` })),
     ...swung.filter((d) => shown.includes(d)).flatMap((d) => d.swings.map((s) => leaf(d, s))),
     ...shown.map((d) => {
       const mark = svg("circle", { cx: d.point[0], cy: d.point[1], r: d.type === "window" ? 0.07 : 0.16,
@@ -683,12 +684,19 @@ function bindPane(pane) {
     if (moved) return;
     const p = planPoint(...local(e));
     if (state.tool) return toolClick(p);
-    const door = target?.dataset?.door || (pane !== $("svg") ? doorAt(p)?.id : null);
-    if (door) return selectItem({ kind: "door", id: door });
-    if (target?.dataset?.at) return selectItem({ kind: target.dataset.kind || "wall", at: target.dataset.at.split(",").map(Number) });
+    const door = openingNear(p);
+    if (door) return selectItem({ kind: "door", id: door.id });
+    const line = drawnNear(p);
+    if (line) return selectItem({ kind: line.kind, at: line.at });
     // on the plan, what was clicked; on the print, the space drawn there
     select(pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null);
   };
+  // A right-click: what can be done there
+  pane.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!state.floor || state.busy) return;
+    openMenu(e.clientX, e.clientY, planPoint(...local(e)));
+  });
   pane.addEventListener("pointerup", end);
   pane.addEventListener("pointercancel", () => {
     drag = null;
@@ -697,6 +705,7 @@ function bindPane(pane) {
   pane.addEventListener("pointerleave", () => showCursor(pane, null, null));
   pane.addEventListener("wheel", (e) => {
     e.preventDefault();
+    closeMenu();
     const [sx, sy] = local(e);
     const speed = e.deltaMode === 1 ? 0.05 : 0.0015;
     zoomAt(sx, sy, Math.exp(-e.deltaY * speed));
@@ -926,7 +935,7 @@ const HINTS = {
   window: "Window: click on a wall where it goes. Esc to stop.",
   opening: "Opening (a way through, no door): click on a wall where it goes. Esc to stop.",
 };
-const WIDTHS = { door: "0.9", window: "1.2", opening: "1.0" };
+const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
 const LINES = { wall: "wall", divide: "divider" }; // the tools that draw a line, and what it is
 
 function planPoint(sx, sy) {
@@ -937,10 +946,6 @@ function planPoint(sx, sy) {
 function setTool(tool) {
   state.tool = tool && state.tool !== tool ? tool : null;
   state.wallStart = null;
-  for (const b of document.querySelectorAll("[data-tool]")) b.classList.toggle("active", b.dataset.tool === state.tool);
-  const opening = state.tool in WIDTHS;
-  $("tool-width-label").hidden = !opening;
-  if (opening) $("tool-width").value = WIDTHS[state.tool];
   $("map").classList.toggle("drawing-tool", Boolean(state.tool));
   clearPreview();
   if (state.tool) {
@@ -1011,8 +1016,8 @@ function snapWall(p) {
 }
 
 /** A door or window placed on the wall nearest the point: along it, in its middle. */
-function openingAt(p) {
-  const width = Math.min(Math.max(parseFloat($("tool-width").value) || 0.9, 0.3), 6);
+function openingAt(p, wide = WIDTHS[state.tool]) {
+  const width = Math.min(Math.max(Number(wide) || 0.9, 0.3), 6);
   const near = nearestOnWalls(p, Math.max(1.0, 12 / state.view.k));
   if (!near) return null;
   const [a, b] = near.seg;
@@ -1067,7 +1072,7 @@ function toolClick(p) {
   }
 }
 
-async function submitEdit(body, saying) {
+async function submitEdit(body, saying, after = null) {
   state.busy = true;
   $("map").classList.add("busy");
   try {
@@ -1075,7 +1080,8 @@ async function submitEdit(body, saying) {
     state.project = await request(`${BASE}/review`);
     fillFloorSelect();
     await openFloor(state.floor.id, null, { keepView: true });
-    toast(body.remove ? "Taken away" : "Added; the floor was read again");
+    toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
+    after?.();
   } catch (e) {
     toast(`Not saved: ${e.message}`, true);
   } finally {
@@ -1085,15 +1091,37 @@ async function submitEdit(body, saying) {
   }
 }
 
-function doorAt(p) {
-  const reach = 10 / state.view.k;
+function toSegment(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+/** The door, window or opening under the pointer: its bar, its leaves or its mark,
+ * within a few pixels (or its wall's thickness). */
+function openingNear(p, px = 9) {
+  const reach = Math.max(px / state.view.k, (state.floor?.wall_thickness || 0.2) * 0.6);
   let best = null;
   for (const d of state.floor?.doors || []) {
     if (d.ignored && !state.showHidden) continue;
-    const dist = Math.hypot(d.point[0] - p[0], d.point[1] - p[1]);
+    let dist = Math.hypot(d.point[0] - p[0], d.point[1] - p[1]);
+    if (d.span) dist = Math.min(dist, toSegment(p, d.span[0], d.span[1]));
+    for (const [h, q] of d.swings || []) dist = Math.min(dist, toSegment(p, h, q));
     if (dist <= reach && (!best || dist < best.dist)) best = { d, dist };
   }
   return best?.d || null;
+}
+
+/** A wall or dividing line drawn here, under the pointer: {kind, at} (at: its middle). */
+function drawnNear(p, px = 8) {
+  const reach = px / state.view.k;
+  let best = null;
+  const lines = [...(state.floor?.edits?.walls || []).map((w) => ["wall", w]), ...(state.floor?.edits?.dividers || []).map((w) => ["divider", w])];
+  for (const [kind, [a, b]] of lines) {
+    const dist = toSegment(p, a, b);
+    if (dist <= reach && (!best || dist < best.dist)) best = { kind, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], length: Math.hypot(b[0] - a[0], b[1] - a[1]), dist };
+  }
+  return best ? { kind: best.kind, at: best.at, length: best.length } : null;
 }
 
 function selectItem(item) {
@@ -1116,17 +1144,169 @@ function renderItemEditor() {
       + (item.kind === "divider" ? " · no wall: the space's zones" : "");
     $("it-delete").textContent = "Take away";
     $("it-flags").textContent = "";
+    $("it-size").hidden = true;
     return;
   }
   const d = state.floor.doors.find((x) => x.id === item.id);
   if (!d) return;
-  const name = d.type === "window" ? "Window" : d.type === "door" ? "Door" : "Way through";
-  $("it-title").textContent = d.tag ? `${name} ${d.tag}` : name;
+  $("it-title").textContent = openingName(d);
   $("it-id").textContent = d.id;
-  $("it-meta").textContent = [d.width && `${d.width.toFixed(2)} m wide`, d.sill != null && `sill ${d.sill.toFixed(2)} m`,
-    d.height != null && `${d.height.toFixed(2)} m high`, d.drawn && "drawn here"].filter(Boolean).join(" · ");
+  $("it-meta").textContent = openingMeta(d);
   $("it-delete").textContent = d.drawn ? "Take away" : d.ignored ? "Restore" : "Delete";
   $("it-flags").textContent = d.ignored ? "Deleted" : "";
+  $("it-size").hidden = d.ignored;
+  fillSizeForm($("it-size"), d);
+}
+
+function openingName(d) {
+  const name = d.type === "window" ? "Window" : d.type === "door" ? "Door" : "Opening";
+  return d.tag ? `${name} ${d.tag}` : name;
+}
+
+function openingMeta(d) {
+  return [d.width && `${d.width.toFixed(2)} m wide`, d.sill != null && `sill ${d.sill.toFixed(2)} m`,
+    d.height != null && `${d.height.toFixed(2)} m high`, d.drawn && "drawn here", d.resize && "size changed here"]
+    .filter(Boolean).join(" · ");
+}
+
+// ---- sizes ---------------------------------------------------------------
+// A door, window or opening's width (jamb to jamb), sill (windows) and height, in
+// metres. Of one drawn here, they change it; of one of the drawing, they are kept
+// with the floor (found again by where it is) and "Size as drawn" takes them away.
+// An empty field: as the drawing (or its schedule) has it.
+
+const fmt = (v) => (v == null ? "" : Number(v).toFixed(2));
+
+function fillSizeForm(form, d) {
+  form.elements.width.value = fmt(d.width);
+  form.elements.sill.value = fmt(d.sill);
+  form.elements.height.value = fmt(d.height);
+  form.querySelector(".sill").hidden = d.type !== "window";
+  form.querySelector(".as-drawn").hidden = d.drawn || !d.resize;
+}
+
+/** The sizes to keep: a field left as it was keeps what it was given (or as drawn). */
+function sizesFrom(form, d) {
+  const given = d.drawn ? { width: null, sill: d.sill ?? null, height: d.height ?? null } : { width: null, sill: null, height: null, ...(d.resize || {}) };
+  const out = {};
+  for (const key of ["width", "sill", "height"]) {
+    const raw = form.elements[key].value.trim();
+    if (!raw) out[key] = null;
+    else if (fmt(raw) === fmt(d[key])) out[key] = given[key];
+    else out[key] = Number(raw);
+  }
+  return out;
+}
+
+function resize(d, sizes) {
+  return submitEdit({ resize: { at: d.middle, ...sizes } }, "Changing the size…", () => selectItem({ kind: "door", id: d.id }));
+}
+
+// ---- the right-click menu --------------------------------------------------
+
+function closeMenu() {
+  const m = $("menu");
+  if (!m.hidden) {
+    m.hidden = true;
+    m.replaceChildren();
+  }
+}
+
+function placeMenu(cx, cy) {
+  const m = $("menu");
+  m.hidden = false;
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.max(4, Math.min(cx, window.innerWidth - r.width - 4))}px`;
+  m.style.top = `${Math.max(4, Math.min(cy, window.innerHeight - r.height - 4))}px`;
+}
+
+function menuItem(label, action, { danger = false, disabled = false, hint = "" } = {}) {
+  const b = el("button", { type: "button", role: "menuitem", class: danger ? "danger" : "" }, label);
+  if (hint) b.append(el("span", { class: "key" }, hint));
+  b.disabled = disabled;
+  b.addEventListener("click", () => {
+    closeMenu();
+    action();
+  });
+  return b;
+}
+
+function openMenu(cx, cy, p) {
+  if (state.tool) setTool(null);
+  const items = [];
+  const d = openingNear(p);
+  const line = d ? null : drawnNear(p);
+  const s = d || line ? null : spaceAt(...p);
+  if (d) {
+    selectItem({ kind: "door", id: d.id });
+    items.push(el("div", { class: "heading" }, openingName(d)), el("div", { class: "meta" }, openingMeta(d) || " "));
+    if (!d.ignored) items.push(menuItem("Change size…", () => sizeMenu(cx, cy, d)));
+    items.push(menuItem(d.drawn ? "Take it away" : d.ignored ? "Restore" : "Delete", () => deleteItem(), { danger: !d.ignored || d.drawn, hint: "Del" }));
+    items.push(el("hr"));
+  } else if (line) {
+    selectItem({ kind: line.kind, at: line.at });
+    items.push(el("div", { class: "heading" }, line.kind === "wall" ? "Wall drawn here" : "Dividing line drawn here"),
+      el("div", { class: "meta" }, `${line.length.toFixed(2)} m long`));
+    items.push(menuItem("Take it away", () => deleteItem(), { danger: true, hint: "Del" }));
+    items.push(el("hr"));
+  } else if (s) {
+    select(s.id);
+    items.push(el("div", { class: "heading" }, title(s)), el("div", { class: "meta" }, typeLabel(s.type)));
+    items.push(menuItem(s.ignored ? "Restore this space" : "Delete this space", () => setFlag(s.id, "ignored", !s.ignored),
+      { danger: !s.ignored, hint: s.ignored ? "" : "Del" }));
+    items.push(el("hr"));
+  }
+  const onWall = Boolean(openingAt(p, 0.9));
+  const off = onWall ? "" : "on a wall";
+  items.push(menuItem("Add a door here", () => addOpening("door", p), { disabled: !onWall, hint: off }));
+  items.push(menuItem("Add a window here", () => addOpening("window", p), { disabled: !onWall, hint: off }));
+  items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall, hint: off }));
+  items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { hint: "W" }));
+  items.push(menuItem("Divide a space from here", () => startLine("divide", p), { hint: "V" }));
+  $("menu").replaceChildren(...items);
+  placeMenu(cx, cy);
+  $("menu").querySelector("button:not(:disabled)")?.focus();
+}
+
+function sizeMenu(cx, cy, d) {
+  const form = $("it-size").cloneNode(true);
+  form.removeAttribute("id");
+  form.hidden = false;
+  fillSizeForm(form, d);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    closeMenu();
+    resize(d, sizesFrom(form, d));
+  });
+  form.querySelector(".as-drawn").addEventListener("click", () => {
+    closeMenu();
+    resize(d, { width: null, sill: null, height: null });
+  });
+  $("menu").replaceChildren(el("div", { class: "heading" }, `${openingName(d)}: size`), form);
+  placeMenu(cx, cy);
+  form.elements.width.focus();
+  form.elements.width.select();
+}
+
+function addOpening(type, p) {
+  const span = openingAt(p, WIDTHS[type]);
+  if (!span) return toast("Right-click on a wall (or nearer one)", true);
+  const mid = [(span[0][0] + span[1][0]) / 2, (span[0][1] + span[1][1]) / 2];
+  submitEdit({ add: { opening: { type, span } } }, `Adding the ${type}…`, () => {
+    // the new one, chosen: to give it its size
+    const added = (state.floor.doors || []).filter((x) => x.drawn)
+      .map((x) => ({ x, d: Math.hypot(x.middle[0] - mid[0], x.middle[1] - mid[1]) }))
+      .sort((a, b) => a.d - b.d)[0];
+    if (added && added.d < 0.5) selectItem({ kind: "door", id: added.x.id });
+  });
+}
+
+function startLine(tool, p) {
+  setTool(tool);
+  state.wallStart = snapWall(p);
+  preview(p);
+  toast(tool === "wall" ? "Wall: click where it ends (it snaps to walls). Esc to stop."
+    : "Divide: click where the line ends, right across the space. Esc to stop.");
 }
 
 async function deleteItem() {
@@ -1175,8 +1355,26 @@ function setupPanel() {
   });
   $("it-close").addEventListener("click", () => selectItem(null));
   $("it-delete").addEventListener("click", deleteItem);
-  for (const b of document.querySelectorAll("[data-tool]")) b.addEventListener("click", () => setTool(b.dataset.tool));
-  $("tool-width").addEventListener("input", () => clearPreview());
+  $("it-size").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const d = state.item?.kind === "door" && state.floor.doors.find((x) => x.id === state.item.id);
+    if (d) resize(d, sizesFrom($("it-size"), d));
+  });
+  $("it-size").querySelector(".as-drawn").addEventListener("click", () => {
+    const d = state.item?.kind === "door" && state.floor.doors.find((x) => x.id === state.item.id);
+    if (d) resize(d, { width: null, sill: null, height: null });
+  });
+  // the menu closes on a click elsewhere, Escape, or the window changing
+  document.addEventListener("pointerdown", (e) => { if (!e.target.closest?.("#menu")) closeMenu(); }, true);
+  window.addEventListener("resize", closeMenu);
+  window.addEventListener("blur", closeMenu);
+  $("menu").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const items = [...$("menu").querySelectorAll("button:not(:disabled)")];
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    e.preventDefault();
+  });
   for (const id of ["ed-type", "ed-name", "ed-number"]) $(id).addEventListener("input", updateEditorState);
   $("ed-type").addEventListener("change", (e) => (e.target.style.borderLeft = `6px solid ${color(e.target.value)}`));
   $("search").addEventListener("input", (e) => {
@@ -1189,13 +1387,24 @@ function setupPanel() {
   document.addEventListener("keydown", (e) => {
     const typing = e.target.closest?.("input, select, textarea");
     if (e.key === "Escape") {
-      if (typing) e.target.blur();
+      if (!$("menu").hidden) closeMenu();
+      else if (typing) e.target.blur();
       else if (state.tool) setTool(null);
       else if (state.item) selectItem(null);
       else select(null);
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Delete" || e.key === "Backspace") {
+      // what is chosen: a door, window, opening or drawn line; else a space
+      if (state.item) deleteItem();
+      else {
+        const s = state.byId.get(state.selected);
+        if (s && !s.ignored) setFlag(s.id, "ignored", true);
+      }
+      e.preventDefault();
+      return;
+    }
     if (e.key === "n" || e.key === "N") nextToReview();
     else if (e.key === "f" || e.key === "F") fit();
     else if (e.key === "w" || e.key === "W") setTool("wall");
