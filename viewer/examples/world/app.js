@@ -32,9 +32,10 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 
 // ---- world events -----------------------------------------------------------------
 
-world.addEventListener("load", ({ detail: { package: pkg } }) => {
+world.addEventListener("load", async ({ detail: { package: pkg } }) => {
   $("project-name").textContent = pkg.project.name;
-  $("project-meta").textContent = `${pkg.project.id} · export #${pkg.manifest.export.sequence}`;
+  $("project-meta").textContent = `${pkg.project.id} · export #${pkg.manifest.export.sequence}`
+    + (world.prebuilt.length ? " · 3D pre-built" : "");
   $("building").innerHTML = pkg.buildings
     .map((b) => `<option value="${esc(b.id)}">${esc(b.properties.name)} (${esc(b.properties.code)})</option>`)
     .join("");
@@ -43,7 +44,7 @@ world.addEventListener("load", ({ detail: { package: pkg } }) => {
   // ?building=<id>, or ?floor=<id> (its building)
   const floor = params.get("floor") && pkg.get(params.get("floor"));
   const building = floor ? floor.properties.building_id : params.get("building");
-  if (building && pkg.get(building) && building !== world.building) world.setBuilding(building);
+  if (building && pkg.get(building) && building !== world.building) await world.setBuilding(building);
   renderFloors();
   if (floor) world.setFloor(floor.id);
   if (params.get("xray") === "1") $("xray").click();

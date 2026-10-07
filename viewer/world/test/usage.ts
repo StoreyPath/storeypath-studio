@@ -14,7 +14,12 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 		console.log(detail.id, detail.feature?.properties['number']);
 	});
 	world.setMode('dollhouse');
-	world.setFloor(pkg.floorsOf(pkg.buildings[0]!.id)[0]?.id ?? null);
+	await world.setBuilding(pkg.buildings[0]!.id);
+	const floor = pkg.floorsOf(pkg.buildings[0]!.id)[0]?.id ?? null;
+	const prebuilt: boolean = floor !== null && pkg.hasWorld(floor) && world.prebuilt.includes(floor);
+	const walls: number = floor ? (world.plan(floor)?.obstacles.length ?? 0) : 0;
+	console.log(prebuilt, walls);
+	world.setFloor(floor);
 	world.select(office?.id ?? null, { go: true });
 	const again = await loadPackage(new Blob([data]));
 	world.destroy();

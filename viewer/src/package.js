@@ -36,12 +36,14 @@ export async function loadPackage(source) {
   const collections = {};
   for (const role of COLLECTIONS) collections[role] = (await read(manifest.files[role])).features;
   for (const role of SINCE_0_3) collections[role] = manifest.files[role] ? (await read(manifest.files[role])).features : [];
-  return new StoreyPathPackage(manifest, collections);
+  return new StoreyPathPackage(manifest, collections, zip);
 }
 
 export class StoreyPathPackage {
-  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [] }) {
+  /** ``zip``: the archive, for the files read only when needed (the pre-built 3D). */
+  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [] }, zip = null) {
     this.manifest = manifest;
+    this._zip = zip;
     this.locations = location;
     this.buildings = buildings;
     this.floors = floors;
@@ -91,6 +93,22 @@ export class StoreyPathPackage {
    * package, and its absence says nothing about it. */
   holds(buildingId) {
     return this.scope === null || this.scope.includes(buildingId);
+  }
+
+  /** Whether a floor comes pre-built in 3D (format 0.5: world/<floor-id>.glb). */
+  hasWorld(floorId) {
+    return Boolean(this._worldFile(floorId));
+  }
+
+  /** A floor's pre-built 3D as binary glTF, or null when the package has none. */
+  async world(floorId) {
+    const file = this._worldFile(floorId);
+    return file ? file.async("arraybuffer") : null;
+  }
+
+  _worldFile(floorId) {
+    const dir = this.manifest.files?.world;
+    return dir && this._zip ? this._zip.file(`${dir.endsWith("/") ? dir : dir + "/"}${floorId}.glb`) : null;
   }
 
   /** Floors of a building, lowest first. */

@@ -29,7 +29,8 @@ test("the WebGL check says no where there is no document", async () => {
 test("the module carries three.js and JSZip: it imports nothing", () => {
   const code = readFileSync(join(root, "dist/world.js"), "utf8");
   truly(!/\bimport\s*[\s{*"']/.test(code.replace(/import\.meta/g, "")), "dist/world.js imports another module");
-  truly(!/\bfrom\s*["']/.test(code), "dist/world.js imports another module");
+  truly(!/\bfrom\s*["'][^"'\s]+["']\s*;/.test(code), "dist/world.js imports another module"); // not a message's "from"
+  truly(!/\bimport\s*\(/.test(code), "dist/world.js loads another module");
 });
 
 // ---- in Chrome ----------------------------------------------------------------

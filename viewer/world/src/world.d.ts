@@ -38,7 +38,9 @@ export interface Manifest {
 export declare class StoreyPathPackage {
 	constructor(
 		manifest: Manifest,
-		collections: { location: Feature[]; buildings: Feature[]; floors: Feature[]; spaces: Feature[]; openings: Feature[]; zones?: Feature[] }
+		collections: { location: Feature[]; buildings: Feature[]; floors: Feature[]; spaces: Feature[]; openings: Feature[]; zones?: Feature[] },
+		/** The archive (a JSZip), for the files read only when needed: the pre-built 3D. */
+		zip?: unknown
 	);
 	readonly manifest: Manifest;
 	readonly locations: Feature[];
@@ -73,6 +75,10 @@ export declare class StoreyPathPackage {
 	};
 	doorsOf(spaceId: string): { door: Feature; space: Feature | null }[];
 	search(query?: string, options?: { type?: string; buildingId?: string; floorId?: string; limit?: number }): Feature[];
+	/** Whether a floor comes pre-built in 3D (format 0.5: world/<floor-id>.glb). */
+	hasWorld(floorId: string): boolean;
+	/** A floor's pre-built 3D as binary glTF, or null when the package has none. */
+	world(floorId: string): Promise<ArrayBuffer | null>;
 }
 
 /** Read a package from a URL, Blob, File or ArrayBuffer. */
@@ -117,6 +123,8 @@ export interface WorldEvents {
 export interface WorldPlan {
 	walls: [number, number][][];
 	spaces: { id: string; type: string; name: string | null; rings: [number, number][][] }[];
+	/** What the walker bumps into: walls, windows, open door leaves, [x1, z1, x2, z2] each. */
+	obstacles: [number, number, number, number][];
 	bounds: unknown;
 }
 
@@ -135,13 +143,17 @@ export declare class StoreyPathWorld extends EventTarget {
 	readonly atStairs: boolean;
 	readonly walkFloor: string | null;
 	readonly player: { x: number; z: number; dx: number; dz: number; floor: string | null };
-	/** three.js objects, for anything else. */
+	/** The floors shown from the package's pre-built 3D (world/), not built here. */
+	readonly prebuilt: string[];
+	/** three.js objects, for anything else (`renderer.info.render.calls`: the draw calls of the last frame). */
 	readonly camera: unknown;
 	readonly renderer: unknown;
 	readonly scene: unknown;
-	/** Open a package (URL, Blob, File or ArrayBuffer) and show its first building. */
+	/** Open a package (URL, Blob, File or ArrayBuffer) and show its first building:
+	 * its floors pre-built in the package (world/) where they match, the others built here. */
 	open(source: string | URL | Blob | ArrayBuffer | Uint8Array): Promise<StoreyPathPackage>;
-	setBuilding(id: string): void;
+	/** Show a building; resolves once it is shown: at once, unless its pre-built floors are still to be read. */
+	setBuilding(id: string): Promise<void>;
 	/** Show one floor, or all with null. */
 	setFloor(id: string | null): void;
 	setMode(mode: WorldMode): void;

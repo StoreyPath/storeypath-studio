@@ -8,26 +8,23 @@
 // Walls, door and window openings come from the package (the floor's `walls`, the
 // openings' `span`, and a door's `swings`: its leaves, open as the plan draws them),
 // floor finishes follow each space's type, and everything is drawn here: no
-// textures or models are downloaded.
+// textures or models are downloaded. A floor's geometry is built by build.js, here,
+// or comes pre-built in the package (format 0.5: world/<floor-id>.glb, baked by
+// the same build.js in Node), which is quicker to show on a slow machine.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 import { loadPackage } from "../package.js";
 import { TYPE_COLORS } from "../theme.js";
+import { GEOMETRY, buildPieces, cutPieces, flat, inside, originOf, planFloor, toLocal as localOf } from "./build.js";
 import { Materials } from "./materials.js";
 import { Obstacles, Walker } from "./walk.js";
 
 const DEFAULTS = {
-  slab: 0.22, // m, floor slab thickness
-  doorHead: 2.1, // m above the floor
-  windowSill: 0.9,
-  windowHead: 2.2,
-  wallThickness: 0.2, // when the package does not say
-  cutHeight: 1.25, // walls are cut to this in the cutaway view
+  ...GEOMETRY, // slab, door and window heights, wall thickness, cutaway height
   explode: 0, // m between floors in the dollhouse view
   labels: true,
   showHidden: false,
@@ -39,21 +36,10 @@ const LABEL_STYLE = {
   font: '600 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif', boxShadow: "0 1px 4px rgba(0, 0, 0, 0.18)",
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
-const OPEN_SPAN = 2.6; // m: wider ways through are open-plan joins, with no wall above
-const LEAF = 0.045; // m, a door leaf's thickness
-const CASING = 0.06; // m, the frame round a door
-const WINDOW_FRAME = 0.05; // m, the frame round the glass
-const PANE = 1.0; // m: a mullion about this often across a window
-const DOUBLE_DOOR = 1.3; // m: a door wider than this, drawn without its swings, has two leaves
-const OUTDOOR = new Set(["terrace", "balcony"]); // open to the sky, behind parapets
-const PARAPET = 1.1; // m, when the package gives no parapet height
-
-/** Distance from point ``p`` to the segment ``a``–``b`` (plan meters). */
-function distanceToSegment(p, a, b) {
-  const dx = b[0] - a[0], dy = b[1] - a[1];
-  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
-  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
-}
+// what casts and takes shadows, by material; the order drawn in, after the rest
+const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door"]);
+const TAKES = new Set([...CASTS, "floor", "glass"]);
+const ORDER = { volume: 2, glass: 4 };
 
 export class StoreyPathWorld extends EventTarget {
   #o;
@@ -72,11 +58,14 @@ export class StoreyPathWorld extends EventTarget {
   #building = null;
   #buildingGroup = null;
   #floors = new Map(); // floor id → built floor
+  #baked = new Map(); // floor id → its pre-built 3D as read, or null to build it here
+  #asked = 0; // the last building asked for
   #floor = null; // the floor shown on its own, or null for all
   #mode = "dollhouse";
   #xray = false;
   #cutaway = false;
   #selected = null;
+  #lit = null; // the selected space's highlight
   #room = null; // the space the walker is in
   #timer = new THREE.Timer();
   #flight = null;
@@ -153,6 +142,8 @@ export class StoreyPathWorld extends EventTarget {
   get selected() { return this.#selected; }
   get room() { return this.#room; }
   get walking() { return this.#walker.locked; }
+  /** The floors shown from the package's pre-built 3D rather than built here. */
+  get prebuilt() { return [...this.#floors.values()].filter((f) => f.prebuilt).map((f) => f.id); }
   /** The three.js camera, renderer and scene, for anything else. */
   get camera() { return this.#camera; }
   get renderer() { return this.#renderer; }
@@ -160,15 +151,30 @@ export class StoreyPathWorld extends EventTarget {
 
   /** Open a package from a URL, Blob, File or ArrayBuffer. */
   async open(source) {
-    this.#pkg = await loadPackage(source);
-    this.setBuilding(this.#pkg.buildings[0]?.id);
-    this.#emit("load", { package: this.#pkg });
-    return this.#pkg;
+    const pkg = await loadPackage(source);
+    this.#pkg = pkg;
+    this.#baked = new Map();
+    await this.setBuilding(pkg.buildings[0]?.id);
+    this.#emit("load", { package: pkg });
+    return pkg;
   }
 
-  /** Build and show a building. */
+  /** Build and show a building. Resolves once it is shown: at once, unless its
+   * floors come pre-built and are still to be read. */
   setBuilding(id) {
-    if (!this.#pkg || !id) return;
+    const pkg = this.#pkg;
+    if (!pkg || !id) return Promise.resolve();
+    const asked = ++this.#asked;
+    if (!pkg.floorsOf(id).some((f) => !this.#baked.has(f.id) && pkg.hasWorld(f.id))) {
+      this.#show(id);
+      return Promise.resolve();
+    }
+    return this.#readBaked(pkg, id).then(() => {
+      if (this.#pkg === pkg && this.#asked === asked) this.#show(id);
+    });
+  }
+
+  #show(id) {
     if (this.#buildingGroup) {
       this.#scene.remove(this.#buildingGroup);
       this.#dispose(this.#buildingGroup);
@@ -177,6 +183,7 @@ export class StoreyPathWorld extends EventTarget {
     this.#floors.clear();
     this.#floor = null;
     this.#selected = null;
+    this.#lit = null;
     this.#buildingGroup = this.#buildBuilding(id);
     this.#scene.add(this.#buildingGroup);
     this.#applyVisibility();
@@ -255,7 +262,7 @@ export class StoreyPathWorld extends EventTarget {
   /** Select a space (highlight it); in the walk view, go there. */
   select(id, { go = true } = {}) {
     const found = id ? this.#findSpace(id) : null;
-    for (const f of this.#floors.values()) for (const s of f.spaces) s.highlight.visible = s.id === id;
+    this.#highlight(found);
     this.#selected = found ? id : null;
     if (found && go) {
       if (this.#mode === "walk") this.#walkTo(found.floor.id, found.space.centre.x, found.space.centre.z);
@@ -295,11 +302,12 @@ export class StoreyPathWorld extends EventTarget {
 
   /** Longitude/latitude → the world's local meters: x east, z south. */
   toLocal([lon, lat]) {
-    const [x, n] = this.#local([lon, lat]);
+    const [x, n] = localOf(this.#origin, [lon, lat]);
     return { x, z: -n };
   }
 
-  /** A floor's plan in local meters (x east, z south), for a minimap. */
+  /** A floor's plan in local meters (x east, z south), for a minimap: its walls,
+   * spaces, and what the walker bumps into ([x1, z1, x2, z2] each). */
   plan(floorId) {
     const f = this.#floors.get(floorId);
     if (!f) return null;
@@ -308,6 +316,7 @@ export class StoreyPathWorld extends EventTarget {
       walls: f.wallRings.map(xz),
       spaces: f.spaces.filter((s) => this.#o.showHidden || !s.tucked)
         .map((s) => ({ id: s.id, type: s.type, name: s.name, rings: s.rings.flat(1).map(xz) })),
+      obstacles: f.obstacles.segments,
       bounds: f.bounds,
     };
   }
@@ -341,7 +350,7 @@ export class StoreyPathWorld extends EventTarget {
   #buildBuilding(buildingId) {
     const pkg = this.#pkg;
     const floors = pkg.floorsOf(buildingId);
-    this.#origin = this.#originOf(floors.length ? floors : [pkg.get(buildingId)]);
+    this.#origin = originOf(pkg, buildingId);
     const group = new THREE.Group();
     group.name = buildingId;
     for (const floor of floors) {
@@ -370,368 +379,120 @@ export class StoreyPathWorld extends EventTarget {
 
   #bounds = new THREE.Box3();
 
-  #originOf(features) {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const visit = (c) => {
-      if (typeof c[0] === "number") {
-        x0 = Math.min(x0, c[0]); y0 = Math.min(y0, c[1]); x1 = Math.max(x1, c[0]); y1 = Math.max(y1, c[1]);
-      } else c.forEach(visit);
-    };
-    for (const f of features) if (f?.geometry) visit(f.geometry.coordinates);
-    const lon = Number.isFinite(x0) ? (x0 + x1) / 2 : 0;
-    const lat = Number.isFinite(y0) ? (y0 + y1) / 2 : 0;
-    return { lon, lat, kx: 111320 * Math.cos((lat * Math.PI) / 180), ky: 110540 };
-  }
-
-  /** Longitude/latitude → local meters: x east, n north. */
-  #local([lon, lat]) {
-    const o = this.#origin;
-    return [(lon - o.lon) * o.kx, (lat - o.lat) * o.ky];
-  }
-
-  /** A GeoJSON (Multi)Polygon → polygons as rings of [x, n] in local meters. */
-  #polygons(geometry) {
-    if (!geometry) return [];
-    const polys = geometry.type === "Polygon" ? [geometry.coordinates]
-      : geometry.type === "MultiPolygon" ? geometry.coordinates : [];
-    return polys.map((rings) => rings.map((ring) => ring.map((c) => this.#local(c))));
-  }
-
-  /** A polygon's rings as a shape, or null. A ring too small to have an inside (a
-   * hole a few millimetres wide, collapsed by the package's 1 cm rounding) is
-   * left out: the triangulator fails on it, and takes the whole floor with it. */
-  #shape(rings) {
-    const toPts = (ring) => ring.map(([x, n]) => new THREE.Vector2(x, n));
-    const usable = (pts) => pts.length >= 3 && Math.abs(THREE.ShapeUtils.area(pts)) > 1e-4;
-    const outer = toPts(rings[0]);
-    if (!usable(outer)) return null;
-    const shape = new THREE.Shape(outer);
-    for (const hole of rings.slice(1)) {
-      const pts = toPts(hole);
-      if (usable(pts)) shape.holes.push(new THREE.Path(pts));
-    }
-    return shape;
-  }
-
-  /** Shapes for ``polygons``, built with ``make``; when that fails on the whole set,
-   * with only the shapes it works on, one bad outline does not hide the rest. */
-  #geometry(polygons, make) {
-    const shapes = polygons.map((rings) => this.#shape(rings)).filter(Boolean);
-    if (!shapes.length) return new THREE.BufferGeometry();
+  /** Read a building's pre-built floors (world/<floor-id>.glb), each kept when it
+   * was built from this package, in this frame, with these options; otherwise (or
+   * unreadable) the floor is built here. */
+  async #readBaked(pkg, buildingId) {
+    const baked = this.#baked;
+    const floors = pkg.floorsOf(buildingId).filter((f) => !baked.has(f.id) && pkg.hasWorld(f.id));
+    const origin = originOf(pkg, buildingId);
+    const o = this.#o;
+    const matches = (x, floor) => x && x.floor_id === floor.id && x.project_id === pkg.project.id
+      && x.export_sequence === pkg.manifest.export?.sequence
+      && Object.keys(GEOMETRY).every((k) => x.options?.[k] === o[k])
+      && ["lon", "lat", "kx", "ky"].every((k) => Math.abs(x.origin?.[k] - origin[k]) <= 1e-9 * Math.max(1, Math.abs(origin[k])));
     try {
-      return make(shapes);
-    } catch {
-      const good = shapes.filter((shape) => {
+      const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+      const loader = new GLTFLoader();
+      await Promise.all(floors.map(async (floor) => {
+        let gltf = null;
         try {
-          make([shape]).dispose();
-          return true;
-        } catch {
-          return false;
+          gltf = await loader.parseAsync(await pkg.world(floor.id), "");
+        } catch (e) {
+          console.warn(`StoreyPathWorld: ${floor.id}'s pre-built 3D could not be read, so it is built here: ${e.message}`);
         }
-      });
-      return good.length ? make(good) : new THREE.BufferGeometry();
+        baked.set(floor.id, gltf && matches(gltf.scene.userData.storeypath, floor) ? gltf : null);
+      }));
+    } catch (e) {
+      console.warn(`StoreyPathWorld: no glTF loader, so floors are built here: ${e.message}`);
+      for (const f of floors) baked.set(f.id, null);
     }
   }
 
-  /** Polygons extruded upward from ``y`` by ``depth``: material 0 on the top and
-   * bottom faces, material 1 on the sides. */
-  #extrude(polygons, depth, y) {
-    if (!polygons.length) return null;
-    const g = this.#geometry(polygons,
-      (shapes) => new THREE.ExtrudeGeometry(shapes, { depth, bevelEnabled: false, curveSegments: 1 }));
-    g.rotateX(-Math.PI / 2);
-    g.translate(0, y, 0);
-    return g;
+  /** A pre-built floor's pieces, room IDs and obstacles, as buildPieces gives them. */
+  #bakedPieces(gltf) {
+    const pieces = [], obstacles = [];
+    gltf.scene.traverse((m) => {
+      const d = m.userData;
+      if (m.isLineSegments && d.name === "obstacles") {
+        const p = m.geometry.getAttribute("position");
+        for (let i = 0; i + 1 < p.count; i += 2) obstacles.push([p.getX(i), p.getZ(i), p.getX(i + 1), p.getZ(i + 1)]);
+        m.geometry.dispose();
+      } else if (m.isMesh && d.material) {
+        pieces.push({ name: d.name ?? m.name, material: d.material, view: d.view, type: d.type, hidden: d.hidden,
+          geometry: m.geometry });
+      }
+      if (m.material) m.material.dispose(); // the file's own: the world's are used
+    });
+    return { pieces, rooms: gltf.scene.userData.storeypath.rooms, obstacles };
   }
 
-  #flat(polygons, y) {
-    const g = this.#geometry(polygons, (shapes) => new THREE.ShapeGeometry(shapes, 1));
-    g.rotateX(-Math.PI / 2);
-    g.translate(0, y, 0);
-    return g;
+  /** The material a piece is drawn with. */
+  #material({ material, type }) {
+    const m = this.#materials;
+    if (material === "floor") return m.floor(type);
+    if (material === "volume") return m.volume(TYPE_COLORS[type] || TYPE_COLORS.unspecified);
+    return m[material] instanceof THREE.Material ? m[material] : m.wallPlain;
   }
 
   #buildFloor(floor) {
     const o = this.#o;
-    const props = floor.properties;
-    const e = props.elevation;
-    const wallHeight = Math.max(2.4, props.height - o.slab);
-    let thickness = props.wall_thickness_m || o.wallThickness;
+    const plan = planFloor(this.#pkg, floor, this.#origin, o);
+    const baked = this.#baked.get(floor.id);
+    const { pieces, rooms, obstacles } = baked ? this.#bakedPieces(baked) : buildPieces(plan, o);
+    if (baked) this.#baked.delete(floor.id); // its geometry is the floor's now: read again when built again
+    const e = plan.elevation;
+    pieces.push(...cutPieces(pieces, e, o));
     const group = new THREE.Group();
     group.name = floor.id;
-    const built = { id: floor.id, group, elevation: e, height: props.height, ordinal: props.ordinal,
-      spaces: [], wallRings: [], bounds: [Infinity, Infinity, -Infinity, -Infinity], bounds3: new THREE.Box3() };
+    const built = { id: floor.id, group, elevation: e, height: plan.height, ordinal: plan.ordinal, prebuilt: Boolean(baked),
+      spaces: [], pieces: [], rooms, wallRings: plan.wallRings, bounds: plan.bounds, bounds3: new THREE.Box3() };
 
-    // the slab
-    const outline = this.#polygons(floor.geometry);
-    const slab = this.#extrude(outline, o.slab, e - o.slab);
-    if (slab) {
-      const mesh = new THREE.Mesh(slab, this.#materials.slab);
-      mesh.receiveShadow = mesh.castShadow = true;
+    // slab, walls, floors, doors and windows: one mesh a piece
+    for (const p of pieces) {
+      const mesh = new THREE.Mesh(p.geometry, this.#material(p));
+      mesh.name = p.name;
+      mesh.userData = { material: p.material, view: p.view, hidden: Boolean(p.hidden) };
+      mesh.castShadow = CASTS.has(p.material);
+      mesh.receiveShadow = TAKES.has(p.material);
+      mesh.renderOrder = ORDER[p.material] ?? 0;
+      mesh.visible = p.view !== "walk" && p.view !== "xray";
       group.add(mesh);
+      built.pieces.push(mesh);
     }
 
-    // the rooms: floor finish, x-ray volume, highlight, label
-    const parapetHeight = Math.min(props.parapet_height_m || PARAPET, wallHeight);
-    const roofed = []; // under the ceiling: every room but terraces and balconies
-    // One volume per space (walls stand on its edges); a space divided into zones is
-    // used through them: each has its own floor, highlight and label, and no wall.
-    built.rooms = [];
-    for (const space of this.#pkg.spacesOn(floor.id)) {
-      const sp = space.properties;
-      const spacePolys = this.#polygons(space.geometry);
-      if (!spacePolys.length) continue;
-      built.rooms.push({ id: space.id, rings: spacePolys });
-      const outdoor = sp.outdoor ?? OUTDOOR.has(sp.type); // a glazed veranda is not: older packages say by type
-      if (!outdoor) roofed.push(...spacePolys);
-      const volume = new THREE.Mesh(this.#extrude(spacePolys, (outdoor ? parapetHeight : wallHeight) - 0.05, e + 0.01),
-        this.#materials.volume(TYPE_COLORS[sp.type] || TYPE_COLORS.unspecified));
-      volume.userData.spaceId = space.id;
-      volume.renderOrder = 2;
-      group.add(volume);
-      const zones = this.#pkg.zonesOf(space.id);
-      for (const unit of zones.length ? zones : [space]) {
-        const p = unit.properties;
-        const polys = unit === space ? spacePolys : this.#polygons(unit.geometry);
-        if (!polys.length) continue;
-        const finish = p.type === "open_to_below" ? null : new THREE.Mesh(this.#flat(polys, e + 0.004),
-          this.#materials.floor(p.type));
-        if (finish) {
-          finish.receiveShadow = true;
-          finish.userData.spaceId = unit.id;
-          group.add(finish);
-        }
-        const highlight = new THREE.Mesh(this.#flat(polys, e + 0.02), this.#materials.highlight);
-        highlight.visible = false;
-        highlight.renderOrder = 3;
-        group.add(highlight);
-        const [lx, ln] = p.display_point ? this.#local(p.display_point) : polys[0][0][0];
-        const label = this.#label(p);
-        label.position.set(lx, e + 0.25, -ln);
-        if (label.element.textContent) group.add(label);
-        let x0 = Infinity, n0 = Infinity, x1 = -Infinity, n1 = -Infinity;
-        for (const [x, n] of polys.flat(2)) {
-          x0 = Math.min(x0, x); n0 = Math.min(n0, n); x1 = Math.max(x1, x); n1 = Math.max(n1, n);
-        }
-        built.spaces.push({
-          id: unit.id, type: p.type, name: p.name, number: p.number, tucked: p.hidden || p.ignored,
-          rings: polys, finish, volume, highlight, label,
-          centre: { x: lx, z: -ln }, size: Math.max(x1 - x0, n1 - n0, 2),
-        });
-      }
+    // the label of each space and zone in use
+    for (const u of plan.units) {
+      const label = this.#label(u);
+      label.position.set(u.label[0], e + 0.25, -u.label[1]);
+      if (label.element.textContent) group.add(label);
+      built.spaces.push({ id: u.id, type: u.type, name: u.name, number: u.number, tucked: u.tucked, rings: u.rings,
+        label, centre: u.centre, size: u.size });
     }
+    built.obstacles = new Obstacles(obstacles);
 
-    // the ceiling, seen only when walking (it casts no shadow: rooms stay sunlit); none
-    // over terraces and balconies
-    const ceilingPolys = built.spaces.length ? roofed : outline;
-    const ceiling = ceilingPolys.length
-      ? new THREE.Mesh(this.#flat(ceilingPolys, e + wallHeight), this.#materials.ceiling) : null;
-    if (ceiling) {
-      ceiling.visible = false;
-      group.add(ceiling);
-    }
-    built.ceiling = ceiling;
-
-    // the walls, full height and cut low; drawn along the rooms' edges when the
-    // package has none (older packages, drawings without wall layers)
-    let walls = this.#polygons(props.walls);
-    let ways;
-    if (walls.length) {
-      ways = this.#pkg.openings
-        .filter((x) => x.properties.floor_id === floor.id && x.properties.span && !x.properties.ignored) // deleted in review: left out
-        .map((x) => {
-          const [a, b] = x.properties.span.map((c) => this.#local(c));
-          const leaves = (x.properties.swings || []).map((leaf) => leaf.map((c) => this.#local(c)));
-          return { a, b, type: x.properties.type, connects: x.properties.connects || [], leaves,
-            sill: x.properties.sill_m ?? null, height: x.properties.height_m ?? null };
-        });
-    } else {
-      thickness = props.wall_thickness_m || 0.12;
-      const fallback = this.#roomWalls(floor.id, built.rooms, thickness); // spaces, not zones: no wall between zones
-      walls = fallback.walls;
-      ways = fallback.gaps;
-    }
-    const full = this.#extrude(walls, wallHeight, e);
-    const cut = this.#extrude(walls, o.cutHeight, e);
-    built.wallsFull = full && new THREE.Mesh(full, [this.#materials.wallTop, this.#materials.wall]);
-    built.wallsCut = cut && new THREE.Mesh(cut, [this.#materials.wallCut, this.#materials.wall]);
-    // the parapets: the low walls around terraces, balconies and the roof
-    const parapets = this.#polygons(props.parapets);
-    const parapetsFull = this.#extrude(parapets, parapetHeight, e);
-    const parapetsCut = this.#extrude(parapets, Math.min(parapetHeight, o.cutHeight), e);
-    built.parapetsFull = parapetsFull && new THREE.Mesh(parapetsFull, [this.#materials.wallTop, this.#materials.wall]);
-    built.parapetsCut = parapetsCut && new THREE.Mesh(parapetsCut, [this.#materials.wallCut, this.#materials.wall]);
-    for (const m of [built.wallsFull, built.wallsCut, built.parapetsFull, built.parapetsCut]) {
-      if (!m) continue;
-      m.castShadow = m.receiveShadow = true;
-      group.add(m);
-    }
-    built.wallRings = walls.flat(1).concat(parapets.flat(1));
-    // Openings in a parapet (no full wall at either side) get no head, sill or glass:
-    // a full wall ends at one of its jambs (its middle is far from any wall when wide).
-    const fullSegments = [];
-    for (const ring of walls.flat(1)) {
-      for (let i = 0; i + 1 < ring.length; i++) fullSegments.push([ring[i], ring[i + 1]]);
-    }
-    const inFullWall = ({ a, b }) => !parapets.length || [a, b].some((jamb) => fullSegments.some(([p, q]) =>
-      distanceToSegment(jamb, p, q) <= thickness + 0.3));
-
-    // door heads, frames and leaves; window sills, heads, frames and glass
-    const heads = [], sills = [], glass = [], frames = [], casings = [], leaves = [];
-    // a box from plan point p to q, y0 to y1 above the floor, depth across
-    const piece = (p, q, y0, y1, depth) => {
-      const g = new THREE.BoxGeometry(Math.hypot(q[0] - p[0], q[1] - p[1]), y1 - y0, depth);
-      g.rotateY(Math.atan2(q[1] - p[1], q[0] - p[0]));
-      g.translate((p[0] + q[0]) / 2, e + (y0 + y1) / 2, -(p[1] + q[1]) / 2);
-      return g;
-    };
-    const segments = [];
-    for (const ring of built.wallRings) {
-      for (let i = 0; i + 1 < ring.length; i++) {
-        segments.push([ring[i][0], -ring[i][1], ring[i + 1][0], -ring[i + 1][1]]);
-      }
-    }
-    for (const way of ways) {
-      const { a, b, type } = way;
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (len < 0.3 || !inFullWall(way)) continue;
-      const box = (y0, y1, depth) => {
-        const g = new THREE.BoxGeometry(len, y1 - y0, depth);
-        g.rotateY(Math.atan2(b[1] - a[1], b[0] - a[0]));
-        g.translate((a[0] + b[0]) / 2, e + (y0 + y1) / 2, -(a[1] + b[1]) / 2);
-        return g;
-      };
-      const ux = (b[0] - a[0]) / len, un = (b[1] - a[1]) / len;
-      const at = (t) => [a[0] + ux * t, a[1] + un * t];
-      // sizes from the drawing's schedule where it gives them; a window taller than the
-      // floor (through two storeys) stops at this floor's ceiling
-      const ceiling = wallHeight - 0.02;
-      if (type === "window") {
-        const sill = Math.min(Math.max(way.sill ?? o.windowSill, 0), ceiling - 0.2);
-        const head = Math.min(way.height !== null && way.height !== undefined ? sill + way.height : o.windowHead, ceiling);
-        if (sill > 0.01) sills.push(box(0, sill, thickness));
-        if (head < wallHeight - 0.01) heads.push(box(head, wallHeight, thickness));
-        glass.push(box(sill, head, 0.02));
-        // the frame: along the sill and the head, at each side, and a mullion about
-        // every metre between
-        const f = WINDOW_FRAME, depth = Math.min(thickness, 0.09);
-        frames.push(piece(a, b, sill, sill + f, depth), piece(a, b, head - f, head, depth));
-        const panes = Math.max(1, Math.round(len / PANE));
-        for (let k = 0; k <= panes; k++) {
-          const t = Math.min(Math.max((k * len) / panes, f / 2), len - f / 2);
-          frames.push(piece(at(t - f / 2), at(t + f / 2), sill, head, depth));
-        }
-        segments.push([a[0], -a[1], b[0], -b[1]]); // you cannot walk through a window
-      } else if (type === "door") {
-        const top = Math.min(way.height ?? o.doorHead, ceiling);
-        if (top < wallHeight - 0.01) heads.push(box(top, wallHeight, thickness));
-        // the frame: a jamb each side and a head, standing a little proud of the wall
-        const c = Math.min(CASING, len / 4), depth = thickness + 0.03;
-        casings.push(piece(a, at(c), 0, top, depth), piece(at(len - c), b, 0, top, depth),
-          piece(a, b, top - c, top, depth));
-        // the leaves, open as the plan draws them; without the swings, open into the
-        // room it serves, one leaf or two
-        let open = way.leaves || [];
-        if (!open.length) {
-          const mid = at(len / 2), side = [-un, ux];
-          const into = built.spaces.filter((s) => way.connects?.includes(s.id))
-            .some((s) => s.rings.some((r) => inside(r[0], mid[0] + side[0] * 0.5, mid[1] + side[1] * 0.5)));
-          const k = into ? 1 : -1;
-          const hinges = len > DOUBLE_DOOR ? [[0, len / 2], [len, len / 2]] : [[0, len]];
-          open = hinges.map(([t, w]) => {
-            const h = at(t);
-            return [h, [h[0] + side[0] * k * w, h[1] + side[1] * k * w]];
-          });
-        }
-        for (const [h, q] of open) {
-          const reach = Math.hypot(q[0] - h[0], q[1] - h[1]);
-          if (reach < 0.3) continue;
-          const w = Math.min(reach, len) - c, dx = (q[0] - h[0]) / reach, dn = (q[1] - h[1]) / reach;
-          const from = [h[0] + dx * c, h[1] + dn * c], to = [h[0] + dx * (c + w), h[1] + dn * (c + w)];
-          leaves.push(piece(from, to, 0.01, top - c, LEAF));
-          segments.push([from[0], -from[1], to[0], -to[1]]); // an open leaf stands in the way
-        }
-      } else if (len <= OPEN_SPAN) { // a doorway: a way through with no door
-        heads.push(box(o.doorHead, wallHeight, thickness));
-      }
-    }
-    const add = (geoms, material, name) => {
-      if (!geoms.length) return null;
-      const mesh = new THREE.Mesh(mergeGeometries(geoms, false), material);
-      mesh.castShadow = mesh.receiveShadow = true;
-      mesh.name = name;
-      group.add(mesh);
-      geoms.forEach((g) => g.dispose());
-      return mesh;
-    };
-    built.heads = add(heads, this.#materials.wallPlain, "heads");
-    built.sills = add(sills, this.#materials.wallPlain, "sills");
-    built.glass = add(glass, this.#materials.glass, "glass");
-    built.frames = add(frames, this.#materials.frame, "window frames");
-    built.casings = add(casings, this.#materials.doorFrame, "door frames");
-    built.leaves = add(leaves, this.#materials.door, "doors");
-    if (built.glass) {
-      built.glass.castShadow = false;
-      built.glass.renderOrder = 4;
-    }
-    built.obstacles = new Obstacles(segments);
-
-    for (const rings of [...outline, ...walls, ...built.spaces.flatMap((s) => s.rings)]) {
-      for (const [x, n] of rings[0]) {
-        built.bounds[0] = Math.min(built.bounds[0], x); built.bounds[1] = Math.min(built.bounds[1], -n);
-        built.bounds[2] = Math.max(built.bounds[2], x); built.bounds[3] = Math.max(built.bounds[3], -n);
-      }
-    }
-    if (Number.isFinite(built.bounds[0])) {
-      built.bounds3.set(new THREE.Vector3(built.bounds[0], e - o.slab, built.bounds[1]),
-        new THREE.Vector3(built.bounds[2], e + wallHeight, built.bounds[3]));
+    if (Number.isFinite(plan.bounds[0])) {
+      built.bounds3.set(new THREE.Vector3(plan.bounds[0], e - o.slab, plan.bounds[1]),
+        new THREE.Vector3(plan.bounds[2], e + plan.wallHeight, plan.bounds[3]));
     }
     return built;
   }
 
-  /** Thin walls along the edges of the rooms, open where the doors and windows are. */
-  #roomWalls(floorId, spaces, thickness) {
-    const openings = this.#pkg.openings
-      .filter((o) => o.properties.floor_id === floorId && o.geometry?.type === "Point")
-      .map((o) => ({ p: this.#local(o.geometry.coordinates), type: o.properties.type,
-        w: Math.min(Math.max(o.properties.width_m || 0.9, 0.7), 2.4) }));
-    const seen = new Set();
-    const pieces = [], gaps = [];
-    for (const s of spaces) {
-      for (const ring of s.rings.flat(1)) {
-        for (let i = 0; i + 1 < ring.length; i++) {
-          const a = ring[i], b = ring[i + 1];
-          const key = [a, b].map((q) => `${q[0].toFixed(2)},${q[1].toFixed(2)}`).sort().join("|");
-          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          if (seen.has(key) || len < 0.05) continue;
-          seen.add(key);
-          const ux = (b[0] - a[0]) / len, un = (b[1] - a[1]) / len;
-          const at = (t) => [a[0] + ux * t, a[1] + un * t];
-          const cuts = [];
-          for (const o of openings) {
-            const t = (o.p[0] - a[0]) * ux + (o.p[1] - a[1]) * un;
-            const off = Math.abs((o.p[1] - a[1]) * ux - (o.p[0] - a[0]) * un);
-            if (off < 0.45 && t > 0 && t < len) cuts.push([Math.max(0, t - o.w / 2), Math.min(len, t + o.w / 2), o.type]);
-          }
-          cuts.sort((x, y) => x[0] - y[0]);
-          let done = 0;
-          for (const [c0, c1, type] of cuts) {
-            if (c0 > done + 0.05) pieces.push([at(done), at(c0)]);
-            if (c1 > Math.max(c0, done)) gaps.push({ a: at(Math.max(c0, done)), b: at(c1), type });
-            done = Math.max(done, c1);
-          }
-          if (len > done + 0.05) pieces.push([at(done), at(len)]);
-        }
-      }
+  /** Highlight a space (``found``: its floor and space), or none. */
+  #highlight(found) {
+    if (this.#lit) {
+      this.#lit.removeFromParent();
+      this.#lit.geometry.dispose();
+      this.#lit = null;
     }
-    const h = thickness / 2;
-    const walls = pieces.map(([p, q]) => {
-      const len = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
-      const nx = (-(q[1] - p[1]) / len) * h, nn = ((q[0] - p[0]) / len) * h;
-      const ring = [[p[0] + nx, p[1] + nn], [q[0] + nx, q[1] + nn], [q[0] - nx, q[1] - nn], [p[0] - nx, p[1] - nn]];
-      return [[...ring, ring[0]]];
-    });
-    return { walls, gaps };
+    if (!found) return;
+    const lit = new THREE.Mesh(flat(found.space.rings, found.floor.elevation + 0.02), this.#materials.highlight);
+    lit.name = "highlight";
+    lit.renderOrder = 3;
+    lit.userData.space = found.space;
+    lit.visible = this.#o.showHidden || !found.space.tucked;
+    found.floor.group.add(lit);
+    this.#lit = lit;
   }
 
   #label(p) {
@@ -768,20 +529,17 @@ export class StoreyPathWorld extends EventTarget {
       f.group.visible = shown;
       f.group.position.y = this.#offset(f);
       const cut = !walking && this.#cutaway;
-      if (f.wallsFull) f.wallsFull.visible = !cut;
-      if (f.wallsCut) f.wallsCut.visible = cut;
-      if (f.parapetsFull) f.parapetsFull.visible = !cut;
-      if (f.parapetsCut) f.parapetsCut.visible = cut;
-      for (const m of [f.heads, f.glass, f.frames, f.casings, f.leaves]) if (m) m.visible = !cut;
-      if (f.ceiling) f.ceiling.visible = walking && f === wf;
+      for (const m of f.pieces) {
+        const { view, hidden } = m.userData;
+        m.visible = (this.#o.showHidden || !hidden) && (view === "full" ? !cut : view === "cut" ? cut
+          : view === "walk" ? walking && f === wf : view === "xray" ? this.#xray : true);
+      }
       for (const s of f.spaces) {
         const visible = this.#o.showHidden || !s.tucked;
-        if (s.finish) s.finish.visible = visible;
-        s.volume.visible = visible && this.#xray;
         s.label.visible = visible && this.#o.labels && !walking && (!this.#floor ? f === this.#topShown() : true);
-        if (!visible && s.id === this.#selected) s.highlight.visible = false;
       }
     }
+    if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space.tucked;
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
     for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door]) {
@@ -822,13 +580,13 @@ export class StoreyPathWorld extends EventTarget {
       const space = f.spaces.find((s) => s.id === op.connects[0]);
       let mx, mn, nx, nn, len;
       if (op.span) {
-        const [a, b] = op.span.map((c) => this.#local(c));
+        const [a, b] = op.span.map((c) => localOf(this.#origin, c));
         mx = (a[0] + b[0]) / 2; mn = (a[1] + b[1]) / 2;
         len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
         nx = -(b[1] - a[1]) / len; nn = (b[0] - a[0]) / len;
       } else if (opening.geometry?.type === "Point" && space) {
         // no span (older packages): out is away from the middle of the room
-        [mx, mn] = this.#local(opening.geometry.coordinates);
+        [mx, mn] = localOf(this.#origin, opening.geometry.coordinates);
         const dx = mx - space.centre.x, dn = mn + space.centre.z;
         const d = Math.hypot(dx, dn) || 1;
         nx = dx / d; nn = dn / d;
@@ -884,6 +642,7 @@ export class StoreyPathWorld extends EventTarget {
     const to = new THREE.Vector3(centre.x + radius * 0.8, centre.y + radius * 0.75, centre.z + radius * 0.9);
     if (animate) this.#flight = { from: this.#camera.position.clone(), to, fromT: this.#orbit.target.clone(), toT: centre, t: 0 };
     else {
+      this.#flight = null; // one under way would take the camera on elsewhere
       this.#camera.position.copy(to);
       this.#orbit.target.copy(centre);
       this.#orbit.update();
@@ -966,13 +725,16 @@ export class StoreyPathWorld extends EventTarget {
       if (this.#mode !== "dollhouse" || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
       const r = canvas.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.#camera);
+      // the floor finishes, merged: the room is the one the triangle hit is of
       const targets = [];
       for (const f of this.#floors.values()) {
         if (!f.group.visible) continue;
-        for (const s of f.spaces) if (s.finish?.visible) targets.push(s.finish);
+        for (const m of f.pieces) if (m.visible && m.userData.material === "floor") targets.push(m);
       }
       const hit = ray.intersectObjects(targets, false)[0];
-      this.select(hit ? hit.object.userData.spaceId : null, { go: false });
+      const floor = hit && [...this.#floors.values()].find((f) => f.group === hit.object.parent);
+      const room = hit?.object.geometry.getAttribute("_room")?.getX(hit.face.a);
+      this.select(floor?.rooms[room] ?? null, { go: false });
     });
   }
 
@@ -986,14 +748,4 @@ export class StoreyPathWorld extends EventTarget {
       if (o.isCSS2DObject) o.element.remove();
     });
   }
-}
-
-/** Point in ring (ray casting), ring as [[x, n], …]. */
-function inside(ring, x, n) {
-  let hit = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, ni] = ring[i], [xj, nj] = ring[j];
-    if ((ni > n) !== (nj > n) && x < ((xj - xi) * (n - ni)) / (nj - ni) + xi) hit = !hit;
-  }
-  return hit;
 }
