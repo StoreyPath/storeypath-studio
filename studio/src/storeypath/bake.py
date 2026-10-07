@@ -66,7 +66,8 @@ def bake_world(package: str | Path) -> tuple[dict[str, bytes], str | None]:
             return {}, f"Node.js could not be run: {e}"
         if run.returncode != 0:
             return {}, f"the baker failed: {_error(run.stderr)}"
-        return {WORLD_DIR + p.name: p.read_bytes() for p in sorted(Path(out).glob("*.glb"))}, None
+        files = {WORLD_DIR + p.name: p.read_bytes() for p in sorted(Path(out).glob("*.glb"))}
+    return (files, None) if files else ({}, "the package has no floors")
 
 
 def _error(stderr: str) -> str:

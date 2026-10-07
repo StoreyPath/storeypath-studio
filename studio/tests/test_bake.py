@@ -12,6 +12,7 @@ from storeypath.bake import NODE_ENV, baker, node
 from storeypath.export import export_package
 from storeypath.package import FILES, FORMAT_VERSION, json_schemas
 from storeypath.validate import validate_package
+from storeypath.workspace import Workspace
 
 with_node = pytest.mark.skipif(node()[0] is None or baker() is None, reason="needs Node.js and the viewer's baker")
 
@@ -87,6 +88,15 @@ def test_without_node_the_package_is_as_before_and_says_why(converted, monkeypat
     said = []
     export_package(ws, d / "d.storeypath", record=False, bake=False, say=said.append)
     assert said == [] and set(zipfile.ZipFile(d / "d.storeypath").namelist()) == before
+
+
+@with_node
+def test_a_project_with_no_floors_is_exported_as_before(tmp_path):
+    ws = Workspace.new("Empty")
+    ws.add_location("SITE", "Site")
+    said = []
+    manifest = export_package(ws, tmp_path / "empty.storeypath", say=said.append)
+    assert said == ["3D not pre-built: the package has no floors"] and "world" not in manifest.files
 
 
 @pytest.mark.skipif(baker() is None, reason="needs the viewer's baker")

@@ -59,7 +59,7 @@ function material({ material: key, type }) {
 /** A floor as binary glTF: one mesh a piece, named as build.js names it, with
  * what it is in its extras; the walker's obstacles as lines; and in the scene's
  * extras, what the world needs to use it (FORMAT.md, "Pre-built 3D"). */
-export async function bakeFloor(pkg, floor, origin) {
+async function bakeFloor(pkg, floor, origin) {
   const { plan, pieces, rooms, obstacles } = buildFloor(pkg, floor, origin, GEOMETRY);
   const scene = new THREE.Scene();
   scene.name = floor.id;
@@ -89,22 +89,20 @@ export async function bakeFloor(pkg, floor, origin) {
   return { glb, pieces: pieces.length, rooms: rooms.length };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [source, out] = process.argv.slice(2);
-  if (!source || !out) {
-    console.error("usage: node bake.mjs <package.storeypath> <outdir>");
-    process.exit(2);
-  }
-  const pkg = await loadPackage(readFileSync(source));
-  mkdirSync(out, { recursive: true });
-  for (const building of pkg.buildings) {
-    const origin = originOf(pkg, building.id);
-    for (const floor of pkg.floorsOf(building.id)) {
-      const t = performance.now();
-      const { glb, pieces, rooms } = await bakeFloor(pkg, floor, origin);
-      writeFileSync(join(out, `${floor.id}.glb`), new Uint8Array(glb));
-      console.log(`${floor.id}.glb: ${pieces} pieces, ${rooms} rooms, ${Math.round(glb.byteLength / 1024)} KiB, `
-        + `${Math.round(performance.now() - t)} ms`);
-    }
+const [source, out] = process.argv.slice(2);
+if (!source || !out) {
+  console.error("usage: node bake.mjs <package.storeypath> <outdir>");
+  process.exit(2);
+}
+const pkg = await loadPackage(readFileSync(source));
+mkdirSync(out, { recursive: true });
+for (const building of pkg.buildings) {
+  const origin = originOf(pkg, building.id);
+  for (const floor of pkg.floorsOf(building.id)) {
+    const t = performance.now();
+    const { glb, pieces, rooms } = await bakeFloor(pkg, floor, origin);
+    writeFileSync(join(out, `${floor.id}.glb`), new Uint8Array(glb));
+    console.log(`${floor.id}.glb: ${pieces} pieces, ${rooms} rooms, ${Math.round(glb.byteLength / 1024)} KiB, `
+      + `${Math.round(performance.now() - t)} ms`);
   }
 }
