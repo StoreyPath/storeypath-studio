@@ -66,6 +66,7 @@ class ExtractedSpace:
     layer: str
     name: str | None = None
     number: str | None = None
+    label: str | None = None  # the text in it as the drawing writes it, its lines in reading order
     blocks: list[str] = field(default_factory=list)
     type: SpaceType = SpaceType.UNSPECIFIED
     type_source: str = "default"
@@ -880,7 +881,7 @@ def type_zoned_spaces(spaces, zones) -> None:
             largest[z.space] = z
     for i, z in largest.items():
         s = spaces[i]
-        s.name = s.number = None
+        s.name = s.number = s.label = None  # its texts are its zones'
         s.type, s.type_source = z.type, "zones"
         s.issues = [i for i in s.issues if not i.startswith("has the labels of")]
 
@@ -988,7 +989,9 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
     merged = 0
     for i, ls in per_space.items():
         ls.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))  # reading order
-        spaces[i].name, spaces[i].number = _split_label([ln for lb in ls for ln in lb.lines], profile)
+        lines = [ln for lb in ls for ln in lb.lines]
+        spaces[i].name, spaces[i].number = _split_label(lines, profile)
+        spaces[i].label = "\n".join(lines) or None
         groups = _label_groups(ls)
         if len(groups) > 1:
             merged += 1

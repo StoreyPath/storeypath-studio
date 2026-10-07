@@ -142,6 +142,9 @@ class ObjectRecord(BaseModel):
     type_source: str = "default"  # which rule produced the type
     name: str | None = None
     number: str | None = None
+    # spaces and zones: the text in it as the drawing writes it (never corrected): a key
+    # other systems can match on, beside the ID
+    label: str | None = None
     geometry: dict[str, Any]  # GeoJSON geometry, local meters
     connects: list[str] = Field(default_factory=list)  # openings: the spaces they join
     parent: str | None = None  # zones: the space they are part of

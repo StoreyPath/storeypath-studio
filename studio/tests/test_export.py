@@ -197,3 +197,30 @@ def test_doors_keep_their_swings(package):
         assert abs(abs(across) - d.width) < 0.15 and across * d.swing > 0  # open, to the side drawn
     openings = _read(pkg, "openings.geojson")["features"]
     assert any(len(o["properties"].get("swings") or []) == 1 for o in openings if o["properties"]["type"] == "door")
+
+
+def test_a_space_carries_the_text_its_drawing_writes_in_it(converted, tmp_path):
+    # The drawing's own label, as written: kept when a person renames the space, and
+    # in objects.csv, as a key to match on beside the ID.
+    import csv
+    import io
+    import json
+    import zipfile
+
+    from storeypath.export import export_package
+    from storeypath.workspace import Override
+
+    ws, d, f_id, *_ = converted
+    office = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and r.number == "201")
+    assert office.label == "OFFICE\n201"
+    ws.overrides[office.id] = Override(name="Board room", number="B-1")
+    out = tmp_path / "p.storeypath"
+    export_package(ws, out)
+    with zipfile.ZipFile(out) as z:
+        space = next(f for f in json.loads(z.read("spaces.geojson"))["features"] if f["id"] == office.id)
+        rows = {r["id"]: r for r in csv.DictReader(io.StringIO(z.read("objects.csv").decode()))}
+    assert (space["properties"]["name"], space["properties"]["number"]) == ("Board room", "B-1")
+    assert space["properties"]["drawing_label"] == "OFFICE\n201"
+    assert rows[office.id]["drawing_label"] == "OFFICE\n201"
+    unlabelled = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and r.label is None)
+    assert rows[unlabelled.id]["drawing_label"] == ""

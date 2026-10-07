@@ -181,7 +181,7 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                 r.id,
                                 _geo(geom, g),
                                 {"kind": "space", "type": eff["type"], "name": eff["name"],
-                                 "number": eff["number"], "floor_id": f_id,
+                                 "number": eff["number"], "drawing_label": r.label, "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "zones": list(r.zones), "outdoor": r.id in sky,
@@ -194,7 +194,7 @@ def build_features(ws: Workspace) -> dict[str, list[dict]]:
                                 r.id,
                                 _geo(geom, g),
                                 {"kind": "zone", "type": eff["type"], "name": eff["name"],
-                                 "number": eff["number"], "space_id": r.parent, "floor_id": f_id,
+                                 "number": eff["number"], "drawing_label": r.label, "space_id": r.parent, "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
@@ -265,6 +265,7 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
                 "lon": pt[0] if pt else "", "lat": pt[1] if pt else "",
                 "hidden": "true" if p.get("hidden") else "", "ignored": "true" if p.get("ignored") else "",
                 "space_id": p.get("space_id") or "",
+                "drawing_label": p.get("drawing_label") or "",
             })
     return buf.getvalue()
 

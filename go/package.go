@@ -101,6 +101,7 @@ type Object struct {
 	ID, Kind, Type, Name, Number                           string
 	Project, Location, Building, Floor, FloorOrdinal, Area string
 	Lon, Lat, Hidden, Ignored, Space                       string
+	DrawingLabel                                           string
 }
 
 // Limits on what Open reads, against broken or hostile files.
@@ -323,7 +324,7 @@ func readObjects(data []byte) ([]Object, error) {
 			Number: get(row, "number"), Project: get(row, "project_id"), Location: get(row, "location_id"),
 			Building: get(row, "building_id"), Floor: get(row, "floor_id"), FloorOrdinal: get(row, "floor_ordinal"),
 			Area: get(row, "area_m2"), Lon: get(row, "lon"), Lat: get(row, "lat"), Hidden: get(row, "hidden"),
-			Ignored: get(row, "ignored"), Space: get(row, "space_id"),
+			Ignored: get(row, "ignored"), Space: get(row, "space_id"), DrawingLabel: get(row, "drawing_label"),
 		})
 	}
 	return out, nil
@@ -424,13 +425,14 @@ func (p *Package) UnitsOn(floorID string) []Unit {
 		zones := p.ZonesOf(s.ID)
 		if len(zones) == 0 {
 			out = append(out, Unit{ID: s.ID, Kind: "space", Space: s, Type: s.Type, Name: s.Name, Number: s.Number,
-				Area: s.Area, Label: s.Label, Geometry: s.Geometry, Hidden: s.Hidden, Ignored: s.Ignored})
+				Area: s.Area, Label: s.Label, Geometry: s.Geometry, Hidden: s.Hidden, Ignored: s.Ignored,
+				DrawingLabel: s.DrawingLabel})
 			continue
 		}
 		for _, z := range zones {
 			out = append(out, Unit{ID: z.ID, Kind: "zone", Space: s, Zone: z, Type: z.Type, Name: z.Name,
 				Number: z.Number, Area: z.Area, Label: z.Label, Geometry: z.Geometry, Hidden: z.Hidden,
-				Ignored: z.Ignored})
+				Ignored: z.Ignored, DrawingLabel: z.DrawingLabel})
 		}
 	}
 	return out

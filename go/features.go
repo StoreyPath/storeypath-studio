@@ -50,13 +50,16 @@ type Floor struct {
 type Space struct {
 	ID       string
 	Geometry *Geometry
-	Type     string   `json:"type"`
-	Name     *string  `json:"name"`
-	Number   *string  `json:"number"`
-	Floor    string   `json:"floor_id"`
-	Area     float64  `json:"area_m2"`
-	Label    LonLat   `json:"display_point"`
-	Zones    []string `json:"zones"`
+	Type     string  `json:"type"`
+	Name     *string `json:"name"`
+	Number   *string `json:"number"`
+	// DrawingLabel is the text written in it on the drawing, as written (never
+	// corrected): a key to match on, beside the ID. Nil when there is none.
+	DrawingLabel *string  `json:"drawing_label"`
+	Floor        string   `json:"floor_id"`
+	Area         float64  `json:"area_m2"`
+	Label        LonLat   `json:"display_point"`
+	Zones        []string `json:"zones"`
 	// Outdoor: open to the sky (a terrace or balcony with no windows of its own).
 	Outdoor bool `json:"outdoor"`
 	// Hidden: real, but not shown unless asked for. Ignored: judged not worth
@@ -73,12 +76,14 @@ type Zone struct {
 	Type     string  `json:"type"`
 	Name     *string `json:"name"`
 	Number   *string `json:"number"`
-	Space    string  `json:"space_id"`
-	Floor    string  `json:"floor_id"`
-	Area     float64 `json:"area_m2"`
-	Label    LonLat  `json:"display_point"`
-	Hidden   bool    `json:"hidden"`
-	Ignored  bool    `json:"ignored"`
+	// DrawingLabel: as for a space.
+	DrawingLabel *string `json:"drawing_label"`
+	Space        string  `json:"space_id"`
+	Floor        string  `json:"floor_id"`
+	Area         float64 `json:"area_m2"`
+	Label        LonLat  `json:"display_point"`
+	Hidden       bool    `json:"hidden"`
+	Ignored      bool    `json:"ignored"`
 }
 
 // Opening is a door, a window, or a way through with no door (openings.geojson);
@@ -113,8 +118,10 @@ type Unit struct {
 	Type   string
 	Name   *string
 	Number *string
-	Area   float64
-	Label  LonLat
+	// DrawingLabel is the text the drawing writes in it (never corrected).
+	DrawingLabel *string
+	Area         float64
+	Label        LonLat
 	// Geometry: the zone's, or the space's.
 	Geometry *Geometry
 	Hidden   bool

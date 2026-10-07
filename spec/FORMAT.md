@@ -84,13 +84,13 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 `parapet_height_m` high: a Polygon or MultiPolygon, or null) and
 `parapet_height_m`. Geometry: floor outline (or null).
 
-**space** — `type`, `name`, `number`, `floor_id`, `area_m2`, `display_point` (a good
-spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
+**space** — `type`, `name`, `number`, `drawing_label`, `floor_id`, `area_m2`,
+`display_point` (a good spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
 windows of its own; a glazed veranda is not), `hidden`, `ignored`. Geometry: Polygon
 or MultiPolygon.
 A space is what walls, doors and windows enclose: walls stand on its edges.
 
-**zone** — `type`, `name`, `number`, `space_id`, `floor_id`, `area_m2`,
+**zone** — `type`, `name`, `number`, `drawing_label`, `space_id`, `floor_id`, `area_m2`,
 `display_point`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon. A zone is a
 part of a space used for one thing, with no wall between it and the rest of the
 space: a majlis and a dining area in one hall, a passage running into a living room,
@@ -98,6 +98,13 @@ team areas in an open office. The zones of a space divide it exactly (together t
 cover it, without overlapping) and are listed in its `zones`; a space used for one
 thing has none. Zone edges are not walls: draw them as light lines, and walk across
 them freely.
+
+**Names.** `name` and `number` are what StoreyPath read in the space's label and a
+person may have corrected in review. `drawing_label` is the text written in the space
+on the drawing, exactly as written (its lines joined by a line break; null when there
+is none), never changed in review: the drawing's own name for the space, a key other
+systems can match their records on, beside the ID. Systems keep their own display
+names besides both.
 
 **Which to use.** A space with zones is used through its zones; a space without
 zones is used as a whole. Systems that place people or things in rooms should use
@@ -139,7 +146,7 @@ means the converter could not decide and nobody has corrected it yet.
 One row per ID, including the project itself:
 
 `id, kind, type, name, number, project_id, location_id, building_id, floor_id,
-floor_ordinal, area_m2, lon, lat, hidden, ignored, space_id`
+floor_ordinal, area_m2, lon, lat, hidden, ignored, space_id, drawing_label`
 
 `kind` is `project`, `location`, `building`, `floor`, `space`, `zone` or `opening`.
 Parent columns are empty where they do not apply; `space_id` is a zone's space.
@@ -170,6 +177,7 @@ A system that skipped an export can use `all_retired` to clean up its mappings.
   a 0.2 space that becomes a zone keeps its ID.
 
 0.3.1 adds the openings' `swings`, `sill_m` and `height_m`, and the spaces' `outdoor`.
+0.3.2 adds the spaces' and zones' `drawing_label` (and its column in `objects.csv`).
 
 ## Readers
 

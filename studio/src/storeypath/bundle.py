@@ -211,7 +211,7 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             r = ObjectRecord(id=f["id"], kind=kind, type=p["type"], type_source="package",
                              geometry=mapping(local.geometry(f["geometry"])), created_at=exported_at)
             if kind != "opening":
-                r.name, r.number = p.get("name"), p.get("number")
+                r.name, r.number, r.label = p.get("name"), p.get("number"), p.get("drawing_label")
             if kind == "space":
                 r.zones = list(p.get("zones") or [])
             elif kind == "zone":

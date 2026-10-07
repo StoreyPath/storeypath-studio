@@ -846,6 +846,8 @@ function renderEditor() {
   if (!s) return;
   $("ed-title").textContent = title(s);
   $("ed-id").textContent = s.id;
+  // the drawing's own text in it, as written: never changed here
+  $("ed-label").textContent = s.drawing_label ? `In the drawing: ${s.drawing_label.split("\n").join(" · ")}` : "No text in the drawing";
   $("ed-reasons").replaceChildren(...s.reasons.map((r) => el("li", {}, r)));
   $("ed-type").value = s.type;
   $("ed-type").style.borderLeft = `6px solid ${color(s.type)}`;

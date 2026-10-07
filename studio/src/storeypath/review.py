@@ -222,6 +222,7 @@ class Review:
             "id": r.id, "kind": r.kind, "space_id": r.parent, "zones": list(r.zones),
             "type": eff["type"], "name": eff["name"], "number": eff["number"],
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
+            "drawing_label": r.label,
             "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored"}) if o else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             "reasons": ws.review_reasons(r),

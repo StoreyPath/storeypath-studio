@@ -190,6 +190,19 @@
           "default": null,
           "title": "Number"
         },
+        "drawing_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the text written in it on the drawing, as written (its lines joined by a line break; never changed in review): a key to match on, beside the ID",
+          "title": "Drawing Label"
+        },
         "floor_id": {
           "title": "Floor Id",
           "type": "string"

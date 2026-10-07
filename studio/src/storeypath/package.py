@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.3.1"
+FORMAT_VERSION = "0.3.2"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -31,6 +31,7 @@ FILES = {
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
     "building_id", "floor_id", "floor_ordinal", "area_m2", "lon", "lat", "hidden", "ignored", "space_id",
+    "drawing_label",
 ]
 
 LonLat = tuple[float, float]
@@ -94,11 +95,16 @@ class FloorProps(_Props):
     parapet_height_m: float | None = Field(None, description="the parapets' height above the floor")
 
 
+DRAWING_LABEL = ("the text written in it on the drawing, as written (its lines joined by a line break; "
+                 "never changed in review): a key to match on, beside the ID")
+
+
 class SpaceProps(_Props):
     kind: Literal["space"]
     type: SpaceType
     name: str | None = None
     number: str | None = None
+    drawing_label: str | None = Field(None, description=DRAWING_LABEL)
     floor_id: str
     area_m2: float
     display_point: LonLat
@@ -115,6 +121,7 @@ class ZoneProps(_Props):
     type: SpaceType
     name: str | None = None
     number: str | None = None
+    drawing_label: str | None = Field(None, description=DRAWING_LABEL)
     space_id: str = Field(description="the space this zone is part of")
     floor_id: str
     area_m2: float

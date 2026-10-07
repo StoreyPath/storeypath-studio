@@ -227,6 +227,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
         record.kind = kind
         record.type, record.type_source = obj.type, obj.type_source
         record.name, record.number = obj.name, obj.number
+        record.label = obj.label
         record.issues = list(obj.issues)
         record.detected_ignored = obj.ignored
         record.geometry = _local(obj.polygon)
