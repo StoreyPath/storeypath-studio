@@ -47,6 +47,9 @@ class ExportError(Exception):
 
 def _rounded(lonlat_geom) -> dict:
     out = shapely.transform(lonlat_geom, lambda c: np.round(c, COORD_DECIMALS))
+    # two corners under a centimetre apart become one point: written once, not as a
+    # zero-length edge (strict readers take it for a ring crossing itself)
+    out = shapely.remove_repeated_points(out)
     return json.loads(json.dumps(mapping(out)))  # tuples → lists
 
 

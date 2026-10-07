@@ -265,3 +265,21 @@ def test_one_building_is_exported_without_the_rest_seeming_gone(tmp_path):
 
     with pytest.raises(ExportError, match="no building"):
         export_package(ws, tmp_path / "x.storeypath", buildings=[f"{ws.id}-DEMO-NOPE"])
+
+
+def test_corners_closer_than_the_rounding_are_written_once(converted, tmp_path):
+    # Two corners 3 mm apart round to one point (1 cm): a ring that repeats it has a
+    # zero-length edge, which strict readers take for the ring crossing itself.
+    from shapely.geometry import Polygon, mapping, shape
+
+    ws, d, f_id, *_ = converted
+    room = next(r for r in ws.floor_objects(f_id) if r.kind == "space")
+    pts = list(shape(room.geometry).exterior.coords)[:-1]
+    x, y = pts[0]
+    room.geometry = mapping(Polygon([(x, y), (x + 0.003, y), *pts[1:]]))
+    export_package(ws, tmp_path / "p.storeypath", record=False)
+    with zipfile.ZipFile(tmp_path / "p.storeypath") as z:
+        spaces = {f["id"]: f for f in json.loads(z.read("spaces.geojson"))["features"]}
+    ring = spaces[room.id]["geometry"]["coordinates"][0]
+    assert all(ring[i] != ring[i + 1] for i in range(len(ring) - 1))
+    assert validate_package(tmp_path / "p.storeypath") == []

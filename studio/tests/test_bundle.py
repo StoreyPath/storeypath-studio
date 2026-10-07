@@ -5,6 +5,8 @@ import json
 import zipfile
 
 import pytest
+import shapely
+import shapely.geometry
 
 from storeypath.assets import asset_dir
 from storeypath.bundle import ProjectExists, export_project, open_file
@@ -55,6 +57,9 @@ def _same(again, before):
                     assert w == v, (i, k, v, w)
             if role in ("location", "buildings") and f["geometry"]:  # worked out from the floors
                 assert shape(g["geometry"]).symmetric_difference(shape(f["geometry"])).area < 1e-9, i
+            elif f["geometry"]:  # as written, a point the rounding repeated written once (older packages)
+                once = json.loads(json.dumps(shapely.geometry.mapping(shapely.remove_repeated_points(shape(f["geometry"])))))
+                assert g["geometry"] in (f["geometry"], once), i
             else:
                 assert g["geometry"] == f["geometry"], i
 
