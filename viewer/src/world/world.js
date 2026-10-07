@@ -155,7 +155,7 @@ export class StoreyPathWorld extends EventTarget {
     this.#pkg = pkg;
     this.#baked = new Map();
     await this.setBuilding(pkg.buildings[0]?.id);
-    this.#emit("load", { package: pkg });
+    if (this.#pkg === pkg) this.#emit("load", { package: pkg }); // not when another was opened meanwhile
     return pkg;
   }
 
