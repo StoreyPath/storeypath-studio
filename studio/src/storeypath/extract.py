@@ -468,7 +468,7 @@ def extract_floor(
     doorways: list[Polygon] = []
     open_edges = fabric = None
     outside = 0
-    spaces, containers = _clean_spaces(closed_shapes, profile, warnings)
+    spaces, containers = _clean_spaces(closed_shapes, profile, warnings, [lb.point for lb in labels])
     outline = _floor_outline(spaces, containers)
     used = "outlines"
     wall_lines = _without_crosses(wall_lines)
@@ -1016,34 +1016,64 @@ def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
                 lines.append(poly.exterior)
 
 
+CONTAINER_SHARE = 0.5  # an outline is the floor's, not a room, when the outlines in it cover this much of it
+TWIN_IOU = 0.8  # an outline round another this alike is the same room drawn twice (gross and net)
+TWIN_SHARE = 0.5  # …as is one round another at least this big with only a wall's thickness between
+
+
 def _clean_spaces(
-    shapes: list[tuple[Polygon, str]], profile: Profile, warnings: list[str]
+    shapes: list[tuple[Polygon, str]], profile: Profile, warnings: list[str], label_points=(),
 ) -> tuple[list[ExtractedSpace], list[Polygon]]:
-    """Drop tiny and duplicate outlines. Outlines that contain several others are
-    returned separately as floor-outline candidates instead of spaces."""
+    """Drop tiny and duplicate outlines. A room drawn twice, to the walls' middle and
+    to their faces (gross and net), is one room: the inner outline is kept (the outer
+    when only it holds the room's label), never the ring between. An outline holding
+    several others is the floor's outline (returned separately, as a candidate), not a
+    room, when they cover most of it or it holds no label of its own; otherwise it is
+    a room with the others cut out of it (an open office round two shafts)."""
     shapes = [(p, layer) for p, layer in shapes if p.area >= profile.spaces.min_area]
     shapes.sort(key=lambda s: -s[0].area)
+    polys = [p for p, _ in shapes]
+    middles = STRtree([p.representative_point() for p in polys])
+    outlines = STRtree(polys)
+    labels = STRtree(list(label_points))
+    thin = profile.walls.max_thickness / 2
+
+    def labelled(area) -> bool:
+        return len(labels.query(area, predicate="contains")) > 0
 
     kept: list[ExtractedSpace] = []
+    final: dict[int, Polygon] = {}  # the outlines kept as spaces, by index
+    dropped: set[int] = set()
     containers: list[Polygon] = []
+    cut = 0
     for i, (poly, layer) in enumerate(shapes):
-        inner = [
-            q for q, _ in shapes[i + 1:]
-            if poly.contains(q.representative_point()) and q.area < poly.area * 0.9
-        ]
+        if i in dropped:
+            continue
+        inner = sorted(j for j in (int(k) for k in middles.query(poly, predicate="contains"))
+                       if j > i and j not in dropped)
+        twin = next((j for j in inner if _same_room(poly, polys[j], thin)), None)
+        if twin is not None:
+            if labelled(polys[twin]) or not labelled(poly):
+                continue  # the gross outline of a room drawn net too: the net one is the room
+            dropped.add(twin)  # the label is in the ring: this outline is the room
+            inner.remove(twin)
         if len(inner) >= 2:
-            containers.append(poly)
+            others = unary_union([polys[j] for j in inner])
+            covered = others.intersection(poly).area / poly.area
+            if covered >= CONTAINER_SHARE or not labelled(poly.difference(others)):
+                containers.append(poly)
+                continue
+        near = (int(k) for k in outlines.query(poly, predicate="intersects"))
+        if any(j < i and j in final and iou(final[j], poly) > 0.95 for j in near):
             continue
-        dup = next((k for k in kept if iou(k.polygon, poly) > 0.95), None)
-        if dup is not None:
-            continue
-        if len(inner) == 1:
-            poly = poly.difference(inner[0])
-            warnings.append(
-                f"an outline on {layer} contains one other outline; the inner area was cut out of it"
-            )
+        if inner:
+            poly = poly.difference(unary_union([polys[j] for j in inner]))
+            cut += 1
+        final[i] = poly
         kept.append(ExtractedSpace(polygon=poly, layer=layer))
 
+    if cut:
+        warnings.append(f"{cut} outline(s) contain other outlines; the inner areas were cut out of them")
     if containers:
         warnings.append(
             f"{len(containers)} outline(s) enclosing several spaces were used as the floor outline, not as spaces"
@@ -1052,15 +1082,25 @@ def _clean_spaces(
     return kept, containers
 
 
+def _same_room(outer: Polygon, inner: Polygon, thin: float) -> bool:
+    """Whether an outline round another is the same room drawn again: nearly the
+    same, or only a wall's thickness bigger all round (gross round net)."""
+    if iou(outer, inner) > TWIN_IOU:
+        return True
+    return inner.area >= TWIN_SHARE * outer.area and outer.difference(inner).buffer(-thin).is_empty
+
+
 def _floor_outline(spaces: list[ExtractedSpace], containers: list[Polygon]):
-    if containers:
-        return unary_union(containers)
+    """The floor's outline: the outlines drawn round its rooms, with any room drawn
+    outside them; else the rooms, closed over the walls between them."""
     if not spaces:
-        return None
+        return unary_union(containers) if containers else None
     c = OUTLINE_CLOSING_M
     merged = unary_union([s.polygon.buffer(c, join_style="mitre") for s in spaces]).buffer(
         -c, join_style="mitre"
     )
+    if containers:
+        merged = unary_union([*containers, merged])
     parts = []
     for p in as_polygons(merged):
         holes = [h for h in p.interiors if Polygon(h).area >= OUTLINE_MIN_HOLE_M2]

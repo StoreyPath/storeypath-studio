@@ -8,6 +8,7 @@ from pathlib import Path
 
 import ezdxf
 import pytest
+from ezdxf.enums import TextEntityAlignment
 from typer.testing import CliRunner
 
 import storeypath.llm as llm
@@ -255,6 +256,84 @@ def test_a_very_large_plan_is_aligned_on_a_coarser_grid():
     plan = unary_union(walls)
     (tx, ty), overlap = align(plan, translate(plan, 12.0, 4.0))
     assert abs(tx - 12) < 0.5 and abs(ty - 4) < 0.5 and overlap > 0.5
+
+
+# ---- room outlines ------------------------------------------------------------------
+
+
+def _outlines_drawing():
+    doc = ezdxf.new("R2018", setup=True)
+    doc.units = ezdxf.units.M
+    for layer in ("A-AREA", "A-AREA-IDEN"):
+        doc.layers.add(layer)
+    return doc
+
+
+def _room(doc, x0, y0, x1, y1, name=None):
+    m = doc.modelspace()
+    m.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": "A-AREA"})
+    if name:
+        m.add_text(name, dxfattribs={"layer": "A-AREA-IDEN", "height": 0.2}).set_placement(
+            ((x0 + x1) / 2, (y0 + y1) / 2), align=TextEntityAlignment.MIDDLE_CENTER)
+
+
+def _extract(doc):
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+
+    return extract_floor(doc, load_profile("ncs"), "m")
+
+
+def test_an_open_office_round_two_shafts_is_a_room_with_holes():
+    doc = _outlines_drawing()
+    _room(doc, 0, 0, 20, 12, "OPEN OFFICE 201")
+    _room(doc, 3, 3, 4, 4, "SHAFT")
+    _room(doc, 15, 8, 16, 9, "SHAFT")
+    _room(doc, 20, 0, 26, 6, "OFFICE 202")
+    _room(doc, 20, 6, 26, 12, "OFFICE 203")
+    ex = _extract(doc)
+    rooms = {(s.name, s.number): round(s.polygon.area, 1) for s in ex.spaces}
+    assert rooms == {("OPEN OFFICE", "201"): 238.0, ("OFFICE", "202"): 36.0, ("OFFICE", "203"): 36.0, ("SHAFT", None): 1.0}
+    assert sum(1 for s in ex.spaces if s.name == "SHAFT") == 2
+    assert round(ex.outline.area) == 26 * 12
+
+
+def test_an_outline_round_the_rooms_is_the_floors():
+    doc = _outlines_drawing()
+    _room(doc, 0, 0, 30, 10)  # the floor's outline, no label of its own
+    _room(doc, 0, 0, 10, 10, "OFFICE 101")
+    _room(doc, 10, 0, 20, 10, "OFFICE 102")
+    _room(doc, 30, 0, 34, 4, "BALCONY")  # drawn outside it
+    ex = _extract(doc)
+    assert sorted(s.name for s in ex.spaces) == ["BALCONY", "OFFICE", "OFFICE"]
+    assert round(ex.outline.area) == 30 * 10 + 16
+
+
+def test_rooms_drawn_gross_and_net_are_one_room_each_and_no_ring():
+    doc = _outlines_drawing()
+    rooms = [(0, 0, 5, 4, "OFFICE 101"), (5, 0, 10, 4, "OFFICE 102"), (0, 4, 10, 6, "CORRIDOR C1"),
+             (10, 0, 11.2, 1.2, "DUCT D1")]
+    for x0, y0, x1, y1, name in rooms:
+        _room(doc, x0, y0, x1, y1)  # to the walls' middle
+        _room(doc, x0 + 0.1, y0 + 0.1, x1 - 0.1, y1 - 0.1, name)  # to their faces
+    ex = _extract(doc)
+    assert sorted((s.name, s.number) for s in ex.spaces) == [
+        ("CORRIDOR", "C1"), ("DUCT", "D1"), ("OFFICE", "101"), ("OFFICE", "102")]
+    assert all(not s.polygon.interiors for s in ex.spaces)
+
+
+def test_cleaning_thousands_of_outlines_is_quick():
+    import time
+
+    from shapely.geometry import box
+
+    from storeypath.extract import _clean_spaces
+    from storeypath.profile import load_profile
+
+    shapes = [(box(i % 50 * 3, i // 50 * 3, i % 50 * 3 + 2.5, i // 50 * 3 + 2.5), "A-AREA") for i in range(3000)]
+    started = time.monotonic()
+    kept, containers = _clean_spaces(shapes, load_profile("ncs"), [])
+    assert len(kept) == 3000 and not containers and time.monotonic() - started < 10
 
 
 # ---- lifts and stairs through the floors ---------------------------------------------
