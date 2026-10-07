@@ -789,3 +789,44 @@ def test_buildings_on_the_site_plan(studio, tmp_path):
     with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath") as res:
         manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
     assert all(pl["placed"] and abs(pl["lat"] - 25.28) < 1e-9 for pl in manifest["placements"].values())
+
+
+def test_a_building_whose_first_reading_failed_is_read_again_and_put_beside(studio, tmp_path, monkeypatch):
+    # The drawing of a second building, at the first one's origin, fails to read; it
+    # is read again from its floor, and then stands beside the first, not on it.
+    import storeypath.convert
+    from storeypath.export import site_footprint, site_positions
+
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Campus"})
+    code = created["code"]
+    for name in ("a.dxf", "b.dxf"):
+        write_floor_dxf(tmp_path / name, office_floor(0), origin=(100.0, 50.0), title="GROUND FLOOR PLAN")
+
+    def add(name, building):
+        call(f"{base}/api/projects/{code}/drawings/{name}?private=0", raw=(tmp_path / name).read_bytes())
+        _, job = call(f"{base}/api/projects/{code}/drawings/{name}/plans", {})
+        plan = max(wait(base, job)["plans"], key=lambda x: x["size"][0] * x["size"][1])
+        _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": name, "plans": [
+            {"index": plan["index"], "title": plan["title"], "region": plan["region"], "building": building, "ordinal": 0}]})
+        while job["state"] in ("waiting", "running"):
+            time.sleep(0.1)
+            _, job = call(f"{base}/api/jobs/{job['id']}")
+        return job
+
+    assert add("a.dxf", "Admin")["state"] == "done"
+    read = storeypath.convert.convert_floor
+    monkeypatch.setattr(storeypath.convert, "convert_floor", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("could not locate vertex")))
+    assert add("b.dxf", "Clinic")["state"] == "failed"
+    monkeypatch.setattr(storeypath.convert, "convert_floor", read)
+
+    _, p = call(f"{base}/api/projects/{code}")
+    clinic = next(b for b in p["locations"][0]["buildings"] if b["name"] == "Clinic")
+    assert not clinic["floors"][0]["converted"]
+    _, job = call(f"{base}/api/projects/{code}/floors/{clinic['floors'][0]['id']}/convert", {})
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    loc = ws.locations[0]
+    pos = site_positions(loc)
+    fps = {b.name: site_footprint(b, pos[b.code]) for b in loc.buildings}
+    assert fps["Clinic"] is not None and fps["Admin"].intersection(fps["Clinic"]).area < 1e-6

@@ -579,9 +579,26 @@ function buildingsCard(code, p) {
         el("td", { class: "actions" }, f.converted ? [
           el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` }, "Review"),
           el("a", { href: worldUrl(code, { floor: f.id }), target: "_blank", title: "This floor in 3D" }, "3D"),
-        ] : null))))),
+        ] : f.method !== "package" && f.drawing ? readAgain(code, f) : null))))),
     placementForm(code, b),
   )));
+}
+
+// A floor whose reading failed or was stopped: read its drawing again.
+function readAgain(code, f) {
+  const button = el("button", { type: "button", title: `Read ${f.drawing} for this floor again` }, "Read");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await runJob(api(`projects/${code}/floors/${f.id}/convert`, {}));
+      toast(`${f.name} read`);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 // ---- the site plan ---------------------------------------------------------------

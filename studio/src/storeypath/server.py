@@ -657,7 +657,14 @@ class Studio:
         def run(job: Job):
             ws = Workspace.load(ws_path)
             floors = [fid for *_, fid in ws.iter_floors() if floor in (None, fid)]
-            return self._convert(ws_path, floors, job)
+            # a building read for the first time (its first reading failed, say) is put
+            # beside the others when its drawing would stack it on one of them
+            unread = {f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings
+                      if all(f.converted_at is None for f in b.floors)}
+            result = self._convert(ws_path, floors, job)
+            if unread:
+                self._stand_apart(ws_path, unread, job)
+            return result
 
         return self.jobs.submit("Converting", run)
 
