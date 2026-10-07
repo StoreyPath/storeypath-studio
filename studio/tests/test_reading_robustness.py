@@ -410,6 +410,56 @@ def test_basements_are_counted_down_and_titles_of_several_floors_left_to_the_mod
     assert read_title(title) == read
 
 
+# ---- zones divide their space -------------------------------------------------------
+
+
+def _divides(whole, parts) -> bool:
+    from shapely.ops import unary_union
+
+    together = unary_union(parts)
+    return (whole.symmetric_difference(together).area < 1e-6
+            and abs(sum(p.area for p in parts) - whole.area) < 1e-6)
+
+
+def test_the_zones_labels_divide_a_room_into_divide_it_exactly():
+    import math
+
+    from shapely.geometry import Point, Polygon
+
+    from storeypath.split import split_by_labels
+
+    bay = [(10 + 3 * math.cos(a), 5 + 3 * math.sin(a)) for a in [(-math.pi / 2) + i * math.pi / 300 for i in range(301)]]
+    hall = Polygon([(0, 0), (10, 0), *bay[1:-1], (10, 8), (4, 8), (4, 12), (0, 12)])
+    wavy = Polygon([(0, 0), *[(x / 10, 0.03 * math.sin(x)) for x in range(1, 200)], (20, 0), (20, 6), (0, 6)])
+    for room, labels in ((hall, [[Point(2, 10)], [Point(8, 4)], [Point(12, 5)]]),
+                         (wavy, [[Point(3, 3)], [Point(17, 3)]])):
+        parts, _ = split_by_labels(room, labels, 6.0, 0.5)
+        assert len(parts) == len(labels) and _divides(room, parts)
+
+
+def test_a_line_drawn_across_a_room_leaves_no_piece_out():
+    from shapely.geometry import LineString, Polygon
+
+    from storeypath.extract import _halves
+
+    # a C-shaped room: the line crosses both its arms, cutting a piece too small
+    # to keep off the end of the upper one: that piece stays with its neighbour
+    room = Polygon([(0, 0), (10, 0), (10, 2), (3, 2), (3, 4), (10, 4), (10, 6), (0, 6)])
+    line = LineString([(9.8, 7), (9.8, 3.5), (5, 1), (5, -1)])
+    parts = _halves(room, line, 0.5)
+    assert len(parts) == 2 and _divides(room, parts)
+
+
+def test_pieces_a_cut_left_are_given_to_a_neighbour():
+    from shapely.geometry import box
+
+    from storeypath.split import exact_parts
+
+    room = box(0, 0, 10, 4)
+    parts = exact_parts(room, [box(-0.1, 0, 5.02, 4.1), box(4.98, 0, 9.9, 4)])  # out, overlapping, short
+    assert len(parts) == 2 and _divides(room, parts)
+
+
 # ---- lifts and stairs through the floors ---------------------------------------------
 
 

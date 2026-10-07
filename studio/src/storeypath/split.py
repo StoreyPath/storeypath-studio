@@ -50,7 +50,30 @@ def split_by_labels(
             inside, outside, cut = straight
         cuts.extend(cut)
         work += [(inside, gs_in), (outside, gs_out)]
-    return parts, cuts
+    return exact_parts(polygon, parts), cuts
+
+
+def exact_parts(whole: Polygon, parts: list[Polygon]) -> list[Polygon]:
+    """``parts`` made to divide ``whole`` exactly, as the zones of a space must: each
+    cut back to it (a cut worked out on its simplified outline stands a little out of
+    it), none overlapping one before it, and what none of them covers (a sliver, a
+    piece too small to keep) given to the part it borders most. In the same order."""
+    out: list[Polygon] = []
+    taken = Polygon()
+    for p in parts:
+        own = as_polygons(p.intersection(whole).difference(taken))
+        out.append(max(own, key=lambda q: q.area) if own else Polygon())
+        taken = taken.union(out[-1]) if not out[-1].is_empty else taken
+    rest = sorted(as_polygons(whole.difference(unary_union(out))), key=lambda q: -q.area)
+    for piece in rest:
+        shared = [piece.boundary.intersection(q.buffer(1e-6)).length if not q.is_empty else 0.0 for q in out]
+        k = max(range(len(out)), key=lambda i: shared[i], default=None)
+        if k is None or shared[k] <= 0:
+            continue
+        merged = as_polygons(unary_union([out[k], piece]))
+        if len(merged) == 1:
+            out[k] = merged[0]
+    return [q for q in out if not q.is_empty]
 
 
 def _straighter(poly: Polygon, cut: list[LineString], gs_in, gs_out, max_cut: float, min_area: float):

@@ -26,7 +26,7 @@ from .cad import drawing_units, header_units, meters_per_unit
 from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
-from .split import split_by_labels
+from .split import exact_parts, split_by_labels
 from .walls import DoorShape, DoorSwing, open_issue, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
@@ -1242,7 +1242,7 @@ def _halves(polygon, line: LineString, min_area: float) -> list | None:
     if not line.crosses(polygon):
         return None
     parts = [p for p in as_polygons(split(polygon, line)) if p.area >= min_area]
-    return parts if len(parts) > 1 else None
+    return exact_parts(polygon, parts) if len(parts) > 1 else None  # the bits too small: to a neighbour
 
 
 def _parted_by(spaces: list[ExtractedSpace], lines: list[LineString], min_area: float) -> list[ExtractedSpace]:

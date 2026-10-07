@@ -39,6 +39,7 @@ from shapely.geometry import LineString, box
 
 from .extract import ExtractedSpace, ExtractedZone, plan_entities
 from .geometry import as_polygons
+from .split import exact_parts
 from .types import SpaceType
 
 SYSTEM = ("You read architectural floor plans (CAD drawings, as printed) the way an architect does. "
@@ -920,7 +921,7 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
 
     with ThreadPoolExecutor(max_workers=max(1, model.parallel if model is not None else 1)) as pool:
         for row, (pieces, used, n) in zip(checking, pool.map(check, checking)):
-            row[1], row[2] = pieces, used
+            row[1], row[2] = exact_parts(units[row[0]].polygon, pieces), used  # the zones divide the room exactly
             looked += n
     for k, pieces, used in cut_up:
         unit = units[k]
