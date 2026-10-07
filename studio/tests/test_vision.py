@@ -1,6 +1,7 @@
 """Looking at the rooms with a vision model (vision.py), with a stand-in for the model."""
 
 import json
+import re
 
 import ezdxf
 import pytest
@@ -227,3 +228,17 @@ def test_a_cut_is_undone_where_the_pieces_look_like_one_room(workspace):
     inside = [r for r in ws.floor_objects(f_id) if r.kind in ("space", "zone")
               and whole.contains(_at(r).representative_point())]
     assert len(inside) == 1 and inside[0].name == "CORRIDOR" and inside[0].kind == "space"
+
+
+def test_a_long_look_says_how_far_it_has_got(workspace, monkeypatch):
+    # A large building floor has a thousand rooms: the questions go out while the rest
+    # are still being drawn, and the job says how many have been looked at.
+    ws, d, f_id, _, _ = workspace
+    monkeypatch.setattr(vision, "PROGRESS_S", 0.0)
+    said = []
+    model = FakeVision(lambda p: {"outline": "exactly one room", "type": "storage"})
+    convert_floor(ws, f_id, d, vision=model, say=said.append)
+    rooms = sum(1 for r in ws.floor_objects(f_id) if r.kind == "space")
+    progress = [int(m[1]) for s in said if (m := re.fullmatch(rf"vision: (\d+) of {rooms} rooms looked at", s))]
+    assert progress and progress == sorted(progress) and progress[-1] <= rooms
+    assert f"vision: asked about {rooms} of {rooms} rooms" in said

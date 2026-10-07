@@ -146,3 +146,23 @@ def test_sympoint_runs_on_a_plan(workspace):
     found = ws.floor(f_id).symbols
     assert found and not any("symbols" in w for w in report.warnings)
     assert {"single door", "double door"} & {s["label"] for s in found}  # the sample's doors are blocks
+
+
+def test_a_plan_too_large_for_the_model_is_not_sent_to_it(workspace, monkeypatch):
+    # A large building floor has ~480,000 lines: on a CPU the model would run out of time
+    # and memory on it, so it is said and skipped at once instead.
+    import storeypath.symbols as symbols
+
+    class Installed(SymbolSpotter):
+        def available(self):
+            return True
+
+    def run(*a, **k):
+        raise AssertionError("the model was run")
+
+    monkeypatch.setattr(symbols, "MAX_PRIMITIVES", 10)
+    monkeypatch.setattr(symbols.subprocess, "run", run)
+    ws, d, f_id, _, _ = workspace
+    report = convert_floor(ws, f_id, d, symbols=Installed())
+    warning = next(w for w in report.warnings if "symbols were not spotted" in w)
+    assert "too large for SymPoint-V2" in warning and "reads up to 10" in warning

@@ -36,6 +36,7 @@ MODEL = "SymPoint-V2"
 COMMANDS = ["Line", "Arc", "circle", "ellipse"]  # the model's primitive kinds, in its order
 DEFAULT_LINEWEIGHT = 25  # 0.25 mm, for lines that set none
 TIMEOUT_S = 600
+MAX_PRIMITIVES = 60_000  # beyond, it runs out of time and memory on a CPU (a large building floor: ~480,000)
 MIN_SCORE = 0.8  # symbols found less surely than this are not used
 STAIR_MIN_LINES = 6  # a flight of stairs is drawn as many treads
 FILLS_ROOM = 0.25  # stairs, lifts and escalators cover at least this share of their room
@@ -104,6 +105,9 @@ class SymbolSpotter:
         self.failed = None
         prims = primitives(doc, region, skip_layer)
         if not prims:
+            return []
+        if len(prims) > MAX_PRIMITIVES:
+            self.failed = f"the plan is too large for {MODEL}: {len(prims):,} lines, where it reads up to {MAX_PRIMITIVES:,}"
             return []
         x0, y0, x1, y1 = region or _extent(prims)
         layers = {name: i + 1 for i, name in enumerate(sorted({p.layer for p in prims}))}

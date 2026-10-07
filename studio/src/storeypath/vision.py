@@ -27,7 +27,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 
 from shapely import wkt
@@ -346,8 +346,35 @@ def room_key(model: str, sha: str, src, polygon) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
+PROGRESS_S = 15.0  # how often a long look at a floor says how far it has got
+
+
+def _ask_each(todo: list, draw, ask, model: VisionModel, say=None, what: str = "rooms") -> list:
+    """``ask(item, image)`` about each item of ``todo`` as soon as ``draw(item)`` has
+    drawn it: drawing one at a time (it is not thread-safe through ezdxf's caches),
+    the questions going out meanwhile, ``model.parallel`` at once. Says how far it
+    has got every PROGRESS_S seconds, as a large floor takes a while. The answers,
+    in order."""
+    last = time.monotonic()
+
+    def progress(futures) -> None:
+        nonlocal last
+        if say is not None and time.monotonic() - last >= PROGRESS_S:
+            last = time.monotonic()
+            say(f"vision: {sum(f.done() for f in futures)} of {len(todo)} {what} looked at")
+
+    with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
+        futures = []
+        for item in todo:
+            futures.append(pool.submit(ask, item, draw(item)))
+            progress(futures)
+        while wait(futures, timeout=PROGRESS_S).not_done:
+            progress(futures)
+        return [f.result() for f in futures]
+
+
 def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | None, answers: dict[str, dict],
-         sheet: FloorPrint | None = None) -> tuple[list[RoomView | None], int]:
+         sheet: FloorPrint | None = None, say=None) -> tuple[list[RoomView | None], int]:
     """What vision sees each area as (the room question, the area outlined in red),
     with how many questions were asked. Answers are kept in ``answers`` and reused
     while an area's shape is unchanged; without the model, any model's answer about
@@ -371,29 +398,29 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
             todo.append((n, key))
     asked = 0
     if todo:
-        images = []
         sheet = sheet or FloorPrint(doc, scale)
-        for n, _ in todo:  # rendering is not thread-safe through ezdxf's caches: one at a time
-            inset = polygons[n].buffer(-0.12)  # inside the walls, so the walls stay visible
-            region = in_drawing(polygons[n] if inset.is_empty else inset)
-            images.append(sheet.view(_window(region, scale), [region]))
         fields = {"outline": OUTLINES, "type": list(ROOM_TYPES)}
 
-        def one(item):
-            (n, key), image = item
+        def draw(item):
+            n, _ = item
+            inset = polygons[n].buffer(-0.12)  # inside the walls, so the walls stay visible
+            region = in_drawing(polygons[n] if inset.is_empty else inset)
+            return sheet.view(_window(region, scale), [region])
+
+        def one(item, image):
+            n, key = item
             try:
                 return n, key, model.ask(image, ROOM_QUESTION, fields)
             except VisionUnavailable as e:
                 model.failed = str(e)
                 return n, key, None
 
-        with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
-            for n, key, got in pool.map(one, zip(todo, images)):
-                if got and "outline" in got and "type" in got:
-                    answers[key] = {"outline": got["outline"], "type": got["type"], "model": name,
-                                    "shape": wkt.dumps(polygons[n], rounding_precision=2)}
-                    views[n] = RoomView(got["outline"], got["type"])
-                    asked += 1
+        for n, key, got in _ask_each(todo, draw, one, model, say, "rooms"):
+            if got and "outline" in got and "type" in got:
+                answers[key] = {"outline": got["outline"], "type": got["type"], "model": name,
+                                "shape": wkt.dumps(polygons[n], rounding_precision=2)}
+                views[n] = RoomView(got["outline"], got["type"])
+                asked += 1
     return views, asked
 
 
@@ -404,7 +431,7 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
     in ``answers``, reused when a room's shape is unchanged) and apply what it says.
     Returns the rooms it saw as several rooms merged."""
     chosen = [k for k in range(len(spaces)) if only is None or k in only]
-    seen, asked = _see([spaces[k].polygon for k in chosen], doc, src, scale, sha, model, answers, sheet)
+    seen, asked = _see([spaces[k].polygon for k in chosen], doc, src, scale, sha, model, answers, sheet, say)
     if say is not None and asked:
         say(f"vision: asked about {asked} of {len(chosen)} rooms")
     merged = []
@@ -710,8 +737,9 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
     asked = 0
     if todo:
         sheet = sheet or FloorPrint(doc, scale)
-        images = []
-        for k, cut, *_ in todo:  # rendering one at a time, as for the rooms
+
+        def draw(line):
+            k, cut, *_ = line
             polygon = units[k].polygon
             inset = polygon.buffer(-0.12)
             region = in_drawing(polygon if inset.is_empty else inset)
@@ -722,22 +750,20 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
                 part = piece.intersection(near)
                 p = (part if not part.is_empty else piece).representative_point()
                 sides.append(in_drawing(p).coords[0])
-            images.append(sheet.view(_window(in_drawing(middle.buffer(cut.length * 0.75)), scale), [region],
-                                     marks=[in_drawing(cut)], letters=list(zip("AB", sides))))
+            return sheet.view(_window(in_drawing(middle.buffer(cut.length * 0.75)), scale), [region],
+                              marks=[in_drawing(cut)], letters=list(zip("AB", sides)))
 
-        def one(item):
-            line, image = item
+        def one(line, image):
             try:
                 return line, model.ask(image, SPLIT_QUESTION, SPLIT_FIELDS)
             except VisionUnavailable as e:
                 model.failed = str(e)
                 return line, {}
 
-        with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
-            for line, got in pool.map(one, zip(todo, images)):
-                if "a" in got and "b" in got:
-                    line[3] = answers[line[2]] = {"a": got["a"], "b": got["b"], "model": name, "cut": line[4]}
-                    asked += 1
+        for line, got in _ask_each(todo, draw, one, model, say, "lines across merged rooms"):
+            if "a" in got and "b" in got:
+                line[3] = answers[line[2]] = {"a": got["a"], "b": got["b"], "model": name, "cut": line[4]}
+                asked += 1
 
     made: list = []
     rooms = looked = 0
