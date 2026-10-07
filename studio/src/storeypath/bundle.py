@@ -15,7 +15,8 @@ retired, and its export number, so the next export follows on from it (a system
 that applied it takes that one as the next). Into a project that is here
 already, the building is added, or put in place of the one there (the others
 are left as they are). Its floors have no drawing (one put in place of a floor
-keeps that floor's): they are reviewed, corrected, walked through and exported;
+keeps that floor's, with what was drawn on it in review): they are reviewed,
+corrected, walked through and exported;
 to read one again, its drawing is added to it (its rooms keep their IDs, lined
 up on the walls the floor has).
 """
@@ -31,7 +32,7 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import compared, item_number
+from .export import build_features, compared, item_number, settle
 from .ids import format_object_code, is_item_id, parse_id
 from .package import FILES, Manifest
 from .workspace import (
@@ -45,6 +46,7 @@ from .workspace import (
     Override,
     Placement,
     Project,
+    SitePosition,
     Workspace,
 )
 
@@ -230,13 +232,92 @@ def _building_of(item: Item) -> str:
     return item.floor_id.rsplit("-", 1)[0] if item.floor_id else ""
 
 
+def _correction(old: ObjectRecord, kept: Override | None, new: ObjectRecord, given: Override | None) -> Override | None:
+    """The correction of an object a package holds, put in place of the one here
+    (``old``, corrected ``kept``): what the package says of it (``new``: its type,
+    name and number; ``given``: hidden, ignored and the capacity set in review). A
+    type, name or number is kept as a correction where here it was one, or where it
+    is not what the record here says (so that reading the drawing again does not undo
+    it); one accepted here stays accepted."""
+    from .types import SpaceType
+
+    o = Override()
+    if new.kind in ("space", "zone") and old.kind == new.kind:
+        for field in ("type", "name", "number"):
+            value = getattr(new, field)
+            if (kept is not None and getattr(kept, field) is not None) or value != getattr(old, field):
+                if field == "type":
+                    o.type = SpaceType(value) if value in {t.value for t in SpaceType} else None
+                else:
+                    setattr(o, field, value if value is not None else "")  # "": none
+    o.hidden = True if given and given.hidden else (False if kept and kept.hidden else None)
+    o.ignored = True if given and given.ignored else (False if kept and kept.ignored is not None else None)
+    o.capacity = given.capacity if given else None
+    return o if kept is not None or o != Override() else None
+
+
+def _keep_drawn(old: Building, new: Building) -> None:
+    """A floor put in place of one keeps that floor's drawing, and what was spotted in
+    it and drawn on it in review, so it can be read again (its rooms keep their IDs)."""
+    from .workspace import FloorEdits
+
+    was = {f.code: f for f in old.floors}
+    for f in new.floors:
+        w = was.get(f.code)
+        if w is None:
+            continue
+        if f.source is None and w.source is not None:
+            f.source, f.symbols, f.symbols_key, f.layers = w.source, w.symbols, w.symbols_key, w.layers
+            f.warnings = [x for x in f.warnings if "add this floor's drawing" not in x]
+        if f.edits == FloorEdits():  # (a package's floor has none)
+            f.edits = w.edits
+
+
+SAME_PLACE_DEG = 1e-9  # a package's placement at its site's centre: the site's own
+
+
+def _onto_site(loc: Location, old: Building | None, new: Building) -> None:
+    """A building of a package, onto its location's site plan here when the package
+    placed it through its site: not on the map (it stands as the site plan has it), or
+    at the centre of the site here (its placement is the site's, the building turned
+    and moved on it). One the package placed by itself keeps its own placement. It
+    stands where the package has it either way."""
+    import math
+
+    from .export import footprint
+
+    p = new.placement
+    if p is None:
+        return  # not on the map: its place on the site plan, from the package
+    site = loc.placement
+    if site is None or abs(p.lon - site.lon) > SAME_PLACE_DEG or abs(p.lat - site.lat) > SAME_PLACE_DEG:
+        return
+    if old is not None and old.site is not None:
+        pivot = old.site.pivot
+    else:
+        fp = footprint(new)
+        pivot = (round(fp.centroid.x, 3), round(fp.centroid.y, 3)) if fp is not None else (p.x, p.y)
+    rotation = (p.bearing - site.bearing) % 360
+    r = math.radians(rotation)
+    dx, dy = pivot[0] - p.x, pivot[1] - p.y
+    new.placement = None
+    new.site = SitePosition(x=dx * math.cos(r) + dy * math.sin(r), y=-dx * math.sin(r) + dy * math.cos(r),
+                            rotation=rotation, pivot=pivot)
+
+
 def _merge(here: Workspace, pkg: Workspace) -> None:
     """A package's buildings (rebuilt, ``pkg``) into the project here: each added, or
     put in place of the one with its code. A floor put in place of one keeps that
-    floor's drawing, so it can be read again (its rooms keep their IDs). Items the
-    package holds are put where it has them; one it retired is retired here; the
-    others are left as they are (one carried to another building waits for that
-    building's package). The package's export is entered as the last one, when it
+    floor's drawing, what was spotted in it and what was drawn on it in review, so it
+    can be read again (its rooms keep their IDs). An object the package no longer
+    holds is retired, and the building gives no ID again; one it holds keeps the
+    correction or acceptance it had, saying what the package says (_correction). A
+    building the package placed through its site stays on the site here, and no other
+    building of the site moves. Items the package holds are put where it has them;
+    one it retired is retired here when it stands in its building; the others are
+    left as they are (one carried to another building waits for that building's
+    package). Refused (ItemClash), with nothing changed, when an item of the package
+    has the ID of another item here. The package's export is entered as the last one, when it
     is later than the last here; its building is next compared with it when it is
     later than the last package of that building here (packages may be opened in any
     order, and the same one twice)."""
@@ -254,34 +335,43 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
                             "ID (the project's items were numbered apart). Nothing was opened")
     held, known = last_packages(here)  # as it was before the package
     theirs, their_known = last_packages(pkg)
+    now = utcnow()
     for loc in pkg.locations:
         mine = next((l for l in here.locations if l.code == loc.code), None)
         if mine is None:
             here.locations.append(loc)
             continue
+        settle(mine)  # the site's other buildings stay where they are on it
         for b in loc.buildings:
             b_id = make_id(pkg.id, loc.code, b.code)
             old = next((x for x in mine.buildings if x.code == b.code), None)
+            _onto_site(mine, old, b)
             if old is not None:
-                drawn = {f.code: f.source for f in old.floors}
-                for f in b.floors:
-                    if f.source is None and drawn.get(f.code) is not None:
-                        f.source = drawn[f.code]
-                        f.warnings = [w for w in f.warnings if "add this floor's drawing" not in w]
+                _keep_drawn(old, b)
+                b.next_object_seq = max(b.next_object_seq, old.next_object_seq)  # no ID it gave is given again
                 mine.buildings[mine.buildings.index(old)] = b
             else:
                 mine.buildings.append(b)
-            prefix = b_id + "-"  # what is in it now is the package's; what it retired stays retired
-            for i in [i for i, r in here.objects.items() if i.startswith(prefix) and r.status != "retired"]:
-                del here.objects[i]
+            # what is in it now is the package's: one here it does not hold is retired (its ID
+            # is never given again); one held keeps the correction or acceptance it had here,
+            # saying what the package says
+            prefix = b_id + "-"
+            corrections = {i: _correction(here.objects[i], here.overrides.get(i), r, pkg.overrides.get(i))
+                           for i, r in pkg.objects.items()
+                           if i.startswith(prefix) and r.status == "active" and i in here.objects}
+            for i, r in here.objects.items():
+                if i.startswith(prefix) and r.status == "active" and \
+                        (i not in pkg.objects or pkg.objects[i].status == "retired"):
+                    r.status, r.retired_at = "retired", now
             for i in [i for i in here.overrides if i.startswith(prefix)]:
                 del here.overrides[i]
+            here.overrides.update({i: c for i, c in corrections.items() if c is not None})
     for i, r in pkg.objects.items():
         if r.status == "retired" and i in here.objects:
             continue  # kept as it was retired here, not as the package's bare record of it
+        if i not in here.objects and i in pkg.overrides:
+            here.overrides[i] = pkg.overrides[i]
         here.objects[i] = r
-    here.overrides.update(pkg.overrides)
-    now = utcnow()
     for i, it in pkg.items.items():
         if it.status == "retired":
             mine = here.items.get(i)
@@ -292,10 +382,11 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
         else:
             here.items[i] = it
     here.next_item_seq = max(here.next_item_seq, pkg.next_item_seq)
-    # each of its buildings is next compared with the package, when it is later than the
-    # last package of that building here, whatever the order the packages are opened in
+    # each of its buildings is next compared with the package (as the package rebuilt
+    # here), unless the last package of that building here is a later one: whatever the
+    # order the packages are opened in, and the same one opened twice
     for b, p in theirs.items():
-        if b not in held or p.sequence > held[b].sequence:
+        if b not in held or p.sequence >= held[b].sequence:
             held[b] = p
     record = pkg.exports[-1] if pkg.exports else None
     last = here.exports[-1] if here.exports else None
@@ -398,8 +489,11 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                 if p.get("swings"):
                     r.swings = [[local.point(q) for q in leaf] for leaf in p["swings"]]
             ws.objects[r.id] = r
-            if p.get("hidden") or p.get("ignored"):
-                ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None, ignored=bool(p.get("ignored")) or None)
+            # what a person set in review: flags, and how many it seats (not what its desks say)
+            capacity = p.get("capacity") if p.get("capacity_from") == "review" else None
+            if p.get("hidden") or p.get("ignored") or capacity is not None:
+                ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None,
+                                              ignored=bool(p.get("ignored")) or None, capacity=capacity)
     # furniture and equipment, back where the package has them: where each stands in
     # its building (0.7); from an earlier package, its map position and heading (where
     # its front faces on earth) back to the building's frame
@@ -466,6 +560,8 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
     cat_file = manifest.files.get("catalogue")  # as this Studio would read it (an older one's filled in)
     cat = read_catalogue(z.read(cat_file).decode("utf-8"))[0] if cat_file and cat_file in z.namelist() else None
     hashes = compared(ws, cat)
+    for i in _not_kept(ws, cat, z, files) & set(hashes):
+        hashes[i] = "not kept"  # what the package says of it is not all here: changed in the next
     retired = changes.get("all_retired") or []
     held = {}
     for b_id in buildings:  # (from 0.7, one)
@@ -483,6 +579,28 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         items_held=sorted({i for i, it in ws.items.items() if it.status == "active"} | set(moved)
                           | {i for i in retired if is_item_id(i)})))
     return ws
+
+
+# where a feature is (worked out again from the geometry kept to about a centimetre), not
+# what it says of itself
+POSITIONAL = {"area_m2", "display_point", "span", "swings", "walls", "parapets", "local", "heading"}
+
+
+def _not_kept(ws: Workspace, cat, z: zipfile.ZipFile, files: dict) -> set[str]:
+    """The features of a package that the workspace rebuilt from it does not say as the
+    package does (anything but where they are): its export is taken as the last one,
+    and what it lost there is to be listed as changed, not hidden."""
+    out = set()
+    names = set(z.namelist())
+    for role, fs in build_features(ws, cat).items():
+        if files.get(role) not in names:
+            continue
+        theirs = {f["id"]: f["properties"] for f in json.loads(z.read(files[role]))["features"]}
+        for f in fs:
+            p, mine = theirs.get(f["id"]), f["properties"]
+            if p is not None and any(k not in POSITIONAL and k in mine and mine[k] != v for k, v in p.items()):
+                out.add(f["id"])
+    return out
 
 
 class _Local:

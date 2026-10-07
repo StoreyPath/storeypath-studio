@@ -147,6 +147,22 @@ def site_positions(loc) -> dict[str, SitePosition]:
     return out
 
 
+def settle(loc) -> None:
+    """Every building of a location keeps the place it has on its site plan now (as
+    drawn, until then): one added, moved or put in place of another moves no other,
+    and one added later as drawn stands where its drawing puts it relative to them.
+    No building moves (as server.Studio's own settling, when a building is moved)."""
+    positions = site_positions(loc)
+    if loc.site_origin is None:
+        loose = next((b for b in loc.buildings if b.site is None), None)
+        if loose is not None:
+            p = positions[loose.code]
+            loc.site_origin = (round(p.pivot[0] - p.x, 4), round(p.pivot[1] - p.y, 4))
+    for b in loc.buildings:
+        if b.site is None:
+            b.site = positions[b.code]
+
+
 def on_site(site: SitePosition, x: float, y: float) -> tuple[float, float]:
     """A point of a building (its drawing metres) on its site plan."""
     r = math.radians(site.rotation)

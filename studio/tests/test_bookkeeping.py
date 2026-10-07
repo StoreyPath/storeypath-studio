@@ -259,6 +259,219 @@ def test_a_package_whose_item_has_the_id_of_another_item_here_is_refused(campus,
     assert path.read_bytes() == before
 
 
+def _in_studio(ws, ws_path):
+    """The campus where a Studio keeps a project: data/<code>/<code>.spproj."""
+    data = ws_path.parent.parent
+    folder = data / ws.id
+    ws_path.parent.rename(folder)
+    path = folder / f"{ws.id}.spproj"
+    (folder / ws_path.name).rename(path)
+    ws.save(path)
+    return data, path
+
+
+def _spaces(ws, f_id):
+    return sorted((r for r in ws.floor_objects(f_id) if r.kind == "space"), key=lambda r: r.id)
+
+
+def test_what_was_set_in_review_survives_a_package_opened_in_another_studio(campus, tmp_path):
+    # How many a room seats, set in review (0 among them), comes back with the
+    # package: the next export from there lists nothing changed.
+    from storeypath.bundle import open_file
+    from storeypath.workspace import Override
+
+    ws, _, hq, _ = campus
+    f0 = f"{hq}-F00"
+    meeting, room = _spaces(ws, f0)[:2]
+    ws.overrides[meeting.id] = Override(capacity=0)
+    ws.overrides[room.id] = Override(capacity=12, hidden=True)
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    open_file(tmp_path / "B", tmp_path / "hq.storeypath")
+    b = _opened(tmp_path / "B", ws.id)
+    assert b.overrides[meeting.id].capacity == 0 and b.overrides[room.id].capacity == 12
+    assert b.effective(b.objects[room.id])["hidden"]
+    export_package(b, tmp_path / "again.storeypath", building=hq)
+    changes, _ = _read(tmp_path / "again.storeypath")
+    assert (changes["added"], changes["changed"], changes["retired"]) == ([], [], [])
+    with zipfile.ZipFile(tmp_path / "again.storeypath") as z:
+        spaces = {f["id"]: f["properties"] for f in json.loads(z.read("spaces.geojson"))["features"]}
+    assert (spaces[meeting.id]["capacity"], spaces[meeting.id]["capacity_from"]) == (0, "review")
+
+
+def test_what_a_package_says_and_this_studio_does_not_keep_is_listed_as_changed(campus, tmp_path):
+    # The package's export is taken as the last one, as rebuilt here: what the rebuilt
+    # project does not say as the package does is listed as changed next, not hidden.
+    from storeypath.bundle import open_file
+
+    ws, _, hq, _ = campus
+    room = _spaces(ws, f"{hq}-F00")[0]
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    odd = tmp_path / "odd.storeypath"
+    with zipfile.ZipFile(tmp_path / "hq.storeypath") as z, zipfile.ZipFile(odd, "w") as w:
+        for info in z.infolist():
+            data = z.read(info)
+            if info.filename == "spaces.geojson":  # seats 5 by its desks, where there are none
+                doc = json.loads(data)
+                p = next(f["properties"] for f in doc["features"] if f["id"] == room.id)
+                p["capacity"], p["capacity_from"] = 5, "items"
+                data = json.dumps(doc).encode()
+            w.writestr(info.filename, data)
+    open_file(tmp_path / "B", odd)
+    export_package(_opened(tmp_path / "B", ws.id), tmp_path / "again.storeypath", building=hq)
+    changes, _ = _read(tmp_path / "again.storeypath")
+    assert changes["changed"] == [room.id] and changes["added"] == changes["retired"] == []
+
+
+def test_a_buildings_own_package_opened_into_its_project_keeps_what_review_made(campus, tmp_path):
+    # Its corrections, what was accepted, the capacity set, what was drawn on its floors
+    # and spotted in their drawings: all kept, saying what the package says; exported
+    # at once, nothing has changed.
+    from storeypath.bundle import open_file
+    from storeypath.workspace import Override
+
+    ws, ws_path, hq, _ = campus
+    data, path = _in_studio(ws, ws_path)
+    f0 = f"{hq}-F00"
+    s = _spaces(ws, f0)
+    ws.overrides[s[0].id] = Override(capacity=0)
+    ws.overrides[s[1].id] = Override(name="Board room")
+    ws.overrides[s[2].id] = Override()  # accepted as it is
+    floor = ws.floor(f0)
+    floor.edits.walls.append([[1.0, 1.0], [3.0, 1.0]])
+    floor.edits.dividers.append([[5.0, 1.0], [5.0, 3.0]])
+    floor.symbols, floor.symbols_key = [{"class": "door", "x": 1.0, "y": 2.0}], "spotted-in-this-drawing"
+    p = shape(s[3].geometry).representative_point()
+    ws.add_item("DESK-MANAGER", f0, p.x, p.y)
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    ws.save(path)
+
+    assert open_file(data, tmp_path / "hq.storeypath", replace=True)["replaced"] == [hq]
+    here = Workspace.load(path)
+    assert here.overrides[s[0].id].capacity == 0
+    assert here.effective(here.objects[s[1].id])["name"] == "Board room" and here.overrides[s[1].id].name == "Board room"
+    assert s[2].id in here.overrides and here.review_reasons(here.objects[s[2].id]) == []
+    floor = here.floor(f0)
+    assert floor.source is not None and floor.edits.walls == [[[1.0, 1.0], [3.0, 1.0]]]
+    assert floor.edits.dividers == [[[5.0, 1.0], [5.0, 3.0]]]
+    assert floor.symbols_key == "spotted-in-this-drawing" and floor.symbols
+    export_package(here, tmp_path / "hq-2.storeypath", building=hq)
+    changes, _ = _read(tmp_path / "hq-2.storeypath")
+    assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
+    assert changes["previous_sequence"] == 3
+
+
+def test_an_earlier_package_put_in_place_of_its_building_gives_no_id_again(workspace, tmp_path):
+    # Opened in place of the building, an earlier package does not take its counter
+    # back: the rooms a later reading gave IDs to (published since) are retired, not
+    # forgotten, and no ID is issued again.
+    from storeypath.bundle import open_file
+    from storeypath.convert import convert_floor
+    from storeypath.samples import office_floor, write_floor_dxf
+    from storeypath.workspace import SourceDrawing
+    from test_reimport import _renovate
+
+    ws, d, f_id, b_id, _ = workspace
+    convert_floor(ws, f_id, d)
+    export_package(ws, tmp_path / "v1.storeypath", building=b_id, bake=False)
+    write_floor_dxf(d / "level-2r.dxf", _renovate(office_floor(2)))
+    ws.floor(f_id).source = SourceDrawing(path="level-2r.dxf")
+    issued = sorted(convert_floor(ws, f_id, d).added)
+    assert issued
+    export_package(ws, tmp_path / "v2.storeypath", building=b_id, bake=False)
+    counter = ws.building(b_id).next_object_seq
+    data = tmp_path / "data"
+    (data / ws.id).mkdir(parents=True)
+    path = data / ws.id / f"{ws.id}.spproj"
+    ws.save(path)
+
+    open_file(data, tmp_path / "v1.storeypath", replace=True)
+    here = Workspace.load(path)
+    assert here.building(b_id).next_object_seq == counter
+    assert all(here.objects[i].status == "retired" for i in issued)
+    given = {i for i in here.objects}
+    assert here.allocate_object_code(b_id) == f"{counter:04d}" and f"{f_id}-{counter:04d}" not in given
+    export_package(here, tmp_path / "v3.storeypath", building=b_id, bake=False)
+    changes, _ = _read(tmp_path / "v3.storeypath")
+    assert set(issued) <= set(changes["retired"]) and set(issued) <= set(changes["all_retired"])
+
+
+def test_packages_opened_in_any_order_list_nothing_changed(campus, tmp_path):
+    # A Studio with the project as it was at its second export opens the next two
+    # packages, the later first (and one of them twice): each building is next
+    # compared with its own package, and exported at once lists nothing changed.
+    from storeypath.bundle import export_project, open_file
+
+    ws, ws_path, hq, annex = campus
+    for b in (hq, annex):
+        f0 = f"{b}-F00"
+        for r in _spaces(ws, f0)[:4]:
+            p = shape(r.geometry).representative_point()
+            ws.add_item("DESK-SENIOR", f0, p.x, p.y, rotation=33.3)
+    ws.save(ws_path)
+    export_project(ws_path, tmp_path / "p.storeypath-project")
+    data = tmp_path / "B"
+    open_file(data, tmp_path / "p.storeypath-project")
+    export_package(ws, tmp_path / "hq-3.storeypath", building=hq)
+    export_package(ws, tmp_path / "annex-4.storeypath", building=annex)
+
+    open_file(data, tmp_path / "annex-4.storeypath", replace=True)
+    open_file(data, tmp_path / "hq-3.storeypath", replace=True)
+    open_file(data, tmp_path / "hq-3.storeypath", replace=True)  # again
+    b = _opened(data, ws.id)
+    assert b.exports[-1].sequence == 4
+    for building, previous in ((hq, 3), (annex, 4)):
+        out = tmp_path / f"b-{building}.storeypath"
+        export_package(b, out, building=building)
+        changes, _ = _read(out)
+        assert changes["previous_sequence"] == previous
+        assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
+
+
+def test_a_buildings_package_opened_as_a_new_project_exports_as_it_was(campus, tmp_path):
+    from storeypath.bundle import open_file
+
+    ws, _, hq, annex = campus
+    for b in (hq, annex):
+        ws.add_item("DESK-SENIOR", *_ground(ws, b), rotation=33.3)
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    open_file(tmp_path / "C", tmp_path / "hq.storeypath")
+    export_package(_opened(tmp_path / "C", ws.id), tmp_path / "c.storeypath", building=hq)
+    changes, _ = _read(tmp_path / "c.storeypath")
+    assert changes["previous_sequence"] == 3
+    assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
+
+
+def test_a_building_of_a_site_stays_on_it_when_its_package_is_opened(campus, tmp_path):
+    # A site on the map, its buildings standing as drawn: the ANNEX's own package
+    # opened in its place keeps it on the site, and no building moves.
+    from shapely.geometry import box, mapping
+
+    from storeypath.bundle import open_file
+    from storeypath.export import placements
+    from storeypath.workspace import Placement
+
+    ws, ws_path, hq, annex = campus
+    data, path = _in_studio(ws, ws_path)
+    loc = ws.locations[0]
+    for b in loc.buildings:
+        b.placement = None
+    loc.placement = Placement(lon=46.6761, lat=24.7127, bearing=30.0)
+    ws.floor(f"{annex}-F01").outline = mapping(box(0, 0, 300, 200))  # the ANNEX reaches further than the HQ
+    export_package(ws, tmp_path / "annex.storeypath", building=annex)
+    ws.save(path)
+    before = placements(ws)
+    open_file(data, tmp_path / "annex.storeypath", replace=True)
+    here = Workspace.load(path)
+    after = placements(here)
+    assert here.building(annex).placement is None and here.building(annex).site is not None
+    for b in (hq, annex):
+        p, q = before[b][0], after[b][0]
+        assert (p.lon, p.lat) == (q.lon, q.lat) and abs(p.bearing - q.bearing) < 1e-6
+        assert abs(p.x - q.x) < 1e-3 and abs(p.y - q.y) < 1e-3
+    export_package(here, tmp_path / "annex-2.storeypath", building=annex)
+    assert annex not in _read(tmp_path / "annex-2.storeypath")[0]["changed"]
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 
