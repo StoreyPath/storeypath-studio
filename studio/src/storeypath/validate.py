@@ -97,9 +97,9 @@ def validate_package(path: str | Path) -> list[str]:
             elif f.id not in zones_of.get(space, set()):
                 errors.append(f"{f.id}: not listed in the zones of its space {space}")
         for space, zs in zones_of.items():
-            for z in zs:
-                if ids.get(z) != "zone":
-                    errors.append(f"{space}: lists unknown zone {z}")
+            for zone in zs:
+                if ids.get(zone) != "zone":
+                    errors.append(f"{space}: lists unknown zone {zone}")
         for f in collections.get("openings", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
             for s in f.properties.connects:

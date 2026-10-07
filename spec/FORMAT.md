@@ -119,8 +119,9 @@ Space types: `office`, `room`, `meeting_room`, `corridor`, `lobby`, `elevator`,
 (private; public toilets are `restroom`), `dressing_room`, `laundry`, `prayer_room`,
 `parking`, `balcony`, `terrace`, `open_to_below` (a void over the floor below).
 
-Opening types: `door`, `opening` (a way through a wall with no door: a doorway).
-Openings join spaces; the zones of a space need none.
+Opening types: `door`, `window` (glazing in a wall: not a way through), `opening` (a
+way through a wall with no door: a doorway). Openings join spaces; the zones of a
+space need none.
 
 Zones use the space types.
 
@@ -164,6 +165,14 @@ A system that skipped an export can use `all_retired` to clean up its mappings.
   a 0.2 space that becomes a zone keeps its ID.
 
 0.3.1 adds the openings' `swings`, `sill_m` and `height_m`, and the spaces' `outdoor`.
+
+## Readers
+
+`spec/conformance/` holds packages and coordinate pairs that every reader must read
+the same way: Studio's own validator, the Go module in `go/` (for systems written in
+Go), the viewer. A reader turning longitude and latitude back into a building's
+local metres must agree with `localframe.json` to a millimetre; positions read from
+a package are within about a centimetre of Studio's (7 decimals of a degree).
 
 ## Versioning
 
