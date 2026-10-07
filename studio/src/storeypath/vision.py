@@ -36,7 +36,7 @@ from shapely.affinity import scale as scale_geom
 from shapely.affinity import translate
 from shapely.geometry import LineString, box
 
-from .extract import ExtractedSpace, ExtractedZone, modelspace_entities
+from .extract import ExtractedSpace, ExtractedZone, plan_entities
 from .geometry import as_polygons
 from .types import SpaceType
 
@@ -222,7 +222,7 @@ def print_png(doc, bbox, width: int, height: int) -> bytes:
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
     pad = max(x1 - x0, y1 - y0) * 0.1  # blocks placed just outside reach in
-    entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
+    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
     Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
@@ -246,7 +246,7 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     fig = Figure(figsize=(px / 100, px / 100), dpi=100)  # no pyplot: safe in Studio's job threads
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
-    entities = list(modelspace_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
+    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
     Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
     for g in highlight:
         for part in getattr(g, "geoms", [g]):
@@ -735,7 +735,7 @@ def _segments_in(doc, region_drawing, to_local) -> list[LineString]:
 
     x0, y0, x1, y1 = region_drawing.bounds
     out = []
-    for e, _ in _walk(modelspace_entities(doc, (x0, y0, x1, y1))):
+    for e, _ in _walk(plan_entities(doc, (x0, y0, x1, y1))):
         if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB", "INSERT", "DIMENSION", "HATCH", "MULTILEADER"):
             continue
         try:

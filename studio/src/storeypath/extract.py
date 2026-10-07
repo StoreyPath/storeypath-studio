@@ -121,11 +121,18 @@ class FloorExtraction:
         return [*self.zones, *(s for i, s in enumerate(self.spaces) if i not in zoned)]
 
 
+MAX_BLOCK_PIECES = 1_000_000  # entities taken out of blocks in one walk through a drawing, at most
+
+
 def _walk(entities, parent_layer: str | None = None, depth: int = 0,
-          expand: Callable[[DXFGraphic, str], bool] | None = None):
+          expand: Callable[[DXFGraphic, str], bool] | None = None, _within: tuple[str, ...] = (),
+          _budget: list[int] | None = None):
     """Yield (entity, effective layer) through nested block inserts. Entities on
     layer "0" inside a block take the layer of the insert, as CAD programs show them.
-    ``expand(insert, layer)`` returning False keeps a block's contents out."""
+    ``expand(insert, layer)`` returning False keeps a block's contents out. A block
+    placed inside itself is not expanded again, and at most MAX_BLOCK_PIECES are
+    taken out of blocks: a broken drawing's blocks would otherwise never end."""
+    budget = [MAX_BLOCK_PIECES] if _budget is None else _budget
     for e in entities:
         layer = e.dxf.get("layer", "0")
         if parent_layer is not None and layer == "0":
@@ -135,45 +142,102 @@ def _walk(entities, parent_layer: str | None = None, depth: int = 0,
             for attrib in e.attribs:
                 a_layer = attrib.dxf.get("layer", "0")
                 yield attrib, (layer if a_layer == "0" else a_layer)
-            if depth < MAX_BLOCK_DEPTH and (expand is None or expand(e, layer)):
+            name = e.dxf.get("name", "")
+            if depth < MAX_BLOCK_DEPTH and name not in _within and budget[0] > 0 \
+                    and (expand is None or expand(e, layer)):
                 try:
                     children = list(e.virtual_entities())
                 except Exception:  # broken or unsupported block content
                     continue
-                yield from _walk(children, layer, depth + 1, expand)
+                budget[0] -= len(children)
+                yield from _walk(children, layer, depth + 1, expand, (*_within, name), budget)
 
 
 def modelspace_entities(doc: Drawing, region: tuple[float, float, float, float] | None = None):
     """Top-level entities of the drawing; with ``region`` (x0, y0, x1, y1 in drawing
     units) only those whose middle lies inside it, for drawings that hold several
-    floors (or sheets) side by side."""
+    floors (or sheets) side by side. To read a plan, see plan_entities."""
     if region is None:
         yield from doc.modelspace()
         return
-    entities, centres = _entity_index(doc)
+    entities, centres, _ = _entity_index(doc)
     x0, y0, x1, y1 = region
     inside = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
     for i in np.nonzero(inside)[0]:
         yield entities[i]
 
 
+def plan_entities(doc: Drawing, region: tuple[float, float, float, float] | None = None):
+    """The entities of one plan: as modelspace_entities, but a block placed across
+    ``region`` (a sheet pasted as one block, a bound xref holding several plans) is
+    not given whole to the plan that holds its middle: it is taken apart, and its
+    pieces whose middle lies inside are the plan's (themselves taken apart when they
+    too lie across it). Pieces on layer "0" take the block's layer, as in _walk."""
+    if region is None:
+        yield from doc.modelspace()
+        return
+    entities, centres, boxes = _entity_index(doc)
+    x0, y0, x1, y1 = region
+    inside = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
+    across = (boxes[:, 0] <= x1) & (boxes[:, 2] >= x0) & (boxes[:, 1] <= y1) & (boxes[:, 3] >= y0) & ~(
+        (boxes[:, 0] >= x0) & (boxes[:, 2] <= x1) & (boxes[:, 1] >= y0) & (boxes[:, 3] <= y1))
+    budget = [MAX_BLOCK_PIECES]
+    for i in np.nonzero(inside | across)[0]:
+        e = entities[i]
+        if across[i] and e.dxftype() == "INSERT":
+            yield from _pieces_in(e, region, 1, (e.dxf.get("name", ""),), budget)
+        elif inside[i]:
+            yield e
+
+
+def _pieces_in(insert, region, depth: int, within: tuple[str, ...], budget: list[int]):
+    """The pieces of a block placed across ``region`` that lie in it (see plan_entities)."""
+    try:
+        children = list(insert.virtual_entities())
+    except Exception:  # broken or unsupported block content
+        return
+    budget[0] -= len(children)
+    layer = insert.dxf.get("layer", "0")
+    x0, y0, x1, y1 = region
+    for c in children:
+        if c.dxf.get("layer", "0") == "0":
+            c.dxf.layer = layer  # a copy: the drawing is not changed
+        try:
+            ext = ezdxf.bbox.extents([c], fast=True)
+        except Exception:
+            continue
+        if not ext.has_data or not _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
+            continue
+        lo, hi = ext.extmin, ext.extmax
+        within_region = lo.x >= x0 and hi.x <= x1 and lo.y >= y0 and hi.y <= y1
+        overlaps = lo.x <= x1 and hi.x >= x0 and lo.y <= y1 and hi.y >= y0
+        name = c.dxf.get("name", "") if c.dxftype() == "INSERT" else ""
+        if name and overlaps and not within_region and depth < MAX_BLOCK_DEPTH and name not in within \
+                and budget[0] > 0:
+            yield from _pieces_in(c, region, depth + 1, (*within, name), budget)
+        elif x0 <= ext.center.x <= x1 and y0 <= ext.center.y <= y1:
+            yield c
+
+
 def _entity_index(doc: Drawing):
-    """The middle of every top-level entity, measured once per drawing: picking one
-    plan out of a sheet set is then a lookup, not a pass over every entity. An
-    entity whose extents cannot be measured, or are not finite, is left out."""
+    """The middle and extents of every top-level entity, measured once per drawing:
+    picking one plan out of a sheet set is then a lookup, not a pass over every
+    entity. An entity whose extents cannot be measured, or are not finite, is left out."""
     index = getattr(doc, "_storeypath_index", None)
     if index is None:
-        entities, centres = [], []
+        entities, centres, boxes = [], [], []
         cache = ezdxf.bbox.Cache()
         for e in doc.modelspace():
             try:
                 ext = ezdxf.bbox.extents([e], fast=True, cache=cache)
             except Exception:
                 continue
-            if ext.has_data and _finite(ext.center.x, ext.center.y):
+            if ext.has_data and _finite(ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y):
                 entities.append(e)
                 centres.append((ext.center.x, ext.center.y))
-        index = (entities, np.array(centres, dtype=float).reshape(-1, 2))
+                boxes.append((ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y))
+        index = (entities, np.array(centres, dtype=float).reshape(-1, 2),
+                 np.array(boxes, dtype=float).reshape(-1, 4))
         doc._storeypath_index = index
     return index
 
@@ -334,7 +398,7 @@ def extract_floor(
 
     is_dashed = dashed_lines(doc)
 
-    for e, layer in _walk(modelspace_entities(doc, region), expand=expand):
+    for e, layer in _walk(plan_entities(doc, region), expand=expand):
         kind = e.dxftype()
         layer_counts[layer] += 1
         if kind in ("TEXT", "MTEXT", "ATTRIB"):

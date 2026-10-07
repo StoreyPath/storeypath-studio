@@ -143,8 +143,9 @@ def unit_note(doc: Drawing, model: LocalModel | None = None) -> UnitClue | None:
 
 
 def _notes(doc: Drawing) -> list[str]:
+    """The drawing's notes: on its sheets, and in its blocks (a sheet pasted as a block)."""
     texts = []
-    for layout in doc.layouts:
+    for layout in doc.blocks:  # the layouts' own blocks among them
         for t in layout.query("TEXT MTEXT"):
             texts.append(t.plain_text() if t.dxftype() == "MTEXT" else t.dxf.text)
     return [t for t in dict.fromkeys(" ".join(t.split()) for t in texts) if 4 <= len(t) <= 200]

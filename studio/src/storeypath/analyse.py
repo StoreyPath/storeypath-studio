@@ -26,7 +26,7 @@ import numpy as np
 import shapely
 from ezdxf.document import Drawing
 
-from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, dashed_lines, modelspace_entities
+from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, dashed_lines, plan_entities
 from .profile import (
     BlocksConfig,
     DoorsConfig,
@@ -203,7 +203,7 @@ def _scan(doc: Drawing, scale: float, region) -> Scan:
     tol = CURVE_TOLERANCE_M / scale
     is_dashed = dashed_lines(doc)
 
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         st = stats.setdefault(layer, LayerStats(layer))
         st.entities += 1
         kind = e.dxftype()
@@ -264,7 +264,7 @@ def plan_texts(doc: Drawing, region=None, per_layer: int | None = None, unknown=
     ``per_layer``, at most that many of each layer's texts that ``unknown`` says are
     not known yet: a few examples are enough to tell what a layer holds."""
     by_layer: dict[str, list[str]] = defaultdict(list)
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB"):
             text = " ".join(_text_lines(e)).strip()
             if text and len(text) <= 40 and len(text.split()) <= 5 and text not in by_layer[layer]:

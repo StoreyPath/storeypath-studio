@@ -286,27 +286,7 @@ def _door_clue(doc: Drawing) -> UnitClue:
     """Door swings: quarter-turn arcs with a leaf, a straight line from the hinge
     (the arc's centre) about as long as the radius. Fixtures, columns and window bays
     have quarter arcs too (a basin's rounded corners), but no leaf."""
-    msp = doc.modelspace()
-    radii: list[float] = []
-    in_blocks: dict[str, list[float]] = {}
-    leaves = None
-    seen = 0
-    for e in msp.query("ARC INSERT"):
-        if seen >= MAX_ARCS:
-            break
-        if e.dxftype() == "ARC":
-            seen += 1
-            if _quarter(e):
-                leaves = leaves or _Leaves(msp)
-                if leaves.hinge_of(e):
-                    radii.append(e.dxf.radius)
-        else:
-            name = e.dxf.name
-            if name not in in_blocks:
-                block = doc.blocks.get(name)
-                in_blocks[name] = _door_radii(block) if block is not None else []
-            seen += len(in_blocks[name])
-            radii.extend(r * _insert_scale(e) for r in in_blocks[name])
+    radii = _through_blocks(doc, _door_radii, MAX_ARCS)
     if len(radii) < 3:
         return UnitClue("doors", [], f"{len(radii)} door swings")
     votes = {u: sum(1 for r in radii if DOOR_SWING_M[0] <= r * k <= DOOR_SWING_M[1]) for u, k in M_PER_UNIT.items()}
@@ -321,11 +301,47 @@ def _door_clue(doc: Drawing) -> UnitClue:
     return UnitClue("doors", fits, f"{len(radii)} door swings, typically {statistics.median(radii):g} across")
 
 
-def _door_radii(block) -> list[float]:
-    arcs = [a for a in block if a.dxftype() == "ARC" and _quarter(a)]
+MAX_CLUE_DEPTH = 8  # blocks inside blocks followed this deep for the units clues
+
+
+def _through_blocks(doc: Drawing, measure, most: int) -> list[float]:
+    """What ``measure(layout)`` finds in the drawing and in the blocks placed in it,
+    as placed (times each insert's scale), blocks in blocks too: a sheet pasted as one
+    block, or a bound xref, holds the doors, dimensions and texts that show the units.
+    Each block is measured once; one placed inside itself is not followed. At most
+    ``most`` values."""
+    memo: dict[str, list[float]] = {}
+
+    def of(layout, within: tuple[str, ...]) -> list[float]:
+        out = list(measure(layout))[:most]
+        if len(within) >= MAX_CLUE_DEPTH:
+            return out
+        for insert in layout.query("INSERT"):
+            if len(out) >= most:
+                break
+            name = insert.dxf.get("name", "")
+            if name in within:
+                continue
+            if name not in memo:
+                block = doc.blocks.get(name)
+                memo[name] = of(block, (*within, name)) if block is not None else []
+            k = _insert_scale(insert)
+            out += [v * k for v in memo[name][: most - len(out)]]
+        return out
+
+    return of(doc.modelspace(), ())
+
+
+def _door_radii(layout) -> list[float]:
+    arcs = []
+    for a in layout.query("ARC"):
+        if len(arcs) >= MAX_ARCS:
+            break
+        if _quarter(a):
+            arcs.append(a)
     if not arcs:
         return []
-    leaves = _Leaves(block)
+    leaves = _Leaves(layout)
     return [a.dxf.radius for a in arcs if leaves.hinge_of(a)]
 
 
@@ -369,29 +385,44 @@ def _segments(e) -> list[tuple[tuple[float, float], tuple[float, float]]]:
 
 def _dimension_clue(doc: Drawing) -> UnitClue:
     """The typical length the drawing's linear dimensions measure."""
-    lengths = []
-    for d in doc.modelspace().query("DIMENSION"):
-        if d.dimtype not in (0, 1):  # linear and aligned
-            continue
-        try:
-            m = d.get_measurement()
-        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
-            continue
-        if isinstance(m, (int, float)) and m > 0:
-            lengths.append(float(m))
+    lengths = _through_blocks(doc, _dimension_lengths, MAX_CLUES)
     if len(lengths) < 5:
         return UnitClue("dimensions", [], f"{len(lengths)} dimensions")
     typical = statistics.median(lengths)
     return UnitClue("dimensions", _fits(typical, DIMENSION_M), f"{len(lengths)} dimensions, typically {typical:g}")
 
 
+MAX_CLUES = 20000  # dimensions or texts measured for the units, at most
+
+
+def _dimension_lengths(layout) -> list[float]:
+    lengths = []
+    for d in layout.query("DIMENSION"):
+        if len(lengths) >= MAX_CLUES:
+            break
+        if d.dimtype not in (0, 1):  # linear and aligned
+            continue
+        try:
+            m = d.get_measurement()
+        except (ValueError, TypeError, AttributeError, ZeroDivisionError):
+            continue
+        if isinstance(m, (int, float)) and m > 0 and math.isfinite(m):
+            lengths.append(float(m))
+    return lengths
+
+
 def _text_clue(doc: Drawing) -> UnitClue:
-    heights = [t.dxf.height for t in doc.modelspace().query("TEXT") if t.dxf.height > 0]
-    heights += [t.dxf.char_height for t in doc.modelspace().query("MTEXT") if t.dxf.char_height > 0]
+    heights = _through_blocks(doc, _text_heights, MAX_CLUES)
     if len(heights) < 5:
         return UnitClue("text", [], f"{len(heights)} texts")
     typical = statistics.median(heights)
     return UnitClue("text", _fits(typical, TEXT_HEIGHT_M), f"{len(heights)} texts, typically {typical:g} high")
+
+
+def _text_heights(layout) -> list[float]:
+    heights = [t.dxf.height for t in layout.query("TEXT") if t.dxf.height > 0]
+    heights += [t.dxf.char_height for t in layout.query("MTEXT") if t.dxf.char_height > 0]
+    return [h for h in heights if math.isfinite(h)]
 
 
 def _insert_scale(insert) -> float:

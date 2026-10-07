@@ -226,6 +226,62 @@ def test_floors_drawn_in_other_units_are_lined_up_in_metres(tmp_path):
     assert abs(x - 30.0) < 0.05 and abs(y - 10.0) < 0.05
 
 
+# ---- plans inside a block ---------------------------------------------------------
+
+
+def _sheet_in_a_block(d: Path) -> Path:
+    """Three floor plans side by side, the whole sheet pasted into the drawing as one
+    block (as a bound xref is), the drawing's unit setting left out."""
+    from ezdxf.addons import importer
+
+    from storeypath.samples import write_sheet_dxf
+
+    write_sheet_dxf(d / "flat.dxf", [(office_floor(0), (125.0, 48.0), "GROUND FLOOR PLAN"),
+                                     (office_floor(1), (185.0, 48.0), "FIRST FLOOR PLAN"),
+                                     (office_floor(2), (245.0, 48.0), "SECOND FLOOR PLAN")])
+    src = ezdxf.readfile(d / "flat.dxf")
+    doc = ezdxf.new("R2018", setup=True)
+    imp = importer.Importer(src, doc)
+    imp.import_entities(src.modelspace(), doc.blocks.new("SHEET"))
+    imp.finalize()
+    doc.modelspace().add_blockref("SHEET", (0, 0))
+    doc.header["$INSUNITS"] = 0
+    doc.saveas(d / "inblock.dxf")
+    return d / "inblock.dxf"
+
+
+def test_plans_inside_one_block_are_each_their_own_floor(tmp_path):
+    from storeypath.analyse import analyse
+    from storeypath.cad import decide_units, read_drawing
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+    from storeypath.sheets import find_views
+
+    doc = read_drawing(_sheet_in_a_block(tmp_path))
+    units = decide_units(doc)
+    assert units.units == "mm" and units.sure  # the doors and texts in the block show it
+    views = [v for v in find_views(doc, load_profile("ncs"), 0.001, auto=True) if v.is_plan]
+    assert [(v.title, v.ordinal) for v in views] == [
+        ("GROUND FLOOR PLAN", 0), ("FIRST FLOOR PLAN", 1), ("SECOND FLOOR PLAN", 2)]
+    for n, v in enumerate(views):
+        profile = analyse(doc, 0.001, v.region, None, load_profile("ncs")).profile
+        ex = extract_floor(doc, profile, None, v.region)
+        assert len(ex.spaces) == 24 and {s.number[0] for s in ex.spaces if s.number} == {str(n)}
+
+
+def test_a_block_placed_inside_itself_is_walked_once():
+    from storeypath.extract import _walk
+
+    doc = ezdxf.new("R2018")
+    loop = doc.blocks.new("LOOP")
+    loop.add_line((0, 0), (1000, 0), dxfattribs={"layer": "A-WALL"})
+    for i in range(6):
+        loop.add_blockref("LOOP", (i * 10, 0))
+    doc.modelspace().add_blockref("LOOP", (0, 0))
+    walked = list(_walk(doc.modelspace()))
+    assert sum(1 for e, _ in walked if e.dxftype() == "LINE") == 1
+
+
 # ---- a malformed answer costs one question ---------------------------------------
 
 

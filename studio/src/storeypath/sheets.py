@@ -18,7 +18,8 @@ import shapely
 from ezdxf.document import Drawing
 from shapely.geometry import box
 
-from .extract import _center, _flatten, _text_lines, _walk, _wall_hatch, modelspace_entities, CURVE_TOLERANCE_M
+from .extract import (CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, _wall_hatch, modelspace_entities,
+                      plan_entities)
 from .geometry import as_polygons
 from .profile import Profile
 from .walls import wall_mass
@@ -163,8 +164,10 @@ def _is_frame(members, bounds, all_bounds) -> bool:
 
 
 def _texts(doc: Drawing):
+    """The drawing's texts, with those in blocks (a sheet pasted as a block holds its
+    plans' titles): (text, middle, height)."""
     out = []
-    for e in doc.modelspace():
+    for e, _ in _walk(doc.modelspace()):
         kind = e.dxftype()
         if kind in ("TEXT", "MTEXT"):
             lines, c = _text_lines(e), _center(e)
@@ -272,7 +275,7 @@ def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
     """The wall mass of one plan (meters, drawing position)."""
     tol = CURVE_TOLERANCE_M / scale
     lines, fills = [], []
-    for e, layer in _walk(modelspace_entities(doc, region)):
+    for e, layer in _walk(plan_entities(doc, region)):
         if not profile.wall_layers.fullmatch(layer) or e.dxftype() in ("TEXT", "MTEXT", "ATTRIB", "INSERT"):
             continue
         if e.dxftype() == "HATCH":
