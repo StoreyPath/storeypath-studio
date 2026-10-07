@@ -82,6 +82,12 @@ def validate_package(path: str | Path) -> list[str]:
             elif not child.startswith(parent + "-"):
                 errors.append(f"{child}: ID does not start with its parent {parent}")
 
+        if manifest.scope is not None:  # a part of a project: exactly the buildings it lists
+            held = {f.id for f in collections.get("buildings", [])}
+            for b in sorted(set(manifest.scope.buildings) - held):
+                errors.append(f"scope lists building {b}, which is not in the package")
+            for b in sorted(held - set(manifest.scope.buildings)):
+                errors.append(f"building {b} is in the package but not in its scope")
         for f in collections.get("buildings", []):
             expect_parent(f.id, f.properties.location_id, "location")
         for f in collections.get("floors", []):

@@ -30,6 +30,7 @@ from .package import (
     Manifest,
     PlacementInfo,
     ProjectInfo,
+    Scope,
     SourceInfo,
     json_schemas,
 )
@@ -352,25 +353,51 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
     return buf.getvalue()
 
 
-def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None) -> Manifest:
+def in_buildings(buildings: list[str] | None):
+    """Whether an ID is one of ``buildings`` or of what is in them (all IDs, without)."""
+    if buildings is None:
+        return lambda i: True
+    prefixes = tuple(b + "-" for b in buildings)
+    return lambda i: i in buildings or i.startswith(prefixes)
+
+
+def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None,
+                   buildings: list[str] | None = None) -> Manifest:
     """Write the package to ``out_path`` (a path, or a binary file object). With
     ``record`` the export is entered in the workspace, so the next one lists what
     changed since; without it (a preview) the workspace is left as it was.
     ``extra`` adds files (name → bytes or a path): the project itself, in
-    ``studio/``, for another Studio to continue it (bundle.py)."""
+    ``studio/``, for another Studio to continue it (bundle.py).
+
+    With ``buildings`` (IDs) the package holds only those buildings, their floors and
+    what is on them, and their locations; its manifest says so (``scope``). What
+    changed is listed for them alone, and the record of what was exported keeps
+    the other buildings as they were last exported."""
     features = build_features(ws)
+    if buildings is not None:
+        known = {make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings}
+        if unknown := sorted(set(buildings) - known):
+            raise ExportError(f"no building {', '.join(unknown)} in this project")
+        if not buildings:
+            raise ExportError("choose a building to export")
+        buildings = sorted(set(buildings))
+        locations = {b.rsplit("-", 1)[0] for b in buildings}
+        scoped = in_buildings(buildings)
+        features = {role: [f for f in fs if (f["id"] in locations if role == "location" else scoped(f["id"]))]
+                    for role, fs in features.items()}
+    scoped = in_buildings(buildings)
     hashes = {f["id"]: _hash(f) for fs in features.values() for f in fs}
 
     prev = ws.exports[-1] if ws.exports else None
     sequence = (prev.sequence + 1) if prev else 1
     prev_hashes = prev.objects if prev else {}
-    all_retired = sorted(i for i, r in ws.objects.items() if r.status == "retired")
+    all_retired = sorted(i for i, r in ws.objects.items() if r.status == "retired" and scoped(i))
     changes = Changes(
         sequence=sequence,
         previous_sequence=prev.sequence if prev else None,
         added=sorted(i for i in hashes if i not in prev_hashes),
         changed=sorted(i for i in hashes if i in prev_hashes and prev_hashes[i] != hashes[i]),
-        retired=sorted(i for i in prev_hashes if i not in hashes),
+        retired=sorted(i for i in prev_hashes if i not in hashes and scoped(i)),  # a part's locations stay
         all_retired=all_retired,
     )
 
@@ -385,11 +412,13 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
                "opening": [t.value for t in OpeningType]},
         sources=[
             SourceInfo(floor_id=fid, file=Path(f.source.path).name, sha256=f.source.sha256)
-            for _, _, f, fid in ws.iter_floors() if f.source
+            for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)
         ],
         placements={
             b_id: PlacementInfo(**p.model_dump(), placed=real) for b_id, (p, real) in placements(ws).items()
+            if scoped(b_id)
         },
+        scope=Scope(buildings=buildings) if buildings is not None else None,
     )
 
     if isinstance(out_path, (str, Path)):
@@ -411,5 +440,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict 
                 z.writestr(name, data)
 
     if record:
-        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name, objects=hashes))
+        kept = {} if buildings is None else {i: h for i, h in prev_hashes.items() if not scoped(i) and i not in hashes}
+        ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name,
+                                       objects={**kept, **hashes}, buildings=buildings))
     return manifest

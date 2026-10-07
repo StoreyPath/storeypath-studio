@@ -376,3 +376,40 @@ func TestIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestAPackageOfOneBuildingOfAProject(t *testing.T) {
+	// campus-part holds the Headquarters of a two-building project: the Annex is
+	// not in it, and that says nothing about the Annex.
+	p := open(t, "campus-part.storeypath")
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Fatalf("problems: %v", problems)
+	}
+	hq := p.Manifest.Project.ID + "-DEMO-HQ"
+	annex := p.Manifest.Project.ID + "-DEMO-ANNEX"
+	if p.Manifest.Scope == nil || !p.Holds(hq) || p.Holds(annex) {
+		t.Fatalf("scope %v: holds HQ %v, Annex %v", p.Manifest.Scope, p.Holds(hq), p.Holds(annex))
+	}
+	if len(p.Buildings) != 1 || p.Building(annex) != nil || len(p.FloorsOf(hq)) != 3 {
+		t.Fatalf("%d buildings, %d floors of HQ", len(p.Buildings), len(p.FloorsOf(hq)))
+	}
+	c := p.Changes
+	if c == nil || len(c.Changed) != 1 || !strings.HasPrefix(c.Changed[0], hq+"-") || len(c.Retired) != 0 || len(c.Added) != 0 {
+		t.Fatalf("changes: %+v", c)
+	}
+	whole := open(t, "campus.storeypath")
+	if whole.Manifest.Scope != nil || !whole.Holds(whole.Manifest.Project.ID+"-DEMO-ANNEX") {
+		t.Fatal("a package of the whole project holds every building")
+	}
+}
+
+func TestAScopeMustListTheBuildingsHeld(t *testing.T) {
+	p := open(t, "campus-part.storeypath")
+	p.Manifest.Scope.Buildings = []string{p.Manifest.Project.ID + "-DEMO-ANNEX"}
+	codes := map[string]bool{}
+	for _, pr := range p.Validate() {
+		codes[pr.Code] = true
+	}
+	if !codes[ProblemScope] {
+		t.Fatal("a scope that lists another building is a problem")
+	}
+}

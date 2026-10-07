@@ -113,6 +113,24 @@
       "title": "ProjectInfo",
       "type": "object"
     },
+    "Scope": {
+      "description": "The part of the project a package holds, when it is not all of it.",
+      "properties": {
+        "buildings": {
+          "description": "IDs of the buildings in the package; the rest of the project is not in it, and its absence says nothing about them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Buildings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "buildings"
+      ],
+      "title": "Scope",
+      "type": "object"
+    },
     "SourceInfo": {
       "properties": {
         "floor_id": {
@@ -153,7 +171,7 @@
       "type": "string"
     },
     "format_version": {
-      "default": "0.3.2",
+      "default": "0.4.0",
       "title": "Format Version",
       "type": "string"
     },
@@ -215,6 +233,18 @@
       },
       "title": "Placements",
       "type": "object"
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Scope"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Only some of the project's buildings; absent: all of it"
     }
   },
   "required": [

@@ -29,6 +29,8 @@ export interface Manifest {
 	format_version: string;
 	project: { id: string; name: string };
 	files: Record<string, string>;
+	/** Only some of the project's buildings (format 0.4); absent: all of them. */
+	scope?: { buildings: string[] } | null;
 	[key: string]: unknown;
 }
 
@@ -52,6 +54,10 @@ export declare class StoreyPathPackage {
 	readonly project: { id: string; name: string };
 	/** The feature with this ID, or null. */
 	get(id: string): Feature | null;
+	/** The buildings the package holds when it is part of a project, or null for the whole project. */
+	readonly scope: string[] | null;
+	/** Whether the package holds a building: always for the whole project; for a part, when it is in the scope. */
+	holds(buildingId: string): boolean;
 	/** Floors of a building, lowest first. */
 	floorsOf(buildingId: string): Feature[];
 	spacesOn(floorId: string): Feature[];

@@ -80,6 +80,19 @@ export class StoreyPathPackage {
     return this.byId.get(id) ?? null;
   }
 
+  /** The buildings the package holds when it is part of a project (format 0.4), or
+   * null for the whole project. */
+  get scope() {
+    return this.manifest.scope?.buildings ?? null;
+  }
+
+  /** Whether the package holds a building: always, for the whole project; for a
+   * part, when the building is in its scope. What is outside it is not in the
+   * package, and its absence says nothing about it. */
+  holds(buildingId) {
+    return this.scope === null || this.scope.includes(buildingId);
+  }
+
   /** Floors of a building, lowest first. */
   floorsOf(buildingId) {
     return this._floorsByBuilding.get(buildingId) ?? [];

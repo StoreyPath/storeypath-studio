@@ -17,7 +17,7 @@ import (
 // same major version are read; properties and files it does not know are ignored.
 const (
 	FormatName    = "storeypath-package"
-	FormatVersion = "0.3.1"
+	FormatVersion = "0.4.0"
 )
 
 // The files of a package, by role.
@@ -58,6 +58,15 @@ type Manifest struct {
 	Types      map[string][]string  `json:"types"`
 	Sources    []Source             `json:"sources"`
 	Placements map[string]Placement `json:"placements"`
+	// Scope: the buildings the package holds when it is not the whole project
+	// (format 0.4); nil, all of them. What is outside it is not in the package, and
+	// its absence says nothing about it: see Holds.
+	Scope *Scope `json:"scope,omitempty"`
+}
+
+// Scope is the part of a project a package holds.
+type Scope struct {
+	Buildings []string `json:"buildings"`
 }
 
 // Source is the drawing a floor was read from (its file name only).
@@ -365,6 +374,22 @@ func (p *Package) Get(id string) (any, bool) {
 }
 
 // Building, Floor, Space, Zone and Opening find a feature of that kind by ID.
+// Holds reports whether the package holds a building, so that what it says about
+// the building (its floors, spaces, what changed) is the whole truth: always, for a
+// package of the whole project; for a part of one, when the building is in its
+// scope. A system keeping a project's buildings leaves the others as they are.
+func (p *Package) Holds(buildingID string) bool {
+	if p.Manifest.Scope == nil {
+		return true
+	}
+	for _, b := range p.Manifest.Scope.Buildings {
+		if b == buildingID {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Package) Building(id string) *Building { f, _ := p.byID[id].(*Building); return f }
 func (p *Package) Floor(id string) *Floor       { f, _ := p.byID[id].(*Floor); return f }
 func (p *Package) Space(id string) *Space       { f, _ := p.byID[id].(*Space); return f }

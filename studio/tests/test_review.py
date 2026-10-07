@@ -841,3 +841,33 @@ def test_a_room_with_an_empty_shape_does_not_stop_the_floor_showing(review):
     ws.save(path)
     floor = r.floor(f_id)
     assert len(floor["spaces"]) == 23 and room.id not in {s["id"] for s in floor["spaces"]}
+
+
+def test_a_package_of_one_building(studio, tmp_path):
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Campus"})
+    code = created["code"]
+    for name, building, origin in (("a.dxf", "Admin", (100.0, 50.0)), ("c.dxf", "Labs", (100.0, 120.0))):
+        write_floor_dxf(tmp_path / name, office_floor(0), origin=origin, title="GROUND FLOOR PLAN")
+        call(f"{base}/api/projects/{code}/drawings/{name}?private=0", raw=(tmp_path / name).read_bytes())
+        _, job = call(f"{base}/api/projects/{code}/drawings/{name}/plans", {})
+        plan = max(wait(base, job)["plans"], key=lambda x: x["size"][0] * x["size"][1])
+        _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": name, "plans": [
+            {"index": plan["index"], "title": plan["title"], "region": plan["region"], "building": building, "ordinal": 0}]})
+        wait(base, job)
+    _, p = call(f"{base}/api/projects/{code}")
+    labs = next(b["id"] for b in p["locations"][0]["buildings"] if b["name"] == "Labs")
+
+    _, job = call(f"{base}/api/projects/{code}/export", {"buildings": [labs]})
+    done = wait(base, job)
+    assert done["file"] == f"{code}-001-LABS.storeypath" and done["counts"]["buildings"] == 1
+    with urllib.request.urlopen(f"{base}/api/projects/{code}/exports/{done['file']}") as res:
+        manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
+    assert manifest["scope"] == {"buildings": [labs]} and manifest["format_version"].startswith("0.4")
+
+    with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath?building={labs}") as res:
+        assert json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))["counts"]["buildings"] == 1
+    status, _ = call(f"{base}/api/projects/{code}/preview.storeypath?building={code}-SITE-NOPE")
+    assert status == 404
+    status, _ = call(f"{base}/api/projects/{code}/export", {"buildings": labs})
+    assert status == 400

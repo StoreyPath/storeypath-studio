@@ -208,7 +208,9 @@ class ExportRecord(BaseModel):
     sequence: int
     exported_at: datetime
     file: str
-    objects: dict[str, str]  # ID -> content hash, used for the next export's change list
+    objects: dict[str, str]  # ID -> content hash, used for the next export's change list: the whole
+    # project as last exported, a package of some buildings updating only theirs
+    buildings: list[str] | None = None  # the package held only these buildings
 
 
 class Project(BaseModel):

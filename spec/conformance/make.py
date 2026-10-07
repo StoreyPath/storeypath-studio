@@ -15,6 +15,9 @@ module in go/, the viewer's JavaScript) must read the same way.
   renamed BOARD ROOM, the prayer room F0-322 retyped a meeting room, and the open
   office's south half divided again (F0-331 smaller, a new zone F0-332): for
   systems to test what they make of a later export;
+- packages/campus-part.storeypath: one building of a two-building project (manifest
+  scope), its second export, after a room in each building was renamed: only the
+  Headquarters' rename is listed, and nothing of the Annex is retired;
 - localframe.json: points in Studio's local drawing metres and where they are on
   earth, for each building's placement, as Studio's projection gives them: a
   reader that turns lon/lat back into local metres must agree to a millimetre.
@@ -23,7 +26,7 @@ Readers make their own broken variants of these packages to test their checks.
 Run from studio/ after a format change, and commit the result:
 
     uv run python ../spec/conformance/make.py                  # all of them
-    uv run python ../spec/conformance/make.py simple-office    # one: campus, simple-office
+    uv run python ../spec/conformance/make.py simple-office    # one: campus, part, simple-office
 
 Every run makes new projects, so new IDs: remake only what changed.
 """
@@ -40,13 +43,15 @@ HERE = Path(__file__).resolve().parent
 
 
 def main(names: list[str]) -> None:
-    unknown = set(names) - {"campus", "simple-office"}
+    unknown = set(names) - {"campus", "part", "simple-office"}
     if unknown:
-        raise SystemExit(f"unknown: {', '.join(sorted(unknown))} (campus, simple-office)")
+        raise SystemExit(f"unknown: {', '.join(sorted(unknown))} (campus, part, simple-office)")
     work = Path(tempfile.mkdtemp())
     try:
         if not names or "campus" in names:
             campus(work)
+        if not names or "part" in names:
+            part(work)
         if not names or "simple-office" in names:
             simple_office(work)
     finally:
@@ -97,6 +102,26 @@ def campus(work: Path) -> None:
                             "local": [x, y], "lonlat": [lon, lat]})
     (HERE / "localframe.json").write_text(json.dumps({"tolerance_m": 0.001, "vectors": vectors}, indent=1) + "\n")
     print(f"wrote {out}/campus.storeypath, {out}/unplaced.storeypath and localframe.json")
+
+
+def part(work: Path) -> None:
+    """One building of the demo campus, exported after the whole project was."""
+    from storeypath.export import export_package
+    from storeypath.samples import build_demo
+    from storeypath.workspace import Override, Workspace
+
+    ws_path, _ = build_demo(work / "part")
+    ws = Workspace.load(ws_path)
+    if not ws.exports:
+        export_package(ws, work / "whole.storeypath")  # the whole project, first
+    for code in ("HQ", "ANNEX"):  # a room renamed in each building
+        room = next(r for r in sorted(ws.objects.values(), key=lambda r: r.id)
+                    if r.kind == "space" and f"-{code}-" in r.id and r.status != "retired")
+        ws.overrides[room.id] = Override(name=f"RENAMED {code}")
+    hq = next(f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings if b.code == "HQ")
+    out = HERE / "packages" / "campus-part.storeypath"
+    export_package(ws, out, buildings=[hq])
+    print(f"wrote {out}")
 
 
 def simple_office(work: Path) -> None:

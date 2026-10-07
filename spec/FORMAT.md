@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.3
+# StoreyPath package format — version 0.4
 
 A StoreyPath package (`*.storeypath`) describes one project: its locations, buildings,
 floors, the spaces on each floor (offices, corridors, elevators, …), the zones that
@@ -11,7 +11,7 @@ A copy of this document is included in every package.
 
 | File | Contents |
 |---|---|
-| `manifest.json` | Format version, project, export number, file list, counts, placements |
+| `manifest.json` | Format version, project, export number, file list, counts, placements, and the buildings it holds when not all of them (`scope`) |
 | `location.geojson` | Locations (sites, campuses) |
 | `buildings.geojson` | Buildings, with their footprint |
 | `floors.geojson` | Floors, with their outline, order, elevation and height |
@@ -168,6 +168,28 @@ position (openings).
 
 A system that skipped an export can use `all_retired` to clean up its mappings.
 
+## Part of a project
+
+A package may hold only some of a project's buildings: `manifest.json → scope`
+lists them.
+
+```json
+"scope": { "buildings": ["7KQ2MX-SITE-ENG"] }
+```
+
+It then holds those buildings, their floors and everything on them, and the
+locations they stand in; `sources`, `placements` and `counts` cover them alone.
+Without `scope` a package holds the whole project.
+
+What is outside the scope is not in the package, and its absence says nothing
+about it: a reader that keeps a project's buildings must leave the others as they
+are, and compare a building only with the last package that held it.
+
+`changes.json` lists what changed in those buildings alone since the previous
+export (of the whole project or a part of it): an ID outside the scope is never
+listed, nor retired. Export numbers run on across the project's packages, whole
+or in part, so a later package always has a higher `sequence`.
+
 ## Changes from 0.2
 
 - `zones.geojson` and the `zone` kind: open areas are one space divided into zones,
@@ -178,6 +200,12 @@ A system that skipped an export can use `all_retired` to clean up its mappings.
 
 0.3.1 adds the openings' `swings`, `sill_m` and `height_m`, and the spaces' `outdoor`.
 0.3.2 adds the spaces' and zones' `drawing_label` (and its column in `objects.csv`).
+
+## Changes from 0.3
+
+- `manifest.json → scope`: a package of some of a project's buildings (Part of a
+  project). A reader of 0.3 that imports packages would take the buildings left
+  out as removed: it must read `scope` before it applies a 0.4 package.
 
 ## Readers
 

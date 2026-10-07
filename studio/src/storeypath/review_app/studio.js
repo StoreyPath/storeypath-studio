@@ -551,7 +551,9 @@ function thumbnail(plan) {
 
 /** The 3D world showing the project as it is now: no export needed. */
 function worldUrl(code, { building, floor } = {}) {
-  const q = new URLSearchParams({ pkg: `/api/projects/${encodeURIComponent(code)}/preview.storeypath` });
+  const pkg = `/api/projects/${encodeURIComponent(code)}/preview.storeypath`;
+  const owner = building || (floor && floor.split("-").slice(0, 3).join("-")); // a floor's building: its ID's first three parts
+  const q = new URLSearchParams({ pkg: owner ? `${pkg}?building=${encodeURIComponent(owner)}` : pkg });
   if (building) q.set("building", building);
   if (floor) q.set("floor", floor);
   return `/viewer/examples/world/index.html?${q}`;
@@ -876,9 +878,15 @@ function openCard() {
 }
 
 function exportCard(code, p) {
+  // the whole project, or one building of it: its package says so, and lists what
+  // changed in that building alone
+  const buildings = p.locations.flatMap((l) => l.buildings.filter((b) => b.floors.some((f) => f.converted)));
+  const what = el("select", { "aria-label": "What to export" },
+    el("option", { value: "" }, "Whole project"),
+    ...buildings.map((b) => el("option", { value: b.id }, b.name)));
   const button = el("button", { class: "primary", type: "button", onclick: async () => {
     try {
-      const r = await runJob(api(`projects/${code}/export`, {}));
+      const r = await runJob(api(`projects/${code}/export`, what.value ? { buildings: [what.value] } : {}));
       toast(`Exported ${r.file}`);
       projectPage(code);
     } catch (e) {
@@ -890,8 +898,8 @@ function exportCard(code, p) {
     title: "One file to send: a package any system reads, carrying this project (its drawings, corrections and edits) for another Studio to continue it" },
   "Download project");
   return el("section", { class: "card" },
-    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, button),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before. Download project gives one file to send to someone who continues the project in their Studio: they open it on their Projects page."),
+    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, buildings.length > 1 ? what : null, button),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before. A package of one building holds that building alone and says so: a system that reads it leaves the others as they are. Download project gives one file to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),

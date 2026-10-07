@@ -34,6 +34,7 @@ const (
 	ProblemObjects      = "OBJECTS"       // objects.csv does not list exactly the features
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
 	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
+	ProblemScope        = "SCOPE"         // a package of part of a project holds a building its scope does not list, or lacks one it does
 )
 
 var kindLevel = map[string]string{
@@ -114,6 +115,20 @@ func (p *Package) Validate() []Problem {
 	}
 	for _, b := range p.Buildings {
 		parent(b.ID, b.Location, "location", FileBuildings)
+	}
+	if m.Scope != nil {
+		listed := map[string]bool{}
+		for _, id := range m.Scope.Buildings {
+			listed[id] = true
+			if p.Building(id) == nil {
+				add(ProblemScope, FileManifest, id, "scope lists building %s, which is not in the package", id)
+			}
+		}
+		for _, b := range p.Buildings {
+			if !listed[b.ID] {
+				add(ProblemScope, FileBuildings, b.ID, "building %s is in the package but not in its scope", b.ID)
+			}
+		}
 	}
 	for _, f := range p.Floors {
 		parent(f.ID, f.Building, "building", FileFloors)

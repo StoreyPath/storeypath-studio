@@ -27,10 +27,11 @@ converting, exporting — run as jobs, one at a time, and report progress.
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
-    POST /api/projects/<code>/export           → job
+    POST /api/projects/<code>/export           → job; {"buildings": [IDs]} for some of them
     GET  /api/projects/<code>/exports/<file>
-    GET  /api/projects/<code>/preview.storeypath   the project as it is now, as a
-                                               package (not recorded as an export)
+    GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
+                                               building) as it is now, as a package
+                                               (not recorded as an export)
     GET  /api/projects/<code>/project.storeypath   the project to send: a package that
                                                carries it, to be continued elsewhere
     PUT  /api/open[?replace=<name>]               a project from a file: a package, or a
@@ -773,8 +774,12 @@ class Studio:
             ws.save(ws_path)
         return {"placement": b.placement.model_dump()}
 
-    def export(self, code: str) -> Job:
+    def export(self, code: str, body: dict | None = None) -> Job:
+        """A package of the project, or (``buildings``: IDs) of some of its buildings."""
         ws_path = self.path(code)
+        buildings = (body or {}).get("buildings")
+        if buildings is not None and (not isinstance(buildings, list) or not all(isinstance(b, str) for b in buildings)):
+            raise ValueError("buildings: a list of building IDs")
 
         def run(job: Job):
             from .export import export_package
@@ -785,9 +790,11 @@ class Studio:
                 folder = ws_path.parent / "exports"
                 folder.mkdir(exist_ok=True)
                 seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
-                out = folder / f"{ws.id}-{seq:03d}.storeypath"  # by code, as the folder
+                # by code, as the folder; a part of the project with its building's code
+                part = "" if buildings is None else "-" + (buildings[0].rsplit("-", 1)[-1] if len(buildings) == 1 else "PART")
+                out = folder / f"{ws.id}-{seq:03d}{part}.storeypath"
                 job.say(f"writing {out.name}")
-                manifest = export_package(ws, out)
+                manifest = export_package(ws, out, buildings=buildings)
                 ws.save(ws_path)
             errors = validate_package(out)
             for e in errors:
@@ -848,16 +855,19 @@ class Studio:
         finally:
             tmp.unlink(missing_ok=True)
 
-    def preview(self, code: str) -> bytes:
+    def preview(self, code: str, building: str | None = None) -> bytes:
         """The project as a package, as it is now, for the 3D view: built in memory
-        and not entered as an export."""
-        from .export import export_package
+        and not entered as an export. With ``building``, that building alone."""
+        from .export import ExportError, export_package
 
         ws = Workspace.load(self.path(code))  # saved whole (workspace.py): no lock to read it
         if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
-        export_package(ws, buf, record=False)
+        try:
+            export_package(ws, buf, record=False, buildings=[building] if building else None)
+        except ExportError as e:
+            raise NotFound(str(e)) from None
         return buf.getvalue()
 
     def export_file(self, code: str, name: str) -> Path:
@@ -1171,11 +1181,11 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             case "POST", ["projects", code, "buildings", b_id, "placement"]:
                 return studio.place(code, b_id, body)
             case "POST", ["projects", code, "export"]:
-                return studio.export(code)
+                return studio.export(code, body)
             case "GET", ["projects", code, "exports", name]:
                 return studio.export_file(code, name)
             case "GET", ["projects", code, "preview.storeypath"]:
-                return studio.preview(code)
+                return studio.preview(code, (query.get("building") or [None])[0])
             case "GET", ["projects", code, "project.storeypath"]:
                 return studio.project_file(code)
             case "PUT", ["open"]:

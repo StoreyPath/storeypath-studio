@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.3.2"
+FORMAT_VERSION = "0.4.0"
 FILE_EXTENSION = ".storeypath"
 
 FILES = {
@@ -197,6 +197,13 @@ class PlacementInfo(BaseModel):
         "shape and size, but its position on earth is not known"))
 
 
+class Scope(BaseModel):
+    """The part of the project a package holds, when it is not all of it."""
+
+    buildings: list[str] = Field(description="IDs of the buildings in the package; the rest of the project is "
+                                             "not in it, and its absence says nothing about them")
+
+
 class Manifest(BaseModel):
     format: Literal["storeypath-package"] = FORMAT_NAME
     format_version: str = FORMAT_VERSION
@@ -210,6 +217,7 @@ class Manifest(BaseModel):
     types: dict[str, list[str]]
     sources: list[SourceInfo]
     placements: dict[str, PlacementInfo]
+    scope: Scope | None = Field(default=None, description="Only some of the project's buildings; absent: all of it")
 
 
 class Changes(BaseModel):
