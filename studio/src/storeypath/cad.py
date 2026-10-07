@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import shutil
 import statistics
 import subprocess
@@ -115,13 +116,35 @@ def read_drawing_to_change(path: str | Path) -> Drawing:
 def _parse(path: Path) -> Drawing:
     suffix = path.suffix.lower()
     if suffix == ".dxf":
-        try:
-            return _audited(ezdxf.readfile(path))
-        except (OSError, ezdxf.DXFStructureError) as e:
-            raise DrawingError(f"cannot read {path.name}: {e}") from e
+        return _audited(_read_dxf(path, path.name))
     if suffix == ".dwg":
         return _audited(_read_dwg(path))
     raise DrawingError(f"unsupported file type {suffix!r}: expected .dwg or .dxf")
+
+
+def _read_dxf(path: Path, name: str) -> Drawing:
+    """A DXF file; a damaged one read as far as ezdxf can recover it (said in the
+    drawing's notes), DrawingError when nothing can be read from it."""
+    try:
+        return ezdxf.readfile(path)
+    except OSError as e:
+        raise DrawingError(f"cannot read {name}: {e}") from e
+    except Exception as e:  # damaged: a bad value, a section cut short…
+        first = e
+    try:
+        from ezdxf import recover
+
+        doc, _ = recover.readfile(path)
+    except Exception as e:
+        raise DrawingError(f"cannot read {name}: {first}") from e
+    if not len(doc.modelspace()):
+        raise DrawingError(f"cannot read {name}: {first}")
+    _note(doc, f"{name} is damaged ({first}): it was read as far as it could be; check its floors in review")
+    return doc
+
+
+def _note(doc: Drawing, note: str) -> None:
+    doc.__dict__.setdefault("_storeypath_notes", []).append(note)
 
 
 def _audited(doc: Drawing) -> Drawing:
@@ -129,32 +152,59 @@ def _audited(doc: Drawing) -> Drawing:
     taken out (an insert of a block the drawing does not define, a spline with too
     few points, a hatch with a broken boundary), as CAD programs do on opening, so
     one broken entity does not stop the reading of a floor. What was taken out is
-    kept on the drawing (``broken_entities``) for the conversion report."""
+    said in the drawing's notes (``read_notes``)."""
     try:
         auditor = doc.audit()
     except Exception:  # the auditor itself fails on it: read as it is
         return doc
-    doc._storeypath_removed = [f.message for f in auditor.fixes if f.message.startswith(("Deleted", "Removed"))]
+    removed = [f.message for f in auditor.fixes if f.message.startswith(("Deleted", "Removed"))]
+    if removed:
+        more = f" (and {len(removed) - 1} more)" if len(removed) > 1 else ""
+        _note(doc, f"{len(removed)} broken entities were left out of the drawing as it was read: {removed[0]}{more}")
     return doc
 
 
-def broken_entities(doc: Drawing) -> list[str]:
-    """What was taken out of a drawing as broken when it was read (see _audited)."""
-    return getattr(doc, "_storeypath_removed", [])
+def read_notes(doc: Drawing) -> list[str]:
+    """What a person should know of how a drawing was read: a damaged file, broken
+    entities left out. For the conversion report."""
+    return list(getattr(doc, "_storeypath_notes", []))
+
+
+DWG_TIMEOUT_S = 600  # a DWG converter still at work after this long is stopped
+# What LibreDWG says of a file that is damaged, not merely of objects it does not know
+# (it reports errors on many good files' materials and the like).
+DWG_DAMAGE = re.compile(r"CRC mismatch|Invalid object type|Invalid class index|Object handle not found|"
+                        r"section.*overflow|error parsing", re.IGNORECASE)
 
 
 def _read_dwg(path: Path) -> Drawing:
     if shutil.which("dwg2dxf"):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / (path.stem + ".dxf")
-            result = subprocess.run(
-                ["dwg2dxf", "-y", "-o", str(out), str(path)], capture_output=True, text=True
-            )
-            if not out.exists():
-                raise DrawingError(f"dwg2dxf failed on {path.name}: {result.stderr.strip()}")
-            return ezdxf.readfile(out)
+            try:
+                result = subprocess.run(["dwg2dxf", "-y", "-o", str(out), str(path)], capture_output=True,
+                                        text=True, errors="replace", timeout=DWG_TIMEOUT_S)
+            except subprocess.TimeoutExpired as e:
+                raise DrawingError(f"dwg2dxf did not finish converting {path.name} in {DWG_TIMEOUT_S // 60} "
+                                   "minutes; save the drawing as DXF instead") from e
+            except OSError as e:
+                raise DrawingError(f"dwg2dxf could not run: {e}") from e
+            said = [ln.strip() for ln in result.stderr.splitlines() if ln.strip()]
+            if not out.exists() or out.stat().st_size == 0:
+                raise DrawingError(f"dwg2dxf failed on {path.name}: {' '.join(said[-3:])}")
+            doc = _read_dxf(out, path.name)
+            damage = [ln for ln in said if DWG_DAMAGE.search(ln)]
+            if result.returncode != 0 or damage:
+                why = (damage or [ln for ln in said if ln.startswith("ERROR")] or said or ["no reason given"])[0]
+                _note(doc, f"{path.name} looks damaged: converting it said \"{why}\" (and {len(said) - 1} more); "
+                           "parts of it may be missing: check its floors in review, or save it again from the "
+                           "CAD program")
+            return doc
     if odafc.is_installed():
-        return odafc.readfile(str(path))
+        try:
+            return odafc.readfile(str(path))
+        except Exception as e:
+            raise DrawingError(f"the ODA File Converter could not read {path.name}: {e}") from e
     raise DrawingError(
         "reading DWG needs a converter: install LibreDWG (provides dwg2dxf) or the "
         "ODA File Converter, or save the drawing as DXF"

@@ -226,6 +226,85 @@ def test_floors_drawn_in_other_units_are_lined_up_in_metres(tmp_path):
     assert abs(x - 30.0) < 0.05 and abs(y - 10.0) < 0.05
 
 
+# ---- files that cannot be read, or only in part ------------------------------------
+
+
+def _bad_files(d: Path) -> dict[str, bytes]:
+    write_floor_dxf(d / "base.dxf", simple_office())
+    base = (d / "base.dxf").read_bytes()
+    return {
+        "empty.dxf": b"",
+        "garbage.dxf": bytes(range(256)) * 16,
+        "truncated.dxf": base[: len(base) // 3],
+        "text.dxf": b"hello world\nthis is not a dxf\n",
+        "badfloat.dxf": base.replace(b"\n 10\n", b"\n 10\nNOTAFLOAT\n", 5),
+        "utf16.dxf": base.decode("cp1252", "ignore").encode("utf-16"),
+    }
+
+
+def test_a_file_that_cannot_be_read_is_a_drawing_error(tmp_path):
+    from storeypath.cad import DrawingError, read_drawing
+
+    for name, data in _bad_files(tmp_path).items():
+        (tmp_path / name).write_bytes(data)
+        with pytest.raises(DrawingError, match="cannot read"):
+            read_drawing(tmp_path / name)
+
+
+def _fake_dwg2dxf(d: Path, monkeypatch, body: str) -> None:
+    """A stand-in for LibreDWG's dwg2dxf on PATH: a shell script with ``body``
+    ($OUT is where it writes the DXF)."""
+    import os
+
+    bin_dir = d / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "dwg2dxf"
+    script.write_text(f'#!/bin/sh\nOUT="$3"\n{body}\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_a_dwg_converted_with_signs_of_damage_is_read_and_said(tmp_path, monkeypatch):
+    from storeypath.cad import read_drawing, read_notes
+
+    write_floor_dxf(tmp_path / "plan.dxf", simple_office())
+    _fake_dwg2dxf(tmp_path, monkeypatch, f'cp "{tmp_path / "plan.dxf"}" "$OUT"\n'
+                                         'echo "ERROR: Invalid specularmap.transmatrix size 16" >&2\n'
+                                         'echo "Warning: check_CRC mismatch 23047-23112 = 65" >&2')
+    (tmp_path / "plan.dwg").write_bytes(b"AC1032")
+    notes = read_notes(read_drawing(tmp_path / "plan.dwg"))
+    assert len(notes) == 1 and "plan.dwg looks damaged" in notes[0] and "CRC mismatch" in notes[0]
+
+
+def test_a_dwg_converted_cleanly_has_nothing_to_say(tmp_path, monkeypatch):
+    from storeypath.cad import read_drawing, read_notes
+
+    write_floor_dxf(tmp_path / "plan.dxf", simple_office())
+    _fake_dwg2dxf(tmp_path, monkeypatch, f'cp "{tmp_path / "plan.dxf"}" "$OUT"\n'
+                                         'echo "ERROR: Invalid specularmap.transmatrix size 16" >&2')
+    (tmp_path / "plan.dwg").write_bytes(b"AC1032")
+    assert read_notes(read_drawing(tmp_path / "plan.dwg")) == []
+
+
+def test_a_dwg_converter_that_hangs_is_stopped(tmp_path, monkeypatch):
+    import storeypath.cad as cad
+
+    _fake_dwg2dxf(tmp_path, monkeypatch, "sleep 30")
+    monkeypatch.setattr(cad, "DWG_TIMEOUT_S", 1)
+    (tmp_path / "plan.dwg").write_bytes(b"AC1032")
+    with pytest.raises(cad.DrawingError, match="did not finish"):
+        cad.read_drawing(tmp_path / "plan.dwg")
+
+
+def test_a_dwg_converter_that_writes_a_broken_dxf_is_a_drawing_error(tmp_path, monkeypatch):
+    from storeypath.cad import DrawingError, read_drawing
+
+    _fake_dwg2dxf(tmp_path, monkeypatch, 'printf "  0\\nSECTION\\n  2\\nENTITIES\\n 10\\nNOTAFLOAT\\n" > "$OUT"\nexit 1')
+    (tmp_path / "plan.dwg").write_bytes(b"AC1032")
+    with pytest.raises(DrawingError, match="cannot read plan.dwg"):
+        read_drawing(tmp_path / "plan.dwg")
+
+
 # ---- plans inside a block ---------------------------------------------------------
 
 

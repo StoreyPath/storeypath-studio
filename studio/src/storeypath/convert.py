@@ -15,7 +15,7 @@ from shapely import STRtree, set_precision
 from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
-from .cad import broken_entities, file_sha256, meters_per_unit, read_drawing
+from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
 from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
                       keep_to_the_building, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
@@ -121,10 +121,7 @@ def convert_floor(
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = analysis.summary() if analysis is not None else []
         floor.source.sha256 = sha
-    if removed := broken_entities(doc):
-        more = f" (and {len(removed) - 1} more)" if len(removed) > 1 else ""
-        report.warnings.append(f"{len(removed)} broken entities were left out of the drawing as it was read: "
-                               f"{removed[0]}{more}")
+    report.warnings += read_notes(doc)
     if reader.model_failed:
         report.warnings.append(f"the language model was not used: {reader.model_failed}")
     if spot_failed:
