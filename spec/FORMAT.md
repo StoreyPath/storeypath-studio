@@ -208,9 +208,13 @@ kept for good and never given to another type (a type no longer used is `retired
 English and Arabic names, a `category` (furniture, equipment, appliance), a size, how
 it is mounted (`floor`, `wall`, `ceiling`), a colour, and its `fields`. Each field
 says who enters it: `owner: "storeypath"` (what is physical: a colour, a size, a
-model) or `"system"` (the system that manages the asset: its network, its asset tag).
+model) or `"system"` (the system that manages the asset: an access point's network).
 A reader keeps the `system` fields itself, by the item's ID; the package never
 carries them. The catalogue is the organization's: the same for every project.
+
+Items are for asset management: where things are, and where they have been. They
+are not inventory: nothing in a package says who holds what. An inventory system
+keys its own records to the items' IDs, as every system keys its own to StoreyPath's.
 
 Items go through `changes.json` as everything else: one moved, turned or given other
 details is `changed`, so a system can keep the history of where each item has been.

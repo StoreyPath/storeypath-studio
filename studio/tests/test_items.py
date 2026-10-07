@@ -66,7 +66,7 @@ def test_items_in_a_package_and_what_changed_of_them(converted, tmp_path):
     ws, d, f_id, b_id, *_ = converted
     office = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and r.type == "office")
     mx, my = shape(office.geometry).representative_point().coords[0]
-    desk = ws.add_item("DESK-MANAGER", f_id, mx, my, rotation=90, values={"asset_tag": "kept by wayfinder"})
+    desk = ws.add_item("DESK-MANAGER", f_id, mx, my, rotation=90, values={"anything": "not its type's"})
     ap = ws.add_item("ACCESS-POINT", f_id, mx + 0.3, my, values={"color": "#ff0000"})
 
     def package(name):
@@ -80,7 +80,7 @@ def test_items_in_a_package_and_what_changed_of_them(converted, tmp_path):
     p = items[desk.id]["properties"]
     assert p["space_id"] == office.id and p["floor_id"] == f_id and p["building_id"] == b_id
     assert p["type"] == "DESK-MANAGER" and (p["width_m"], p["depth_m"]) == (1.8, 0.9)
-    assert p["values"] == {}  # the asset tag is the managing system's field, never sent
+    assert p["values"] == {}  # only its type's StoreyPath fields are sent
     assert items[ap.id]["properties"]["values"] == {"color": "#ff0000"} and items[ap.id]["properties"]["elevation_m"] is None
     foot = shape(items[desk.id]["geometry"])
     assert foot.geom_type == "Polygon" and len(foot.exterior.coords) == 5  # its footprint, four corners

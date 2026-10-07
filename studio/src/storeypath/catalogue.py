@@ -5,8 +5,12 @@ One catalogue serves every project of a Studio (``catalogue.json`` in its data
 folder) and goes with every package, so a system reading it knows each type and
 its fields. A type's code is its identity: kept for good, never given to another
 type; a type no longer used is retired, not removed. Each field says who enters
-it: StoreyPath (what is physical: size, colour) or the system that manages the
-asset (wayfinder: its network, its asset tag).
+it: StoreyPath (what is physical: size, colour, model) or the system that manages
+the asset (wayfinder: an access point's network).
+
+This is asset management: where things are and have been, not inventory. Nothing
+here says which employee holds what; an inventory system keys its records to the
+items' IDs, as any system keys its own to StoreyPath's.
 """
 
 from __future__ import annotations
@@ -92,8 +96,7 @@ class Catalogue(BaseModel):
 
 def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str) -> ItemType:
     return ItemType(code=code, name_en=en, name_ar=ar, category="furniture", width=width, depth=depth,
-                    height=0.75, mount="floor", color=color,
-                    fields=[ItemField(key="asset_tag", name_en="Asset tag", name_ar="رقم الأصل", owner="system")])
+                    height=0.75, mount="floor", color=color)
 
 
 def default_catalogue() -> Catalogue:
@@ -110,21 +113,18 @@ def default_catalogue() -> Catalogue:
         ItemType(code="COPIER", name_en="Central photocopier", name_ar="آلة تصوير مركزية", category="equipment",
                  width=1.2, depth=0.7, height=1.2, mount="floor", color="#3b6ea5",
                  fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
-                         ItemField(key="asset_tag", name_en="Asset tag", name_ar="رقم الأصل", owner="system"),
                          ItemField(key="network_name", name_en="Network name", name_ar="اسم الشبكة", owner="system")]),
         ItemType(code="ACCESS-POINT", name_en="Wireless access point", name_ar="نقطة وصول لاسلكية", category="equipment",
                  width=0.25, depth=0.25, height=0.05, mount="ceiling", color="#1f9d8b",
                  fields=[ItemField(key="color", name_en="Colour", name_ar="اللون", kind="color"),
                          ItemField(key="ssid", name_en="Network (SSID)", name_ar="اسم الشبكة اللاسلكية", owner="system"),
-                         ItemField(key="vlan", name_en="VLAN", name_ar="الشبكة الافتراضية", kind="number", owner="system"),
-                         ItemField(key="asset_tag", name_en="Asset tag", name_ar="رقم الأصل", owner="system")]),
+                         ItemField(key="vlan", name_en="VLAN", name_ar="الشبكة الافتراضية", kind="number", owner="system")]),
         ItemType(code="SOFA", name_en="Sofa", name_ar="أريكة", category="furniture",
                  width=2.0, depth=0.9, height=0.8, mount="floor", color="#7d6a8f",
                  fields=[ItemField(key="seats", name_en="Seats", name_ar="عدد المقاعد", kind="number")]),
         ItemType(code="TV", name_en="TV screen", name_ar="شاشة تلفاز", category="appliance",
                  width=1.4, depth=0.1, height=0.8, mount="wall", color="#2b2b30",
-                 fields=[ItemField(key="size_in", name_en="Size (inches)", name_ar="المقاس (بوصة)", kind="number"),
-                         ItemField(key="asset_tag", name_en="Asset tag", name_ar="رقم الأصل", owner="system")]),
+                 fields=[ItemField(key="size_in", name_en="Size (inches)", name_ar="المقاس (بوصة)", kind="number")]),
     ])
 
 
