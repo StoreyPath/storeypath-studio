@@ -177,6 +177,22 @@ def _name_zones(ex: FloorExtraction, zones: list, profile, reader: TextReader, s
     type_rooms(zones, spotted)
 
 
+def _keep_package_values(ws: Workspace, record: ObjectRecord) -> None:
+    """A space of a project rebuilt from a package (bundle.py), read from its drawing
+    for the first time: what the package said of it (what a person may have set) is
+    kept as its correction, over what the drawing is read as."""
+    from .workspace import Override
+
+    o = ws.overrides.get(record.id) or Override()
+    if o.type is None and record.type in {t.value for t in SpaceType}:
+        o.type = SpaceType(record.type)
+    if o.name is None:
+        o.name = record.name or ""
+    if o.number is None:
+        o.number = record.number or ""
+    ws.overrides[record.id] = o
+
+
 def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> ConversionReport:
     """Register an extracted floor in the workspace, reusing IDs where objects match."""
     report = ConversionReport(floor_id, method=ex.method, warnings=list(ex.warnings))
@@ -206,6 +222,8 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction) -> Conve
             report.added.append(record_id)
         else:
             report.kept.append(record.id)
+            if record.type_source == "package":
+                _keep_package_values(ws, record)
         record.kind = kind
         record.type, record.type_source = obj.type, obj.type_source
         record.name, record.number = obj.name, obj.number

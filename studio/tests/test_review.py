@@ -681,3 +681,50 @@ def test_an_opening_drawn_in_review_is_given_another_size(review):
         r.edit(f_id, {"resize": {"at": [c.x, c.y], "sill": "high"}})
     with pytest.raises(NotFound):
         r.edit(f_id, {"resize": {"at": [c.x + 500, c.y + 500], "width": 1.0}})
+
+
+def test_a_package_opened_gets_its_drawing_back_and_keeps_its_ids(studio, tmp_path):
+    # A sheet with two floors side by side (the second moved onto the first), exported
+    # as a package; the project is opened from the package alone (no drawing), and the
+    # sheet added again to floor 1: lined up on the walls it has, its rooms keep their
+    # IDs and what was set on them.
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Offices"})
+    code = created["code"]
+    write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),
+                                             (office_floor(1), (170.0, 50.0), "FIRST FLOOR PLAN")])
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=(tmp_path / "sheet.dxf").read_bytes())
+    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
+    plans = sorted(wait(base, job)["plans"], key=lambda p: p["region"][0])
+    _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
+        {"index": p["index"], "title": p["title"], "region": p["region"], "building": "Main", "ordinal": n}
+        for n, p in enumerate(plans)]})
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    b_id = f"{ws.id}-{ws.locations[0].code}-{ws.locations[0].buildings[0].code}"
+    first = next(f for f in ws.building(b_id).floors if f.ordinal == 1)
+    first_id = f"{b_id}-{first.code}"
+    assert abs(first.source.offset[0]) > 10  # moved onto the ground floor
+    rooms = {r.id for r in ws.floor_objects(first_id) if r.kind == "space"}
+    named = next(r for r in ws.floor_objects(first_id) if r.kind == "space")
+    call(f"{base}/api/projects/{code}/objects/{named.id}", {"correction": {"name": "Board room"}})
+
+    with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath") as res:
+        package = res.read()
+    call(f"{base}/api/projects/{code}/delete", {"confirm": "Offices"})
+    status, opened = call(f"{base}/api/open", raw=package)
+    assert status == 200 and opened["how"] == "package" and opened["code"] == code
+    status, again = call(f"{base}/api/open", raw=package)
+    assert status == 409 and again["name"] == "Offices"
+
+    call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=(tmp_path / "sheet.dxf").read_bytes())
+    _, job = call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})
+    p = sorted(wait(base, job)["plans"], key=lambda p: p["region"][0])[1]
+    status, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
+        {"index": p["index"], "title": p["title"], "region": p["region"], "building_id": b_id, "ordinal": 1, "replace": True}]})
+    assert status == 200, job
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    assert {r.id for r in ws.floor_objects(first_id) if r.kind == "space"} == rooms  # the same rooms, the same IDs
+    assert ws.effective(ws.objects[named.id])["name"] == "Board room"  # kept over the drawing's reading
+    assert ws.floor(first_id).source.path.endswith("sheet.dxf")

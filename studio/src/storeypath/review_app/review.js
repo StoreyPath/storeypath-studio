@@ -262,7 +262,8 @@ async function loadPrint(id) {
 
 function renderFloorMeta() {
   const f = state.floor;
-  const how = { walls: "Spaces found from walls", outlines: "Spaces from room outlines" }[f.method];
+  const how = { walls: "Spaces found from walls", outlines: "Spaces from room outlines",
+    package: "From a package, without its drawing" }[f.method];
   const parts = [f.converted_at ? how || "Converted" : "Not converted yet"];
   if (f.source) parts.push(f.source);
   if (f.converted_at) parts.push(new Date(f.converted_at).toLocaleString());
@@ -1154,7 +1155,7 @@ function renderItemEditor() {
   $("it-meta").textContent = openingMeta(d);
   $("it-delete").textContent = d.drawn ? "Take away" : d.ignored ? "Restore" : "Delete";
   $("it-flags").textContent = d.ignored ? "Deleted" : "";
-  $("it-size").hidden = d.ignored;
+  $("it-size").hidden = d.ignored || !readable();
   fillSizeForm($("it-size"), d);
 }
 
@@ -1204,6 +1205,9 @@ function resize(d, sizes) {
 
 // ---- the right-click menu --------------------------------------------------
 
+/** Whether the floor has its drawing, to read it again with what is added. */
+const readable = () => Boolean(state.floor?.source);
+
 function closeMenu() {
   const m = $("menu");
   if (!m.hidden) {
@@ -1240,7 +1244,7 @@ function openMenu(cx, cy, p) {
   if (d) {
     selectItem({ kind: "door", id: d.id });
     items.push(el("div", { class: "heading" }, openingName(d)), el("div", { class: "meta" }, openingMeta(d) || " "));
-    if (!d.ignored) items.push(menuItem("Change size…", () => sizeMenu(cx, cy, d)));
+    if (!d.ignored) items.push(menuItem("Change size…", () => sizeMenu(cx, cy, d), { disabled: !readable(), hint: readable() ? "" : "needs its drawing" }));
     items.push(menuItem(d.drawn ? "Take it away" : d.ignored ? "Restore" : "Delete", () => deleteItem(), { danger: !d.ignored || d.drawn, hint: "Del" }));
     items.push(el("hr"));
   } else if (line) {
@@ -1256,13 +1260,14 @@ function openMenu(cx, cy, p) {
       { danger: !s.ignored, hint: s.ignored ? "" : "Del" }));
     items.push(el("hr"));
   }
+  // what is added is read with the floor's drawing: a floor from a package has none yet
   const onWall = Boolean(openingAt(p, 0.9));
-  const off = onWall ? "" : "on a wall";
-  items.push(menuItem("Add a door here", () => addOpening("door", p), { disabled: !onWall, hint: off }));
-  items.push(menuItem("Add a window here", () => addOpening("window", p), { disabled: !onWall, hint: off }));
-  items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall, hint: off }));
-  items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { hint: "W" }));
-  items.push(menuItem("Divide a space from here", () => startLine("divide", p), { hint: "V" }));
+  const off = !readable() ? "needs its drawing" : onWall ? "" : "on a wall";
+  items.push(menuItem("Add a door here", () => addOpening("door", p), { disabled: !onWall || !readable(), hint: off }));
+  items.push(menuItem("Add a window here", () => addOpening("window", p), { disabled: !onWall || !readable(), hint: off }));
+  items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall || !readable(), hint: off }));
+  items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { disabled: !readable(), hint: readable() ? "W" : "needs its drawing" }));
+  items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? "V" : "needs its drawing" }));
   $("menu").replaceChildren(...items);
   placeMenu(cx, cy);
   $("menu").querySelector("button:not(:disabled)")?.focus();
@@ -1407,6 +1412,7 @@ function setupPanel() {
     }
     if (e.key === "n" || e.key === "N") nextToReview();
     else if (e.key === "f" || e.key === "F") fit();
+    else if (!readable() && "wWvVdDoO".includes(e.key)) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
     else if (e.key === "w" || e.key === "W") setTool("wall");
     else if (e.key === "v" || e.key === "V") setTool("divide");
     else if (e.key === "d" || e.key === "D") setTool("door");

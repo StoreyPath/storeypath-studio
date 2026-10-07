@@ -22,8 +22,13 @@ A copy of this document is included in every package.
 | `changes.json` | IDs added, changed and retired since the previous export |
 | `schema/*.schema.json` | JSON Schema for every JSON file |
 | `FORMAT.md` | This document |
+| `studio/` | Only in a project sent to be continued in another StoreyPath Studio: the project itself (its workspace, with every correction and edit, and its drawings). Other readers ignore it. |
 
 Readers must locate files through `manifest.json → files`, not by fixed names.
+
+The files are JSON, GeoJSON and CSV in a ZIP archive, each compressed on its own
+(a floor's plan is typically a tenth of its size in the archive), so a reader takes
+only the files it needs, one at a time, and can parse a file as it reads it.
 
 ## IDs
 

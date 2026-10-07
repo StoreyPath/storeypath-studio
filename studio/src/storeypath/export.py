@@ -269,10 +269,12 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
     return buf.getvalue()
 
 
-def export_package(ws: Workspace, out_path, *, record: bool = True) -> Manifest:
+def export_package(ws: Workspace, out_path, *, record: bool = True, extra: dict | None = None) -> Manifest:
     """Write the package to ``out_path`` (a path, or a binary file object). With
     ``record`` the export is entered in the workspace, so the next one lists what
-    changed since; without it (a preview) the workspace is left as it was."""
+    changed since; without it (a preview) the workspace is left as it was.
+    ``extra`` adds files (name → bytes or a path): the project itself, in
+    ``studio/``, for another Studio to continue it (bundle.py)."""
     features = build_features(ws)
     hashes = {f["id"]: _hash(f) for fs in features.values() for f in fs}
 
@@ -294,7 +296,7 @@ def export_package(ws: Workspace, out_path, *, record: bool = True) -> Manifest:
         generator=Generator(name="storeypath", version=version("storeypath")),
         project=ProjectInfo(id=ws.id, name=ws.project.name),
         export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
-        files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
+        files={**FILES, "spec": "FORMAT.md", "schemas": "schema/", **({"studio": "studio/"} if extra else {})},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
                "opening": [t.value for t in OpeningType]},
@@ -319,6 +321,11 @@ def export_package(ws: Workspace, out_path, *, record: bool = True) -> Manifest:
         z.writestr("FORMAT.md", format_spec())
         for name, schema in json_schemas().items():
             z.writestr(f"schema/{name}", json.dumps(schema, indent=2))
+        for name, data in (extra or {}).items():
+            if isinstance(data, Path):
+                z.write(data, name)
+            else:
+                z.writestr(name, data)
 
     if record:
         ws.exports.append(ExportRecord(sequence=sequence, exported_at=now, file=Path(out_path).name, objects=hashes))

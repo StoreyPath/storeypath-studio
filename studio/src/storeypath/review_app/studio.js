@@ -27,7 +27,7 @@ async function api(path, body, { method, raw } = {}) {
   }
   const res = await fetch(`/api/${path}`, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status, data });
   return data;
 }
 
@@ -124,6 +124,7 @@ async function projectsPage() {
       el("h1", {}, "Projects"),
       el("p", { class: "lead" }, "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms.")),
     el("section", { class: "card" }, form),
+    openCard(),
     projects.length
       ? el("section", { class: "projects" }, projects.map((p) =>
           el("a", { class: "card project-card", href: `#/p/${p.code}` },
@@ -572,7 +573,8 @@ function buildingsCard(code, p) {
         el("td", {}, f.drawing || "–", el("div", { class: "muted small" }, f.view || "")),
         el("td", {}, f.layers.length
           ? el("details", {}, el("summary", {}, `${f.layers.length} layers recognised`), el("ul", { class: "layers" }, f.layers.map((l) => el("li", {}, l))))
-          : el("span", { class: "muted small" }, f.converted ? "with a layer profile" : "not converted")),
+          : el("span", { class: "muted small" }, f.method === "package" ? "from a package: add its drawing to read it again"
+            : f.converted ? "with a layer profile" : "not converted")),
         el("td", { class: "actions" }, f.converted ? [
           el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` }, "Review"),
           el("a", { href: worldUrl(code, { floor: f.id }), target: "_blank", title: "This floor in 3D" }, "3D"),
@@ -605,6 +607,40 @@ function placementForm(code, b) {
       el("label", {}, "Latitude", lat), el("label", {}, "Longitude", lon), el("label", {}, "Bearing of up (°)", bearing), save));
 }
 
+// ---- a project sent, or a package -------------------------------------------------
+
+/** Open a .storeypath: a project sent from another Studio (as it was), or any package
+ * (rebuilt from it: the same IDs; its floors have no drawing until one is added). */
+function openCard() {
+  const input = el("input", { type: "file", accept: ".storeypath", hidden: true });
+  const drop = el("label", { class: "drop" }, input,
+    el("strong", {}, "Open a project or a package"), el("br"),
+    "Drop a .storeypath here, or click to choose it: a project sent from another Studio, or any package.");
+  const open = async (file, replace = null) => {
+    try {
+      toast(`Opening ${file.name}…`);
+      const r = await api(`open${replace !== null ? `?replace=${encodeURIComponent(replace)}` : ""}`, undefined, { raw: file });
+      toast(r.how === "project"
+        ? `${r.name} opened as it was sent: ${r.floors} floor${r.floors === 1 ? "" : "s"}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
+        : `${r.name} rebuilt from the package: ${r.floors} floor${r.floors === 1 ? "" : "s"}, the same IDs. To read a floor again, add its drawing to it.`, false, 12000);
+      location.hash = `#/p/${r.code}`;
+    } catch (e) {
+      if (e.status === 409 && replace === null) {
+        const typed = prompt(`${e.data.name} (${e.data.code}) is here already. Put the file in its place? What is here now ` +
+          `(its drawings, corrections and exports) is lost. Type the project's name to replace it:`);
+        if (typed !== null) return open(file, typed);
+        return;
+      }
+      toast(`${file.name}: ${e.message}`, true);
+    }
+  };
+  input.addEventListener("change", () => input.files[0] && open(input.files[0]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && open(e.dataTransfer.files[0]); });
+  return el("section", { class: "card" }, drop);
+}
+
 function exportCard(code, p) {
   const button = el("button", { class: "primary", type: "button", onclick: async () => {
     try {
@@ -615,9 +651,13 @@ function exportCard(code, p) {
       toast(e.message, true);
     }
   } }, "Export package");
+  const send = el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/project.storeypath`,
+    download: `${code}-project.storeypath`,
+    title: "One file to send: a package any system reads, carrying this project (its drawings, corrections and edits) for another Studio to continue it" },
+  "Download project");
   return el("section", { class: "card" },
-    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), button),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before."),
+    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, button),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds the buildings, floors, spaces and doors with their IDs, ready for the viewer and for any other system. Every export lists what changed since the one before. Download project gives one file to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),

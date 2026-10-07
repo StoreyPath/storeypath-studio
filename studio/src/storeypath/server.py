@@ -31,6 +31,10 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath   the project as it is now, as a
                                                package (not recorded as an export)
+    GET  /api/projects/<code>/project.storeypath   the project to send: a package that
+                                               carries it, to be continued elsewhere
+    PUT  /api/open[?replace=<name>]               a project from a file: a package, or a
+                                               project sent (bundle.py)
     GET  /api/jobs/<id>
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 """
@@ -43,6 +47,7 @@ import re
 import threading
 import traceback
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +62,7 @@ from shapely.geometry import shape
 from shapely.ops import unary_union
 
 from .assets import asset_dir
+from .bundle import ProjectExists
 from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
@@ -248,7 +254,8 @@ class Studio:
                     "floors": [{"id": f"{b_id}-{f.code}", "name": f.name, "ordinal": f.ordinal,
                                 "drawing": Path(f.source.path).name if f.source else None,
                                 "view": f.source.view if f.source else None,
-                                "layers": f.layers, "converted": f.converted_at is not None}
+                                "layers": f.layers, "converted": f.converted_at is not None,
+                                "method": f.method}
                                for f in sorted(b.floors, key=lambda f: f.ordinal)],
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings})
@@ -491,6 +498,7 @@ class Studio:
                 ws = Workspace.load(ws_path)
                 places = _floors_to_add(ws, plans)
                 added: dict[str, list[str]] = {}  # building -> floors added or given this drawing
+                replaced: set[str] = set()  # floors given this drawing in place of theirs
                 made_locations: dict[str, str] = {}
                 made_buildings: dict[tuple[str, str], str] = {}
                 for place in places:
@@ -522,6 +530,7 @@ class Studio:
                         if p.get("parapet"):
                             f.parapet_height = float(p["parapet"])
                         f_id = place.replaces
+                        replaced.add(f_id)
                         job.say(f"floor {f_id}: its drawing is now {p.get('title') or 'plan ' + str(p.get('index'))}")
                     else:
                         f_id = ws.add_floor(b_id, place.ordinal, name=p.get("name") or None, source=source,
@@ -551,11 +560,27 @@ class Studio:
                 return floor_walls(doc, prof, scale, f.source.region), scale
 
             for b_id, new in added.items():
-                floors = sorted((f for f in ws.building(b_id).floors if f.source is not None), key=lambda f: f.ordinal)
+                ids = {fl_id.rsplit("-", 1)[-1] for fl_id in new}
+                # A new drawing of a floor that has walls (read before, or from a package)
+                # lines up on them: its rooms come back where they were, keeping their IDs.
+                own = set()
+                for f in ws.building(b_id).floors:
+                    if f.code not in ids or f"{b_id}-{f.code}" not in replaced or not f.walls:
+                        continue
+                    f_walls, scale = walls(f)
+                    (tx, ty), overlap = align(shape(f.walls), f_walls)
+                    if overlap < MIN_ALIGN_OVERLAP:
+                        tx = ty = 0.0
+                        job.say(f"  {f.name}: too few walls line up with its walls before ({overlap:.0%}): kept where its drawing has it")
+                    else:
+                        job.say(f"  {f.name}: lined up on its walls before: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} line up")
+                    f.source.offset = (tx / scale, ty / scale)
+                    own.add(f.code)
+                floors = sorted((f for f in ws.building(b_id).floors if f.source is not None and f.code not in own),
+                                key=lambda f: f.ordinal)
                 if len(floors) < 2:
                     continue
                 # the lowest floor that was there before, else the lowest one added
-                ids = {fl_id.rsplit("-", 1)[-1] for fl_id in new}
                 ref = next((f for f in floors if f.code not in ids), floors[0])
                 job.say(f"lining up the floors of {b_id} with {ref.name}")
                 ref_walls, ref_scale = walls(ref)
@@ -647,7 +672,7 @@ class Studio:
                 ws = Workspace.load(ws_path)
                 folder = ws_path.parent / "exports"
                 folder.mkdir(exist_ok=True)
-                seq = len(ws.exports) + 1
+                seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
                 out = folder / f"{ws.id}-{seq:03d}.storeypath"  # by code, as the folder
                 job.say(f"writing {out.name}")
                 manifest = export_package(ws, out)
@@ -664,6 +689,52 @@ class Studio:
             return {"file": out.name, "counts": manifest.counts}
 
         return self.jobs.submit("Exporting", run)
+
+    def project_file(self, code: str) -> "Download":
+        """The project as one file to send: a package that carries the project (its
+        workspace and drawings), for another Studio to continue it (bundle.py)."""
+        from .bundle import export_project
+
+        path = self.path(code)
+        buf = io.BytesIO()
+        with self._changing(path):
+            export_project(path, buf)
+        return Download(buf.getvalue(), f"{Workspace.load(path).id}-project.storeypath")
+
+    def open(self, body: bytes, replace: str | None = None) -> dict:
+        """A project from a file (a package, or a project sent): put in the data folder.
+        When the project is here already, it is put in its place only when its name is
+        typed (``replace``) and no job is working on it."""
+        from .bundle import ProjectExists, open_file
+
+        if not body:
+            raise ValueError("the file is empty")
+        tmp = self.data / f".opening-{uuid.uuid4().hex}.storeypath"
+        tmp.write_bytes(body)
+        try:
+            try:
+                return open_file(self.data, tmp)
+            except ProjectExists as e:
+                if replace is None:
+                    raise
+                if replace.strip() != e.name.strip():
+                    raise ValueError(f"type the name of the project here, {e.name}, to replace it") from None
+                path = self._workspaces().get(e.code)
+                lock = self._changing(path) if path else None
+                if lock is not None and not lock.acquire(blocking=False):
+                    raise ValueError("a job is working on this project: open the file when the job is done") from None
+                try:
+                    opened = open_file(self.data, tmp, replace=True)
+                    with self._lock:
+                        self._reviews.pop(path, None)
+                    return opened
+                finally:
+                    if lock is not None:
+                        lock.release()
+        except zipfile.BadZipFile:
+            raise ValueError("not a StoreyPath file (.storeypath)") from None
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def preview(self, code: str) -> bytes:
         """The project as a package, as it is now, for the 3D view: built in memory
@@ -685,6 +756,14 @@ class Studio:
 
 
 MIN_ALIGN_OVERLAP = 0.25  # floors from two drawings are moved to line up only when this much of their walls do
+
+
+@dataclass
+class Download:
+    """A file made on the fly, for the browser to save under ``name``."""
+
+    data: bytes
+    name: str
 
 
 class FloorPlace(NamedTuple):
@@ -883,11 +962,16 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 data = route(method, parts, body, query)
             except NotFound as e:
                 return self._json(404, {"error": str(e)})
+            except ProjectExists as e:
+                return self._json(409, {"error": f"{e.name} ({e.code}) is here already", "code": e.code, "name": e.name})
             except (DrawingError, ValueError, KeyError, ModelUnavailable) as e:
                 return self._json(400, {"error": str(e).strip("'\"")})
             except Exception as e:
                 traceback.print_exc()
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            if isinstance(data, Download):  # made on the fly, saved by the browser
+                return self._send(200, data.data, "application/zip",
+                                  {"Content-Disposition": f'attachment; filename="{data.name}"'})
             if isinstance(data, File):  # a file shown as it is (a floor's print)
                 return self._send(200, data.data, data.content_type, {"Cache-Control": "private, max-age=86400"})
             if isinstance(data, Path):  # a file to download
@@ -935,6 +1019,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.export_file(code, name)
             case "GET", ["projects", code, "preview.storeypath"]:
                 return studio.preview(code)
+            case "GET", ["projects", code, "project.storeypath"]:
+                return studio.project_file(code)
+            case "PUT", ["open"]:
+                return studio.open(body, (query.get("replace") or [None])[0])
             # the review editor
             case "GET", ["projects", code, "floors", floor_id]:
                 return studio.review(code).floor(floor_id)
