@@ -96,7 +96,8 @@ def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
         export_package(ws, out, building=b)
         assert validate_package(out) == []
         changes = _changes(out)
-        assert changes["sequence"] == previous + n and changes["previous_sequence"] == previous + n - 1
+        # the last package that held the building: the campus's, for both
+        assert changes["sequence"] == previous + n and changes["previous_sequence"] == previous
         assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
         _same(_features(out), _of(before, b))
 

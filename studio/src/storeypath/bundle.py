@@ -39,6 +39,7 @@ from .workspace import (
     ExportRecord,
     Floor,
     Item,
+    LastPackage,
     Location,
     ObjectRecord,
     Override,
@@ -226,10 +227,15 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
     package holds are put where it has them; one it retired is retired here; the
     others are left as they are (one carried to another building waits for that
     building's package). The package's export is entered as the last one, when it
-    is later than the last here."""
+    is later than the last here; its building is next compared with it when it is
+    later than the last package of that building here (packages may be opened in any
+    order, and the same one twice)."""
+    from .export import last_packages
     from .ids import make_id
     from .workspace import utcnow
 
+    held, known = last_packages(here)  # as it was before the package
+    theirs, their_known = last_packages(pkg)
     for loc in pkg.locations:
         mine = next((l for l in here.locations if l.code == loc.code), None)
         if mine is None:
@@ -268,13 +274,17 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
         else:
             here.items[i] = it
     here.next_item_seq = max(here.next_item_seq, pkg.next_item_seq)
+    # each of its buildings is next compared with the package, when it is later than the
+    # last package of that building here, whatever the order the packages are opened in
+    for b, p in theirs.items():
+        if b not in held or p.sequence > held[b].sequence:
+            held[b] = p
     record = pkg.exports[-1] if pkg.exports else None
     last = here.exports[-1] if here.exports else None
     if record is not None and (last is None or record.sequence > last.sequence):
-        kept = {} if last is None else {i: h for i, h in last.objects.items() if i not in record.objects}
-        places = {} if last is None else {i: b for i, b in last.places.items() if i not in record.places}
-        here.exports.append(record.model_copy(update={"objects": {**kept, **record.objects},
-                                                      "places": {**places, **record.places}}))
+        here.exports.append(record.model_copy(update={"held": held, "items_held": sorted(known | their_known)}))
+    elif last is not None:  # the next export still follows on from the last here
+        last.held, last.items_held = held, sorted(known | their_known)
 
 
 def _learn_types(data: Path, source: Path) -> list[str]:
@@ -434,10 +444,23 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
 
     cat_file = manifest.files.get("catalogue")  # as this Studio would read it (an older one's filled in)
     cat = read_catalogue(z.read(cat_file).decode("utf-8"))[0] if cat_file and cat_file in z.namelist() else None
+    hashes = compared(ws, cat)
+    retired = changes.get("all_retired") or []
+    held = {}
+    for b_id in buildings:  # (from 0.7, one)
+        location = b_id.rsplit("-", 1)[0]
+        held[b_id] = LastPackage(
+            sequence=manifest.export.sequence,
+            objects={i: h for i, h in hashes.items() if i in (location, b_id) or i.startswith(b_id + "-")
+                     or (i in ws.items and ws.items[i].floor_id.startswith(b_id + "-"))},
+            # what it retired; an item's building is not known (from 0.7 there is one)
+            retired=sorted(i for i in retired if i.startswith(b_id + "-") or is_item_id(i)))
+    moved = [m["id"] for m in changes.get("moved_away") or []]
     ws.exports.append(ExportRecord(
-        sequence=manifest.export.sequence, exported_at=exported_at, file=file_name, objects=compared(ws, cat),
-        buildings=sorted(buildings) if manifest.scope is not None else None,
-        places={i: it.floor_id.rsplit("-", 1)[0] for i, it in ws.items.items() if it.status == "active"}))
+        sequence=manifest.export.sequence, exported_at=exported_at, file=file_name,
+        buildings=sorted(buildings) if manifest.scope is not None else None, held=held,
+        items_held=sorted({i for i, it in ws.items.items() if it.status == "active"} | set(moved)
+                          | {i for i in retired if is_item_id(i)})))
     return ws
 
 

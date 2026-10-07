@@ -23,7 +23,7 @@ from .assets import format_spec
 from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
-from .ids import child_id, make_id
+from .ids import child_id, is_item_id, make_id
 from .catalogue import GRADES, Catalogue, default_catalogue
 from .package import (
     FILES,
@@ -41,7 +41,7 @@ from .package import (
 )
 from .levels import DEFAULT_PARAPET_M
 from .types import OpeningType, SpaceType
-from .workspace import ExportRecord, Placement, SitePosition, Workspace, utcnow
+from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
 LOCAL_DECIMALS = 4  # metres, in a building's own frame: a tenth of a millimetre
@@ -469,18 +469,54 @@ def in_buildings(buildings: list[str] | None):
 def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True) -> dict[str, str]:
     """What is compared between exports, by ID: each feature (``held`` says which) as
     it is in its building's own frame, so moving a building on the map changes none
-    of its rooms, doors or items; a building, with its place on the map."""
+    of its rooms, doors or items; a building, with its place on the map; a location,
+    by what it says of itself (its outline is its buildings', compared themselves)."""
     placed = placements(ws)
     out = {}
     for role, fs in build_features(ws, cat, own_frame=True).items():
         for f in fs:
-            if held(role, f):
-                out[f["id"]] = _hash({**f, "placement": placed[f["id"]][0].model_dump()} if role == "buildings" else f)
+            if not held(role, f):
+                continue
+            if role == "buildings":
+                f = {**f, "placement": placed[f["id"]][0].model_dump()}
+            elif role == "location":
+                f = {**f, "geometry": None, "properties": {k: v for k, v in f["properties"].items() if k != "display_point"}}
+            out[f["id"]] = _hash(f)
     return out
 
 
 def building_ids(ws: Workspace) -> list[str]:
     return [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings]
+
+
+def _in_building(i: str, b_id: str) -> bool:
+    return i == b_id or i.startswith(b_id + "-")
+
+
+def last_packages(ws: Workspace) -> tuple[dict[str, LastPackage], set[str]]:
+    """Each building as the last package that held it had it (building ID -> it), and
+    every item ID a package of the project has held: what the next export of a building
+    lists its changes against. From a record of a Studio before these were kept, they
+    are worked out from what it kept: the whole project as last exported, and the
+    building each item was in then."""
+    if not ws.exports:
+        return {}, set()
+    last = ws.exports[-1]
+    if last.held is not None:
+        return {b: p.model_copy(deep=True) for b, p in last.held.items()}, set(last.items_held or [])
+    held = {}
+    nowhere = {i for i, it in ws.items.items() if it.status == "retired" and not it.floor_id}  # from a package
+    for b in building_ids(ws):
+        seq = next((r.sequence for r in reversed(ws.exports) if r.buildings is None or b in r.buildings), None)
+        if seq is None:
+            continue
+        location = b.rsplit("-", 1)[0]
+        objects = {i: h for i, h in last.objects.items() if i == location or _in_building(i, b)}
+        objects.update({i: last.objects[i] for i, at in last.places.items() if at == b and i in last.objects})
+        retired = {i for i, r in ws.objects.items() if r.status == "retired" and _in_building(i, b)} | nowhere
+        retired |= {i for i, it in ws.items.items() if it.status == "retired" and _in_building(it.floor_id, b)}
+        held[b] = LastPackage(sequence=seq, objects=objects, retired=sorted(retired))
+    return held, {i for i in last.objects if is_item_id(i)} | set(last.places)
 
 
 def export_package(ws: Workspace, out_path, *, building: str | None = None, record: bool = True,
@@ -491,10 +527,13 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
     With ``record`` the export is entered in the workspace, so the next one lists
     what changed since; without it the workspace is left as it was.
 
-    What changed is listed for that building alone, compared in its own frame:
+    What changed is listed for that building alone, against the last package that
+    held it (``previous_sequence``: that package's export), compared in its own frame:
     moving it on the map changes none of its rooms, doors or items (only the
-    building is changed). An item carried from it to another building since it was
-    last exported is listed as moved away.
+    building is changed). An item that package held, carried since to another
+    building, is listed as moved away; one taken away since, wherever it was then, as
+    retired. One carried into the building that a package of the project held before
+    is changed, not added.
 
     With ``bake`` its floors are pre-built in 3D (``world/``, bake.py) when Node.js is
     here; when it is not, the package is written without them. ``say`` is told
@@ -541,24 +580,42 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     placed = placements(ws)
     hashes = compared(ws, cat, held)
 
-    prev = ws.exports[-1] if ws.exports else None
-    sequence = (prev.sequence + 1) if prev else 1
-    prev_hashes = prev.objects if prev else {}
-    prev_places = prev.places if prev else {}
+    # each building is compared with the last package that held it, whatever packages
+    # of the project's other buildings came between
+    held_before, known = last_packages(ws)
+    sequence = (ws.exports[-1].sequence + 1) if ws.exports else 1
+    last = {b: held_before[b] for b in buildings if b in held_before}
+    prev_hashes: dict[str, str] = {}
+    for p in last.values():
+        prev_hashes.update(p.objects)
     places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
     here = {f["id"] for f in features["items"]}
-    moved_away = [MovedAway(id=i, building_id=places[i]) for i, b in sorted(prev_places.items())
-                  if b in buildings and i in places and i not in here]
-    gone_items = sorted(i for i, b in prev_places.items()  # taken away since, from here
-                        if b in buildings and i in ws.items and ws.items[i].status == "retired" and i in prev_hashes)
-    all_retired = sorted([i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)]
-                         + [i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id)])
-    retired = sorted({i for i in prev_hashes if i not in hashes and scoped(i)} | set(gone_items))  # a location stays
+    gone = sorted(i for i in prev_hashes if i not in hashes)
+    moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if is_item_id(i) and i in places]
+
+    def taken_away(i: str) -> bool:  # an object of the building, or an item retired (wherever it was then)
+        if is_item_id(i):
+            return i not in ws.items or ws.items[i].status == "retired"
+        return scoped(i)  # a location stays
+
+    def active(i: str) -> bool:
+        r = ws.items.get(i) if is_item_id(i) else ws.objects.get(i)
+        return r is not None and r.status == "active"
+
+    retired = [i for i in gone if taken_away(i)]
+    # every ID the building has retired: those it listed before, and those retired since,
+    # with an item none of the project's packages held taken away while it stood here
+    ever = set(retired).union(*(p.retired for p in last.values()))
+    ever |= {i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)}
+    ever |= {i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id) and i not in known}
+    all_retired = sorted(i for i in ever if i not in hashes and not active(i))  # an item brought back is not
     changes = Changes(
         sequence=sequence,
-        previous_sequence=prev.sequence if prev else None,
-        added=sorted(i for i in hashes if i not in prev_hashes),
-        changed=sorted(i for i in hashes if i in prev_hashes and prev_hashes[i] != hashes[i]),
+        previous_sequence=max((p.sequence for p in last.values()), default=None),
+        # an item a package of the project held before, carried into the building, is not new
+        added=sorted(i for i in hashes if i not in prev_hashes and not (is_item_id(i) and i in known)),
+        changed=sorted(i for i in hashes if (prev_hashes[i] != hashes[i] if i in prev_hashes
+                                             else is_item_id(i) and i in known)),
         retired=retired,
         all_retired=all_retired,
         moved_away=moved_away,
@@ -599,14 +656,17 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     _write(out_path, ws, manifest, features, changes, world, cat)
 
     if record:
-        done = set(retired)
-        kept = {i: h for i, h in prev_hashes.items() if i not in hashes and not scoped(i) and i not in done}
-        moved = {m.id for m in moved_away}
+        held = dict(held_before)
+        for b in buildings:  # (one: a package holds one building)
+            location = b.rsplit("-", 1)[0]
+            held[b] = LastPackage(
+                sequence=sequence,
+                objects={i: h for i, h in hashes.items()
+                         if i == location or _in_building(i, b) or places.get(i) == b},
+                retired=[i for i in all_retired if _in_building(i, b) or is_item_id(i)])
         ws.exports.append(ExportRecord(
-            sequence=sequence, exported_at=now, file=Path(out_path).name, objects={**kept, **hashes},
-            buildings=buildings,
-            places={**{i: b for i, b in prev_places.items() if i not in here and i not in moved and i not in done},
-                    **{i: places[i] for i in here}}))
+            sequence=sequence, exported_at=now, file=Path(out_path).name, buildings=buildings,
+            held=held, items_held=sorted(known | here)))
     return manifest
 
 
