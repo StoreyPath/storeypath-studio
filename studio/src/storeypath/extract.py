@@ -318,14 +318,17 @@ def _center(e: DXFGraphic) -> tuple[float, float] | None:
 
 
 def _split_label(lines: list[str], profile: Profile) -> tuple[str | None, str | None]:
-    """Name and number from a space's label lines, e.g. ["OFFICE", "204"] or ["OFFICE 204"]."""
+    """Name and number from a space's label lines, e.g. ["OFFICE", "204"] or ["OFFICE 204"].
+    A line that is a number on its own is the number: then a number ending another
+    line is part of the name (["MEETING ROOM 2", "301"])."""
     names, number = [], None
+    on_its_own = any(profile.number_re.fullmatch(line) for line in lines)
     for line in lines:
         if profile.number_re.fullmatch(line):
             number = number or line
             continue
         head, _, tail = line.rpartition(" ")
-        if head and number is None and profile.number_re.fullmatch(tail):
+        if head and number is None and not on_its_own and profile.number_re.fullmatch(tail):
             names.append(head.strip())
             number = tail
         else:
@@ -856,7 +859,7 @@ def _divide_open_areas(spaces, labels, profile, walls) -> tuple[list, list[Extra
             per_space.setdefault(i, []).append(label)
     out, zones, gaps = [], [], []
     for i, s in enumerate(spaces):
-        groups = _label_groups(per_space.get(i, []))
+        groups = _room_groups(_label_groups(per_space.get(i, [])), profile)
         parts, lines = (split_by_labels(s.polygon, [[lb.point for lb in g] for g in groups],
                                         profile.spaces.max_split, profile.spaces.min_area)
                         if len(groups) >= 2 else ([s.polygon], []))
@@ -1146,9 +1149,10 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
     for i, ls in per_space.items():
         ls.sort(key=lambda lb: (-round(lb.point.y, 1), lb.point.x))  # reading order
         lines = [ln for lb in ls for ln in lb.lines]
-        spaces[i].name, spaces[i].number = _split_label(lines, profile)
         spaces[i].label = "\n".join(lines) or None
-        groups = _label_groups(ls)
+        groups = _room_groups(_label_groups(ls), profile)
+        own = sorted((lb for g in groups for lb in g), key=lambda lb: (-round(lb.point.y, 1), lb.point.x))
+        spaces[i].name, spaces[i].number = _split_label([ln for lb in own for ln in lb.lines], profile)
         if len(groups) > 1:
             merged += 1
             names = " / ".join(repr(" ".join(ln for lb in g for ln in lb.lines)) for g in groups)
@@ -1161,6 +1165,20 @@ def _assign_labels(spaces, labels, profile, warnings) -> None:
     if orphans:
         sample = ", ".join(repr(o) for o in orphans[:5])
         warnings.append(f"{len(orphans)} label(s) are not inside any space: {sample}")
+
+
+def _room_groups(groups: list[list[Label]], profile: Profile) -> list[list[Label]]:
+    """The label groups that can each be a room's: a group that is only tags (an
+    equipment or door tag, FCU-1, D4, AC-3) is not one when the space holds another,
+    so it neither divides the space nor gives its number. A space labelled by such
+    texts alone keeps them: they may be its rooms' numbers (A101)."""
+    from .reading import NOT_A_ROOM
+
+    def tag(line: str) -> bool:  # a number as rooms are numbered (204, 1.05) is no tag
+        return bool(NOT_A_ROOM.match(line)) and not (line[:1].isdigit() and profile.number_re.fullmatch(line))
+
+    named = [g for g in groups if not all(tag(ln) for lb in g for ln in lb.lines)]
+    return named or groups
 
 
 def _label_groups(labels: list[Label]) -> list[list[Label]]:

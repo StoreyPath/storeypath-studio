@@ -16,6 +16,7 @@ import storeypath.vision as vision
 from storeypath.cli import app
 from storeypath.convert import convert_floor
 from storeypath.llm import ModelUnavailable
+from storeypath.reading import TextReader
 from storeypath.samples import office_floor, simple_office, write_floor_dxf
 from storeypath.types import SpaceType
 from storeypath.workspace import SourceDrawing, Workspace
@@ -334,6 +335,63 @@ def test_cleaning_thousands_of_outlines_is_quick():
     started = time.monotonic()
     kept, containers = _clean_spaces(shapes, load_profile("ncs"), [])
     assert len(kept) == 3000 and not containers and time.monotonic() - started < 10
+
+
+# ---- labels: names, numbers and tags -------------------------------------------------
+
+
+@pytest.mark.parametrize("lines, read", [
+    (["MEETING ROOM 2", "301"], ("MEETING ROOM 2", "301")),
+    (["301", "MEETING ROOM 2"], ("MEETING ROOM 2", "301")),
+    (["OFFICE 204"], ("OFFICE", "204")),
+    (["OFFICE", "204"], ("OFFICE", "204")),
+])
+def test_a_number_on_its_own_line_is_the_rooms_number(lines, read):
+    from storeypath.extract import _split_label
+    from storeypath.profile import load_profile
+
+    assert _split_label(lines, load_profile("ncs")) == read
+
+
+def _walled_room_with_texts(texts):
+    doc = ezdxf.new("R2018", setup=True)
+    doc.units = ezdxf.units.M
+    m = doc.modelspace()
+    for layer in ("A-WALL", "A-AREA-IDEN"):
+        doc.layers.add(layer)
+    for x0, y0, x1, y1 in ((0, 0, 9, 4), (-0.2, -0.2, 9.2, 4.2)):
+        m.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": "A-WALL"})
+    for text, at in texts:
+        m.add_text(text, dxfattribs={"layer": "A-AREA-IDEN", "height": 0.2}).set_placement(
+            at, align=TextEntityAlignment.MIDDLE_CENTER)
+    return doc
+
+
+@pytest.mark.parametrize("tag", ["FCU-1", "D4", "AC-3"])
+def test_an_equipment_or_door_tag_does_not_divide_or_number_a_room(tag):
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+
+    profile = load_profile("ncs")
+    reader = TextReader(Workspace.new("x"), profile)
+    doc = _walled_room_with_texts([("OFFICE 101", (2, 2)), (tag, (7.5, 3.5))])
+    ex = extract_floor(doc, profile, "m", skip_label=lambda t: reader.is_room_name(t) is False)
+    assert [(s.name, s.number) for s in ex.spaces] == [("OFFICE", "101")] and not ex.zones
+    assert not any("labels of" in i for s in ex.spaces for i in s.issues)
+
+
+def test_rooms_labelled_by_numbers_alone_keep_them():
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+
+    profile = load_profile("ncs")
+    reader = TextReader(Workspace.new("x"), profile)
+    alone = extract_floor(_walled_room_with_texts([("A101", (4.5, 2))]), profile, "m",
+                          skip_label=lambda t: reader.is_room_name(t) is False)
+    assert [s.number for s in alone.spaces] == ["A101"]
+    two = extract_floor(_walled_room_with_texts([("204", (1.5, 2)), ("205", (7.5, 2))]), profile, "m",
+                        skip_label=lambda t: reader.is_room_name(t) is False)
+    assert sorted(z.number for z in [*two.zones, *(s for s in two.spaces if s.number)]) == ["204", "205"]
 
 
 # ---- lifts and stairs through the floors ---------------------------------------------
