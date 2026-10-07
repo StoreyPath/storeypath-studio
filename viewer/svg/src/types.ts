@@ -21,6 +21,8 @@ export interface PlanSpace {
   type?: string;
   name?: string | null;
   number?: string | null;
+  /** The text the drawing writes in it (a room code: RM-GF-33), shown when it has no name or number. */
+  label?: string | null;
   /** For a zone: the space it is part of. */
   container?: string | null;
 }

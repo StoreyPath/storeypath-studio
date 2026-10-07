@@ -9,9 +9,10 @@
   --sp-container: rgba(0, 0, 0, 0.45);
   --sp-wall: #3d3d42;
   --sp-parapet: #8c8c93;
-  --sp-door: #c9771a;
-  --sp-window: #2a9cb0;
-  --sp-way: #c9771a;
+  --sp-door: #f08c00;
+  --sp-window: #22b8cf;
+  --sp-way: #f08c00;
+  --sp-fill-opacity: 0.55;
   --sp-label: #1d1d1f;
   --sp-label-halo: rgba(255, 255, 255, 0.9);
   --sp-select: #ff8a00;
@@ -35,6 +36,7 @@
 .sp-outline path { fill: var(--sp-outline); stroke: none; }
 
 .sp-unit {
+  fill-opacity: var(--sp-fill-opacity);
   stroke: var(--sp-unit-stroke);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
@@ -56,9 +58,9 @@
 .sp-parapet { fill: var(--sp-parapet); stroke: none; pointer-events: none; }
 
 .sp-openings * { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
-.sp-door { stroke: var(--sp-door); stroke-width: 1.5; }
+.sp-door { stroke: var(--sp-door); stroke-width: 2; }
 .sp-swing { stroke-linejoin: round; }
-.sp-window { stroke: var(--sp-window); stroke-width: 2.5; }
+.sp-window { stroke: var(--sp-window); stroke-width: 3; }
 .sp-way { stroke: var(--sp-way); stroke-width: 2.5; stroke-dasharray: 4 4; }
 
 .sp-labels { pointer-events: none; }
@@ -76,6 +78,20 @@
 
 .sp-pin path { fill: var(--sp-pin); stroke: var(--sp-pin-dot); stroke-width: 1.5; }
 .sp-pin circle { fill: var(--sp-pin-dot); }
+
+/* dark, as Studio's plan: walls dark between the rooms, light labels */
+@media (prefers-color-scheme: dark) {
+  .sp-plan {
+    --sp-outline: #34343a;
+    --sp-unit-stroke: rgba(255, 255, 255, 0.22);
+    --sp-zone-stroke: rgba(255, 255, 255, 0.35);
+    --sp-container: rgba(255, 255, 255, 0.45);
+    --sp-wall: #111114;
+    --sp-parapet: #6e6e76;
+    --sp-label: #f1f1f3;
+    --sp-label-halo: rgba(20, 20, 24, 0.85);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .sp-unit { transition: none; }

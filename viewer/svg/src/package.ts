@@ -20,7 +20,7 @@ interface Feature<P> {
 
 interface FloorProps { building_id: string; walls?: Geometry | null; parapets?: Geometry | null }
 interface SpaceProps {
-  floor_id: string; type: string; name?: string | null; number?: string | null;
+  floor_id: string; type: string; name?: string | null; number?: string | null; drawing_label?: string | null;
   display_point: LonLat; zones?: string[]; hidden?: boolean; ignored?: boolean;
 }
 interface ZoneProps extends SpaceProps { space_id: string }
@@ -70,7 +70,7 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
   const containers: { id: string; polygons: Polygon[] }[] = [];
   const unit = (f: Feature<SpaceProps>, kind: "space" | "zone", container: string | null): PlanSpace => ({
     id: f.id, kind, polygons: polygons(f.geometry), marker: local(f.properties.display_point), type: f.properties.type,
-    name: f.properties.name ?? null, number: f.properties.number ?? null, container,
+    name: f.properties.name ?? null, number: f.properties.number ?? null, label: f.properties.drawing_label ?? null, container,
   });
   for (const s of pkg.spaces) {
     if (s.properties.floor_id !== floorId || !shown(s.properties)) continue;

@@ -19,7 +19,7 @@ const DRAG_PX = 4; // a press that moves less than this is a click
 const ANIMATION_MS = 260;
 
 export interface EngineOptions {
-  /** A space's label, as lines (default: its name, then its number). */
+  /** A space's label, as lines (default: its name, then its number; else the text its drawing writes in it). */
   label?: (space: PlanSpace) => string | string[] | null;
   /** What a screen reader says for a space that can be chosen (default: its label and type). */
   ariaLabel?: (space: PlanSpace) => string | null;
@@ -309,6 +309,7 @@ export class FloorPlanEngine extends EventTarget {
     }
     const name = s.name?.trim() ?? "";
     const number = s.number?.trim() ?? "";
+    if (!name && !number) return s.label?.trim() ? [s.label.trim()] : [];
     return [name, number && number !== name ? number : ""].filter(Boolean);
   }
 

@@ -6,12 +6,13 @@
 <title>StoreyPath plan</title>
 <link rel="stylesheet" href="../dist/plan.css">
 <style>
-  :root { color-scheme: light; font-family: system-ui, sans-serif; }
-  body { margin: 0; display: grid; grid-template-rows: auto 1fr; height: 100vh; background: #fafaf8; }
-  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; --bg: #ecebe6; --panel: #fff; --line: #ddd; --text: #1d1d1f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #26262a; --panel: #1c1c1f; --line: #3a3a40; --text: #ececef; } }
+  body { margin: 0; display: grid; grid-template-rows: auto 1fr; height: 100vh; background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
   header input[type="search"] { min-width: 12em; }
   #plan { position: relative; min-height: 0; }
-  #about { position: absolute; left: 12px; bottom: 12px; background: #fff; border: 1px solid #ddd; border-radius: 6px;
+  #about { position: absolute; left: 12px; bottom: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 8px 12px; font-size: 14px; max-width: 22em; }
   #about:empty { display: none; }
 </style>

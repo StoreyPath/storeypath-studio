@@ -70,6 +70,13 @@ test("hidden spaces are left out unless asked for; ignored ones always", () => {
   truly(!floorFromPackage(changed, FLOOR, { showHidden: true }).spaces.some((s) => s.id === OFFICE), "ignored");
 });
 
+test("a space with no name or number is labelled with what its drawing writes in it", () => {
+  const changed = structuredClone(pkg);
+  const office = changed.spaces.find((s) => s.id === OFFICE);
+  Object.assign(office.properties, { name: null, number: null, drawing_label: "RM-GF-33" });
+  equal(floorFromPackage(changed, FLOOR).spaces.find((s) => s.id === OFFICE).label, "RM-GF-33", "its drawing label");
+});
+
 test("readPackage reads a package file as the test's own ZIP reader does", async () => {
   const path = join(conformance, "packages/campus.storeypath");
   const read = await readInBrowsers(readFileSync(path));
@@ -263,6 +270,16 @@ inChrome("the pin stands on a space's label point, and follows the plan", async 
   near((await pin()).at, [first.at[0] - 70, first.at[1] + 20], 1, "after a pan");
   await page.run(() => window.engine.setPin(null));
   equal(await page.run(() => document.querySelectorAll("[data-sp-pin]").length), 0, "taken away");
+});
+
+inChrome("a space's drawing label is shown when it has no name or number", async (page) => {
+  const lines = await page.run(async (office) => {
+    const plan = window.sp.floorFromPackage(window.pkg, "EWBSSN-DEMO-HQ-F01");
+    for (const s of plan.spaces) if (s.id === office) Object.assign(s, { name: null, number: null, label: "RM-GF-33" });
+    await window.fresh({}, plan);
+    return [...document.querySelectorAll(".sp-labels text")].map((t) => t.textContent);
+  }, OFFICE);
+  truly(lines.includes("RM-GF-33"), "the drawing's code as the label");
 });
 
 inChrome("labels: any language, upright, shown only where they fit", async (page) => {
