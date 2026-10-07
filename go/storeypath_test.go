@@ -413,3 +413,24 @@ func TestAScopeMustListTheBuildingsHeld(t *testing.T) {
 		t.Fatal("a scope that lists another building is a problem")
 	}
 }
+
+func TestAPackageWithItsFloorsPreBuiltReadsAsWithout(t *testing.T) {
+	// campus-world is campus with world/<floor-id>.glb (format 0.5): read the same,
+	// the folder left to those that draw in 3D.
+	p, plain := open(t, "campus-world.storeypath"), open(t, "campus.storeypath")
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Fatalf("problems: %v", problems)
+	}
+	if p.Manifest.FormatVersion != FormatVersion || p.Manifest.Files["world"] != "world/" {
+		t.Fatalf("format %s, files %v", p.Manifest.FormatVersion, p.Manifest.Files)
+	}
+	if len(p.Floors) != len(plain.Floors) || len(p.Spaces) != len(plain.Spaces) || len(p.Openings) != len(plain.Openings) {
+		t.Fatalf("%d floors, %d spaces, %d openings; without world/: %d, %d, %d", len(p.Floors), len(p.Spaces),
+			len(p.Openings), len(plain.Floors), len(plain.Spaces), len(plain.Openings))
+	}
+	for _, f := range p.Floors {
+		if !p.files["world/"+f.ID+".glb"] {
+			t.Errorf("%s: not pre-built", f.ID)
+		}
+	}
+}

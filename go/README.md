@@ -41,7 +41,9 @@ for _, b := range pkg.Buildings {
 - `ParseID`: an ID's project, parent, code and the prefix at any level.
 
 Properties a later format version adds are ignored, as the format asks; a package
-of another major version is reported by `Validate` (`VERSION`).
+of another major version is reported by `Validate` (`VERSION`). So are files it
+does not read: a package's floors pre-built in 3D (format 0.5, `world/`) are for
+viewers.
 
 ## Tests
 

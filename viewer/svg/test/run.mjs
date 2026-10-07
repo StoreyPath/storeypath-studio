@@ -90,6 +90,11 @@ test("readPackage reads a package file as the test's own ZIP reader does", async
   truly(/not a StoreyPath package/.test(said), `a file that is not a package: ${said}`);
 });
 
+test("a package with its floors pre-built in 3D (0.5, world/) reads as one without", async () => {
+  const read = await readInBrowsers(readFileSync(join(conformance, "packages/campus-world.storeypath")));
+  equal(floorFromPackage(read, FLOOR), floorFromPackage(pkg, FLOOR), "the same floor");
+});
+
 test("an unplaced building reads in its own metres too", () => {
   const unplaced = readPackage(join(conformance, "packages/unplaced.storeypath"));
   const floor = unplaced.floors[0];

@@ -22,6 +22,10 @@ module in go/, the viewer's JavaScript) must read the same way.
   project's first and third exports, of the whole project: a system that keeps the
   project applies 1, then the part, then 3, whose changes list the Annex's rename
   (the Annex was last exported in 1) and nothing more of the Headquarters;
+- packages/campus-world.storeypath and simple-office-world.storeypath: campus and
+  simple-office (the same IDs) with their floors pre-built in 3D, as Studio exports
+  them when Node.js is there (format 0.5: world/<floor-id>.glb): readers must read
+  them as they read the others, and the viewer must show them as it shows those;
 - localframe.json: points in Studio's local drawing metres and where they are on
   earth, for each building's placement, as Studio's projection gives them: a
   reader that turns lon/lat back into local metres must agree to a millimetre.
@@ -30,9 +34,11 @@ Readers make their own broken variants of these packages to test their checks.
 Run from studio/ after a format change, and commit the result:
 
     uv run python ../spec/conformance/make.py                  # all of them
-    uv run python ../spec/conformance/make.py simple-office    # one: campus, part, simple-office
+    uv run python ../spec/conformance/make.py simple-office    # one: campus, part, simple-office, world
 
-Every run makes new projects, so new IDs: remake only what changed.
+Every run makes new projects, so new IDs: remake only what changed. ``world`` makes
+no project: it bakes campus and simple-office as they are (it needs Node.js), so run
+it after them, and after a change to the viewer's builder (viewer/src/world/build.js).
 """
 
 from __future__ import annotations
@@ -41,15 +47,17 @@ import json
 import shutil
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+STEPS = ("campus", "part", "simple-office", "world")
 
 
 def main(names: list[str]) -> None:
-    unknown = set(names) - {"campus", "part", "simple-office"}
+    unknown = set(names) - set(STEPS)
     if unknown:
-        raise SystemExit(f"unknown: {', '.join(sorted(unknown))} (campus, part, simple-office)")
+        raise SystemExit(f"unknown: {', '.join(sorted(unknown))} ({', '.join(STEPS)})")
     work = Path(tempfile.mkdtemp())
     try:
         if not names or "campus" in names:
@@ -58,8 +66,41 @@ def main(names: list[str]) -> None:
             part(work)
         if not names or "simple-office" in names:
             simple_office(work)
+        if not names or "world" in names:
+            world()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def world() -> None:
+    """campus and simple-office with their floors pre-built in 3D: their files as
+    they are, the manifest of this format with world/, and the floors baked."""
+    from storeypath.assets import format_spec
+    from storeypath.bake import WORLD_DIR, bake_world
+    from storeypath.package import FORMAT_VERSION, Manifest, json_schemas
+
+    for name in ("campus", "simple-office"):
+        source = HERE / "packages" / f"{name}.storeypath"
+        baked, why = bake_world(source)
+        if not baked:
+            raise SystemExit(f"{name}: not baked: {why}")
+        out = HERE / "packages" / f"{name}-world.storeypath"
+        schemas = {f"schema/{n}": json.dumps(s, indent=2) for n, s in json_schemas().items()}
+        with zipfile.ZipFile(source) as z, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as w:
+            manifest = Manifest.model_validate_json(z.read("manifest.json"))
+            manifest.format_version = FORMAT_VERSION
+            manifest.files["world"] = WORLD_DIR
+            w.writestr("manifest.json", manifest.model_dump_json(indent=2))
+            for n in z.namelist():
+                if n == "FORMAT.md":
+                    w.writestr(n, format_spec())
+                elif n in schemas:
+                    w.writestr(n, schemas[n])
+                elif n != "manifest.json":
+                    w.writestr(n, z.read(n))
+            for n, data in baked.items():
+                w.writestr(n, data)
+        print(f"wrote {out} ({len(baked)} floors)")
 
 
 def campus(work: Path) -> None:

@@ -17,7 +17,7 @@ import (
 // same major version are read; properties and files it does not know are ignored.
 const (
 	FormatName    = "storeypath-package"
-	FormatVersion = "0.4.0"
+	FormatVersion = "0.5.0"
 )
 
 // The files of a package, by role.
