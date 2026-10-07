@@ -40,8 +40,12 @@ for _, b := range pkg.Buildings {
   limits, tied to the size of upload it accepts** (`OpenWithLimits`, `Read`): what
   reading costs is in proportion to them, not to the upload.
 - `Validate`: the checks Studio's validator makes, each `Problem` with a stable
-  `Code` (`MISSING_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`, `ITEM`,
-  `ITEM_TYPE`, …), the file and the ID it is about.
+  `Code` (`MISSING_FILE`, `BAD_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`,
+  `PLACEMENT`, `ITEM`, `ITEM_TYPE`, `VALUE`, …), the file and the ID it is about.
+  A file is read by its keys as written: one that differs from the format's only
+  in case (`"Hidden"`) makes it a `BAD_FILE`, as Go's JSON decoder would
+  otherwise read it where other readers do not. Types of spaces, zones and
+  openings are those the manifest's `types` list.
 - Lookups: `Get`, `Building`, `Floor`, `Space`, `Zone`, `Opening`, `FloorsOf`,
   `SpacesOn`, `ZonesOf`, `OpeningsOn`, and `UnitsOn`: the zones of a divided space
   and every space with none, which is what a system placing people should use.

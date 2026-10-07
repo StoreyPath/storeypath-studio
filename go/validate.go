@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ const (
 	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
 	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
+	ProblemValue        = "VALUE"         // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
 )
 
 var kindLevel = map[string]string{
@@ -67,6 +69,29 @@ var kindLevel = map[string]string{
 
 // knownKinds: the kinds of objects.csv rows this reader knows. Rows of others (a
 // later format's), and their IDs in changes.json, are left alone.
+// knownTypes: the types of spaces, zones and openings of this format, for a
+// manifest that does not list them (manifest.json → types lists those a package
+// may use, a later format's too).
+var knownTypes = map[string][]string{
+	"space": spaceTypes, "zone": spaceTypes, "opening": {"door", "opening", "window"},
+}
+
+var spaceTypes = []string{"office", "room", "meeting_room", "corridor", "lobby", "elevator", "stairs", "escalator",
+	"ramp", "restroom", "kitchen", "storage", "utility", "shaft", "open_area", "unspecified", "bedroom", "living_room",
+	"dining_room", "bathroom", "dressing_room", "laundry", "prayer_room", "parking", "balcony", "terrace", "open_to_below"}
+
+// The values a property may have, as Studio's models allow them.
+var (
+	grades        = []string{"president", "c_level", "director", "manager", "section_head", "senior", "junior"}
+	capacityFroms = []string{"review", "items"}
+	mounts        = []string{"floor", "wall", "ceiling"}
+	categories    = []string{"furniture", "equipment", "appliance"}
+	colourRE      = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+// maxWorkplaces: the most people who work at one item (a bench of desks).
+const maxWorkplaces = 100
+
 var knownKinds = map[string]bool{"project": true, "location": true, "building": true, "floor": true,
 	"space": true, "zone": true, "opening": true, "item": true}
 
@@ -114,6 +139,37 @@ func (p *Package) Validate() []Problem {
 		add(ProblemVersion, FileManifest, "", "%v", err)
 	}
 	project := m.Project.ID
+	// values: the types the manifest lists for each kind (else this format's), and
+	// what a space's or zone's seating may be
+	types := map[string]map[string]bool{}
+	for kind, known := range knownTypes {
+		names := m.Types[kind]
+		if len(names) == 0 {
+			names = known
+		}
+		types[kind] = map[string]bool{}
+		for _, name := range names {
+			types[kind][name] = true
+		}
+	}
+	typed := func(kind, file, id, typ string) {
+		if !types[kind][typ] {
+			add(ProblemValue, file, id, "%s: type %q is not one of the %s types of the package", id, typ, kind)
+		}
+	}
+	seated := func(file, id string, s Seating) {
+		if s.Capacity != nil && *s.Capacity < 0 {
+			add(ProblemValue, file, id, "%s: capacity %d is less than none", id, *s.Capacity)
+		}
+		if s.CapacityFrom != nil && !slices.Contains(capacityFroms, *s.CapacityFrom) {
+			add(ProblemValue, file, id, "%s: capacity_from %q is not review or items", id, *s.CapacityFrom)
+		} else if s.CapacityFrom != nil && s.Capacity == nil {
+			add(ProblemValue, file, id, "%s: capacity_from %q with no capacity", id, *s.CapacityFrom)
+		}
+		if s.Grade != nil && !slices.Contains(grades, *s.Grade) {
+			add(ProblemValue, file, id, "%s: grade %q is not one of %s", id, *s.Grade, strings.Join(grades, ", "))
+		}
+	}
 	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
 
 	counts := map[string]int{"location": len(p.Locations), "buildings": len(p.Buildings), "floors": len(p.Floors),
@@ -236,6 +292,8 @@ func (p *Package) Validate() []Problem {
 				add(ProblemZone, spacesFile, s.ID, "%s: lists zone %s, which is part of space %s", s.ID, z, of)
 			}
 		}
+		typed("space", spacesFile, s.ID, s.Type)
+		seated(spacesFile, s.ID, s.Seating)
 		geometryOf(s.ID, s.Geometry, spacesFile, false, add)
 	}
 	for _, z := range p.Zones {
@@ -245,6 +303,8 @@ func (p *Package) Validate() []Problem {
 		} else if !zonesOf[z.Space][z.ID] {
 			add(ProblemZone, zonesFile, z.ID, "%s: not listed in the zones of its space %s", z.ID, z.Space)
 		}
+		typed("zone", zonesFile, z.ID, z.Type)
+		seated(zonesFile, z.ID, z.Seating)
 		geometryOf(z.ID, z.Geometry, zonesFile, false, add)
 	}
 	for _, o := range p.Openings {
@@ -256,6 +316,7 @@ func (p *Package) Validate() []Problem {
 				add(ProblemOpening, openingsFile, o.ID, "%s: connects to %s on another floor", o.ID, s)
 			}
 		}
+		typed("opening", openingsFile, o.ID, o.Type)
 		geometryOf(o.ID, o.Geometry, openingsFile, true, add)
 	}
 	for _, it := range p.Items {
@@ -290,7 +351,34 @@ func (p *Package) Validate() []Problem {
 					it.ID, it.Heading, math.Mod(math.Mod(faces, 360)+360, 360))
 			}
 		}
+		if !slices.Contains(mounts, it.Mount) {
+			add(ProblemValue, itemsFile, it.ID, "%s: mount %q is not floor, wall or ceiling", it.ID, it.Mount)
+		}
+		if !slices.Contains(categories, it.Category) {
+			add(ProblemValue, itemsFile, it.ID, "%s: category %q is not furniture, equipment or appliance", it.ID, it.Category)
+		}
 		geometryOf(it.ID, it.Geometry, itemsFile, false, add)
+	}
+
+	if c := p.Catalogue; c != nil { // a colour, category or mount left out is Studio's default
+		file := p.file("catalogue")
+		for _, ty := range c.Types {
+			if ty.Color != "" && !colourRE.MatchString(ty.Color) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: colour %q is not #rrggbb", file, ty.Code, ty.Color)
+			}
+			if ty.Category != "" && !slices.Contains(categories, ty.Category) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: category %q is not furniture, equipment or appliance", file, ty.Code, ty.Category)
+			}
+			if ty.Mount != "" && !slices.Contains(mounts, ty.Mount) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: mount %q is not floor, wall or ceiling", file, ty.Code, ty.Mount)
+			}
+			if ty.Workplaces < 0 || ty.Workplaces > maxWorkplaces {
+				add(ProblemValue, file, ty.Code, "%s: type %s: workplaces %d is not 0 to %d", file, ty.Code, ty.Workplaces, maxWorkplaces)
+			}
+			if ty.Grade != nil && !slices.Contains(grades, *ty.Grade) {
+				add(ProblemValue, file, ty.Code, "%s: type %s: grade %q is not one of %s", file, ty.Code, *ty.Grade, strings.Join(grades, ", "))
+			}
+		}
 	}
 
 	unknown := map[string]bool{} // rows of a later format's kinds

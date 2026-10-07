@@ -1154,6 +1154,74 @@ func TestAKeyWrittenInAnotherCaseIsABrokenFile(t *testing.T) {
 	}
 }
 
+func TestValuesAreThoseTheFormatAllows(t *testing.T) {
+	// The values Studio's validator checks: types the manifest lists, a capacity
+	// of none or more and what says so, grades, mounts, categories and colours.
+	first := func(file string, change func(p map[string]any)) func(string, []byte) []byte {
+		return editJSON(file, func(doc map[string]any) { change(props(features(doc)[0])) })
+	}
+	firstType := func(change func(ty map[string]any)) func(string, []byte) []byte {
+		return editJSON(FileCatalogue, func(doc map[string]any) { change(doc["types"].([]any)[0].(map[string]any)) })
+	}
+	for _, c := range []struct {
+		name string
+		edit func(string, []byte) []byte
+		ok   bool
+	}{
+		{"a space type not listed", first(FileSpaces, func(p map[string]any) { p["type"] = "spaceship" }), false},
+		{"a space with no type", first(FileSpaces, func(p map[string]any) { delete(p, "type") }), false},
+		{"a zone type not listed", first(FileZones, func(p map[string]any) { p["type"] = "door" }), false},
+		{"an opening type not listed", first(FileOpenings, func(p map[string]any) { p["type"] = "portal" }), false},
+		{"a type the manifest lists (a later format's)", func(n string, d []byte) []byte {
+			switch n {
+			case FileManifest:
+				return editJSON(n, func(doc map[string]any) {
+					types := doc["types"].(map[string]any)
+					types["space"] = append(types["space"].([]any), "gym")
+				})(n, d)
+			case FileSpaces:
+				return first(n, func(p map[string]any) { p["type"] = "gym" })(n, d)
+			}
+			return d
+		}, true},
+		{"a capacity less than none", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = -3, "review" }), false},
+		{"a capacity of none", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = 0, "review" }), true},
+		{"capacity from a guess", first(FileSpaces, func(p map[string]any) { p["capacity"], p["capacity_from"] = 4, "guess" }), false},
+		{"capacity from review, of no capacity", first(FileZones, func(p map[string]any) { p["capacity"], p["capacity_from"] = nil, "review" }), false},
+		{"a grade not of the format", first(FileSpaces, func(p map[string]any) { p["grade"] = "ceo" }), false},
+		{"a grade", first(FileZones, func(p map[string]any) { p["grade"] = "section_head" }), true},
+		{"an item mounted nowhere", first(FileItems, func(p map[string]any) { p["mount"] = "floating" }), false},
+		{"an item of no category", first(FileItems, func(p map[string]any) { p["category"] = "food" }), false},
+		{"a colour that is not one", firstType(func(ty map[string]any) { ty["color"] = "red;fill:url(https://example.com/beacon.svg#a)" }), false},
+		{"a colour in capitals", firstType(func(ty map[string]any) { ty["color"] = "#A1B2C3" }), true},
+		{"a type's colour, category and mount left out (Studio's defaults)", firstType(func(ty map[string]any) {
+			delete(ty, "color")
+			delete(ty, "category")
+			delete(ty, "mount")
+		}), true},
+		{"a type's category", firstType(func(ty map[string]any) { ty["category"] = "food" }), false},
+		{"a type's mount", firstType(func(ty map[string]any) { ty["mount"] = "roof" }), false},
+		{"a type's grade", firstType(func(ty map[string]any) { ty["grade"] = "ceo" }), false},
+		{"a type's workplaces", firstType(func(ty map[string]any) { ty["workplaces"] = -1 }), false},
+		{"a type's workplaces, too many", firstType(func(ty map[string]any) { ty["workplaces"] = 101 }), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			problems := rewriteFrom(t, "campus-hq.storeypath", c.edit).Validate()
+			if c.ok && len(problems) != 0 {
+				t.Errorf("problems: %v", problems)
+			}
+			if !c.ok && !slices.Equal(codes(problems), []string{ProblemValue}) {
+				t.Errorf("problems %v, want VALUE", problems)
+			}
+		})
+	}
+	// a manifest that lists no types: this format's
+	untyped := rewriteFrom(t, "simple-office.storeypath", editJSON(FileManifest, func(doc map[string]any) { delete(doc, "types") }))
+	if problems := untyped.Validate(); len(problems) != 0 {
+		t.Errorf("no types listed: %v", problems)
+	}
+}
+
 func TestAProjectFileIsNotAPackage(t *testing.T) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
