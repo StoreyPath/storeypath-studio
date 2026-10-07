@@ -325,8 +325,9 @@ class Changes(_Model):
     previous_sequence: int | None
     added: list[str]
     changed: list[str]
-    retired: list[str] = Field(description="IDs removed since the previous export")
-    all_retired: list[str] = Field(description="every ID this project has ever retired")
+    retired: list[str] = Field(description="IDs removed since the building was last exported")
+    all_retired: list[str] = Field(description=(
+        "every ID ever retired in the building it holds (before 0.7: in the buildings it holds)"))
     moved_away: list[MovedAway] = Field(default_factory=list, description=(
         "items in this building when it was last exported, carried since to another building of the "
         "project (format 0.7): not retired, they keep their IDs"))

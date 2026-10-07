@@ -299,6 +299,62 @@ def test_a_zone_is_listed_by_its_own_space_alone(tmp_path):
     assert errors == [f"{other}: lists zone {zone['id']}, which is part of {own}"]
 
 
+# Capacity
+
+
+@pytest.mark.parametrize("file, values", [
+    ("spaces.geojson", {"capacity": None, "capacity_from": "review"}),
+    ("spaces.geojson", {"capacity": 4, "capacity_from": None}),
+    ("zones.geojson", {"capacity": None, "capacity_from": "items"}),
+])
+def test_a_capacity_and_what_says_so_go_together(tmp_path, file, values):
+    errors = validate_package(rewritten(tmp_path, **{file: _props(0, **values)}))
+    assert errors == [f"{first(file)['id']}: capacity {values['capacity']} from {values['capacity_from']}: "
+                      "both are set, or neither"]
+
+
+# changes.json
+
+
+def _project():
+    with zipfile.ZipFile(HQ) as z:
+        return json.loads(z.read("manifest.json"))["project"]["id"]
+
+
+def test_an_id_retired_since_the_last_export_is_not_in_the_package(tmp_path):
+    space = first()["id"]
+    out = rewritten(tmp_path, **{"changes.json": edited(lambda c: c.update(retired=[space]))})
+    assert validate_package(out) == [f"changes.json: retired ID {space} is still in the package"]
+
+
+def test_an_item_moved_away_is_not_retired(tmp_path):
+    item = f"{_project()}-I999999"
+
+    def both(c):
+        c["moved_away"] = [{"id": item, "building_id": f"{_project()}-DEMO-ANNEX"}]
+        c["retired"], c["all_retired"] = [item], c["all_retired"] + [item]
+    assert validate_package(rewritten(tmp_path, **{"changes.json": edited(both)})) == [
+        f"changes.json: {item} is listed as moved away and as retired"]
+
+    def moved(c):
+        c["moved_away"] = [{"id": item, "building_id": f"{_project()}-DEMO-ANNEX"}]
+    assert validate_package(rewritten(tmp_path, **{"changes.json": edited(moved)})) == []
+
+
+def test_the_previous_export_comes_before_this_one(tmp_path):
+    def later(doc):
+        target = doc["export"] if "export" in doc else doc
+        target["previous_sequence"] = target["sequence"] + 5
+    out = rewritten(tmp_path, HQ.with_name("campus-hq-2.storeypath"),
+                    **{"changes.json": edited(later), "manifest.json": edited(later)})
+    errors = validate_package(out)
+    assert len(errors) == 1 and "previous_sequence 8 is not before this export's 3" in errors[0], errors
+
+    out = rewritten(tmp_path, HQ.with_name("campus-hq-2.storeypath"),
+                    **{"changes.json": edited(lambda c: c.update(previous_sequence=1))})
+    assert validate_package(out) == ["changes.json: previous_sequence does not match the manifest"]
+
+
 # An item's heading
 
 

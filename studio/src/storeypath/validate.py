@@ -137,6 +137,10 @@ def validate_package(path: str | Path) -> list[str]:
             expect_parent(f.id, f.properties.location_id, "location")
         for f in collections.get("floors", []):
             expect_parent(f.id, f.properties.building_id, "building")
+        for f in collections.get("spaces", []) + collections.get("zones", []):
+            q = f.properties
+            if (q.capacity is None) != (q.capacity_from is None):  # (0.7) a capacity says what says so
+                errors.append(f"{f.id}: capacity {q.capacity} from {q.capacity_from}: both are set, or neither")
         for f in collections.get("spaces", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
         zones_of = {f.id: set(f.properties.zones) for f in collections.get("spaces", [])}
@@ -224,16 +228,23 @@ def validate_package(path: str | Path) -> list[str]:
             for i in changes.added + changes.changed:
                 if i not in ids and i not in unknown:
                     errors.append(f"{name}: {i} is listed as added/changed but not in the package")
-            for i in changes.all_retired:
-                if i in ids:
-                    errors.append(f"{name}: retired ID {i} is still in the package")
+            retired = set(changes.retired) | set(changes.all_retired)
+            for i in sorted(retired & set(ids)):
+                errors.append(f"{name}: retired ID {i} is still in the package")
             for m in changes.moved_away:
                 if not is_item_id(m.id) or m.id in ids:
                     errors.append(f"{name}: {m.id} is listed as moved away but is not an item gone from here")
+                elif m.id in retired:  # carried elsewhere, it is not retired: it keeps its ID
+                    errors.append(f"{name}: {m.id} is listed as moved away and as retired")
                 if not m.building_id.startswith(project + "-") or m.building_id in ids:
                     errors.append(f"{name}: {m.id} moved to {m.building_id}, not another building of the project")
             if changes.sequence != manifest.export.sequence:
                 errors.append(f"{name}: sequence does not match the manifest")
+            if changes.previous_sequence != manifest.export.previous_sequence:
+                errors.append(f"{name}: previous_sequence does not match the manifest")
+            if changes.previous_sequence is not None and not changes.previous_sequence < changes.sequence:
+                errors.append(f"{name}: previous_sequence {changes.previous_sequence} is not before "
+                              f"this export's {changes.sequence}")
     return errors
 
 
