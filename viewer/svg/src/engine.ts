@@ -189,9 +189,11 @@ export class FloorPlanEngine extends EventTarget {
       if (this.lit) classes.push(this.lit.has(id) ? "sp-highlight" : this.dim ? "sp-dim" : "");
       if (id === this.chosen) classes.push("sp-selected");
       path.setAttribute("class", classes.filter(Boolean).join(" "));
+      path.style.cssText = "";
       path.style.fill = style.fill ?? (style.className ? "" : this.colors[s.type ?? "unspecified"] ?? this.colors.unspecified ?? "");
-      path.style.stroke = style.stroke ?? "";
-      path.style.opacity = style.opacity === undefined ? "" : String(style.opacity);
+      if (style.stroke) path.style.stroke = style.stroke;
+      if (style.opacity !== undefined) path.style.opacity = String(style.opacity);
+      if (style.style) path.style.cssText += `;${style.style}`;
       if (id === this.chosen) path.setAttribute("data-selected", "true");
       else path.removeAttribute("data-selected");
     }

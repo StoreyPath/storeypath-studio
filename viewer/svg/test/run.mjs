@@ -319,6 +319,20 @@ inChrome("the host styles spaces, and restyles them when its data changes", asyn
   equal(await page.run((id) => document.querySelector(`[data-sp-id="${id}"]`).classList.contains("taken"), OFFICE), true, "its class");
 });
 
+inChrome("inline CSS from the host wins over the type colour, and goes when it does", async (page) => {
+  await page.run(() => {
+    window.styled = true;
+    return window.fresh({ styleOf: () => (window.styled ? { style: "fill: rgb(1, 2, 3); stroke-dasharray: 5 4" } : null) });
+  });
+  const look = () => page.run((id) => {
+    const s = getComputedStyle(document.querySelector(`[data-sp-id="${id}"]`));
+    return [s.fill, s.strokeDasharray];
+  }, OFFICE);
+  equal(await look(), ["rgb(1, 2, 3)", "5px, 4px"], "styled");
+  await page.run(() => { window.styled = false; window.engine.restyle(); });
+  truly((await look())[0] !== "rgb(1, 2, 3)", "back to its type colour");
+});
+
 inChrome("y up (a drawing) and y down (a page) both stand the right way up", async (page) => {
   const square = (y) => [[[0, y], [4, y], [4, y + 4], [0, y + 4], [0, y]]];
   for (const yDown of [false, true]) {

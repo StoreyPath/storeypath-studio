@@ -54,12 +54,14 @@ export interface FloorPlan {
   yDown?: boolean;
 }
 
-/** How a space looks: a class to style it with CSS, or colours. */
+/** How a space looks: a class to style it with CSS, or colours, or inline CSS. */
 export interface SpaceStyle {
   className?: string;
   fill?: string;
   stroke?: string;
   opacity?: number;
+  /** Inline CSS declarations ("fill: var(--taken); stroke-dasharray: 5 4"), over the rest. */
+  style?: string;
 }
 
 /** The view: screen = (x·k + tx, ±y·k + ty), in CSS pixels. */
