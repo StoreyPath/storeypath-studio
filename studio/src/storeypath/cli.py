@@ -448,26 +448,39 @@ def convert(
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
     failed = False
-    for fid in floors:
-        if ws.floor(fid).source is None:
-            continue
-        try:
-            report = convert_floor(ws, fid, workspace.parent, model, symbols,
-                                   vision if vision is not None and vision.available() else None,
-                                   say=lambda m: typer.echo(f"  {m}"), force=force)
-        except DrawingError as e:
-            typer.secho(f"{fid}: {e}", fg="red", err=True)
-            failed = True
-            continue
-        failed |= report.held
-        typer.secho(report.summary(), fg="yellow" if report.held else None)
-        for w in report.warnings:
-            typer.secho(f"  warning: {w}", fg="yellow")
-    ws.save(workspace)
-    if model is not None:
-        model.close()
+    try:
+        for fid in floors:
+            if ws.floor(fid).source is None:
+                continue
+            try:
+                report = convert_floor(ws, fid, workspace.parent, model, symbols,
+                                       vision if vision is not None and vision.available() else None,
+                                       say=lambda m: typer.echo(f"  {m}"), force=force)
+            except Exception as e:  # this floor is not converted; the others are
+                why = str(e) if isinstance(e, DrawingError) else f"{type(e).__name__}: {e}"
+                typer.secho(f"{fid}: not converted: {why}", fg="red", err=True)
+                failed = True
+                ws = _as_saved(workspace, ws)
+                continue
+            failed |= report.held
+            typer.secho(report.summary(), fg="yellow" if report.held else None)
+            for w in report.warnings:
+                typer.secho(f"  warning: {w}", fg="yellow")
+            ws.save(workspace)  # each floor kept as soon as it is converted
+    finally:
+        if model is not None:
+            model.close()
     if failed:
         raise typer.Exit(1)
+
+
+def _as_saved(path: Path, ws: Workspace) -> Workspace:
+    """The project as last saved, a floor's failed conversion undone; what the models
+    answered meanwhile (about texts and room shapes in the drawings) is kept."""
+    saved = Workspace.load(path)
+    saved.readings.update(ws.readings)
+    saved.vision.update(ws.vision)
+    return saved
 
 
 @app.command("list")

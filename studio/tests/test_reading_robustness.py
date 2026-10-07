@@ -100,6 +100,70 @@ def test_the_cli_holds_a_bad_read_back_unless_forced(tmp_path):
     assert not _active(Workspace.load(ws_file), f)
 
 
+# ---- one floor's failure is that floor's ---------------------------------------
+
+
+def _three_floors(d: Path) -> tuple[Path, list[str]]:
+    ws = Workspace.new("T")
+    b = ws.add_building(ws.add_location("S", "S"), "B", "B")
+    floors = []
+    for n in range(3):
+        write_floor_dxf(d / f"f{n}.dxf", office_floor(n))
+        floors.append(ws.add_floor(b, n, source=SourceDrawing(path=f"f{n}.dxf", profile="ncs")))
+    ws.save(d / "p.spproj")
+    return d / "p.spproj", floors
+
+
+def _failing_on(floor_id: str, real):
+    def convert(ws, fid, *a, **k):
+        if fid == floor_id:  # half-way through: an answer kept, the floor's objects in pieces
+            ws.vision["seen"] = {"outline": "exactly one room", "type": "office", "shape": "POINT (0 0)"}
+            ws.objects.clear()
+            raise RuntimeError("something unforeseen")
+        return real(ws, fid, *a, **k)
+
+    return convert
+
+
+def _rooms_by_floor(ws_file: Path, floors: list[str]) -> list[int]:
+    ws = Workspace.load(ws_file)
+    return [sum(1 for r in ws.floor_objects(f) if r.kind == "space") for f in floors]
+
+
+def test_the_cli_converts_the_other_floors_when_one_fails(tmp_path, monkeypatch):
+    import storeypath.cli as cli
+
+    ws_file, floors = _three_floors(tmp_path)
+    monkeypatch.setattr(cli, "convert_floor", _failing_on(floors[1], convert_floor))
+    result = runner.invoke(app, ["convert", str(ws_file), "--no-model", "--no-symbols", "--no-vision"])
+    assert result.exit_code == 1 and f"{floors[1]}: not converted: RuntimeError: something unforeseen" in result.output
+    first, failed, last = _rooms_by_floor(ws_file, floors)
+    assert first > 10 and failed == 0 and last > 10
+    assert "seen" in Workspace.load(ws_file).vision  # what the models answered is kept
+
+
+def test_the_studio_converts_the_other_floors_when_one_fails(tmp_path, monkeypatch):
+    import storeypath.convert
+    from storeypath.server import Job, Studio
+
+    class NoModel:
+        name, ready = "none", False
+
+        def available(self):
+            return False
+
+    data = tmp_path / "data"
+    data.mkdir()
+    ws_file, floors = _three_floors(data)
+    monkeypatch.setattr(storeypath.convert, "convert_floor", _failing_on(floors[1], convert_floor))
+    studio = Studio(data, model=NoModel(), warm=False, vision=vision.VisionModel(url=""))
+    job = Job("j", "Converting")
+    with pytest.raises(ValueError, match=f"not converted: {floors[1]}: RuntimeError: something unforeseen"):
+        studio._convert(ws_file, floors, job)  # the job fails…
+    first, failed, last = _rooms_by_floor(ws_file, floors)  # …the other floors converted
+    assert first > 10 and failed == 0 and last > 10
+
+
 # ---- a malformed answer costs one question ---------------------------------------
 
 
