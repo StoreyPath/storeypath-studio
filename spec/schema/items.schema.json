@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "Feature_ItemProps_": {
+    "ItemFeature": {
       "properties": {
         "type": {
           "const": "Feature",
@@ -13,33 +13,8 @@
           "type": "string"
         },
         "geometry": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
-                  "Polygon": "#/$defs/PolygonGeometry"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
-                {
-                  "$ref": "#/$defs/PolygonGeometry"
-                },
-                {
-                  "$ref": "#/$defs/MultiPolygonGeometry"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Geometry"
+          "$ref": "#/$defs/PolygonGeometry",
+          "description": "its footprint, on the map"
         },
         "properties": {
           "$ref": "#/$defs/ItemProps"
@@ -50,7 +25,7 @@
         "geometry",
         "properties"
       ],
-      "title": "Feature[ItemProps]",
+      "title": "ItemFeature",
       "type": "object"
     },
     "ItemLocal": {
@@ -240,73 +215,6 @@
       "title": "ItemProps",
       "type": "object"
     },
-    "MultiPolygonGeometry": {
-      "properties": {
-        "type": {
-          "const": "MultiPolygon",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "items": {
-            "items": {
-              "items": {
-                "maxItems": 2,
-                "minItems": 2,
-                "prefixItems": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "number"
-                  }
-                ],
-                "type": "array"
-              },
-              "type": "array"
-            },
-            "type": "array"
-          },
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "MultiPolygonGeometry",
-      "type": "object"
-    },
-    "PointGeometry": {
-      "properties": {
-        "type": {
-          "const": "Point",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PointGeometry",
-      "type": "object"
-    },
     "PolygonGeometry": {
       "properties": {
         "type": {
@@ -352,7 +260,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_ItemProps_"
+        "$ref": "#/$defs/ItemFeature"
       },
       "title": "Features",
       "type": "array"
@@ -361,6 +269,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[ItemProps]",
+  "title": "FeatureCollection[ItemFeature]",
   "type": "object"
 }

@@ -1,58 +1,5 @@
 {
   "$defs": {
-    "Feature_SpaceProps_": {
-      "properties": {
-        "type": {
-          "const": "Feature",
-          "default": "Feature",
-          "title": "Type",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "geometry": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
-                  "Polygon": "#/$defs/PolygonGeometry"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
-                {
-                  "$ref": "#/$defs/PolygonGeometry"
-                },
-                {
-                  "$ref": "#/$defs/MultiPolygonGeometry"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Geometry"
-        },
-        "properties": {
-          "$ref": "#/$defs/SpaceProps"
-        }
-      },
-      "required": [
-        "id",
-        "geometry",
-        "properties"
-      ],
-      "title": "Feature[SpaceProps]",
-      "type": "object"
-    },
     "MultiPolygonGeometry": {
       "properties": {
         "type": {
@@ -91,35 +38,6 @@
       "title": "MultiPolygonGeometry",
       "type": "object"
     },
-    "PointGeometry": {
-      "properties": {
-        "type": {
-          "const": "Point",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PointGeometry",
-      "type": "object"
-    },
     "PolygonGeometry": {
       "properties": {
         "type": {
@@ -153,6 +71,49 @@
         "coordinates"
       ],
       "title": "PolygonGeometry",
+      "type": "object"
+    },
+    "SpaceFeature": {
+      "properties": {
+        "type": {
+          "const": "Feature",
+          "default": "Feature",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "geometry": {
+          "description": "what its walls, doors and windows enclose",
+          "discriminator": {
+            "mapping": {
+              "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+              "Polygon": "#/$defs/PolygonGeometry"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PolygonGeometry"
+            },
+            {
+              "$ref": "#/$defs/MultiPolygonGeometry"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/SpaceProps"
+        }
+      },
+      "required": [
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "title": "SpaceFeature",
       "type": "object"
     },
     "SpaceProps": {
@@ -358,7 +319,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_SpaceProps_"
+        "$ref": "#/$defs/SpaceFeature"
       },
       "title": "Features",
       "type": "array"
@@ -367,6 +328,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[SpaceProps]",
+  "title": "FeatureCollection[SpaceFeature]",
   "type": "object"
 }

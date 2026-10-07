@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "Feature_OpeningProps_": {
+    "OpeningFeature": {
       "properties": {
         "type": {
           "const": "Feature",
@@ -13,33 +13,8 @@
           "type": "string"
         },
         "geometry": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
-                  "Polygon": "#/$defs/PolygonGeometry"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
-                {
-                  "$ref": "#/$defs/PolygonGeometry"
-                },
-                {
-                  "$ref": "#/$defs/MultiPolygonGeometry"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Geometry"
+          "$ref": "#/$defs/PointGeometry",
+          "description": "a point in the wall"
         },
         "properties": {
           "$ref": "#/$defs/OpeningProps"
@@ -50,45 +25,7 @@
         "geometry",
         "properties"
       ],
-      "title": "Feature[OpeningProps]",
-      "type": "object"
-    },
-    "MultiPolygonGeometry": {
-      "properties": {
-        "type": {
-          "const": "MultiPolygon",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "items": {
-            "items": {
-              "items": {
-                "maxItems": 2,
-                "minItems": 2,
-                "prefixItems": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "number"
-                  }
-                ],
-                "type": "array"
-              },
-              "type": "array"
-            },
-            "type": "array"
-          },
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "MultiPolygonGeometry",
+      "title": "OpeningFeature",
       "type": "object"
     },
     "OpeningProps": {
@@ -273,41 +210,6 @@
       ],
       "title": "PointGeometry",
       "type": "object"
-    },
-    "PolygonGeometry": {
-      "properties": {
-        "type": {
-          "const": "Polygon",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "items": {
-            "items": {
-              "maxItems": 2,
-              "minItems": 2,
-              "prefixItems": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "number"
-                }
-              ],
-              "type": "array"
-            },
-            "type": "array"
-          },
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PolygonGeometry",
-      "type": "object"
     }
   },
   "properties": {
@@ -319,7 +221,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_OpeningProps_"
+        "$ref": "#/$defs/OpeningFeature"
       },
       "title": "Features",
       "type": "array"
@@ -328,6 +230,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[OpeningProps]",
+  "title": "FeatureCollection[OpeningFeature]",
   "type": "object"
 }

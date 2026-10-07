@@ -1,58 +1,5 @@
 {
   "$defs": {
-    "Feature_ZoneProps_": {
-      "properties": {
-        "type": {
-          "const": "Feature",
-          "default": "Feature",
-          "title": "Type",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "geometry": {
-          "anyOf": [
-            {
-              "discriminator": {
-                "mapping": {
-                  "MultiPolygon": "#/$defs/MultiPolygonGeometry",
-                  "Point": "#/$defs/PointGeometry",
-                  "Polygon": "#/$defs/PolygonGeometry"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PointGeometry"
-                },
-                {
-                  "$ref": "#/$defs/PolygonGeometry"
-                },
-                {
-                  "$ref": "#/$defs/MultiPolygonGeometry"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Geometry"
-        },
-        "properties": {
-          "$ref": "#/$defs/ZoneProps"
-        }
-      },
-      "required": [
-        "id",
-        "geometry",
-        "properties"
-      ],
-      "title": "Feature[ZoneProps]",
-      "type": "object"
-    },
     "MultiPolygonGeometry": {
       "properties": {
         "type": {
@@ -89,35 +36,6 @@
         "coordinates"
       ],
       "title": "MultiPolygonGeometry",
-      "type": "object"
-    },
-    "PointGeometry": {
-      "properties": {
-        "type": {
-          "const": "Point",
-          "title": "Type",
-          "type": "string"
-        },
-        "coordinates": {
-          "maxItems": 2,
-          "minItems": 2,
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Coordinates",
-          "type": "array"
-        }
-      },
-      "required": [
-        "type",
-        "coordinates"
-      ],
-      "title": "PointGeometry",
       "type": "object"
     },
     "PolygonGeometry": {
@@ -187,6 +105,49 @@
       ],
       "title": "SpaceType",
       "type": "string"
+    },
+    "ZoneFeature": {
+      "properties": {
+        "type": {
+          "const": "Feature",
+          "default": "Feature",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "geometry": {
+          "description": "its part of its space",
+          "discriminator": {
+            "mapping": {
+              "MultiPolygon": "#/$defs/MultiPolygonGeometry",
+              "Polygon": "#/$defs/PolygonGeometry"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PolygonGeometry"
+            },
+            {
+              "$ref": "#/$defs/MultiPolygonGeometry"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/ZoneProps"
+        }
+      },
+      "required": [
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "title": "ZoneFeature",
+      "type": "object"
     },
     "ZoneProps": {
       "additionalProperties": true,
@@ -350,7 +311,7 @@
     },
     "features": {
       "items": {
-        "$ref": "#/$defs/Feature_ZoneProps_"
+        "$ref": "#/$defs/ZoneFeature"
       },
       "title": "Features",
       "type": "array"
@@ -359,6 +320,6 @@
   "required": [
     "features"
   ],
-  "title": "FeatureCollection[ZoneProps]",
+  "title": "FeatureCollection[ZoneFeature]",
   "type": "object"
 }

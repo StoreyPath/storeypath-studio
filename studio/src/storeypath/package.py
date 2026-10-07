@@ -7,6 +7,7 @@ them. See spec/FORMAT.md for the human-readable description.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Generic, Literal, TypeVar, Union
 
@@ -41,27 +42,33 @@ OBJECTS_CSV_COLUMNS = [
 LonLat = tuple[float, float]
 
 
-class PointGeometry(BaseModel):
+class _Model(BaseModel):
+    # Every number of a package is finite: NaN and Infinity are not JSON, and no
+    # reader can place, draw or compare them.
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class PointGeometry(_Model):
     type: Literal["Point"]
     coordinates: LonLat
 
 
-class PolygonGeometry(BaseModel):
+class PolygonGeometry(_Model):
     type: Literal["Polygon"]
     coordinates: list[list[LonLat]]
 
 
-class MultiPolygonGeometry(BaseModel):
+class MultiPolygonGeometry(_Model):
     type: Literal["MultiPolygon"]
     coordinates: list[list[list[LonLat]]]
 
 
-Geometry = Annotated[
-    Union[PointGeometry, PolygonGeometry, MultiPolygonGeometry], Field(discriminator="type")
-]
+# what an area is drawn as: a space, a zone, a floor's outline, its walls, a building's
+# footprint (an opening is a Point, an item's footprint a Polygon)
+Polygonal = Annotated[Union[PolygonGeometry, MultiPolygonGeometry], Field(discriminator="type")]
 
 
-class _Props(BaseModel):
+class _Props(_Model):
     # Consumers must ignore properties they do not know: later format versions add some.
     model_config = ConfigDict(extra="allow")
 
@@ -91,11 +98,11 @@ class FloorProps(_Props):
     ordinal: int = Field(description="0 = ground floor, negative = below ground")
     elevation: float = Field(description="meters above the building's ground floor")
     height: float = Field(description="floor-to-floor height in meters")
-    walls: Geometry | None = Field(None, description="the walls as drawn, with their door and window gaps; "
-                                                    "full height, except the parapets")
+    walls: Polygonal | None = Field(None, description="the walls as drawn, with their door and window gaps; "
+                                                     "full height, except the parapets")
     wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
-    parapets: Geometry | None = Field(None, description="the low walls around terraces, balconies and roofs, "
-                                                       "parapet_height_m high")
+    parapets: Polygonal | None = Field(None, description="the low walls around terraces, balconies and roofs, "
+                                                        "parapet_height_m high")
     parapet_height_m: float | None = Field(None, description="the parapets' height above the floor")
 
 
@@ -163,7 +170,7 @@ class OpeningProps(_Props):
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
-class ItemLocal(BaseModel):
+class ItemLocal(_Model):
     """Where an item stands in its building's own frame: what it is placed by. The
     building's position on the map never changes it."""
 
@@ -202,41 +209,72 @@ class ItemProps(_Props):
 P = TypeVar("P", bound=_Props)
 
 
-class Feature(BaseModel, Generic[P]):
+class Feature(_Model, Generic[P]):
     type: Literal["Feature"] = "Feature"
     id: str
-    geometry: Geometry | None
+    geometry: PointGeometry | Polygonal | None  # each kind's is narrower: its feature below
     properties: P
 
 
-class FeatureCollection(BaseModel, Generic[P]):
+class LocationFeature(Feature[LocationProps]):
+    geometry: Polygonal | None = Field(description="the convex hull of its buildings (null: none has a footprint)")
+
+
+class BuildingFeature(Feature[BuildingProps]):
+    geometry: Polygonal | None = Field(description="its footprint (null: no floor of it is converted)")
+
+
+class FloorFeature(Feature[FloorProps]):
+    geometry: Polygonal | None = Field(description="its outline (null: not known)")
+
+
+class SpaceFeature(Feature[SpaceProps]):
+    geometry: Polygonal = Field(description="what its walls, doors and windows enclose")
+
+
+class ZoneFeature(Feature[ZoneProps]):
+    geometry: Polygonal = Field(description="its part of its space")
+
+
+class OpeningFeature(Feature[OpeningProps]):
+    geometry: PointGeometry = Field(description="a point in the wall")
+
+
+class ItemFeature(Feature[ItemProps]):
+    geometry: PolygonGeometry = Field(description="its footprint, on the map")
+
+
+F = TypeVar("F", bound=Feature)
+
+
+class FeatureCollection(_Model, Generic[F]):
     type: Literal["FeatureCollection"] = "FeatureCollection"
-    features: list[Feature[P]]
+    features: list[F]
 
 
-class Generator(BaseModel):
+class Generator(_Model):
     name: str
     version: str
 
 
-class ProjectInfo(BaseModel):
+class ProjectInfo(_Model):
     id: str
     name: str
 
 
-class ExportInfo(BaseModel):
+class ExportInfo(_Model):
     sequence: int = Field(description="1 for the project's first export, then 2, 3, …")
     exported_at: datetime
     previous_sequence: int | None = None
 
 
-class SourceInfo(BaseModel):
+class SourceInfo(_Model):
     floor_id: str
     file: str = Field(description="file name only; local paths are not exported")
     sha256: str | None = None
 
 
-class PlacementInfo(BaseModel):
+class PlacementInfo(_Model):
     """Lets a consumer rebuild local drawing coordinates in meters."""
 
     lon: float
@@ -250,7 +288,7 @@ class PlacementInfo(BaseModel):
         "shape and size, but its position on earth is not known"))
 
 
-class Scope(BaseModel):
+class Scope(_Model):
     """The building a package holds (from format 0.7, exactly one; before, the part of
     the project it held when not all of it)."""
 
@@ -275,52 +313,64 @@ class Manifest(BaseModel):
         "The building it holds (from 0.7, always one); before 0.7, absent: the whole project"))
 
 
-class MovedAway(BaseModel):
+class MovedAway(_Model):
     id: str = Field(description="an item's ID")
     building_id: str = Field(description="the building of the project it is in now")
 
 
-class Changes(BaseModel):
+class Changes(_Model):
     """What changed since the previous export, so importers can update their ID mappings."""
 
     sequence: int
     previous_sequence: int | None
     added: list[str]
     changed: list[str]
-    retired: list[str] = Field(description="IDs removed since the previous export")
-    all_retired: list[str] = Field(description="every ID this project has ever retired")
+    retired: list[str] = Field(description="IDs removed since the building was last exported")
+    all_retired: list[str] = Field(description=(
+        "every ID ever retired in the building it holds (before 0.7: in the buildings it holds)"))
     moved_away: list[MovedAway] = Field(default_factory=list, description=(
         "items in this building when it was last exported, carried since to another building of the "
         "project (format 0.7): not retired, they keep their IDs"))
 
 
 def version_problem(version: str) -> str | None:
-    """Why this Studio does not read packages of a format version, or None: one of
-    another major version, or (before 1.0, where a minor version may change what a
-    package means) of a newer minor version. Older ones, and newer patches, are read."""
-    if version.split(".")[0] != FORMAT_VERSION.split(".")[0]:
-        return f"unsupported format version {version} (this Studio reads {FORMAT_VERSION.split('.')[0]}.x)"
-    if FORMAT_VERSION.startswith("0.") and version_tuple(version) > version_tuple(FORMAT_VERSION):
+    """Why this Studio does not read packages of a format version, or None: one that
+    is not a version, one of another major version, or (before 1.0, where a minor
+    version may change what a package means) of a newer minor version. Older ones,
+    and newer patches, are read."""
+    try:
+        major, minor = version_tuple(version)
+    except ValueError as e:
+        return str(e)
+    ours = version_tuple(FORMAT_VERSION)
+    if major != ours[0]:
+        return f"unsupported format version {version} (this Studio reads {ours[0]}.x)"
+    if ours[0] == 0 and (major, minor) > ours:
         return f"format version {version} is newer than this Studio's {FORMAT_VERSION}: update StoreyPath Studio to read it"
     return None
 
 
+# major.minor, a patch number, and a pre-release or build label (semantic versioning);
+# ASCII digits only
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)(\.\d+)?([-+][0-9A-Za-z.-]+)?", re.ASCII)
+
+
 def version_tuple(version: str) -> tuple[int, int]:
-    """A format version's major and minor numbers ("0.7.0" → (0, 7))."""
-    parts = (version.split(".") + ["0", "0"])[:2]
-    try:
-        return int(parts[0]), int(parts[1])
-    except ValueError:
-        return (0, 0)
+    """A format version's major and minor numbers ("0.7.0" → (0, 7)). Anything that
+    is not a version (" 8", "1_0", "0.8a.0") is a ValueError, never read as another."""
+    m = _VERSION_RE.fullmatch(version) if isinstance(version, str) else None
+    if m is None:
+        raise ValueError(f"format version {version!r} is not a version (major.minor.patch, as {FORMAT_VERSION})")
+    return int(m[1]), int(m[2])
 
 
-COLLECTIONS: dict[str, type[_Props]] = {
-    "location": LocationProps,
-    "buildings": BuildingProps,
-    "floors": FloorProps,
-    "spaces": SpaceProps,
-    "zones": ZoneProps,
-    "openings": OpeningProps,
+COLLECTIONS: dict[str, type[Feature]] = {  # a package's collections of places, by role: their features
+    "location": LocationFeature,
+    "buildings": BuildingFeature,
+    "floors": FloorFeature,
+    "spaces": SpaceFeature,
+    "zones": ZoneFeature,
+    "openings": OpeningFeature,
 }
 
 
@@ -329,8 +379,8 @@ def json_schemas() -> dict[str, dict]:
     from .catalogue import Catalogue
 
     out = {"manifest.schema.json": Manifest.model_json_schema(), "changes.schema.json": Changes.model_json_schema()}
-    for role, props in COLLECTIONS.items():
-        out[f"{role}.schema.json"] = FeatureCollection[props].model_json_schema()
-    out["items.schema.json"] = FeatureCollection[ItemProps].model_json_schema()
+    for role, feature in COLLECTIONS.items():
+        out[f"{role}.schema.json"] = FeatureCollection[feature].model_json_schema()
+    out["items.schema.json"] = FeatureCollection[ItemFeature].model_json_schema()
     out["catalogue.schema.json"] = Catalogue.model_json_schema()
     return out

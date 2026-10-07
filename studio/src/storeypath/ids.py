@@ -24,8 +24,13 @@ SEPARATOR = "-"
 CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # no I, L, O, U
 PROJECT_CODE_LENGTH = 6
 LEVELS = ("project", "location", "building", "floor", "object")
+SEGMENT_MAX_LENGTH = 16
+# the longest an ID can be (every level's segment at its longest): anything longer is
+# refused before it is taken apart
+MAX_ID_LENGTH = len(LEVELS) * SEGMENT_MAX_LENGTH + len(LEVELS) - 1
 
-_SEGMENT_RE = re.compile(r"^[A-Z0-9]{1,16}$")
+# ASCII only, the whole string (\Z: no trailing line break, as $ would let through)
+_SEGMENT_RE = re.compile(rf"\A[A-Z0-9]{{1,{SEGMENT_MAX_LENGTH}}}\Z")
 
 
 def generate_project_code() -> str:
@@ -33,7 +38,7 @@ def generate_project_code() -> str:
 
 
 def validate_segment(code: str) -> str:
-    if not _SEGMENT_RE.match(code):
+    if not isinstance(code, str) or not _SEGMENT_RE.fullmatch(code):
         raise ValueError(
             f"invalid code {code!r}: use 1-16 upper-case letters or digits, no hyphens"
         )
@@ -84,6 +89,8 @@ class ParsedId:
 
 
 def parse_id(value: str) -> ParsedId:
+    if len(value) > MAX_ID_LENGTH:
+        raise ValueError(f"invalid ID {value[:MAX_ID_LENGTH]!r}…: longer than an ID can be ({MAX_ID_LENGTH})")
     segments = tuple(value.split(SEPARATOR))
     make_id(*segments)  # validates count and every segment
     return ParsedId(segments)
@@ -91,7 +98,8 @@ def parse_id(value: str) -> ParsedId:
 
 # Items (furniture and equipment) are not part of the place hierarchy: a desk carried
 # to another floor keeps its ID, and where it is, is data. PROJECT-I000142.
-ITEM_CODE_RE = re.compile(r"^I\d{6}$")
+ITEM_CODE_RE = re.compile(r"\AI[0-9]{6}\Z")  # ASCII digits, the whole string
+ITEM_ID_MAX_LENGTH = SEGMENT_MAX_LENGTH + len(SEPARATOR) + 7
 
 
 def make_item_id(project: str, sequence: int) -> str:
@@ -102,8 +110,11 @@ def make_item_id(project: str, sequence: int) -> str:
 
 def is_item_id(value: str) -> bool:
     """Whether ``value`` is an item's ID (two segments, the second I and six digits)."""
+    if not isinstance(value, str) or len(value) > ITEM_ID_MAX_LENGTH:
+        return False
     segments = value.split(SEPARATOR)
-    return len(segments) == 2 and bool(ITEM_CODE_RE.match(segments[1]))
+    return (len(segments) == 2 and bool(_SEGMENT_RE.fullmatch(segments[0]))
+            and bool(ITEM_CODE_RE.fullmatch(segments[1])))
 
 
 def format_object_code(sequence: int) -> str:

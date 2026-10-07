@@ -53,7 +53,7 @@
       "type": "array"
     },
     "retired": {
-      "description": "IDs removed since the previous export",
+      "description": "IDs removed since the building was last exported",
       "items": {
         "type": "string"
       },
@@ -61,7 +61,7 @@
       "type": "array"
     },
     "all_retired": {
-      "description": "every ID this project has ever retired",
+      "description": "every ID ever retired in the building it holds (before 0.7: in the buildings it holds)",
       "items": {
         "type": "string"
       },
