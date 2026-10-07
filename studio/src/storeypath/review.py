@@ -239,33 +239,38 @@ class Review:
 
     def change_item(self, item_id: str, body: dict) -> dict:
         """An item moved, turned, given another type or details, carried to another floor
-        (``floor_id``), taken away (``{"retired": true}``) or brought back."""
+        (``floor_id``), taken away (``{"retired": true}``) or brought back: all that is
+        asked, or (when any of it cannot be) nothing."""
         with self._writing() as ws:
             it = ws.items.get(item_id)
             if it is None:
                 raise NotFound(f"no item {item_id}")
+            new = it.model_copy(deep=True)  # changed whole, then put in its place
             if "retired" in body:
                 if not isinstance(body["retired"], bool):
                     raise ValueError("retired is true or false")
-                it.status = "retired" if body["retired"] else "active"
-                it.retired_at = utcnow() if body["retired"] else None
+                new.status = "retired" if body["retired"] else "active"
+                new.retired_at = utcnow() if body["retired"] else None
             if "floor_id" in body:
+                if not isinstance(body["floor_id"], str):
+                    raise NotFound(f"no floor {body['floor_id']}")
                 self._floor(ws, body["floor_id"])
-                it.floor_id = body["floor_id"]
+                new.floor_id = body["floor_id"]
             if "type" in body:
                 self._item_values(body["type"], None)  # a type of the catalogue
-                it.type = body["type"]
-                own = {f.key for f in self.catalogue().get(it.type).fields if f.owner == "storeypath"}
-                it.values = {k: v for k, v in it.values.items() if k in own}  # what the new type has
+                new.type = body["type"]
+                own = {f.key for f in self.catalogue().get(new.type).fields if f.owner == "storeypath"}
+                new.values = {k: v for k, v in new.values.items() if k in own}  # what the new type has
             if "values" in body:
-                it.values = self._item_values(it.type, body["values"])
+                new.values = self._item_values(new.type, body["values"])
             for key in ("x", "y"):
                 if key in body:
-                    setattr(it, key, _number(body, key))
+                    setattr(new, key, _number(body, key))
             if "rotation" in body:
-                it.rotation = _number(body, "rotation") % 360
+                new.rotation = _number(body, "rotation") % 360
+            ws.items[item_id] = new
             self._save(ws)
-            return self._item(it)
+            return self._item(new)
 
     def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None, resized=()) -> dict:
         eff = ws.effective(r)

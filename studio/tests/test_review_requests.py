@@ -103,3 +103,29 @@ def test_json_nan_is_refused_by_the_server(demo):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_an_item_change_refused_changes_nothing(demo):
+    """A change refused part way (here for its floor) leaves the item as it was, in
+    the file and in the editor's copy that the next save writes."""
+    ws_path, ws, f0 = demo
+    r = Review(ws_path)
+    item = r.add_item(f0, {"type": "COPIER", "x": 10, "y": 10, "values": {"model": "A3"}})
+    refused = [
+        ({"retired": True, "x": 99, "floor_id": f"{ws.id}-DEMO-HQ-F99"}, NotFound),
+        ({"retired": True, "floor_id": 5}, NotFound),
+        ({"x": 50, "type": "SOFA", "values": {"seats": "many"}}, ValueError),
+        ({"type": "TV", "rotation": "NaN"}, ValueError),
+        ({"y": 3, "retired": "yes"}, ValueError),
+    ]
+    for body, error in refused:
+        with pytest.raises(error):
+            r.change_item(item["id"], body)
+    space = next(o for o in ws.floor_objects(f0) if o.kind == "space")
+    r.correct(space.id, {"correction": {"name": "Something else"}})  # an unrelated change, saved
+    it = Workspace.load(ws_path).items[item["id"]]
+    assert (it.status, it.x, it.y, it.type, it.floor_id, it.values) == ("active", 10, 10, "COPIER", f0, {"model": "A3"})
+    shown = {i["id"]: i for i in r.floor(f0)["items"]}[item["id"]]
+    assert (shown["x"], shown["retired"]) == (10, False)
+    moved = r.change_item(item["id"], {"x": 12, "rotation": 450, "values": {"model": "A4"}})
+    assert (moved["x"], moved["rotation"], moved["values"]) == (12, 90, {"model": "A4"})
