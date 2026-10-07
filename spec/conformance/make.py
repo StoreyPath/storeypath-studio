@@ -18,6 +18,10 @@ module in go/, the viewer's JavaScript) must read the same way.
 - packages/campus-part.storeypath: one building of a two-building project (manifest
   scope), its second export, after a room in each building was renamed: only the
   Headquarters' rename is listed, and nothing of the Annex is retired;
+  packages/campus-whole-1.storeypath and campus-whole-3.storeypath are the same
+  project's first and third exports, of the whole project: a system that keeps the
+  project applies 1, then the part, then 3, whose changes list the Annex's rename
+  (the Annex was last exported in 1) and nothing more of the Headquarters;
 - localframe.json: points in Studio's local drawing metres and where they are on
   earth, for each building's placement, as Studio's projection gives them: a
   reader that turns lon/lat back into local metres must agree to a millimetre.
@@ -110,10 +114,12 @@ def part(work: Path) -> None:
     from storeypath.samples import build_demo
     from storeypath.workspace import Override, Workspace
 
-    ws_path, _ = build_demo(work / "part")
+    import shutil
+
+    ws_path, demo = build_demo(work / "part")  # the whole project, exported first
     ws = Workspace.load(ws_path)
-    if not ws.exports:
-        export_package(ws, work / "whole.storeypath")  # the whole project, first
+    first = HERE / "packages" / "campus-whole-1.storeypath"
+    shutil.copyfile(demo, first)
     for code in ("HQ", "ANNEX"):  # a room renamed in each building
         room = next(r for r in sorted(ws.objects.values(), key=lambda r: r.id)
                     if r.kind == "space" and f"-{code}-" in r.id and r.status != "retired")
@@ -121,7 +127,9 @@ def part(work: Path) -> None:
     hq = next(f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings if b.code == "HQ")
     out = HERE / "packages" / "campus-part.storeypath"
     export_package(ws, out, buildings=[hq])
-    print(f"wrote {out}")
+    third = HERE / "packages" / "campus-whole-3.storeypath"
+    export_package(ws, third)  # the whole project again: the Annex's rename is new to it
+    print(f"wrote {first}, {out} and {third}")
 
 
 def simple_office(work: Path) -> None:
