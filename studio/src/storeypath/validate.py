@@ -8,11 +8,12 @@ import json
 import math
 import zipfile
 from pathlib import Path
+from typing import TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .catalogue import Catalogue
-from .ids import LEVELS, is_item_id, parse_id
+from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, parse_id
 from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
                       ItemProps, Manifest, version_problem, version_tuple)
 
@@ -22,6 +23,8 @@ KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
 # left alone, as a reader leaves unknown files and properties
 KNOWN_KINDS = {"project", *KIND_LEVEL, "item"}
 LOCAL_AGREES_M = 0.05  # an item's map position and its position in its building
+
+M = TypeVar("M", bound=BaseModel)
 
 
 def validate_package(path: str | Path) -> list[str]:
@@ -39,15 +42,32 @@ def validate_package(path: str | Path) -> list[str]:
             if name not in names:
                 errors.append(f"missing file {name}")
                 return None
-            return z.read(name).decode("utf-8")
+            try:
+                return z.read(name).decode("utf-8")
+            except UnicodeDecodeError as e:
+                errors.append(f"{name}: not UTF-8 text ({e})")
+                return None
 
-        raw = read("manifest.json")
-        if raw is None:
+        def load(name: str, model: type[M]) -> M | None:
+            """A JSON file of the package, as its model: strictly (a number is a number,
+            not a string of one; true is true, not "true"), as every reader reads it."""
+            text = read(name)
+            if text is None:
+                return None
+            try:
+                doc = _strict_json(text)
+            except ValueError as e:
+                errors.append(f"{name}: not JSON: {e}")
+                return None
+            try:
+                return model.model_validate_json(text, strict=True)
+            except ValidationError as e:
+                errors.append(f"{name}: {_first_errors(e, doc)}")
+                return None
+
+        manifest = load("manifest.json", Manifest)
+        if manifest is None:
             return errors
-        try:
-            manifest = Manifest.model_validate_json(raw)
-        except ValidationError as e:
-            return [f"manifest.json: {e}"]
         if manifest.format != FORMAT_NAME:
             errors.append(f"unknown format {manifest.format!r}")
         if (why := version_problem(manifest.format_version)) is not None:
@@ -62,13 +82,8 @@ def validate_package(path: str | Path) -> list[str]:
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}
         for role, props in COLLECTIONS.items():
-            text = read(FILES[role])
-            if text is None:
-                continue
-            try:
-                fc = FeatureCollection[props].model_validate_json(text)
-            except ValidationError as e:
-                errors.append(f"{FILES[role]}: {_first_errors(e)}")
+            fc = load(FILES[role], FeatureCollection[props])
+            if fc is None:
                 continue
             collections[role] = fc.features
             if manifest.counts.get(role) != len(fc.features):
@@ -136,18 +151,11 @@ def validate_package(path: str | Path) -> list[str]:
         # IDs are the project's and their own number; where they are is data.
         if "items" in manifest.files:
             codes = None
-            if "catalogue" in manifest.files and (text := read(manifest.files["catalogue"])) is not None:
-                try:
-                    codes = {t.code for t in Catalogue.model_validate_json(text).types}
-                except ValidationError as e:
-                    errors.append(f"{manifest.files['catalogue']}: {_first_errors(e)}")
-            text = read(manifest.files["items"])
-            if text is not None:
-                try:
-                    items = FeatureCollection[ItemProps].model_validate_json(text).features
-                except ValidationError as e:
-                    errors.append(f"{manifest.files['items']}: {_first_errors(e)}")
-                    items = []
+            if "catalogue" in manifest.files and (cat := load(manifest.files["catalogue"], Catalogue)) is not None:
+                codes = {t.code for t in cat.types}
+            fc = load(manifest.files["items"], FeatureCollection[ItemProps])
+            if fc is not None:
+                items = fc.features
                 if manifest.counts.get("items") != len(items):
                     errors.append(f"{manifest.files['items']}: manifest counts {manifest.counts.get('items')}, file has {len(items)}")
                 for f in items:
@@ -170,7 +178,7 @@ def validate_package(path: str | Path) -> list[str]:
                         lon, lat = _lonlat(p, q.local.x_m, q.local.y_m)
                         off = math.hypot((lon - q.display_point[0]) * 111_320 * math.cos(math.radians(lat)),
                                          (lat - q.display_point[1]) * 110_574)
-                        if off > LOCAL_AGREES_M:
+                        if not off <= LOCAL_AGREES_M:  # (NaN is never within it)
                             errors.append(f"{f.id}: its map position is {off:.2f} m from its position in its building")
 
         unknown: set[str] = set()
@@ -185,25 +193,21 @@ def validate_package(path: str | Path) -> list[str]:
                     f"({len(listed - set(ids))} extra, {len(set(ids) - listed)} missing)"
                 )
 
-        text = read(FILES["changes"])
-        if text is not None:
-            try:
-                changes = Changes.model_validate_json(text)
-                for i in changes.added + changes.changed:
-                    if i not in ids and i not in unknown:
-                        errors.append(f"{FILES['changes']}: {i} is listed as added/changed but not in the package")
-                for i in changes.all_retired:
-                    if i in ids:
-                        errors.append(f"{FILES['changes']}: retired ID {i} is still in the package")
-                for m in changes.moved_away:
-                    if not is_item_id(m.id) or m.id in ids:
-                        errors.append(f"{FILES['changes']}: {m.id} is listed as moved away but is not an item gone from here")
-                    if not m.building_id.startswith(project + "-") or m.building_id in ids:
-                        errors.append(f"{FILES['changes']}: {m.id} moved to {m.building_id}, not another building of the project")
-                if changes.sequence != manifest.export.sequence:
-                    errors.append(f"{FILES['changes']}: sequence does not match the manifest")
-            except ValidationError as e:
-                errors.append(f"{FILES['changes']}: {_first_errors(e)}")
+        changes = load(FILES["changes"], Changes)
+        if changes is not None:
+            for i in changes.added + changes.changed:
+                if i not in ids and i not in unknown:
+                    errors.append(f"{FILES['changes']}: {i} is listed as added/changed but not in the package")
+            for i in changes.all_retired:
+                if i in ids:
+                    errors.append(f"{FILES['changes']}: retired ID {i} is still in the package")
+            for m in changes.moved_away:
+                if not is_item_id(m.id) or m.id in ids:
+                    errors.append(f"{FILES['changes']}: {m.id} is listed as moved away but is not an item gone from here")
+                if not m.building_id.startswith(project + "-") or m.building_id in ids:
+                    errors.append(f"{FILES['changes']}: {m.id} moved to {m.building_id}, not another building of the project")
+            if changes.sequence != manifest.export.sequence:
+                errors.append(f"{FILES['changes']}: sequence does not match the manifest")
     return errors
 
 
@@ -215,8 +219,45 @@ def _lonlat(p, x: float, y: float) -> tuple[float, float]:
     return Georeferencer(Placement(lon=p.lon, lat=p.lat, x=p.x, y=p.y, bearing=p.bearing)).lonlat(x, y)
 
 
-def _first_errors(e: ValidationError, n: int = 3) -> str:
-    parts = [f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()[:n]]
+def _not_json(constant: str):
+    raise ValueError(f"{constant} is not a number in JSON")
+
+
+def _finite(number: str) -> float:
+    value = float(number)
+    if not math.isfinite(value):
+        raise ValueError(f"{number[:32]} is too large a number")
+    return value
+
+
+def _whole(number: str) -> int:
+    value = int(number)
+    if not -2**63 <= value < 2**63:
+        raise ValueError(f"{number[:32]} is too large a number")
+    return value
+
+
+def _strict_json(text: str):
+    """A file's document, read as a strict JSON reader reads it: NaN and Infinity are
+    not JSON, and a number too large for a double (or a whole number for 64 bits) is
+    not one (Python's json reads them all), wherever they are, in properties a reader
+    knows or not."""
+    return json.loads(text, parse_constant=_not_json, parse_float=_finite, parse_int=_whole)
+
+
+def _first_errors(e: ValidationError, doc=None, n: int = 3) -> str:
+    def where(loc) -> str:
+        at = ".".join(map(str, loc))
+        if len(loc) > 1 and loc[0] == "features" and isinstance(loc[1], int):  # say which feature
+            try:
+                fid = doc["features"][loc[1]]["id"]
+            except (KeyError, IndexError, TypeError):
+                fid = None
+            if isinstance(fid, str):
+                return f"{fid[:MAX_ID_LENGTH]} ({at})"
+        return at
+
+    parts = [f"{where(err['loc'])}: {err['msg']}" for err in e.errors()[:n]]
     more = e.error_count() - n
     return "; ".join(parts) + (f" (+{more} more)" if more > 0 else "")
 

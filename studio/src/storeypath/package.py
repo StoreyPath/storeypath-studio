@@ -42,17 +42,23 @@ OBJECTS_CSV_COLUMNS = [
 LonLat = tuple[float, float]
 
 
-class PointGeometry(BaseModel):
+class _Model(BaseModel):
+    # Every number of a package is finite: NaN and Infinity are not JSON, and no
+    # reader can place, draw or compare them.
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class PointGeometry(_Model):
     type: Literal["Point"]
     coordinates: LonLat
 
 
-class PolygonGeometry(BaseModel):
+class PolygonGeometry(_Model):
     type: Literal["Polygon"]
     coordinates: list[list[LonLat]]
 
 
-class MultiPolygonGeometry(BaseModel):
+class MultiPolygonGeometry(_Model):
     type: Literal["MultiPolygon"]
     coordinates: list[list[list[LonLat]]]
 
@@ -62,7 +68,7 @@ Geometry = Annotated[
 ]
 
 
-class _Props(BaseModel):
+class _Props(_Model):
     # Consumers must ignore properties they do not know: later format versions add some.
     model_config = ConfigDict(extra="allow")
 
@@ -164,7 +170,7 @@ class OpeningProps(_Props):
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
-class ItemLocal(BaseModel):
+class ItemLocal(_Model):
     """Where an item stands in its building's own frame: what it is placed by. The
     building's position on the map never changes it."""
 
@@ -203,41 +209,41 @@ class ItemProps(_Props):
 P = TypeVar("P", bound=_Props)
 
 
-class Feature(BaseModel, Generic[P]):
+class Feature(_Model, Generic[P]):
     type: Literal["Feature"] = "Feature"
     id: str
     geometry: Geometry | None
     properties: P
 
 
-class FeatureCollection(BaseModel, Generic[P]):
+class FeatureCollection(_Model, Generic[P]):
     type: Literal["FeatureCollection"] = "FeatureCollection"
     features: list[Feature[P]]
 
 
-class Generator(BaseModel):
+class Generator(_Model):
     name: str
     version: str
 
 
-class ProjectInfo(BaseModel):
+class ProjectInfo(_Model):
     id: str
     name: str
 
 
-class ExportInfo(BaseModel):
+class ExportInfo(_Model):
     sequence: int = Field(description="1 for the project's first export, then 2, 3, …")
     exported_at: datetime
     previous_sequence: int | None = None
 
 
-class SourceInfo(BaseModel):
+class SourceInfo(_Model):
     floor_id: str
     file: str = Field(description="file name only; local paths are not exported")
     sha256: str | None = None
 
 
-class PlacementInfo(BaseModel):
+class PlacementInfo(_Model):
     """Lets a consumer rebuild local drawing coordinates in meters."""
 
     lon: float
@@ -251,7 +257,7 @@ class PlacementInfo(BaseModel):
         "shape and size, but its position on earth is not known"))
 
 
-class Scope(BaseModel):
+class Scope(_Model):
     """The building a package holds (from format 0.7, exactly one; before, the part of
     the project it held when not all of it)."""
 
@@ -276,12 +282,12 @@ class Manifest(BaseModel):
         "The building it holds (from 0.7, always one); before 0.7, absent: the whole project"))
 
 
-class MovedAway(BaseModel):
+class MovedAway(_Model):
     id: str = Field(description="an item's ID")
     building_id: str = Field(description="the building of the project it is in now")
 
 
-class Changes(BaseModel):
+class Changes(_Model):
     """What changed since the previous export, so importers can update their ID mappings."""
 
     sequence: int
