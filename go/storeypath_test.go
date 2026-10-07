@@ -296,6 +296,68 @@ func TestTheLocalFrameAgreesWithStudio(t *testing.T) {
 	}
 }
 
+func TestABuildingAcrossTheAntimeridian(t *testing.T) {
+	// The Headquarters anchored at 179.9998°E: its items stand both sides of the
+	// antimeridian, and a package has their longitudes in [-180, 180]. ToLonLat
+	// went past 180, and Validate put the items 38,000 km from where they stand.
+	plain := open(t, "campus-hq.storeypath")
+	building := plain.Buildings[0].ID
+	pl := plain.Manifest.Placements[building]
+	pl.Lon, pl.Lat = 179.9998, -16.5
+	f := NewLocalFrame(pl)
+	east, west := 0, 0
+	p := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) {
+				at := doc["placements"].(map[string]any)[building].(map[string]any)
+				at["lon"], at["lat"] = pl.Lon, pl.Lat
+			})(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) {
+				for _, it := range features(doc) {
+					local := props(it)["local"].(map[string]any)
+					ll := f.ToLonLat(local["x_m"].(float64), local["y_m"].(float64))
+					lon := math.Round(math.Remainder(ll[0], 360)*1e7) / 1e7 // as a package has it
+					if lon < 0 {
+						west++
+					} else {
+						east++
+					}
+					props(it)["display_point"] = []any{lon, math.Round(ll[1]*1e7) / 1e7}
+				}
+			})(n, d)
+		}
+		return d
+	})
+	if east == 0 || west == 0 {
+		t.Fatalf("%d items east of the antimeridian, %d west: not across it", east, west)
+	}
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Errorf("problems: %v", problems)
+	}
+	for _, it := range p.Items {
+		ll := f.ToLonLat(it.Local.X, it.Local.Y)
+		if ll[0] <= -180 || ll[0] > 180 {
+			t.Errorf("%s: ToLonLat %v", it.ID, ll)
+		}
+		own := *it.Local
+		it.Local = nil
+		local, err := p.ItemLocal(it)
+		if it.Local = &own; err != nil || math.Hypot(local.X-own.X, local.Y-own.Y) > 0.02 {
+			t.Errorf("%s: worked out from the map %v, in its building %v (%v)", it.ID, local, own, err)
+		}
+	}
+	if ll := NewLocalFrame(Placement{Lon: 179.9999, Lat: -16.5}).ToLonLat(50, 0); math.Abs(ll[0]-(-179.9996316)) > 1e-6 {
+		t.Errorf("50 m east of 179.9999°E: %v", ll)
+	}
+	for lon, want := range map[float64]float64{180: 180, -180: 180, 180.5: -179.5, -180.5: 179.5, 540: 180, 0: 0, -179.5: -179.5} {
+		if got := wrapLon(lon); math.Abs(got-want) > 1e-9 {
+			t.Errorf("wrapLon(%v) = %v, want %v", lon, got, want)
+		}
+	}
+}
+
 func TestAreasInLocalMetresAreStudios(t *testing.T) {
 	for _, name := range corpusPackages(t) {
 		p := open(t, name)

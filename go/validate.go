@@ -267,7 +267,8 @@ func (p *Package) Validate() []Problem {
 			add(ProblemItem, itemsFile, it.ID, "%s: no position in its building (local)", it.ID)
 		} else if f, err := p.Frame(it.Building); it.Local != nil && err == nil {
 			at := f.ToLonLat(it.Local.X, it.Local.Y)
-			off := math.Hypot((at[0]-it.Label[0])*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
+			dlon := math.Remainder(at[0]-it.Label[0], 360) // the short way, across the antimeridian too
+			off := math.Hypot(dlon*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
 			if off > localAgreesM {
 				add(ProblemItem, itemsFile, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
 			}
