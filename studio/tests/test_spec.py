@@ -29,6 +29,32 @@ def test_the_conformance_packages_are_valid():
         assert validate_package(p) == [], p.name
 
 
+def test_the_campus_package_has_furniture_and_equipment():
+    """Items for every reader to read (format 0.6): desks of several grades in offices
+    (one in a zone, one in a building turned on the map), a photocopier in a
+    corridor, two access points under the ceiling, a sofa, and a TV on a wall."""
+    import zipfile
+
+    with zipfile.ZipFile(asset_dir("spec") / "conformance" / "packages" / "campus.storeypath") as z:
+        manifest = json.loads(z.read("manifest.json"))
+        items = json.loads(z.read(manifest["files"]["items"]))["features"]
+        spaces = {f["id"]: f["properties"] for f in json.loads(z.read(manifest["files"]["spaces"]))["features"]}
+        codes = {t["code"] for t in json.loads(z.read(manifest["files"]["catalogue"]))["types"]}
+    assert manifest["format_version"] == FORMAT_VERSION and manifest["counts"]["items"] == len(items)
+    by_type: dict[str, list[dict]] = {}
+    for f in items:
+        by_type.setdefault(f["properties"]["type"], []).append(f["properties"])
+    assert set(by_type) <= codes
+    desks = [p for t, ps in by_type.items() if t.startswith("DESK-") for p in ps]
+    assert len({p["type"] for p in desks}) >= 5
+    assert {spaces[p["space_id"]]["type"] for p in desks if p["zone_id"] is None} == {"office", "open_area"}
+    assert any(p["zone_id"] for p in desks) and len({p["building_id"] for p in desks}) == 2
+    assert [spaces[p["space_id"]]["type"] for p in by_type["COPIER"]] == ["corridor"]
+    assert len(by_type["ACCESS-POINT"]) == 2 and all(p["mount"] == "ceiling" and p["elevation_m"] is None
+                                                      for p in by_type["ACCESS-POINT"])
+    assert len(by_type["SOFA"]) == 1 and [(p["mount"], p["elevation_m"]) for p in by_type["TV"]] == [("wall", 1.2)]
+
+
 def test_the_local_frame_vectors_are_studios_projection():
     from storeypath.georef import Georeferencer
     from storeypath.workspace import Placement

@@ -2,7 +2,12 @@
 module in go/, the viewer's JavaScript) must read the same way.
 
 - packages/campus.storeypath: the demo campus, two buildings placed on the map,
-  one floor's corridor divided into two zones by a line drawn in review;
+  one floor's corridor divided into two zones by a line drawn in review, and
+  furniture and equipment on its floors (format 0.6, furnish below): desks of every
+  grade in offices (two in one office, one in a zone, one in the Annex, which stands
+  turned on the map), a photocopier and an access point in a corridor, a sofa in
+  the reception, a TV on a meeting room's wall, an open office's desks and access
+  point;
 - packages/unplaced.storeypath: one building not placed on the map yet (around
   0°N 0°E, true shape and size);
 - packages/simple-office.storeypath: wayfinder's "simple-office" floor (its PDF
@@ -34,11 +39,14 @@ Readers make their own broken variants of these packages to test their checks.
 Run from studio/ after a format change, and commit the result:
 
     uv run python ../spec/conformance/make.py                  # all of them
-    uv run python ../spec/conformance/make.py simple-office    # one: campus, part, simple-office, world
+    uv run python ../spec/conformance/make.py simple-office    # one: campus, part, simple-office, items, world
 
-Every run makes new projects, so new IDs: remake only what changed. ``world`` makes
-no project: it bakes campus and simple-office as they are (it needs Node.js), so run
-it after them, and after a change to the viewer's builder (viewer/src/world/build.js).
+Every run makes new projects, so new IDs: remake only what changed. ``items`` and
+``world`` make no project: ``items`` places campus's furniture and equipment again
+in the package as it is, its IDs kept (campus places them when it makes the
+project); ``world`` bakes campus and simple-office as they are (it needs Node.js),
+so run it after them, and after a change to the viewer's builder
+(viewer/src/world/build.js).
 """
 
 from __future__ import annotations
@@ -51,7 +59,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-STEPS = ("campus", "part", "simple-office", "world")
+STEPS = ("campus", "part", "simple-office", "items", "world")
 
 
 def main(names: list[str]) -> None:
@@ -66,6 +74,8 @@ def main(names: list[str]) -> None:
             part(work)
         if not names or "simple-office" in names:
             simple_office(work)
+        if "items" in names and "campus" not in names:  # campus places them as it makes the project
+            items()
         if not names or "world" in names:
             world()
     finally:
@@ -125,6 +135,7 @@ def campus(work: Path) -> None:
     mid = (x0 + x1) / 2
     ws.floor(f_id).edits.dividers.append([[mid, y0 - 0.1], [mid, y1 + 0.1]])
     convert_floor(ws, f_id, ws_path.parent)
+    furnish(ws)
     export_package(ws, out / "campus.storeypath", record=False)
 
     unplaced = ws.save_as_new_project(work / "unplaced.spproj", "Unplaced")
@@ -147,6 +158,110 @@ def campus(work: Path) -> None:
                             "local": [x, y], "lonlat": [lon, lat]})
     (HERE / "localframe.json").write_text(json.dumps({"tolerance_m": 0.001, "vectors": vectors}, indent=1) + "\n")
     print(f"wrote {out}/campus.storeypath, {out}/unplaced.storeypath and localframe.json")
+
+
+def furnish(ws) -> None:
+    """Campus's furniture and equipment, placed by the rooms' numbers and sides (the
+    demo is drawn the same every time). On the Headquarters' ground floor: a
+    director's desk; a senior and a junior staff desk against the next office's
+    west wall; a manager's desk; a TV on the meeting room's wall; a photocopier
+    against the corridor's wall, between two doors, and an access point in the
+    corridor; a sofa in the reception. On its first floor: a head of section's desk,
+    the open office's three desks and its access point, and a desk in a zone of the
+    divided hall. In the Annex, turned 110° on the map: the president's desk."""
+    from shapely.geometry import shape
+
+    floors = {f"{b.code}-{f.code}": fid for _, b, f, fid in ws.iter_floors()}
+
+    def room(floor: str, number: str):
+        f_id = floors[floor]
+        r = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and ws.effective(r)["number"] == number)
+        return f_id, shape(r.geometry).bounds
+
+    def place(code, f_id, x, y, rotation=0, **values):
+        # rotation 0: its front (where its user sits) faces the plan's -y; 90: +x
+        ws.add_item(code, f_id, round(x, 3), round(y, 3), rotation=rotation, values=values)
+
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "001")  # an office on the south side, its door north
+    place("DESK-DIRECTOR", f_id, (x0 + x1) / 2, y0 + 1.6)
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "002")
+    place("DESK-SENIOR", f_id, x0 + 0.4, y0 + 1.5, rotation=90)
+    place("DESK-JUNIOR", f_id, x0 + 0.35, y0 + 4.0, rotation=90)
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "003")
+    place("DESK-MANAGER", f_id, (x0 + x1) / 2, y0 + 2.0)
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "004")  # the meeting room
+    place("TV", f_id, x0 + 0.07, (y0 + y1) / 2, rotation=90, size_in=65)
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "005")  # the corridor, by this office's door and the meeting room's
+    corridor = next(r for r in ws.floor_objects(f_id) if r.kind == "space" and ws.effective(r)["type"] == "corridor")
+    cx0, cy0, cx1, cy1 = shape(corridor.geometry).bounds
+    place("COPIER", f_id, x0 - 2.2, cy0 + 0.4, rotation=180, model="MFP-C450")
+    place("ACCESS-POINT", f_id, x0 - 2.2, (cy0 + cy1) / 2, color="#ffffff")
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "017")  # the reception
+    place("SOFA", f_id, x1 - 0.5, (y0 + y1) / 2 + 0.4, rotation=270, seats=3)
+
+    f_id, (x0, y0, x1, y1) = room("HQ-F01", "112")  # an office on the north side, its door south
+    place("DESK-SECTION-HEAD", f_id, (x0 + x1) / 2, y1 - 1.6, rotation=180)
+    f_id, (x0, y0, x1, y1) = room("HQ-F01", "117")  # the open office
+    for k in range(3):
+        place("DESK-JUNIOR", f_id, x0 + 1.9 + 1.5 * k, y1 - 2.4, rotation=180)
+    place("ACCESS-POINT", f_id, (x0 + x1) / 2, (y0 + y1) / 2)
+    hall = max((r for r in ws.floor_objects(f_id) if r.kind == "zone"), key=lambda r: shape(r.geometry).bounds[0])
+    hx0, hy0, hx1, hy1 = shape(hall.geometry).bounds  # the east zone of the divided hall, against its north wall
+    place("DESK-JUNIOR", f_id, hx1 - 3.9, hy1 - 0.35)
+
+    f_id, (x0, y0, x1, y1) = room("ANNEX-F00", "001")
+    place("DESK-PRESIDENT", f_id, (x0 + x1) / 2, y0 + 2.0)
+
+
+def items() -> None:
+    """campus with its furniture and equipment placed again (furnish), in the package
+    as it is: its IDs kept, the items numbered from 1 and listed as added."""
+    import csv
+    import io
+
+    from storeypath.assets import format_spec
+    from storeypath.bundle import workspace_from_package
+    from storeypath.catalogue import default_catalogue
+    from storeypath.export import _objects_csv, build_features
+    from storeypath.ids import is_item_id
+    from storeypath.package import FILES, FORMAT_VERSION, Manifest, json_schemas
+
+    path = HERE / "packages" / "campus.storeypath"
+    with zipfile.ZipFile(path) as z:
+        files = {n: z.read(n) for n in z.namelist()}
+        ws = workspace_from_package(z, path.name)
+    ws.items, ws.next_item_seq = {}, 1  # placed again
+    furnish(ws)
+    cat = default_catalogue()
+    features = build_features(ws, cat)
+    placed = features["items"]
+
+    manifest = Manifest.model_validate_json(files["manifest.json"])
+    manifest.format_version = FORMAT_VERSION
+    manifest.files.update(items=FILES["items"], catalogue=FILES["catalogue"])
+    manifest.counts["items"] = len(placed)
+    files["manifest.json"] = manifest.model_dump_json(indent=2).encode()
+    files[FILES["items"]] = json.dumps({"type": "FeatureCollection", "features": placed}, ensure_ascii=False).encode()
+    files[FILES["catalogue"]] = json.dumps(cat.model_dump(), ensure_ascii=False, indent=1).encode()
+    # their rows in objects.csv, in the columns it has
+    rows = [r for r in csv.DictReader(io.StringIO(files[FILES["objects"]].decode())) if r["kind"] != "item"]
+    columns = list(rows[0])
+    empty = {role: [] for role in ("location", "buildings", "spaces", "zones", "openings")}
+    rows += list(csv.DictReader(io.StringIO(_objects_csv(ws, {**empty, "floors": features["floors"], "items": placed}))))[1:]
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=columns, lineterminator="\n", extrasaction="ignore")
+    w.writeheader()
+    w.writerows(rows)
+    files[FILES["objects"]] = out.getvalue().encode()
+    changes = json.loads(files[FILES["changes"]])
+    changes["added"] = [i for i in changes["added"] if not is_item_id(i)] + [f["id"] for f in placed]
+    files[FILES["changes"]] = json.dumps(changes, indent=2).encode()
+    files["FORMAT.md"] = format_spec().encode()
+    files.update({f"schema/{n}": json.dumps(s, indent=2).encode() for n, s in json_schemas().items()})
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, data in files.items():
+            z.writestr(n, data)
+    print(f"wrote {path} ({len(placed)} items)")
 
 
 def part(work: Path) -> None:
