@@ -925,6 +925,70 @@ func renamed(t *testing.T, data []byte, names map[string]string) []byte {
 	return buf.Bytes()
 }
 
+func TestAKeyWrittenInAnotherCaseIsABrokenFile(t *testing.T) {
+	// encoding/json reads "Hidden" into Hidden, the last of "hidden" and "Hidden"
+	// winning: every other reader keeps to "hidden". Such a file is broken.
+	first := func(file string, change func(f map[string]any)) func(string, []byte) []byte {
+		return editJSON(file, func(doc map[string]any) { change(features(doc)[0].(map[string]any)) })
+	}
+	for _, c := range []struct {
+		name, file, key string
+		edit            func(string, []byte) []byte
+	}{
+		{"a property", FileSpaces, `"Hidden"`, first(FileSpaces, func(f map[string]any) {
+			props(f)["hidden"], props(f)["Hidden"] = false, true
+		})},
+		{"a property of an embedded struct", FileSpaces, `"Capacity"`, first(FileSpaces, func(f map[string]any) { props(f)["Capacity"] = 40 })},
+		{"its kind", FileZones, `"KIND"`, first(FileZones, func(f map[string]any) { props(f)["KIND"] = "zone" })},
+		{"its kind, with a Kelvin sign", FileZones, `"Kind"`, first(FileZones, func(f map[string]any) { props(f)["Kind"] = "zone" })},
+		{"a feature's ID", FileOpenings, `"Id"`, first(FileOpenings, func(f map[string]any) { f["Id"] = "X" })},
+		{"a geometry's type", FileFloors, `"TYPE"`, first(FileFloors, func(f map[string]any) {
+			f["geometry"].(map[string]any)["TYPE"] = "Point"
+		})},
+		{"walls' type", FileFloors, `"Type"`, first(FileFloors, func(f map[string]any) {
+			props(f)["walls"].(map[string]any)["Type"] = "Point"
+		})},
+		{"an item's position in its building", FileItems, `"X_M"`, first(FileItems, func(f map[string]any) {
+			props(f)["local"].(map[string]any)["X_M"] = 1000.0
+		})},
+		{"a collection's features", FileSpaces, `"Features"`, editJSON(FileSpaces, func(doc map[string]any) { doc["Features"] = []any{} })},
+		{"a catalogue type's colour", FileCatalogue, `"Color"`, editJSON(FileCatalogue, func(doc map[string]any) {
+			doc["types"].([]any)[0].(map[string]any)["Color"] = "#ff0000"
+		})},
+		{"changes", FileChanges, `"All_Retired"`, editJSON(FileChanges, func(doc map[string]any) { doc["All_Retired"] = []any{} })},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			problems := rewriteFrom(t, "campus-hq.storeypath", c.edit).Validate()
+			if len(problems) == 0 || problems[0].Code != ProblemBadFile || problems[0].File != c.file || !strings.Contains(problems[0].Message, c.key) {
+				t.Errorf("%v", problems)
+			}
+		})
+	}
+	// an escape spelling the key exactly is the key; keys of no field, and the
+	// item's values (any key), are left alone
+	p := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileSpaces:
+			return bytes.Replace(d, []byte(`"hidden"`), []byte(`"hidden"`), 1)
+		case FileItems:
+			var doc map[string]any
+			json.Unmarshal(d, &doc)
+			props(features(doc)[0])["Colour"] = "red"
+			props(features(doc)[0])["values"] = map[string]any{"Model": "X", "model": "Y"}
+			d, _ = json.Marshal(doc)
+		}
+		return d
+	})
+	if problems := p.Validate(); len(problems) != 0 || p.Items[0].Values["Model"] != "X" {
+		t.Errorf("problems: %v", problems)
+	}
+	// in the manifest, the package cannot be read
+	data := zipFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["Format_Version"] = "0.1.0" }), zip.Deflate)
+	if _, err := readZip(data, DefaultLimits); err == nil || !strings.Contains(err.Error(), `"Format_Version"`) {
+		t.Errorf("manifest: %v", err)
+	}
+}
+
 func TestAProjectFileIsNotAPackage(t *testing.T) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)

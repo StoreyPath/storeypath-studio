@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -426,95 +425,6 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 	}
 	p.index()
 	return p, nil
-}
-
-// decodeJSON reads a JSON file into v, once no list in it is longer than max.
-func decodeJSON(data []byte, v any, max int) error {
-	if err := checkLists(data, max); err != nil {
-		return err
-	}
-	return json.Unmarshal(data, v)
-}
-
-// maxDepth: how deeply the lists and objects of a JSON file may nest (as deeply as
-// encoding/json reads).
-const maxDepth = 10000
-
-// checkLists fails when a list in a JSON file has more than max entries, before it
-// is decoded: what decoding costs is in proportion to its entries. It counts the
-// commas of each list, outside strings; whether the file is JSON at all is left to
-// the decoder.
-func checkLists(data []byte, max int) error {
-	var commas []int // for each list or object open, the commas in it so far (-1: an object)
-	for i := 0; i < len(data); i++ {
-		switch data[i] {
-		case '"':
-			for i++; i < len(data) && data[i] != '"'; i++ {
-				if data[i] == '\\' {
-					i++
-				}
-			}
-		case '[', '{':
-			if len(commas) == maxDepth {
-				return errors.New("nested too deeply")
-			}
-			if data[i] == '[' {
-				commas = append(commas, 0)
-			} else {
-				commas = append(commas, -1)
-			}
-		case ']', '}':
-			if len(commas) > 0 {
-				commas = commas[:len(commas)-1]
-			}
-		case ',':
-			if n := len(commas); n > 0 && commas[n-1] >= 0 {
-				if commas[n-1]++; commas[n-1] >= max {
-					return fmt.Errorf("%w: a list of more than %d entries", ErrTooLarge, max)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// decode reads a feature collection into features of one kind, of at most max.
-func decode[T any](data []byte, kind string, max int, out *[]*T, set func(*T, string, *Geometry)) error {
-	if err := checkLists(data, max); err != nil {
-		return err
-	}
-	var fc struct {
-		Type     string `json:"type"`
-		Features []struct {
-			ID         string          `json:"id"`
-			Geometry   *Geometry       `json:"geometry"`
-			Properties json.RawMessage `json:"properties"`
-		} `json:"features"`
-	}
-	if err := json.Unmarshal(data, &fc); err != nil {
-		return err
-	}
-	if fc.Type != "FeatureCollection" {
-		return fmt.Errorf("not a FeatureCollection")
-	}
-	for i, f := range fc.Features {
-		var k struct {
-			Kind string `json:"kind"`
-		}
-		if err := json.Unmarshal(f.Properties, &k); err != nil {
-			return fmt.Errorf("feature %d (%s): %w", i, clip(f.ID), err)
-		}
-		if k.Kind != kind {
-			return fmt.Errorf("feature %d (%s): kind %q, expected %q", i, clip(f.ID), clip(k.Kind), kind)
-		}
-		v := new(T)
-		if err := json.Unmarshal(f.Properties, v); err != nil {
-			return fmt.Errorf("feature %d (%s): %w", i, clip(f.ID), err)
-		}
-		set(v, f.ID, f.Geometry)
-		*out = append(*out, v)
-	}
-	return nil
 }
 
 // readObjects reads objects.csv, of at most max rows after its header.
