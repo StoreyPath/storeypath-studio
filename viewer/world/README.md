@@ -11,7 +11,7 @@ wayfinder shows its floors in 3D.
 import { webglSupport } from "@storeypath/viewer-world/support";   // small: no three.js
 
 if (webglSupport().ok) {
-  const { StoreyPathWorld } = await import("@storeypath/viewer-world"); // ~740 kB, loaded only now
+  const { StoreyPathWorld } = await import("@storeypath/viewer-world"); // ~820 kB, loaded only now
   const world = new StoreyPathWorld(element);
   await world.open(await (await fetch("/files/headquarters.storeypath")).arrayBuffer());
   world.select("K7Q2XM-RUH-HQ-F02-0142");
@@ -28,6 +28,20 @@ frame a second or so.
 
 The module exports `StoreyPathWorld`, `loadPackage`, `StoreyPathPackage`,
 `TYPE_COLORS` and `webglSupport`; `dist/world.d.ts` declares them.
+
+## Pre-built 3D
+
+```sh
+node bake.mjs campus.storeypath out/     # out/<floor-id>.glb, one a floor
+```
+
+`bake.mjs` builds every floor of a package with the world's own builder
+(`../src/world/build.js`) and writes it as binary glTF: what a package's `world/`
+folder holds (format 0.5, "Pre-built 3D" in `spec/FORMAT.md`). Studio runs it when
+it exports, when it finds Node.js (20.6 or newer); it needs nothing installed, as
+it takes three.js and JSZip from `../vendor`. The world shows a floor pre-built
+when the package has it, reading it with three.js's glTF loader (in the module),
+instead of building it.
 
 ## Build and test
 

@@ -60,19 +60,29 @@ install `three` and `jszip` alongside it.
 | Method | |
 |---|---|
 | `open(source)` | load a package (URL, `Blob`, `File`, `ArrayBuffer`); builds its first building |
-| `setBuilding(id)` | build and show a building |
+| `setBuilding(id)` | build and show a building; a promise, resolved once it is shown |
 | `setFloor(id)` | one floor, or `null` for all; when walking, go to that floor |
 | `setMode("dollhouse" \| "walk")` | orbit, or stand at the front door to walk in |
 | `startWalking()` | take the mouse to look around (call it from a click: pointer lock) |
 | `changeFloor(+1 \| -1)` | when walking: up or down a floor |
 | `select(id, { go })` | highlight a space and fly (or, walking, go) to it |
 | `setXray(on)`, `setCutaway(on)`, `setLabels(on)`, `setShowHidden(on)`, `setExplode(m)` | |
-| `plan(floorId)` | a floor's walls and rooms in local meters, for drawing a minimap |
+| `plan(floorId)` | a floor's walls, rooms and obstacles in local meters, for drawing a minimap |
 | `destroy()` | |
 
 Properties: `package`, `building`, `floor`, `mode`, `selected`, `room` (the space
 the walker is in), `walkFloor`, `atStairs`, `walking` (mouse taken), `player`
-(`{ x, z, dx, dz, floor }`, for a minimap).
+(`{ x, z, dx, dz, floor }`, for a minimap), `prebuilt` (the floors shown from the
+package's pre-built 3D).
+
+A floor is built from the package's features by
+[src/world/build.js](src/world/build.js), merged into a few dozen meshes (one for
+the walls, one for each type of floor finish, …) whatever its number of rooms. A
+package exported by Studio with Node.js at hand carries each floor already built
+(format 0.5, `world/<floor-id>.glb`, made by the same build.js:
+[world/bake.mjs](world/bake.mjs)); the world shows those as they are, unless they
+are of another export or the world was given other sizes, and builds the rest.
+Either way it looks the same.
 
 Events: `load`, `buildingchange`, `floorchange`, `modechange`, `select`
 (`{ id, feature }`), `roomchange` (`{ id, type, name, number, stairs }`) and
