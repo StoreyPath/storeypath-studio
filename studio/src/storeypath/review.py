@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -62,6 +63,16 @@ class NotFound(Exception):
     pass
 
 
+class Busy(Exception):
+    """A job is changing the project (reading a drawing, converting, exporting): a
+    change saved now would be lost when the job saves its own copy, so none is made."""
+
+
+BUSY_MESSAGE = ("a job is working on this project (adding floors, converting or exporting): "
+                "nothing was changed; make the change again when the job is done")
+BUSY_WAIT_S = 1.0  # a change waits this long for a short one (placing a building) to finish
+
+
 
 def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | None:
     """Where Studio divided an open area (no wall drawn): the edge the two spaces
@@ -76,23 +87,50 @@ def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | No
 class Review:
     """The editor's operations on one workspace file."""
 
-    def __init__(self, path: str | Path, catalogue=None):
+    def __init__(self, path: str | Path, catalogue=None, changing=None):
         self.path = Path(path)
         self._catalogue = catalogue  # () -> the Studio's catalogue of item types (catalogue.py)
+        # () -> the lock a job holds while it changes the project (server.py): a change
+        # made here takes it, and is refused while a job has it
+        self._changing = changing
         self._lock = threading.RLock()
         self._ws: Workspace | None = None
-        self._mtime: int | None = None
+        self._mtime: tuple | None = None
         self._drawings: dict[tuple, dict] = {}
 
+    def _stamp(self) -> tuple:
+        s = self.path.stat()  # every save is a new file (Workspace.save): its inode tells it apart
+        return s.st_mtime_ns, s.st_ino, s.st_size
+
     def _load(self) -> Workspace:
-        mtime = self.path.stat().st_mtime_ns
-        if self._ws is None or mtime != self._mtime:
-            self._ws, self._mtime = Workspace.load(self.path), mtime
+        stamp = self._stamp()
+        if self._ws is None or stamp != self._mtime:
+            self._ws, self._mtime = Workspace.load(self.path), stamp
         return self._ws
 
     def _save(self, ws: Workspace) -> None:
         ws.save(self.path)
-        self._mtime = self.path.stat().st_mtime_ns
+        self._mtime = self._stamp()
+
+    @contextmanager
+    def _writing(self):
+        """The workspace, to change and save: only while no job is changing the project
+        (else Busy: a job saves the copy it loaded, which would lose the change). A
+        change that fails part way leaves nothing of it behind: the workspace is read
+        again from its file."""
+        lock = self._changing() if self._changing else None
+        if lock is not None and not lock.acquire(timeout=BUSY_WAIT_S):
+            raise Busy(BUSY_MESSAGE)
+        try:
+            with self._lock:
+                try:
+                    yield self._load()
+                except BaseException:
+                    self._ws = None
+                    raise
+        finally:
+            if lock is not None:
+                lock.release()
 
     def _floor(self, ws: Workspace, floor_id: str):
         try:
@@ -193,8 +231,7 @@ class Review:
 
     def add_item(self, floor_id: str, body: dict) -> dict:
         """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres)."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             self._floor(ws, floor_id)
             values = self._item_values(body.get("type"), body.get("values"))
             x, y = _number(body, "x"), _number(body, "y")
@@ -205,8 +242,7 @@ class Review:
     def change_item(self, item_id: str, body: dict) -> dict:
         """An item moved, turned, given another type or details, carried to another floor
         (``floor_id``), taken away (``{"retired": true}``) or brought back."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             it = ws.items.get(item_id)
             if it is None:
                 raise NotFound(f"no item {item_id}")
@@ -250,8 +286,7 @@ class Review:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
         takes what was drawn nearest a point."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             f = self._floor(ws, floor_id)
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
             if "wall" in add or "divider" in add:
@@ -352,8 +387,7 @@ class Review:
         flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
         desks say). ``{"reset": true}`` removes the correction (the flags and capacity
         stay)."""
-        with self._lock:
-            ws = self._load()
+        with self._writing() as ws:
             r = ws.objects.get(object_id)
             if r is None or r.status != "active" or r.kind not in ("space", "zone", "opening"):
                 raise NotFound(f"no active space, zone or opening {object_id}")

@@ -80,7 +80,7 @@ from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
 from .privacy import words
-from .review import CONTENT_TYPES, File, NotFound, Review, floor_print, floor_print_png
+from .review import CONTENT_TYPES, Busy, File, NotFound, Review, floor_print, floor_print_png
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
 
@@ -194,7 +194,9 @@ class Studio:
         path = self.path(code)
         with self._lock:
             if path not in self._reviews:
-                self._reviews[path] = Review(path, catalogue=self.catalogue)
+                # its changes wait for (or are refused while) a job changes the project
+                self._reviews[path] = Review(path, catalogue=self.catalogue,
+                                             changing=lambda path=path: self._changing(path))
             return self._reviews[path]
 
     def catalogue(self):
@@ -1296,6 +1298,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(404, {"error": str(e)})
             except ProjectExists as e:
                 return self._json(409, {"error": str(e), "code": e.code, "name": e.name, "building": e.building})
+            except Busy as e:  # a job is changing the project: nothing changed
+                return self._json(409, {"error": str(e), "busy": True})
             except (DrawingError, ValueError, KeyError, ModelUnavailable) as e:
                 return self._json(400, {"error": str(e).strip("'\"")})
             except Exception as e:
