@@ -226,6 +226,37 @@ def test_floors_drawn_in_other_units_are_lined_up_in_metres(tmp_path):
     assert abs(x - 30.0) < 0.05 and abs(y - 10.0) < 0.05
 
 
+def test_a_stray_wall_far_off_does_not_spread_the_alignment_grid():
+    import time
+
+    from shapely.affinity import translate
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from storeypath.sheets import align
+
+    plan = unary_union([box(0, 0, 50, 30).difference(box(0.2, 0.2, 49.8, 29.8)), box(20, 0, 20.2, 30)])
+    stray = box(20000, 20000, 20000.2, 20000.2)  # a line at a georeferenced drawing's origin
+    started = time.monotonic()
+    (tx, ty), overlap = align(plan, unary_union([translate(plan, 7, -3), stray]))
+    assert abs(tx - 7) < 0.15 and abs(ty + 3) < 0.15 and overlap > 0.8
+    assert time.monotonic() - started < 10
+
+
+def test_a_very_large_plan_is_aligned_on_a_coarser_grid():
+    from shapely.affinity import translate
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from storeypath.sheets import align
+
+    walls = [box(0, 0, 1500, 900).difference(box(0.3, 0.3, 1499.7, 899.7))]
+    walls += [box(x, 0, x + 0.3, 900) for x in range(100, 1500, 137)]
+    plan = unary_union(walls)
+    (tx, ty), overlap = align(plan, translate(plan, 12.0, 4.0))
+    assert abs(tx - 12) < 0.5 and abs(ty - 4) < 0.5 and overlap > 0.5
+
+
 # ---- lifts and stairs through the floors ---------------------------------------------
 
 

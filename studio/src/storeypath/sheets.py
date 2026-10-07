@@ -289,12 +289,22 @@ def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
     return wall_mass(lines, fills, profile.walls)
 
 
+ALIGN_GAP_M = 10.0  # walls this far from the plan's main body are strays (a legend, a line at the origin)
+ALIGN_MAX_CELLS = 2000  # cells along a side of the grid the walls are laid on, at most
+
+
 def align(reference, other) -> tuple[tuple[float, float], float]:
     """How far ``other`` (a wall mass) lies from ``reference``: the shift (meters)
     to subtract from ``other`` so that it lines up, and the share of the smaller
-    plan's walls that then overlap."""
-    a, (ax, ay) = _raster(reference)
-    b, (bx, by) = _raster(other)
+    plan's walls that then overlap. Each plan is lined up by its main body of walls;
+    a large plan's walls are laid on a coarser grid."""
+    reference, other = _main_body(reference), _main_body(other)
+    if reference.is_empty or other.is_empty:
+        return (0.0, 0.0), 0.0
+    widest = max(max(g.bounds[2] - g.bounds[0], g.bounds[3] - g.bounds[1]) for g in (reference, other))
+    cell = max(ALIGN_CELL_M, widest / ALIGN_MAX_CELLS)
+    a, (ax, ay) = _raster(reference, cell)
+    b, (bx, by) = _raster(other, cell)
     shape = (a.shape[0] + b.shape[0], a.shape[1] + b.shape[1])
     corr = np.fft.irfft2(np.fft.rfft2(a, shape) * np.conj(np.fft.rfft2(b, shape)), shape)
     ki, kj = np.unravel_index(int(np.argmax(corr)), corr.shape)
@@ -302,15 +312,30 @@ def align(reference, other) -> tuple[tuple[float, float], float]:
     di, dj = _refine(corr, ki, kj)
     ki = ki - shape[0] if ki > shape[0] // 2 else ki
     kj = kj - shape[1] if kj > shape[1] // 2 else kj
-    tx = bx - ax - (kj + dj) * ALIGN_CELL_M
-    ty = by - ay - (ki + di) * ALIGN_CELL_M
+    tx = bx - ax - (kj + dj) * cell
+    ty = by - ay - (ki + di) * cell
     return (tx, ty), min(1.0, score)
 
 
-def _raster(mass) -> tuple[np.ndarray, tuple[float, float]]:
+def _main_body(mass):
+    """The walls of a plan's main body: the group of wall pieces lying within
+    ALIGN_GAP_M of each other that holds the most wall. Strays far off would
+    otherwise spread the grid over kilometres."""
+    pieces = as_polygons(mass)
+    if len(pieces) < 2:
+        return mass
+    groups = as_polygons(shapely.union_all(shapely.buffer(np.array(pieces, dtype=object), ALIGN_GAP_M / 2)))
+    if len(groups) < 2:
+        return mass
+    tree = shapely.STRtree(pieces)
+    best = max(groups, key=lambda g: sum(pieces[int(i)].area for i in tree.query(g, predicate="intersects")))
+    return shapely.union_all([pieces[int(i)] for i in tree.query(best, predicate="intersects")])
+
+
+def _raster(mass, cell: float = ALIGN_CELL_M) -> tuple[np.ndarray, tuple[float, float]]:
     x0, y0, x1, y1 = mass.bounds
-    xs = np.arange(x0, x1 + ALIGN_CELL_M, ALIGN_CELL_M)
-    ys = np.arange(y0, y1 + ALIGN_CELL_M, ALIGN_CELL_M)
+    xs = np.arange(x0, x1 + cell, cell)
+    ys = np.arange(y0, y1 + cell, cell)
     gx, gy = np.meshgrid(xs, ys)
     shapely.prepare(mass)
     grid = shapely.contains_xy(mass, gx, gy).astype(float)
