@@ -890,7 +890,12 @@ function exportCard(code, p) {
   const button = el("button", { class: "primary", type: "button", onclick: async () => {
     try {
       const r = await runJob(api(`projects/${code}/export`, what.value ? { buildings: [what.value] } : {}));
-      toast(`Exported ${r.file}, saved in ${p.exports_folder}: download it from the list below`, false, 8000);
+      // downloaded at once; its copy stays in the list, the package as it was sent
+      const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      toast(`Exported ${r.file}: downloading it. A copy stays in the list below`, false, 8000);
       projectPage(code);
     } catch (e) {
       toast(e.message, true);
