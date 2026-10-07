@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -216,10 +217,7 @@ class Review:
             if value is None or value == "":
                 continue  # cleared
             if f.kind == "number":
-                try:
-                    value = float(value)
-                except (TypeError, ValueError):
-                    raise ValueError(f"{key} is a number") from None
+                value = _finite(value, key)
             elif f.kind == "choice" and value not in f.choices:
                 raise ValueError(f"{key} is one of {', '.join(f.choices)}")
             elif f.kind == "color" and not (isinstance(value, str) and len(value) == 7 and value.startswith("#")):
@@ -460,10 +458,9 @@ DRAWN_SPACE_MIN_M2 = 1.0
 def _ring(value) -> list[list[float]]:
     """A space's outline from a request: three or more points [x, y] (local meters),
     a simple shape of at least DRAWN_SPACE_MIN_M2."""
-    try:
-        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
-    except (TypeError, ValueError):
-        raise ValueError("a space is its corners: [[x, y], [x, y], [x, y], …]") from None
+    if isinstance(value, list) and len(value) > 501:
+        raise ValueError("a space has 3 to 500 corners")
+    pts = _xy(value, "a space is its corners: [[x, y], [x, y], [x, y], …]")
     if len(pts) > 2 and pts[0] == pts[-1]:
         pts = pts[:-1]
     if len(pts) < 3 or len(pts) > 500:
@@ -476,23 +473,37 @@ def _ring(value) -> list[list[float]]:
     return pts
 
 
-def _number(body: dict, key: str, default: float | None = None) -> float:
-    value = body.get(key, default)
+def _finite(value, what: str) -> float:
+    """A finite number from a request: NaN and the infinities are not numbers here."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{what} is a number")
     try:
         number = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} is a number") from None
-    if number != number or number in (float("inf"), float("-inf")):
-        raise ValueError(f"{key} is a number")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{what} is a number") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{what} is a number")
     return number
+
+
+def _number(body: dict, key: str, default: float | None = None) -> float:
+    return _finite(body.get(key, default), key)
+
+
+def _xy(value, error: str) -> list[list[float]]:
+    """Points [x, y] (local meters, finite) from a request; ValueError(``error``) when
+    they are not."""
+    try:
+        return [[round(_finite(x, "x"), 4), round(_finite(y, "y"), 4)] for x, y in value]
+    except (TypeError, ValueError):
+        raise ValueError(error) from None
 
 
 def _points(value, n: int) -> list[list[float]]:
     """``n`` points [x, y] (local meters) from a request."""
-    try:
-        pts = [[round(float(x), 4), round(float(y), 4)] for x, y in value]
-    except (TypeError, ValueError):
-        raise ValueError(f"expected {n} points [x, y]") from None
+    if isinstance(value, list) and len(value) != n:
+        raise ValueError(f"expected {n} points [x, y]")
+    pts = _xy(value, f"expected {n} points [x, y]")
     if len(pts) != n:
         raise ValueError(f"expected {n} points [x, y]")
     return pts

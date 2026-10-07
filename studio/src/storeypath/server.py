@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import threading
 import traceback
@@ -799,11 +800,11 @@ class Studio:
         with self._changing(ws_path):
             ws = Workspace.load(ws_path)
             b = ws.building(building_id)
-            lat, lon = float(body["lat"]), float(body["lon"])
+            lat, lon = _number(body, "lat"), _number(body, "lon")
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 raise ValueError("latitude is -90…90 and longitude -180…180")
-            b.placement = Placement(lat=lat, lon=lon, x=float(body.get("x", 0)), y=float(body.get("y", 0)),
-                                    bearing=float(body.get("bearing", 0)))
+            b.placement = Placement(lat=lat, lon=lon, x=_number(body, "x", 0.0), y=_number(body, "y", 0.0),
+                                    bearing=_number(body, "bearing", 0.0) % 360)
             ws.save(ws_path)
         return {"placement": b.placement.model_dump()}
 
@@ -977,14 +978,7 @@ def _not_a_number(token: str):
 
 
 def _number(body: dict, key: str, default: float | None = None) -> float:
-    value = body.get(key, default)
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} is a number") from None
-    if v != v or v in (float("inf"), float("-inf")):
-        raise ValueError(f"{key} is a number")
-    return v
+    return _finite(body.get(key, default), key)
 
 
 def _rings(geom) -> list | None:
@@ -1036,7 +1030,10 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
     chosen: dict[tuple[str, int], str] = {}
     out = []
     for p in plans:
+        if not isinstance(p, dict):
+            raise ValueError("each plan is an object")
         title = p.get("title") or f"plan {p.get('index')}"
+        _plan_numbers(p, title)
         # the location
         loc_id, new_loc, loc = p.get("location_id") or None, None, None
         if loc_id:
@@ -1095,6 +1092,46 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
         chosen[b_key, ordinal] = title
         out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None))
     return out
+
+
+def _plan_numbers(p: dict, title: str) -> None:
+    """A chosen plan's numbers, checked (and made numbers) before anything changes: its
+    region, four finite numbers; its floor, a whole number; its height and parapet,
+    when given, metres more than nothing."""
+    if p.get("region") is not None:
+        region = p["region"]
+        if not isinstance(region, (list, tuple)) or len(region) != 4:
+            raise ValueError(f"{title}: its region is [x0, y0, x1, y1]")
+        p["region"] = [_finite(v, f"{title}: its region") for v in region]
+    ordinal, whole = p.get("ordinal"), None
+    if isinstance(ordinal, int) and not isinstance(ordinal, bool):
+        whole = ordinal
+    elif isinstance(ordinal, float) and ordinal.is_integer():  # neither NaN nor an infinity
+        whole = int(ordinal)
+    elif isinstance(ordinal, str) and re.fullmatch(r"\s*-?\d{1,4}\s*", ordinal):
+        whole = int(ordinal)
+    if whole is None or not -50 <= whole <= 500:
+        raise ValueError(f"{title}: its floor is a whole number")
+    p["ordinal"] = whole
+    for key in ("height", "parapet"):
+        if p.get(key) not in (None, "", 0):
+            value = _finite(p[key], f"{title}: its {key}")
+            if not 0 < value <= 100:
+                raise ValueError(f"{title}: its {key} is metres, more than 0 and at most 100")
+            p[key] = value
+
+
+def _finite(value, what: str) -> float:
+    """A finite number from a request: NaN and the infinities are not numbers here."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{what} is a number")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{what} is a number") from None
+    if not math.isfinite(v):
+        raise ValueError(f"{what} is a number")
+    return v
 
 
 def _unique(code: str, taken: set[str]) -> str:
