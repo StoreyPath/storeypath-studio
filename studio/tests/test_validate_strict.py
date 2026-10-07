@@ -68,6 +68,16 @@ def test_an_id_longer_than_any_id_is_refused_before_it_is_taken_apart():
     assert not is_item_id("K7Q2XM-I" + "0" * 8_000_000)
 
 
+def test_a_huge_id_in_a_package_is_refused_without_repeating_it(tmp_path):
+    item, space = first("items.geojson")["id"], first()["id"]
+    huge = "A-" * 1_000_000
+    out = rewritten(tmp_path, **{"items.geojson": lambda t: t.replace(item, item + "0" * 2_000_000, 1),
+                                 "spaces.geojson": lambda t: t.replace(space, huge, 1)})
+    errors = validate_package(out)
+    assert any("not an item ID" in e for e in errors) and any("longer than an ID can be" in e for e in errors)
+    assert max(len(e) for e in errors) < 1000
+
+
 def test_an_item_id_with_other_digits_is_refused(tmp_path):
     item = first("items.geojson")["id"]
     other = item[:-1] + "١"  # ARABIC-INDIC DIGIT ONE

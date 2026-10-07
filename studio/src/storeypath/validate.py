@@ -91,9 +91,9 @@ def validate_package(path: str | Path) -> list[str]:
             fc = load(file_of(role), FeatureCollection[feature])
             if fc is None:
                 continue
-            collections[role] = fc.features
             if manifest.counts.get(role) != len(fc.features):
                 errors.append(f"{file_of(role)}: manifest counts {manifest.counts.get(role)}, file has {len(fc.features)}")
+            collections[role] = []  # the features with an ID: one without is a problem of its own
             for f in fc.features:
                 kind = f.properties.kind
                 try:
@@ -101,6 +101,7 @@ def validate_package(path: str | Path) -> list[str]:
                 except ValueError as e:
                     errors.append(f"{file_of(role)}: {e}")
                     continue
+                collections[role].append(f)
                 if f.id in ids:
                     errors.append(f"duplicate ID {f.id}")
                 ids[f.id] = kind
@@ -180,7 +181,10 @@ def validate_package(path: str | Path) -> list[str]:
                 for f in items:
                     q = f.properties
                     if not is_item_id(f.id) or not f.id.startswith(project + "-"):
-                        errors.append(f"{f.id}: not an item ID of project {project} ({project}-I and six digits)")
+                        errors.append(f"{f.id[:MAX_ID_LENGTH]}: not an item ID of project {project} "
+                                      f"({project}-I and six digits)")
+                        if not is_item_id(f.id):  # not an ID at all: nothing else of it is checked
+                            continue
                     if f.id in ids:
                         errors.append(f"duplicate ID {f.id}")
                     ids[f.id] = "item"
