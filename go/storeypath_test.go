@@ -795,6 +795,50 @@ func TestItemsArePlacedInTheirBuilding(t *testing.T) {
 	}
 }
 
+func TestEveryBuildingHasAPlacement(t *testing.T) {
+	// Without its building's placement an item's map position was not checked
+	// against its position in the building, and nothing said so.
+	none := rewriteFrom(t, "campus-hq.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) { doc["placements"] = map[string]any{} })(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) { props(features(doc)[0])["display_point"] = []any{47.0, 25.0} })(n, d)
+		}
+		return d
+	})
+	problems := none.Validate()
+	if !slices.Equal(codes(problems), []string{ProblemPlacement}) || len(problems) != 1 || problems[0].ID != none.Buildings[0].ID {
+		t.Errorf("no placement: %v", problems)
+	}
+	// campus (0.6) holds two buildings: the Annex unplaced, and an item said to be
+	// in a building the package does not hold
+	annex := rewriteFrom(t, "campus.storeypath", func(n string, d []byte) []byte {
+		switch n {
+		case FileManifest:
+			return editJSON(n, func(doc map[string]any) {
+				for id := range doc["placements"].(map[string]any) {
+					if strings.HasSuffix(id, "-ANNEX") {
+						delete(doc["placements"].(map[string]any), id)
+					}
+				}
+			})(n, d)
+		case FileItems:
+			return editJSON(n, func(doc map[string]any) { props(features(doc)[0])["building_id"] = "EWBSSN-DEMO-GONE" })(n, d)
+		}
+		return d
+	})
+	var unplaced []string
+	for _, pr := range annex.Validate() {
+		if pr.Code == ProblemPlacement {
+			unplaced = append(unplaced, pr.ID)
+		}
+	}
+	if !slices.Equal(unplaced, []string{"EWBSSN-DEMO-ANNEX", "EWBSSN-DEMO-GONE"}) {
+		t.Errorf("unplaced: %v", unplaced)
+	}
+}
+
 func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
 	// campus-hq-2: a desk carried to the Annex (moved away), the TV taken away
 	// (retired); campus-annex-2 holds the desk, changed.

@@ -57,6 +57,7 @@ const (
 	ProblemScope        = "SCOPE"         // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
 	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position away from it
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
+	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
 )
 
 var kindLevel = map[string]string{
@@ -81,10 +82,11 @@ var kindRoles = map[string]string{
 
 // Validate checks the package as Studio's validator does: its files, the
 // manifest's counts, every ID and every reference between features, objects.csv
-// and changes.json, and the items (format 0.6): their IDs, the floor, space and zone
-// each stands in, its type in the catalogue, and (0.7) their position in their
-// building, which their map position must agree with. From 0.7 a package holds one
-// building. No problems means the package can be linked to as it is.
+// and changes.json, every building's placement, and the items (format 0.6): their
+// IDs, the floor, space and zone each stands in, its type in the catalogue, and
+// (0.7) their position in their building, which their map position must agree
+// with through the building's placement. From 0.7 a package holds one building.
+// No problems means the package can be linked to as it is.
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
 	add := func(code, file, id, format string, args ...any) {
@@ -195,6 +197,21 @@ func (p *Package) Validate() []Problem {
 				add(ProblemScope, buildingsFile, b.ID, "building %s is in the package but not in its scope", b.ID)
 			}
 		}
+	}
+	// the placements hold one for each building: where its frame is on the map,
+	// which the items standing in it are checked against
+	unplaced := map[string]bool{}
+	placed := func(building string) {
+		if _, ok := m.Placements[building]; !ok && !unplaced[building] {
+			unplaced[building] = true
+			add(ProblemPlacement, FileManifest, building, "building %s has no placement", building)
+		}
+	}
+	for _, b := range p.Buildings {
+		placed(b.ID)
+	}
+	for _, it := range p.Items {
+		placed(it.Building)
 	}
 	for _, f := range p.Floors {
 		parent(f.ID, f.Building, "building", floorsFile)
