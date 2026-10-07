@@ -524,9 +524,13 @@ def serve(
     host: Annotated[str, typer.Option(help="0.0.0.0 to serve other machines (as in the container)")] = "127.0.0.1",
     port: Annotated[int, typer.Option()] = 8080,
     open_browser: Annotated[bool, typer.Option("--open/--no-open")] = False,
+    allowed_host: Annotated[Optional[list[str]], typer.Option(
+        "--allowed-host",
+        help="another name Studio is reached by (a server's, a proxy's), as typed in the browser; again for "
+             "more. localhost, this machine's name and addresses always are; also STOREYPATH_ALLOWED_HOSTS")] = None,
 ):
     """Run StoreyPath Studio in the browser: projects, drawings, review, export."""
-    _serve(data, host, port, "/" , open_browser)
+    _serve(data, host, port, "/" , open_browser, allowed=allowed_host or [])
 
 
 @app.command()
@@ -541,12 +545,13 @@ def review(
            f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them")
 
 
-def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "") -> None:
+def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
+           allowed: list[str] | None = None) -> None:
     from .server import Studio, make_server
 
     studio = Studio(data)
     try:
-        server = make_server(studio, host, port)
+        server = make_server(studio, host, port, allowed=allowed or [])
     except OSError as e:
         _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_port}{page}"

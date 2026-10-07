@@ -67,7 +67,8 @@ function savedMode() {
 async function request(path, body) {
   const init = body === undefined ? {} : {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // the header a page of another site cannot send (server.py refuses changes without it)
+    headers: { "X-StoreyPath": "1", "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
   const res = await fetch(`/api/${path}`, init);

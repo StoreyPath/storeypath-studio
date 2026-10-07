@@ -22,7 +22,8 @@ async function api(path, body, { method, raw } = {}) {
     init.body = raw;
   } else if (body !== undefined) {
     init.method = method || "POST";
-    init.headers = { "Content-Type": "application/json" };
+    // the header a page of another site cannot send (server.py refuses changes without it)
+    init.headers = { "X-StoreyPath": "1", "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
   }
   const res = await fetch(`/api/${path}`, init);

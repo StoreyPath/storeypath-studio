@@ -189,7 +189,7 @@ def call(url, body=None, method=None, raw=None, headers=None):
     else:
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(url, data=data, method=method,
-                                     headers={"Content-Type": "application/json", **(headers or {})})
+                                     headers={"Content-Type": "application/json", "X-StoreyPath": "1", **(headers or {})})
     try:
         with urllib.request.urlopen(req) as res:
             payload = res.read()

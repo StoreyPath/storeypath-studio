@@ -39,6 +39,11 @@ converting, exporting — run as jobs, one at a time, and report progress.
                                                package, or a project file (bundle.py)
     GET  /api/jobs/<id>
     and the review editor's calls under /api/projects/<code>/ (see review.py)
+
+What changes something (POST, a JSON object; PUT, a file) is sent with the header
+``X-StoreyPath: 1``, which a page of another site cannot send, from a page of Studio's.
+Studio answers only to its own names (allowed_hosts: localhost, this machine's name,
+an address, and those given with --allowed-host or STOREYPATH_ALLOWED_HOSTS).
 """
 
 from __future__ import annotations
@@ -935,6 +940,10 @@ def _settle(loc, positions: dict) -> dict:
     return positions
 
 
+def _not_a_number(token: str):
+    raise ValueError(f"{token} is not a number JSON has")
+
+
 def _number(body: dict, key: str, default: float | None = None) -> float:
     value = body.get(key, default)
     try:
@@ -1076,28 +1085,133 @@ def _code(text: str, default: str = "B1") -> str:
 
 # ---- HTTP ----------------------------------------------------------------------
 
-def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> ThreadingHTTPServer:
+MAX_JSON = 64 * 1024 * 1024  # a request's JSON body
+DRAIN_MAX = 1024 * 1024  # a refused request's body is read (and dropped) up to this size; else the connection closes
+ALLOWED_HOSTS_ENV = "STOREYPATH_ALLOWED_HOSTS"  # more names Studio may be reached by: "studio.example.org, studio"
+
+
+def allowed_hosts(bound: str = "127.0.0.1", more=()) -> set[str]:
+    """The names a browser may reach Studio by (the Host it sends, and the origin of a
+    page that changes something): localhost and the loopback addresses, this machine's
+    own name, the address it is bound to when that is a name, and those given (``more``,
+    and STOREYPATH_ALLOWED_HOSTS, separated by commas or spaces; "*": any). An address
+    (192.168.1.20, [fd00::5]) is always allowed as a Host: a page reached by another
+    name that resolves here (DNS rebinding) sends that name, never an address."""
+    import os
+    import socket
+
+    names = {"localhost", "127.0.0.1", "::1"}
+    try:
+        own = socket.gethostname().strip().lower()
+    except OSError:
+        own = ""
+    if own:
+        short = own.split(".")[0]
+        names |= {own, short, f"{short}.local"}
+    if bound and bound not in ("0.0.0.0", "::", ""):
+        names.add(bound.strip("[]").lower())
+    given = list(more or []) + re.split(r"[,\s]+", os.environ.get(ALLOWED_HOSTS_ENV, ""))
+    names |= {n.strip().strip("[]").lower() for n in given if n and n.strip()}
+    return names
+
+
+def _host_name(value: str) -> str | None:
+    """The host in a Host header's value or an origin's host[:port], lowercase, without
+    its port or brackets; None when it is not one."""
+    value = (value or "").strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        name, port = value[1:end], value[end + 1:]
+        if end < 0 or (port and not re.fullmatch(r":\d{1,5}", port)):
+            return None
+        return name or None
+    name, _, port = value.partition(":")
+    if (port and not re.fullmatch(r"\d{1,5}", port)) or not re.fullmatch(r"[a-z0-9._-]+", name):
+        return None
+    return name
+
+
+def _is_address(name: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
+
+
+def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
+                allowed: set[str] | list[str] | tuple = ()) -> ThreadingHTTPServer:
+    """Studio's pages and API on ``host``:``port``. Reached by names other than those
+    of allowed_hosts (``allowed``: more of them), it answers 403."""
     app_dir = Path(str(resources.files("storeypath") / "review_app")).resolve()
     viewer_dir = asset_dir("viewer").resolve()
     theme = viewer_dir / "src" / "theme.js"
-    local_only = host in ("127.0.0.1", "localhost", "::1")
+    names = allowed_hosts(host, allowed)
+    any_name = "*" in names
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        _unread = 0  # what is left of the request's body: -1, not known (the connection is not kept)
 
         def log_message(self, *args):
             pass
 
-        def _allowed(self) -> bool:
-            # On the loopback interface, refuse requests addressed to other names
-            # (DNS rebinding). Published on a network (a container), anyone who can
-            # reach the port may use it, as with any server.
-            if not local_only:
+        def parse_request(self) -> bool:
+            if not super().parse_request():
+                return False
+            lengths = self.headers.get_all("Content-Length") or []
+            if self.headers.get("Transfer-Encoding") or len(lengths) > 1 \
+                    or (lengths and not re.fullmatch(r"\d{1,15}", lengths[0].strip())):
+                self._unread = -1  # where the body ends is not known: answered, and the connection closed
+            else:
+                self._unread = int(lengths[0]) if lengths else 0
+            return True
+
+        def _body(self) -> bytes:
+            data = self.rfile.read(self._unread) if self._unread > 0 else b""
+            self._unread = 0
+            return data
+
+        def _allowed(self, changes: bool = False) -> bool:
+            """Whether the request may be answered: addressed to one of Studio's names,
+            and, when it ``changes`` something, sent by a page of Studio's (its Origin,
+            when it has one: browsers send it with every POST and PUT). A page of another
+            site cannot send what changes things (application/json, X-StoreyPath: 1)
+            without a CORS preflight, which this server never answers; reached through
+            another name that resolves here (DNS rebinding), it is refused here."""
+            host_header = self.headers.get("Host") or ""
+            name = _host_name(host_header)
+            if name is None or not (any_name or name in names or _is_address(name)):
+                return False
+            origin = self.headers.get("Origin")
+            if not changes or origin is None:
                 return True
-            host_name = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-            return host_name in ("127.0.0.1", "localhost", "::1")
+            u = urlparse(origin)
+            if u.scheme not in ("http", "https") or not u.netloc:
+                return False  # "null": a sandboxed frame, a file
+            if u.netloc.lower() == host_header.strip().lower():
+                return True  # this page's own
+            theirs = _host_name(u.netloc)
+            return theirs is not None and (any_name or theirs in names)
+
+        def _refuse(self, status: int = 403, error: str = "forbidden") -> None:
+            """A request refused as it came: never kept on the connection, where its body,
+            unread, would be read as the next request."""
+            self.close_connection = True
+            self._json(status, {"error": error})
 
         def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None) -> None:
+            if self._unread:
+                # answered before its body was read: a small body is read and dropped; any
+                # other ends the connection (never read as another request)
+                if 0 < self._unread <= DRAIN_MAX:
+                    try:
+                        self._body()
+                    except OSError:
+                        pass
+                self.close_connection = True
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -1106,6 +1220,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             self.send_header("X-Content-Type-Options", "nosniff")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
 
@@ -1120,8 +1236,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
             self._send(200, path.read_bytes(), ctype)
 
         def do_GET(self):
+            if self._unread < 0:
+                return self._refuse(400, "a request's body has a Content-Length")
             if not self._allowed():
-                return self._json(403, {"error": "forbidden"})
+                return self._refuse()
             url = urlparse(self.path)
             path = unquote(url.path)
             if path.startswith("/api/"):
@@ -1132,29 +1250,43 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return self._file(viewer_dir / path[len("/viewer/"):], viewer_dir)
             return self._file(app_dir / (path.lstrip("/") or "index.html"), app_dir)
 
+        def _changing(self) -> bool:
+            """Whether a request that changes something may: addressed to Studio, from a
+            page of Studio's, with the header a page of another site cannot send without
+            a CORS preflight (which this server never answers). Refused (the connection
+            closed, its body unread) when not."""
+            if self._unread < 0:
+                self._refuse(400, "a request's body has a Content-Length")
+                return False
+            if not self._allowed(changes=True) or self.headers.get("X-StoreyPath") != "1":
+                self._refuse()
+                return False
+            return True
+
         def do_PUT(self):
-            if not self._allowed():
-                return self._json(403, {"error": "forbidden"})
+            if not self._changing():
+                return
+            if self._unread > MAX_UPLOAD:
+                return self._refuse(413, "the file is too large")
             url = urlparse(self.path)
             parts = unquote(url.path).split("/")[2:]
-            length = int(self.headers.get("Content-Length") or 0)
-            if length > MAX_UPLOAD:
-                return self._json(413, {"error": "the file is too large"})
-            # Uploads need a custom header: a page on another site cannot send one
-            # without a CORS preflight, which this server never answers.
-            if self.headers.get("X-StoreyPath") != "1":
-                return self._json(403, {"error": "forbidden"})
-            body = self.rfile.read(length)
+            body = self._body()
             self._api("PUT", parts, body, parse_qs(url.query))
 
         def do_POST(self):
-            if not self._allowed() or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                return self._json(403, {"error": "forbidden"})
-            length = int(self.headers.get("Content-Length") or 0)
+            if not self._changing():
+                return
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                return self._refuse()
+            if self._unread > MAX_JSON:
+                return self._refuse(413, "too much to send at once")
             try:
-                body = json.loads(self.rfile.read(length) or b"{}")
-            except json.JSONDecodeError:
+                # NaN and Infinity are not JSON: refused, never stored
+                body = json.loads(self._body() or b"{}", parse_constant=_not_a_number)
+            except ValueError:
                 return self._json(400, {"error": "invalid JSON"})
+            if not isinstance(body, dict):
+                return self._json(400, {"error": "send a JSON object"})
             self._api("POST", unquote(urlparse(self.path).path).split("/")[2:], body, {})
 
         def _api(self, method: str, parts: list[str], body, query) -> None:
