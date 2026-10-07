@@ -8,6 +8,7 @@ export const SUPPORTED_MAJOR_VERSION = 0;
 
 const COLLECTIONS = ["location", "buildings", "floors", "spaces", "openings"];
 const SINCE_0_3 = ["zones"]; // parts of open spaces; none in older packages
+const SINCE_0_6 = ["items"]; // furniture and equipment; none in older packages
 
 /**
  * Load a package from a URL, Blob, File or ArrayBuffer.
@@ -35,13 +36,16 @@ export async function loadPackage(source) {
   }
   const collections = {};
   for (const role of COLLECTIONS) collections[role] = (await read(manifest.files[role])).features;
-  for (const role of SINCE_0_3) collections[role] = manifest.files[role] ? (await read(manifest.files[role])).features : [];
+  for (const role of [...SINCE_0_3, ...SINCE_0_6]) {
+    collections[role] = manifest.files[role] ? (await read(manifest.files[role])).features : [];
+  }
+  collections.catalogue = manifest.files.catalogue ? await read(manifest.files.catalogue) : null;
   return new StoreyPathPackage(manifest, collections, zip);
 }
 
 export class StoreyPathPackage {
   /** ``zip``: the archive, for the files read only when needed (the pre-built 3D). */
-  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [] }, zip = null) {
+  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [], items = [], catalogue = null }, zip = null) {
     this.manifest = manifest;
     this._zip = zip;
     this.locations = location;
@@ -50,11 +54,15 @@ export class StoreyPathPackage {
     this.spaces = spaces; // what walls and doors enclose
     this.zones = zones; // the parts of open spaces, with no wall between them
     this.openings = openings;
+    this.items = items; // furniture and equipment: desks, photocopiers, access points, …
+    this.catalogue = catalogue; // the types of items (catalogue.json), or null
 
     this.byId = new Map();
-    for (const list of [location, buildings, floors, spaces, zones, openings]) {
+    for (const list of [location, buildings, floors, spaces, zones, openings, items]) {
       for (const f of list) this.byId.set(f.id, f);
     }
+    this._itemsByFloor = groupBy(items, (i) => i.properties.floor_id);
+    this._itemTypes = new Map((catalogue?.types ?? []).map((t) => [t.code, t]));
     this._zonesBySpace = groupBy(zones, (z) => z.properties.space_id);
     // what is used: the zones of a space that has them, otherwise the space
     this.units = [...zones, ...spaces.filter((s) => !this._zonesBySpace.has(s.id))];
@@ -130,6 +138,18 @@ export class StoreyPathPackage {
     return this._unitsByFloor.get(floorId) ?? [];
   }
 
+  /** The furniture and equipment on a floor (format 0.6; none in older packages). An
+   * item's ID says nothing of where it is: its properties do. */
+  itemsOn(floorId) {
+    return this._itemsByFloor.get(floorId) ?? [];
+  }
+
+  /** An item type of the catalogue by its code (an item's ``type``): its names,
+   * category, size, mount, colour and fields; or null. */
+  itemType(code) {
+    return this._itemTypes.get(code) ?? null;
+  }
+
   /** The ground floor of a building (ordinal 0), or its lowest floor. */
   groundFloor(buildingId) {
     const floors = this.floorsOf(buildingId);
@@ -138,9 +158,12 @@ export class StoreyPathPackage {
 
   /**
    * Everything an ID says about where an object is:
-   * PROJECT-LOCATION-BUILDING-FLOOR-OBJECT.
+   * PROJECT-LOCATION-BUILDING-FLOOR-OBJECT. An item's ID (PROJECT-I000142) says
+   * nothing of it: its floor does, and the item is the object.
    */
   hierarchy(id) {
+    const item = this.get(id);
+    if (item?.properties.kind === "item") return { ...this.hierarchy(item.properties.floor_id), object: item };
     const segments = id.split("-");
     const at = (n) => (segments.length >= n ? this.get(segments.slice(0, n).join("-")) : null);
     return {
