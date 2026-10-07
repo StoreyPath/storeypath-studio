@@ -15,7 +15,7 @@ from pathlib import Path
 
 import ezdxf
 from ezdxf.enums import TextEntityAlignment
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString, Polygon, box
 from shapely.ops import unary_union
 
 WALL = 0.2  # m
@@ -48,9 +48,20 @@ class Cell:
     label_style: str = "text"  # text | mtext | tag
     blocks: list[str] = field(default_factory=list)
     furniture: bool = False
+    outline: list[tuple[float, float]] | None = None  # any shape (an L-shaped room); x0…y1 are its bounds
+    label_at: tuple[float, float] | None = None  # where its label goes, when not its middle
+
+    @property
+    def shape(self):
+        return Polygon(self.outline) if self.outline else box(self.x0, self.y0, self.x1, self.y1)
 
     @property
     def center(self) -> tuple[float, float]:
+        if self.label_at:
+            return self.label_at
+        if self.outline:
+            p = self.shape.representative_point()
+            return p.x, p.y
         return (self.x0 + self.x1) / 2, (self.y0 + self.y1) / 2
 
     @property
@@ -99,6 +110,34 @@ def office_floor(ordinal: int) -> list[Cell]:
     return cells
 
 
+def simple_office() -> list[Cell]:
+    """wayfinder's "simple-office" floor (its PDF test fixture, same rooms and
+    numbers), with an open office on the east whose two halves are numbered
+    separately (to be divided into zones in review) and a shaft in its corner."""
+    cells = []
+    north = [(0, 3.6, ["OFFICE", "F0-301"], "office"), (3.6, 7.2, ["OFFICE", "F0-302"], "office"),
+             (7.2, 12, ["MANAGER OFFICE", "F0-303"], "office"), (12, 18, ["MEETING ROOM", "F0-304"], "meeting_room"),
+             (18, 21.6, ["PANTRY", "F0-305"], "kitchen")]
+    for x0, x1, label, kind in north:
+        cells.append(Cell(x0, 8, x1, 13, label, kind, Door((x0 + x1) / 2, 8, "h", +1), furniture=kind == "office"))
+    cells.append(Cell(0, 6, 21.6, 8, ["CORRIDOR", "F0-C01"], "corridor", Door(0, 7, "v", +1, 1.2)))
+    cells.append(Cell(0, 0, 6, 6, ["OFFICE", "F0-315"], "office", Door(1.8, 6, "h", -1),
+                      outline=[(0, 0), (3.6, 0), (3.6, 3), (6, 3), (6, 6), (0, 6)], label_at=(1.8, 3.2), furniture=True))
+    south = [(3.6, 0, 6, 3, ["WC", "F0-316"], "restroom", Door(4.8, 3, "h", -1, 0.8), []),
+             (6, 0, 9, 6, ["STAIR", "F0-317"], "stairs", Door(7.5, 6, "h", -1), []),
+             (9, 3, 11.4, 6, ["LIFT", "F0-318"], "elevator", Door(10.2, 6, "h", -1, 1.0), ["ELEVATOR_CAR"]),
+             (9, 0, 11.4, 3, ["ELEC. ROOM", "F0-319"], "utility", Door(11.4, 1.5, "v", -1), []),
+             (11.4, 0, 15, 6, ["IT / SERVER ROOM", "F0-320"], "utility", Door(13.2, 6, "h", -1), []),
+             (15, 0, 18, 6, ["STORAGE", "F0-321"], "storage", Door(16.5, 6, "h", -1), []),
+             (18, 0, 21.6, 6, ["PRAYER ROOM", "F0-322"], "prayer_room", Door(19.8, 6, "h", -1), [])]
+    for x0, y0, x1, y1, label, kind, door, blocks in south:
+        cells.append(Cell(x0, y0, x1, y1, label, kind, door, blocks=blocks))
+    cells.append(Cell(21.6, 0, 30, 13, ["OPEN OFFICE", "F0-330"], "open_area", Door(21.6, 7, "v", +1, 1.2),
+                      outline=[(22.8, 0), (30, 0), (30, 13), (21.6, 13), (21.6, 1.2), (22.8, 1.2)], label_at=(25.8, 10)))
+    cells.append(Cell(21.6, 0, 22.8, 1.2, ["SHAFT"], "shaft"))
+    return cells
+
+
 def _setup(doc) -> None:
     for name, color in LAYERS.items():
         doc.layers.add(name, color=color)
@@ -128,7 +167,7 @@ def _windows(cells: list[Cell]) -> list[tuple[float, float, float]]:
     ymin, ymax = min(c.y0 for c in cells), max(c.y1 for c in cells)
     out = []
     for c in cells:
-        if c.expected_type in WINDOW_TYPES:
+        if c.expected_type in WINDOW_TYPES and not c.outline:
             width = min(1.8, c.x1 - c.x0 - 1.2)
             for y in (ymin, ymax):
                 if y in (c.y0, c.y1):
@@ -171,7 +210,7 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
         return round((ox + x) * 1000, 3), round((oy + y) * 1000, 3)
 
     # walls: cell edges thickened, minus the door and window openings
-    wall_mass = unary_union([box(c.x0, c.y0, c.x1, c.y1).exterior for c in cells]).buffer(WALL / 2, join_style="mitre")
+    wall_mass = unary_union([c.shape.exterior for c in cells]).buffer(WALL / 2, join_style="mitre")
     gaps = []
     for c in cells:
         if c.door:
@@ -204,11 +243,9 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
     for c in cells:
         inset = WALL / 2
         if area_outlines:
-            msp.add_lwpolyline(
-                [mm(c.x0 + inset, c.y0 + inset), mm(c.x1 - inset, c.y0 + inset),
-                 mm(c.x1 - inset, c.y1 - inset), mm(c.x0 + inset, c.y1 - inset)],
-                close=True, dxfattribs={"layer": "A-AREA"},
-            )
+            inner = c.shape.buffer(-inset, join_style="mitre")
+            msp.add_lwpolyline([mm(*p) for p in list(inner.exterior.coords)[:-1]], close=True,
+                               dxfattribs={"layer": "A-AREA"})
         cx, cy = c.center
         if c.label:
             if c.label_style == "mtext":

@@ -24,8 +24,57 @@ func open(t *testing.T, name string) *Package {
 	return p
 }
 
+// corpusPackages is every package in the corpus.
+func corpusPackages(t *testing.T) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(corpus, "packages", "*.storeypath"))
+	if err != nil || len(paths) < 3 {
+		t.Fatalf("corpus packages: %v %v", paths, err)
+	}
+	names := make([]string, len(paths))
+	for i, path := range paths {
+		names[i] = filepath.Base(path)
+	}
+	return names
+}
+
+func TestSimpleOfficeIsWayfindersFloor(t *testing.T) {
+	p := open(t, "simple-office.storeypath")
+	if len(p.Floors) != 1 {
+		t.Fatalf("%d floors", len(p.Floors))
+	}
+	numbers := map[string]Unit{}
+	var hidden []string
+	for _, u := range p.UnitsOn(p.Floors[0].ID) {
+		if u.Hidden {
+			hidden = append(hidden, u.Type)
+			continue
+		}
+		if u.Number == nil {
+			t.Errorf("%s (%s) has no number", u.ID, u.Type)
+			continue
+		}
+		numbers[*u.Number] = u
+	}
+	for n, want := range map[string]string{"F0-301": "office", "F0-302": "office", "F0-303": "office", "F0-304": "meeting_room",
+		"F0-305": "kitchen", "F0-C01": "corridor", "F0-315": "office", "F0-316": "restroom", "F0-317": "stairs",
+		"F0-318": "elevator", "F0-319": "utility", "F0-320": "utility", "F0-321": "storage", "F0-322": "prayer_room"} {
+		if u, ok := numbers[n]; !ok || u.Type != want || u.Kind != "space" {
+			t.Errorf("%s: %+v, want a %s space", n, u, want)
+		}
+	}
+	for _, n := range []string{"F0-330", "F0-331"} {
+		if u := numbers[n]; u.Kind != "zone" || u.Type != "office" {
+			t.Errorf("%s: %+v, want an office zone", n, u)
+		}
+	}
+	if len(numbers) != 16 || len(hidden) != 1 || hidden[0] != "shaft" {
+		t.Errorf("%d numbered units, hidden %v", len(numbers), hidden)
+	}
+}
+
 func TestTheConformancePackagesAreValid(t *testing.T) {
-	for _, name := range []string{"campus.storeypath", "unplaced.storeypath"} {
+	for _, name := range corpusPackages(t) {
 		if problems := open(t, name).Validate(); len(problems) > 0 {
 			t.Errorf("%s: %v", name, problems)
 		}
@@ -114,7 +163,7 @@ func TestTheLocalFrameAgreesWithStudio(t *testing.T) {
 }
 
 func TestAreasInLocalMetresAreStudios(t *testing.T) {
-	for _, name := range []string{"campus.storeypath", "unplaced.storeypath"} {
+	for _, name := range corpusPackages(t) {
 		p := open(t, name)
 		for _, s := range p.Spaces {
 			b, _ := ParseID(s.ID)

@@ -15,6 +15,7 @@ node_modules/
 samples/private/
 demo/
 *.storeypath
+!spec/conformance/packages/*.storeypath
 *.spproj
 
 .DS_Store

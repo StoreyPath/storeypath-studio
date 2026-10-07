@@ -30,7 +30,8 @@ labels:
   # Text, multi-line text and block attributes that name and number spaces.
   layers: ['A-AREA-IDEN', 'A-SPCE-IDEN', 'A-ANNO-ROOM', 'ROOM-?(NAMES?|TAGS?|LABELS?)']
   # A label line that matches this is the room number; anything else is the name.
-  number_pattern: '[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}'
+  # Numbers may carry a floor or wing before them: F0-301, B1-204, 2-105, L2.105.
+  number_pattern: '(?:[A-Z]{0,2}\d{0,2}[-.])?[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}'
 
 doors:
   layers: ['A-DOOR', 'A-DOOR-.*']
@@ -56,6 +57,7 @@ rules:
   - { type: restroom, label: '\b(wc|toilets?|restrooms?|lav(atory)?|washrooms?|bathroom)\b' }
   - { type: kitchen, label: '\b(kitchen(ette)?|pantry|break ?room|cafe(teria)?)\b' }
   - { type: meeting_room, label: '\b(meeting|conf(erence)?|board ?room|huddle)\b' }
+  - { type: prayer_room, label: '\b(prayer|musall?a|mosque|masjid)\b|مصل[ىي]' }
   - { type: open_area, label: '\bopen (office|plan|area)\b' }
   - { type: office, label: '\b(office|off\.?|manager|director)\b' }
   - { type: storage, label: '\b(stor(age|e)?|archive|file room)\b' }

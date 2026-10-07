@@ -40,7 +40,7 @@ class WallsConfig(BaseModel):
 
 class LabelsConfig(BaseModel):
     layers: list[str]
-    number_pattern: str = r"[A-Z]{0,2}\d{1,4}[A-Z]?"
+    number_pattern: str = r"(?:[A-Z]{0,2}\d{0,2}[-.])?[A-Z]{0,2}-?\d{1,4}[A-Z]?|\d{1,2}\.\d{2,3}"
 
 
 class DoorsConfig(BaseModel):
