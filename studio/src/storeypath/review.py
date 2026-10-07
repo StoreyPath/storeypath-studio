@@ -359,7 +359,9 @@ class Review:
             "type": eff["type"], "name": eff["name"], "number": eff["number"],
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "drawing_label": r.label,
-            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"}) if o else None,
+            # a person's correction or check ({}: accepted as it is); not a capacity alone
+            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
+            if o and eff["corrected"] else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             # how many it seats: set here, else its desks'; and who it is laid out for
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
@@ -393,7 +395,8 @@ class Review:
                 if capacity is not None and (isinstance(capacity, bool) or not isinstance(capacity, int)
                                              or not 0 <= capacity <= 10000):
                     raise ValueError("capacity is a whole number from 0, or null (as its desks say)")
-            flags = {"hidden": current.hidden, "ignored": current.ignored}
+            # hidden False is no flag (nothing is hidden as detected): it marks a check, below
+            flags = {"hidden": current.hidden or None, "ignored": current.ignored}
             detected = {"hidden": False, "ignored": bool(r.detected_ignored)}
             for flag in ("hidden", "ignored"):
                 if flag in body:
@@ -415,12 +418,16 @@ class Review:
                 values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
             else:
                 raise ValueError("nothing to change")
+            # Checked: a person saved a correction, or accepted it as it is, and has not reset
+            # it since. A flag or a capacity set keeps that as it was: a capacity alone is no
+            # check (workspace.effective), nor one left empty by clearing a flag.
+            was_checked = object_id in ws.overrides and ws.effective(r)["corrected"] \
+                and not (current.hidden or current.ignored)
+            checked = False if body.get("reset") else True if "correction" in body else was_checked
             override = Override(**values, **flags, capacity=capacity)
-            # An empty correction means "accepted"; one left empty only by clearing a flag
-            # (or by a reset) means nothing and is removed.
-            accepted = object_id in ws.overrides and not (current.hidden or current.ignored)
-            flag_only = "correction" not in body and not body.get("reset")
-            if override == Override() and (body.get("reset") or (flag_only and not accepted)):
+            if checked and not values and capacity is not None and override.hidden is None:
+                override.hidden = False  # accepted as it is, with a capacity: the mark of the check
+            if override == Override() and not checked:
                 ws.overrides.pop(object_id, None)
             else:
                 ws.overrides[object_id] = override

@@ -168,3 +168,60 @@ def test_taking_away_takes_what_was_chosen(demo):
     r.edit(f0, {"remove": {"at": [205, 203]}})  # the wall's middle, on the divider too
     walls, dividers, *_ = drawn()
     assert len(walls) + len(dividers) == 1 and drawn()[3] == [ring]
+
+
+def test_a_capacity_is_not_a_check(demo):
+    """Setting (or clearing) how many a room seats does not take it off the review
+    list: only a correction, or accepting it as it is, does; and either keeps its
+    capacity, as its capacity keeps it checked."""
+    ws_path, ws, _ = demo
+    target = next(o for o in sorted(ws.objects.values(), key=lambda o: o.id)
+                  if ws.review_reasons(o) and ws.review_reasons(o) != ["no type"])
+    reasons = ws.review_reasons(target)
+    r = Review(ws_path)
+
+    seen = r.correct(target.id, {"capacity": 4})
+    assert (seen["reasons"], seen["correction"], seen["capacity"]) == (reasons, None, 4)
+    seen = r.correct(target.id, {"capacity": None})
+    assert (seen["reasons"], seen["correction"]) == (reasons, None)
+    assert target.id not in Workspace.load(ws_path).overrides  # nothing left of it
+
+    # a capacity, then accepted as it is: checked, its capacity kept
+    r.correct(target.id, {"capacity": 4})
+    seen = r.correct(target.id, {"correction": {}})
+    assert (seen["reasons"], seen["correction"], seen["capacity"]) == ([], {}, 4)
+    assert not seen["hidden"]
+    seen = r.correct(target.id, {"capacity": 6})  # still checked
+    assert (seen["reasons"], seen["capacity"]) == ([], 6)
+    seen = r.correct(target.id, {"capacity": None})  # and with no capacity
+    assert (seen["reasons"], seen["correction"]) == ([], {})
+    seen = r.correct(target.id, {"capacity": 2})
+    assert seen["reasons"] == []
+    # reset: no longer checked, its capacity kept
+    seen = r.correct(target.id, {"reset": True})
+    assert (seen["reasons"], seen["correction"], seen["capacity"]) == (reasons, None, 2)
+    # accepted first, then a capacity: still checked
+    r.correct(target.id, {"capacity": None})
+    r.correct(target.id, {"correction": {}})
+    seen = r.correct(target.id, {"capacity": 3})
+    assert (seen["reasons"], seen["capacity"]) == ([], 3)
+    # hidden, then shown again: as before capacities, no longer checked
+    r.correct(target.id, {"hidden": True})
+    seen = r.correct(target.id, {"hidden": False})
+    assert (seen["reasons"], seen["hidden"], seen["capacity"]) == (reasons, False, 3)
+
+
+def test_the_command_line_accepts_a_space_with_a_capacity(demo):
+    from typer.testing import CliRunner
+
+    from storeypath.cli import app
+
+    ws_path, ws, _ = demo
+    target = next(o for o in sorted(ws.objects.values(), key=lambda o: o.id)
+                  if ws.review_reasons(o) and ws.review_reasons(o) != ["no type"])
+    Review(ws_path).correct(target.id, {"capacity": 4})
+    assert Workspace.load(ws_path).review_reasons(target)
+    result = CliRunner().invoke(app, ["fix", str(ws_path), target.id])
+    assert result.exit_code == 0, result.output
+    saved = Workspace.load(ws_path)
+    assert saved.review_reasons(saved.objects[target.id]) == [] and saved.overrides[target.id].capacity == 4

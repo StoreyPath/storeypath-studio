@@ -509,10 +509,12 @@ def fix(
     else:
         if type is not None and record.kind != "space":
             _fail("only spaces have a type to correct")
-        o = ws.overrides.get(object_id, Override())
-        ws.overrides[object_id] = o.model_copy(update={
+        o = ws.overrides.get(object_id, Override()).model_copy(update={
             k: v for k, v in (("type", type), ("name", name), ("number", number)) if v is not None
         })
+        ws.overrides[object_id] = o
+        if not ws.effective(record)["corrected"] and o.hidden is None:
+            o.hidden = False  # accepted as it is, with a capacity set: the mark of the check (workspace.effective)
     ws.save(workspace)
     eff = ws.effective(record)
     typer.echo(f"{object_id}  {eff['type']}  {eff['name'] or ''} {eff['number'] or ''}".rstrip())
