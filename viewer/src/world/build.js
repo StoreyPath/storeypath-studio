@@ -40,7 +40,7 @@ const PARAPET = 1.1; // m, when the package gives no parapet height
 export const PIECES = {
   slab: { material: "slab" },
   wall: { material: "wall", view: "full" }, // the walls' faces, full height
-  wallTop: { material: "wallTop", view: "full" }, // their tops
+  wallTop: { material: "wallTop", view: "full" }, // their tops (and undersides)
   wallLow: { material: "wall", view: "cut" }, // the walls' faces, cut low
   wallCut: { material: "wallCut", view: "cut" }, // where they are cut
   parapet: { material: "wall", view: "full" },

@@ -77,6 +77,13 @@ Placing buildings on the map (`place`) is optional: an unplaced building is
 exported, and shown in 3D, with its true shape and size around 0°N 0°E, marked
 `placed: false` in the package.
 
+An export also builds each floor in 3D ahead of time, as the viewer would build
+it, and puts it in the package (`world/<floor-id>.glb`; see *Pre-built 3D* in
+[FORMAT.md](../spec/FORMAT.md)), so that a slow machine shows the building without
+building it. That takes Node.js (20.6 or newer; the container has it): `node` on the
+`PATH`, or `STOREYPATH_NODE` set to it (empty: never). Without it the package is
+exported as before, and the export says why.
+
 Corrections are kept in the workspace and re-applied on every
 conversion. When a revised drawing is converted, each space is matched to its
 previous version by room number and by overlap: matches keep their ID, removed

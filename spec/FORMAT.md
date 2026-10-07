@@ -219,20 +219,27 @@ The node names it; its `extras` say what it is: `material`, `view`, and `type` a
 | `floor:<type>` | `floor` | | the floor finish of the spaces and zones of that `type` |
 | `volume:<type>` | `volume` | `xray` | each space of that `type` as a volume, up to its ceiling (to its parapets, when open to the sky) |
 | `ceiling` | `ceiling` | `walk` | the ceiling, over every space but those open to the sky |
-| `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces and tops, full height |
-| `wallLow`, `wallCut` | `wall`, `wallCut` | `cut` | the walls cut low (`options.cutHeight`): faces, and the cut |
-| `parapet`, `parapetTop`, `parapetLow`, `parapetCut` | the same | `full`, `cut` | the parapets, likewise |
+| `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces, and their tops and undersides, full height |
+| `parapet`, `parapetTop` | `wall`, `wallTop` | `full` | the parapets, likewise |
 | `heads` | `wallPlain` | `full` | the wall over doors, doorways and windows |
 | `sills` | `wallPlain` | | the wall under windows |
 | `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
 | `door`, `doorFrame` | `door`, `doorFrame` | `full` | door leaves, open as the plan draws them, and their frames |
-| `obstacles` | | | lines (mode `LINES`), not drawn: what someone walking bumps into (walls, windows, open leaves) |
+| `obstacles` | | | lines (mode `LINES`) at the floor, not drawn: what someone walking bumps into (walls, windows, open leaves) |
 
-`view` says when a piece shows: `full` unless the walls are cut low; `cut` only
-then; `walk` when walking on that floor; `xray` in the see-through view; with none,
-always. The pieces of spaces and zones hidden or ignored in review are meshes of
-their own (`floor:shaft:hidden`, `"hidden": true`), shown only when asked for. A
-plain glTF viewer shows every mesh at once.
+`view` says when a piece shows: `full` unless the walls are cut low, as on a plan;
+`cut` only then; `walk` when walking on that floor; `xray` in the see-through view;
+with none, always. The pieces of spaces and zones hidden or ignored in review are
+meshes of their own (`floor:shaft:hidden`, `"hidden": true`), shown only when asked
+for. A plain glTF viewer shows every mesh at once.
+
+The walls and parapets cut low are not in the file: they are `wall`, `wallTop`,
+`parapet` and `parapetTop` with every vertex higher than `elevation` +
+`options.cutHeight` brought down to that height (and on the faces, its v to
+1 − `cutHeight`), shown with `view` `cut`, the tops with the material `wallCut`.
+Texture coordinates (`TEXCOORD_0`) are only on what has a texture: the floor
+finishes (metres east and north) and the walls' and parapets' faces (v = 1 − the
+height above the floor, in metres).
 
 The floor finishes and volumes have a vertex attribute `_ROOM` (unsigned integer),
 an index into `rooms` below: the space or zone each vertex belongs to, so that a
