@@ -24,6 +24,7 @@ import io
 import json
 import math
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -99,6 +100,7 @@ class VisionModel:
         self.key = key or os.environ.get("STOREYPATH_VISION_KEY") or ""
         self.parallel = parallel or int(os.environ.get("STOREYPATH_VISION_PARALLEL", "2"))
         self.timeout = timeout
+        self._slots = threading.BoundedSemaphore(max(1, self.parallel))  # questions in flight at once
         self._checked: bool | None = None
         self._checked_at = 0.0
         self.failed: str | None = None
@@ -147,7 +149,7 @@ class VisionModel:
             "chat_template_kwargs": {"enable_thinking": False},
         }
         try:
-            with urllib.request.urlopen(self._request("/chat/completions", body), timeout=self.timeout) as r:
+            with self._slots, urllib.request.urlopen(self._request("/chat/completions", body), timeout=self.timeout) as r:
                 out = json.load(r)
             answer = json.loads(out["choices"][0]["message"]["content"])
         except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
@@ -255,7 +257,15 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     return fig
 
 
+_DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
+
+
 def render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
+    with _DRAWING:
+        return _render(doc, bbox, highlight, px, marks, letters)
+
+
+def _render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
     """A part of the drawing as printed, with ``highlight`` outlined in red and
     ``marks`` and ``letters`` in blue. PNG."""
     x0, y0, x1, y1 = bbox
@@ -294,6 +304,10 @@ class FloorPrint:
         return self._tiles[(i, j)]
 
     def view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
+        with _DRAWING:
+            return self._view(bbox, highlight, px, marks, letters)
+
+    def _view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
         x0, y0, x1, y1 = bbox
         if max(x1 - x0, y1 - y0) > self.overlap:
             return render(self.doc, bbox, highlight, px, marks, letters)
@@ -767,11 +781,8 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
 
     made: list = []
     rooms = looked = 0
-    last = time.monotonic()
-    for done, k in enumerate(merged):
-        if say is not None and time.monotonic() - last >= PROGRESS_S:
-            last = time.monotonic()
-            say(f"vision: the pieces of {done} of {len(merged)} merged rooms looked at")
+    cut_up = []  # each room's pieces, cut along the lines vision saw rooms meet on
+    for k in merged:
         unit = units[k]
         accepted = sorted((cut for kk, cut, _, seen, _ in lines if kk == k and seen and _two_rooms(seen)),
                           key=lambda c: c.length)
@@ -785,9 +796,28 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
                     pieces[n:n + 1] = parts
                     used.append(cut)
                     break
-        if len(pieces) >= 2:
-            pieces, used, n = _checked(pieces, used, doc, src, scale, sha, model, answers, sheet)
+        cut_up.append([k, pieces, used])
+    # Each room's pieces looked at on their own, several rooms at once so the model is
+    # kept busy (drawing stays one at a time); the results applied in order.
+    checking = [row for row in cut_up if len(row[1]) >= 2]
+    progress = {"done": 0, "last": time.monotonic()}
+    counting = threading.Lock()
+
+    def check(row):
+        found = _checked(row[1], row[2], doc, src, scale, sha, model, answers, sheet)
+        with counting:
+            progress["done"] += 1
+            if say is not None and time.monotonic() - progress["last"] >= PROGRESS_S:
+                progress["last"] = time.monotonic()
+                say(f"vision: the pieces of {progress['done']} of {len(checking)} merged rooms looked at")
+        return found
+
+    with ThreadPoolExecutor(max_workers=max(1, model.parallel if model is not None else 1)) as pool:
+        for row, (pieces, used, n) in zip(checking, pool.map(check, checking)):
+            row[1], row[2] = pieces, used
             looked += n
+    for k, pieces, used in cut_up:
+        unit = units[k]
         if len(pieces) < 2:
             continue
         rooms += 1

@@ -242,3 +242,45 @@ def test_a_long_look_says_how_far_it_has_got(workspace, monkeypatch):
     progress = [int(m[1]) for s in said if (m := re.fullmatch(rf"vision: (\d+) of {rooms} rooms looked at", s))]
     assert progress and progress == sorted(progress) and progress[-1] <= rooms
     assert f"vision: asked about {rooms} of {rooms} rooms" in said
+
+
+def test_never_more_questions_in_flight_than_the_model_takes():
+    # Several merged rooms are checked at once: the model still gets no more
+    # questions at a time than it was set to take (STOREYPATH_VISION_PARALLEL).
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    busy = {"now": 0, "most": 0}
+    lock = threading.Lock()
+
+    class Model(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            with lock:
+                busy["now"] += 1
+                busy["most"] = max(busy["most"], busy["now"])
+            time.sleep(0.05)
+            with lock:
+                busy["now"] -= 1
+            body = json.dumps({"choices": [{"message": {"content": json.dumps({"outline": "exactly one room"})}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        model = VisionModel(url=f"http://127.0.0.1:{server.server_port}/v1", model="m", parallel=2)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            answers = list(pool.map(lambda _: model.ask(b"png", "?", {"outline": ["exactly one room"]}), range(12)))
+    finally:
+        server.shutdown()
+    assert all(a == {"outline": "exactly one room"} for a in answers)
+    assert busy["most"] == 2
