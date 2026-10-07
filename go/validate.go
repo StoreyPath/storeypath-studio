@@ -165,6 +165,8 @@ func (p *Package) Validate() []Problem {
 			add(ProblemValue, file, id, "%s: capacity_from %q is not review or items", id, *s.CapacityFrom)
 		} else if s.CapacityFrom != nil && s.Capacity == nil {
 			add(ProblemValue, file, id, "%s: capacity_from %q with no capacity", id, *s.CapacityFrom)
+		} else if s.CapacityFrom == nil && s.Capacity != nil {
+			add(ProblemValue, file, id, "%s: capacity %d with no capacity_from", id, *s.Capacity)
 		}
 		if s.Grade != nil && !slices.Contains(grades, *s.Grade) {
 			add(ProblemValue, file, id, "%s: grade %q is not one of %s", id, *s.Grade, strings.Join(grades, ", "))
@@ -274,6 +276,11 @@ func (p *Package) Validate() []Problem {
 	for _, it := range p.Items {
 		placed(it.Building)
 	}
+	for _, b := range sortedKeys(m.Placements) { // and no other building
+		if p.Building(b) == nil {
+			add(ProblemPlacement, FileManifest, b, "the manifest places building %s, which is not in the package", b)
+		}
+	}
 	for _, f := range p.Floors {
 		parent(f.ID, f.Building, "building", floorsFile)
 	}
@@ -320,7 +327,9 @@ func (p *Package) Validate() []Problem {
 		geometryOf(o.ID, o.Geometry, openingsFile, true, add)
 	}
 	for _, it := range p.Items {
-		if kindOf(it.Floor) != "floor" || !strings.HasPrefix(it.Floor, it.Building+"-") {
+		if kindOf(it.Building) != "building" {
+			add(ProblemItem, itemsFile, it.ID, "%s: in building %s, which is not a building of the package", it.ID, it.Building)
+		} else if kindOf(it.Floor) != "floor" || !strings.HasPrefix(it.Floor, it.Building+"-") {
 			add(ProblemItem, itemsFile, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
 		}
 		for _, in := range []struct {
@@ -358,6 +367,9 @@ func (p *Package) Validate() []Problem {
 			add(ProblemValue, itemsFile, it.ID, "%s: category %q is not furniture, equipment or appliance", it.ID, it.Category)
 		}
 		geometryOf(it.ID, it.Geometry, itemsFile, false, add)
+		if it.Geometry != nil && it.Geometry.Type != "Polygon" {
+			add(ProblemGeometry, itemsFile, it.ID, "%s: an item's footprint is a Polygon, not a %s", it.ID, it.Geometry.Type)
+		}
 	}
 
 	if c := p.Catalogue; c != nil { // a colour, category or mount left out is Studio's default
@@ -413,10 +425,12 @@ func (p *Package) Validate() []Problem {
 				add(ProblemChanges, changesFile, id, "%s: %s is listed as added/changed but not in the package", changesFile, id)
 			}
 		}
-		for _, id := range c.AllRetired {
-			if _, ok := p.kinds[id]; ok {
+		retired := map[string]bool{}
+		for _, id := range append(append([]string(nil), c.Retired...), c.AllRetired...) {
+			if _, ok := p.kinds[id]; ok && !retired[id] {
 				add(ProblemChanges, changesFile, id, "%s: retired ID %s is still in the package", changesFile, id)
 			}
+			retired[id] = true
 		}
 		for _, mv := range c.MovedAway {
 			if _, here := p.kinds[mv.ID]; here || !IsItemID(mv.ID) {
@@ -425,6 +439,15 @@ func (p *Package) Validate() []Problem {
 			if _, here := p.kinds[mv.Building]; here || !strings.HasPrefix(mv.Building, project+"-") {
 				add(ProblemChanges, changesFile, mv.ID, "%s: %s moved to %s, not another building of the project", changesFile, mv.ID, mv.Building)
 			}
+			if retired[mv.ID] {
+				add(ProblemChanges, changesFile, mv.ID, "%s: %s is listed both as moved away and as retired", changesFile, mv.ID)
+			}
+		}
+		if prev := c.PreviousSequence; prev != nil && *prev >= c.Sequence {
+			add(ProblemChanges, changesFile, "", "%s: previous_sequence %d is not before sequence %d", changesFile, *prev, c.Sequence)
+		}
+		if a, b := c.PreviousSequence, m.Export.PreviousSequence; (a == nil) != (b == nil) || (a != nil && *a != *b) {
+			add(ProblemChanges, changesFile, "", "%s: previous_sequence does not match the manifest's", changesFile)
 		}
 		if c.Sequence != m.Export.Sequence {
 			add(ProblemChanges, changesFile, "", "%s: sequence does not match the manifest", changesFile)
@@ -436,7 +459,9 @@ func (p *Package) Validate() []Problem {
 // geometryOf checks a feature's geometry is a polygon (or, for openings, a point).
 func geometryOf(id string, g *Geometry, file string, point bool, add func(code, file, id, format string, args ...any)) {
 	if point {
-		if g != nil && g.Type != "Point" {
+		if g == nil {
+			add(ProblemGeometry, file, id, "%s: no geometry (an opening's is a Point)", id)
+		} else if g.Type != "Point" {
 			add(ProblemGeometry, file, id, "%s: an opening's geometry is a Point, not a %s", id, g.Type)
 		}
 		return
@@ -508,4 +533,14 @@ func levelDepth(level string) int {
 		}
 	}
 	return 0
+}
+
+// sortedKeys is a map's keys in order, so problems come out the same every time.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

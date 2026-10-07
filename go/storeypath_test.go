@@ -1369,3 +1369,71 @@ func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
 		t.Error("no manifest.json: a manifest")
 	}
 }
+
+func TestWhatStudiosValidatorRefusesIsRefusedHereToo(t *testing.T) {
+	// The rules Studio's validator checks, kept the same in both readers.
+	firstOpening := func(doc map[string]any) map[string]any { return features(doc)[0].(map[string]any) }
+	cases := []struct {
+		name string
+		edit func(string, []byte) []byte
+		want string
+	}{
+		{"an opening with no geometry", editJSON(FileOpenings, func(doc map[string]any) { firstOpening(doc)["geometry"] = nil }), ProblemGeometry},
+		{"an item's footprint as a MultiPolygon", editJSON(FileItems, func(doc map[string]any) {
+			g := features(doc)[0].(map[string]any)["geometry"].(map[string]any)
+			g["type"], g["coordinates"] = "MultiPolygon", []any{g["coordinates"]}
+		}), ProblemGeometry},
+		{"an item in the location, not a building", editJSON(FileItems, func(doc map[string]any) {
+			p := props(features(doc)[0])
+			p["building_id"] = p["building_id"].(string)[:strings.LastIndex(p["building_id"].(string), "-")]
+		}), ProblemItem},
+		{"a placement of a building not in the package", editJSON(FileManifest, func(doc map[string]any) {
+			pl := doc["placements"].(map[string]any)
+			for k, v := range pl {
+				pl[k+"X"] = v
+				break
+			}
+		}), ProblemPlacement},
+		{"a capacity with no capacity_from", editJSON(FileSpaces, func(doc map[string]any) {
+			for _, f := range features(doc) {
+				if props(f)["capacity"] != nil {
+					props(f)["capacity_from"] = nil
+					return
+				}
+			}
+		}), ProblemValue},
+		{"a retired ID still in the package", func() func(string, []byte) []byte {
+			var some string
+			return func(n string, d []byte) []byte {
+				if n == FileSpaces {
+					var doc map[string]any
+					json.Unmarshal(d, &doc)
+					some = features(doc)[0].(map[string]any)["id"].(string)
+				}
+				if n == FileChanges && some != "" {
+					var doc map[string]any
+					json.Unmarshal(d, &doc)
+					doc["retired"] = append(doc["retired"].([]any), some)
+					d, _ = json.Marshal(doc)
+				}
+				return d
+			}
+		}(), ProblemChanges},
+		{"previous_sequence not before sequence", editJSON(FileChanges, func(doc map[string]any) { doc["previous_sequence"] = doc["sequence"] }), ProblemChanges},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := codes(rewriteFrom(t, "campus-hq-2.storeypath", c.edit).Validate()); !slices.Contains(got, c.want) {
+				t.Errorf("problems %v, want %s", got, c.want)
+			}
+		})
+	}
+	// an item both moved away and retired
+	both := rewriteFrom(t, "campus-hq-2.storeypath", editJSON(FileChanges, func(doc map[string]any) {
+		mv := doc["moved_away"].([]any)[0].(map[string]any)["id"]
+		doc["all_retired"] = append(doc["all_retired"].([]any), mv)
+	}))
+	if !slices.Contains(codes(both.Validate()), ProblemChanges) {
+		t.Error("moved away and retired: not a problem")
+	}
+}
