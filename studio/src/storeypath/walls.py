@@ -146,7 +146,7 @@ def spaces_from_walls(
     linework on door and window layers (glazing tells a window from a gap)."""
     mass = wall_mass(lines, fills, cfg)
     if mass.is_empty:
-        return WallSpaces([], None, 0)
+        return WallSpaces([], None, [])
     seals = [bar for d in doors for bar in _door_bars(d, mass)]
     built = mass
     seals += list(shapely.buffer(_connectors(mass, opening_lines, cfg.max_opening), SNAP_M)) if opening_lines else []

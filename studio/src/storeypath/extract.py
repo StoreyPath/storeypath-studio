@@ -474,6 +474,7 @@ def extract_floor(
     spaces, containers = _clean_spaces(closed_shapes, profile, warnings, [lb.point for lb in labels])
     outline = _floor_outline(spaces, containers)
     used = "outlines"
+    wall_lines, wall_fills = _near_the_plan(wall_lines, wall_fills, warnings)
     wall_lines = _without_crosses(wall_lines)
     if not spaces and method != "outlines" and (wall_lines or wall_fills):
         found = spaces_from_walls(
@@ -567,6 +568,48 @@ def extract_floor(
         if outline is not None and outside:  # areas left out as the outside: the walls round them too
             outline, walls = _to_the_building(outline, walls, rooms)
     return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels, zones)
+
+
+PLAN_CELL_M = 50.0  # walls are grouped into bodies on a grid this coarse…
+FAR_M = 1000.0  # …and what lies this far beyond the main body is no part of the plan
+
+
+def _near_the_plan(lines: list, fills: list, warnings: list[str]) -> tuple[list, list]:
+    """The wall lines and fills of the plan: its main body of walls (pieces in grid
+    cells next to each other, the body with the most wall) and what lies within FAR_M
+    of it. A stray far off (a line at a georeferenced drawing's origin, a point at
+    1e14) would otherwise spread the building's envelope over it and lose every room."""
+    items = [*lines, *fills]
+    if len(items) < 2:
+        return lines, fills
+    bounds = np.array([g.bounds for g in items], dtype=float)
+    cells: dict[tuple[int, int], list[int]] = {}
+    for k, (x0, y0, x1, y1) in enumerate(bounds):
+        for x, y in ((x0, y0), (x1, y1)):
+            cells.setdefault((int(x // PLAN_CELL_M), int(y // PLAN_CELL_M)), []).append(k)
+    body: dict[tuple[int, int], int] = {}  # cell → its body
+    for start in cells:
+        if start in body:
+            continue
+        body[start], todo = start, [start]
+        while todo:
+            cx, cy = todo.pop()
+            for nb in ((cx + dx, cy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                if nb in cells and nb not in body:
+                    body[nb] = start
+                    todo.append(nb)
+    size: dict[tuple[int, int], float] = {}
+    for cell, ks in cells.items():
+        size[body[cell]] = size.get(body[cell], 0.0) + sum(items[k].length for k in ks)
+    main = max(size, key=size.get)
+    members = sorted({k for cell, ks in cells.items() if body[cell] == main for k in ks})
+    x0, y0 = bounds[members, 0].min() - FAR_M, bounds[members, 1].min() - FAR_M
+    x1, y1 = bounds[members, 2].max() + FAR_M, bounds[members, 3].max() + FAR_M
+    near = (bounds[:, 0] >= x0) & (bounds[:, 1] >= y0) & (bounds[:, 2] <= x1) & (bounds[:, 3] <= y1)
+    if near.all():
+        return lines, fills
+    warnings.append(f"{int((~near).sum())} wall piece(s) far from the plan were left out")
+    return [g for g, ok in zip(lines, near) if ok], [g for g, ok in zip(fills, near[len(lines):]) if ok]
 
 
 def _opening_tag(e) -> tuple[str, str] | None:

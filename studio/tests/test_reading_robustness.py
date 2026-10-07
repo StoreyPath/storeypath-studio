@@ -797,6 +797,44 @@ def test_a_broken_entity_is_left_out_not_the_floor(plain_office, breakage, profi
     assert len(report.added) == counts[profile]
 
 
+@pytest.mark.parametrize("far", [1e9, 1e14, 1e15])
+def test_a_stray_wall_far_off_is_left_out_not_the_rooms(plain_office, far):
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+
+    d, _ = plain_office
+    doc = ezdxf.readfile(d / "base.dxf")
+    rooms = len(extract_floor(doc, load_profile("ncs")).spaces)
+    doc.modelspace().add_line((far, far), (far + 1000, far), dxfattribs={"layer": "A-WALL"})
+    ex = extract_floor(doc, load_profile("ncs"))
+    assert len(ex.spaces) == rooms > 10
+    assert any("far from the plan were left out" in w for w in ex.warnings)
+
+
+@pytest.mark.parametrize("walls", [
+    [((float("nan"), float("nan")), (5, 5))],  # not a number
+    [((5, 5), (5, 5))],  # no length
+])
+def test_walls_that_make_no_wall_leave_a_floor_with_no_rooms(walls):
+    from storeypath.extract import extract_floor
+    from storeypath.profile import load_profile
+
+    doc = ezdxf.new("R2018")
+    doc.layers.add("A-WALL")
+    for a, b in walls:
+        doc.modelspace().add_line(a, b, dxfattribs={"layer": "A-WALL"})
+    ex = extract_floor(doc, load_profile("ncs"), "m")
+    assert ex.spaces == [] and any(w.startswith("no spaces found") for w in ex.warnings)
+
+
+def test_spaces_from_no_walls_is_nothing():
+    from storeypath.profile import load_profile
+    from storeypath.walls import spaces_from_walls
+
+    found = spaces_from_walls([], [], [], [], [], load_profile("ncs").walls, 0.5)
+    assert found.polygons == [] and found.pockets == []
+
+
 def test_what_the_auditor_takes_out_is_said(plain_office, tmp_path):
     d, _ = plain_office
     doc = ezdxf.readfile(d / "base.dxf")
