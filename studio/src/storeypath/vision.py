@@ -458,6 +458,40 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
     return merged
 
 
+WAY_DOORS = 4  # doors into at least this many rooms make an area a way through, not the outside
+CORRIDOR_WIDTH_M = 6.0  # …a corridor when narrower than this on average, else an open area (a hall)
+
+
+def keep_ways_through(ex) -> int:
+    """Areas vision set aside as not a room that doors join to several rooms: a
+    corridor round a wing, too large and winding for one picture to read, or a hall the
+    rooms open onto, is a way through, not the outside. They are kept (a corridor when
+    narrow, else an open area, when nothing else says what they are), with a note to
+    check them. Returns how many."""
+    rooms_of: dict[int, set[int]] = {}
+    for d in ex.doors:
+        if d.source in ("window", "glazing") or len(d.connects) != 2:
+            continue
+        a, b = d.connects
+        rooms_of.setdefault(a, set()).add(b)
+        rooms_of.setdefault(b, set()).add(a)
+    kept = 0
+    for i, s in enumerate(ex.spaces):
+        seen = [x for x in s.issues if x.startswith("vision: not a room")]
+        if not s.ignored or not seen or len(rooms_of.get(i, ())) < WAY_DOORS:
+            continue
+        s.ignored = False
+        s.issues = [x for x in s.issues if x not in seen]
+        s.issues.append(f"vision saw no room here, but doors join it to {len(rooms_of[i])} rooms: kept as a way "
+                        "through; check it")
+        if s.type == SpaceType.UNSPECIFIED:
+            width = 2 * s.polygon.area / max(s.polygon.length, 1e-9)  # on average: a ring corridor's few metres
+            s.type = SpaceType.CORRIDOR if width < CORRIDOR_WIDTH_M else SpaceType.OPEN_AREA
+            s.type_source = "doors"
+        kept += 1
+    return kept
+
+
 WRAPS_SHARE = 0.5  # an area whose outline wraps round this share of the other rooms' area…
 
 

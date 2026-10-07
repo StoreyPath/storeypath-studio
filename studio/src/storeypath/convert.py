@@ -25,7 +25,7 @@ from .profile import AUTO, load_profile, resolve_profile
 from .reading import TextReader
 from .symbols import MODEL as SYMBOLS_MODEL
 from .symbols import Symbol, SymbolSpotter, from_records, to_records, type_rooms
-from .vision import FloorPrint, VisionModel, look_at_rooms, split_merged
+from .vision import FloorPrint, VisionModel, keep_ways_through, look_at_rooms, split_merged
 from .types import VERTICAL_TYPES, SpaceType
 from .workspace import ObjectRecord, Workspace, utcnow
 
@@ -97,6 +97,8 @@ def convert_floor(
             units = extraction.units()
             look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say,
                           only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet)
+        if (ways := keep_ways_through(extraction)) and say is not None:
+            say(f"vision: {ways} area(s) it saw as no room kept, as doors join them to several rooms")
         type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
         type_zoned_spaces(extraction.spaces, extraction.zones)
         keep_to_the_building(extraction)

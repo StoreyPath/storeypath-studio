@@ -284,3 +284,31 @@ def test_never_more_questions_in_flight_than_the_model_takes():
         server.shutdown()
     assert all(a == {"outline": "exactly one room"} for a in answers)
     assert busy["most"] == 2
+
+
+def test_an_area_doors_join_to_several_rooms_is_a_way_through_not_the_outside():
+    # A large building's ring corridor, too large and winding for one picture, was set aside
+    # by vision as not a room; doors join it to many rooms: it is kept. A courtyard
+    # with one door out stays set aside.
+    from storeypath.extract import ExtractedDoor, ExtractedSpace, FloorExtraction
+
+    def room(x):
+        return ExtractedSpace(polygon=box(x, 0, x + 3, 3), layer="walls")
+
+    ring = ExtractedSpace(polygon=box(0, 3, 30, 6), layer="walls", ignored=True,
+                          issues=["vision: not a room (outside, a frame or a gap); set aside"])
+    court = ExtractedSpace(polygon=box(0, 6, 30, 30), layer="walls", ignored=True,
+                           issues=["vision: not a room (outside, a frame or a gap); set aside"])
+    rooms = [room(3 * k) for k in range(5)]
+    spaces = [ring, court, *rooms]
+    doors = [ExtractedDoor(footprint=box(0, 0, 1, 1), point=Point(3 * k + 1.5, 3), connects=[0, 2 + k]) for k in range(5)]
+    doors.append(ExtractedDoor(footprint=box(0, 0, 1, 1), point=Point(5, 6), connects=[0, 1]))
+    doors.append(ExtractedDoor(footprint=box(0, 0, 1, 1), point=Point(1, 0), connects=[2, 3], source="window"))
+    ex = FloorExtraction(spaces=spaces, doors=doors, outline=None, scale=1.0)
+    assert vision.keep_ways_through(ex) == 1
+    assert not ring.ignored and ring.type == "corridor" and any("doors join it to 6 rooms" in i for i in ring.issues)
+    assert not any(i.startswith("vision: not a room") for i in ring.issues)
+    assert court.ignored  # one door out: still the outside
+    for k in range(4):  # rooms opening onto the court: a hall, not a corridor
+        ex.doors.append(ExtractedDoor(footprint=box(0, 0, 1, 1), point=Point(0, 10 + k), connects=[1, 2 + k]))
+    assert vision.keep_ways_through(ex) == 1 and not court.ignored and court.type == "open_area"

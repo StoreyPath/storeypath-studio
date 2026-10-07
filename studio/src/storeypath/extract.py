@@ -378,10 +378,10 @@ def extract_floor(
                   if p.area >= profile.spaces.min_area]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
         outline, used = found.outline, "walls"
-        outside = found.pockets
+        outside = len(found.pockets)
         if found.pockets:
             warnings.append(
-                f"{found.pockets} area(s) open to the outside were left out; "
+                f"{len(found.pockets)} area(s) open to the outside were left out; "
                 "if one is a room, check that its doors are drawn on a door layer"
             )
 

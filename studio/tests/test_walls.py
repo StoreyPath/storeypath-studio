@@ -189,7 +189,7 @@ def _house(label_points=()):
 
 def test_recess_in_the_facade_is_not_a_space():
     found = _house()
-    assert found.pockets == 1
+    assert len(found.pockets) == 1
     assert len(found.polygons) == 1
     assert abs(found.polygons[0].area - (60 - 4.5)) < 0.1
     assert abs(found.outline.area - (60 - 4.5)) < 0.5
@@ -197,7 +197,7 @@ def test_recess_in_the_facade_is_not_a_space():
 
 def test_recess_with_a_label_is_a_space():
     found = _house(label_points=[(5, 0.7)])
-    assert found.pockets == 0 and len(found.polygons) == 2
+    assert found.pockets == [] and len(found.polygons) == 2
     porch = min(found.polygons, key=lambda p: p.area)
     house = max(found.polygons, key=lambda p: p.area)
     assert open_issue(porch, found.open_edges)[0].startswith("open to the outside through 3.0 m")

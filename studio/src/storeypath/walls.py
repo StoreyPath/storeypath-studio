@@ -108,7 +108,9 @@ def _one_per_window(lines: list) -> list[LineString]:
 class WallSpaces:
     polygons: list[Polygon]
     outline: Polygon | MultiPolygon | None
-    pockets: int  # regions dropped as open to the outside
+    pockets: list  # regions left out as open to the outside: (polygon, why) — "around" the
+    # building (a sheet's frame, the garden inside a plot wall) or "recess" (most of its
+    # edge along the building's outline, no room name inside)
     doorways: list[Polygon] = field(default_factory=list)  # openings closed with no door drawn
     open_edges: object = None  # where spaces meet the outside with no door or window drawn
     fabric: Fabric | None = None
@@ -170,7 +172,7 @@ def spaces_from_walls(
                                     ways.buffer(cfg.max_thickness / 2 + 0.05) if ways is not None else None)
     for k, region in enumerate(regions):
         if k in around:
-            pockets.append(region)  # the garden inside a plot wall, a sheet's frame: outside
+            pockets.append((region, "around"))  # the garden inside a plot wall, a sheet's frame: outside
             continue
         # Edges along the envelope rather than walls: open to the outside, unless
         # glazing is drawn there (a window).
@@ -180,7 +182,7 @@ def spaces_from_walls(
         if stretch.length / region.boundary.length > EXTERIOR_SHARE and not any(
             region.contains(p) for p in label_points
         ):
-            pockets.append(region)  # a recess in the facade
+            pockets.append((region, "recess"))  # a recess in the facade
             continue
         open_edges.append(stretch)
         # Region edges sit SNAP_M off the wall lines; put them back on the lines. At a
@@ -188,13 +190,13 @@ def spaces_from_walls(
         spaces += [p for p in as_polygons(region.buffer(SNAP_M, join_style="mitre").simplify(SIMPLIFY_M))
                    if p.area >= min_area]
 
-    outline = envelope.difference(unary_union(pockets)) if pockets else envelope
+    outline = envelope.difference(unary_union([p for p, _ in pockets])) if pockets else envelope
     outline = outline.buffer(-SNAP_M, join_style="mitre")
     parts = as_polygons(outline)
     outline = parts[0] if len(parts) == 1 else MultiPolygon(parts) if parts else None
     fabric = read_fabric(lines, fills, doors, opening_lines, cfg, built)
     fabric.windows = _one_per_window(fabric.windows + [_axis(b) for b in glazed_gaps])
-    return WallSpaces(spaces, outline, len(pockets), doorways,
+    return WallSpaces(spaces, outline, pockets, doorways,
                       shapely.union_all(open_edges) if open_edges else None, fabric)
 
 
