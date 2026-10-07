@@ -268,3 +268,12 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 
 #menu .size-form button { display: inline-flex; width: auto; border: 1px solid var(--line); background: var(--panel); }
 #menu .size-form button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+/* the floor in 3D (StoreyPath's world), instead of the plan */
+#world3d { position: absolute; inset: 0; }
+#map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
+#map.in3d .only2d { display: none !important; }
+#view-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#view-mode button { border: 0; border-radius: 0; }
+#view-mode button + button { border-left: 1px solid var(--line); }
+

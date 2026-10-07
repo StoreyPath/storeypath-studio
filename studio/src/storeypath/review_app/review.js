@@ -69,6 +69,7 @@ async function request(path, body) {
   const res = await fetch(`/api/${path}`, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  if (body !== undefined) changed3d(); // saved: the 3D view no longer shows it all
   return data;
 }
 
@@ -215,6 +216,7 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   if (!keepView || changed) fit();
   select(spaceId && state.byId.has(spaceId) ? spaceId : null, { fly: Boolean(spaceId) });
   showUnderlay();
+  if (view3d.shown) refresh3d();
 }
 
 // The drawing under the spaces: as printed (an image Studio draws once per drawing),
@@ -640,8 +642,16 @@ function setupMap() {
     save("storeypath.drawing", state.drawingMode);
     showUnderlay();
   });
-  $("show-labels").addEventListener("change", (e) => $("labels").classList.toggle("hidden", !e.target.checked));
+  $("show-labels").addEventListener("change", (e) => {
+    $("labels").classList.toggle("hidden", !e.target.checked);
+    view3d.world?.setLabels(e.target.checked);
+  });
+  for (const b of document.querySelectorAll("#view-mode button")) {
+    b.addEventListener("click", () => show3d(b.dataset.view === "3d"));
+  }
+  $("update3d").addEventListener("click", () => { view3d.stale = true; refresh3d(); });
   $("show-hidden").addEventListener("change", (e) => {
+    view3d.world?.setShowHidden(e.target.checked);
     state.showHidden = e.target.checked;
     if (!state.floor) return;
     renderPlan();
@@ -790,6 +800,7 @@ function select(id, { fly = false } = {}) {
   }
   renderEditor();
   markListSelection();
+  if (view3d.shown && view3d.world && view3d.building) view3d.world.select(state.selected, { go: fly });
   const hash = new URLSearchParams({ floor: state.floor.id });
   if (s) hash.set("space", s.id);
   history.replaceState(null, "", `#${hash}`);
@@ -1413,13 +1424,76 @@ function setupPanel() {
       return;
     }
     if (e.key === "n" || e.key === "N") nextToReview();
-    else if (e.key === "f" || e.key === "F") fit();
+    else if (view3d.shown && "fFwWvVdDoO".includes(e.key)) {
+      if (e.key.toLowerCase() !== "f") toast("Switch to 2D to draw walls, dividers and doors");
+    } else if (e.key === "f" || e.key === "F") fit();
     else if (!readable() && "wWvVdDoO".includes(e.key)) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
     else if (e.key === "w" || e.key === "W") setTool("wall");
     else if (e.key === "v" || e.key === "V") setTool("divide");
     else if (e.key === "d" || e.key === "D") setTool("door");
     else if (e.key === "o" || e.key === "O") setTool("opening");
   });
+}
+
+// ---- the floor in 3D ---------------------------------------------------------------
+// The floor as built, from the project as saved (Studio's package of the floor's
+// building, not recorded as an export): a click on a room chooses it here, as on the
+// plan. Walls, dividers and doors are drawn on the plan; what is saved shows in 3D
+// when it is built again (Update 3D, or another floor of another building).
+
+const view3d = { world: null, building: null, stale: true, shown: false, busy: null };
+
+function changed3d() {
+  view3d.stale = true;
+  $("update3d").hidden = !view3d.shown;
+}
+
+async function show3d(on) {
+  view3d.shown = on;
+  for (const b of document.querySelectorAll("#view-mode button")) b.classList.toggle("active", (b.dataset.view === "3d") === on);
+  $("map").classList.toggle("in3d", on);
+  $("world3d").hidden = !on;
+  if (!on) {
+    $("update3d").hidden = true;
+    return;
+  }
+  if (state.tool) setTool(null);
+  await refresh3d();
+}
+
+async function refresh3d() {
+  if (!view3d.shown || !state.floor) return;
+  if (view3d.busy) return view3d.busy;
+  view3d.busy = (async () => {
+    const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
+    try {
+      if (!view3d.world) {
+        const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
+        view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
+        view3d.world.setLabels($("show-labels").checked);
+        view3d.world.addEventListener("select", ({ detail: { id } }) => {
+          if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
+        });
+      }
+      if (view3d.stale || view3d.building !== building) {
+        $("status").textContent = "Building the 3D view…";
+        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
+        view3d.building = building;
+        view3d.stale = false;
+      }
+      view3d.world.setFloor(state.floor.id);
+      if (state.selected) view3d.world.select(state.selected, { go: false });
+      $("status").textContent = "";
+      $("update3d").hidden = true;
+    } catch (e) {
+      $("status").textContent = "";
+      toast(`The 3D view could not be shown: ${e.message}`, true);
+      show3d(false);
+    } finally {
+      view3d.busy = null;
+    }
+  })();
+  return view3d.busy;
 }
 
 setupMap();

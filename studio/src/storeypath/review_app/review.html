@@ -6,6 +6,15 @@
   <title>StoreyPath Review</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/viewer/vendor/three/three.module.js",
+        "three/addons/": "/viewer/vendor/three/addons/",
+        "jszip": "/viewer/vendor/jszip.mjs"
+      }
+    }
+  </script>
 </head>
 <body>
   <aside id="panel">
@@ -129,10 +138,16 @@
       <g id="labels"></g>
       <g id="cursor-main" class="cursor"></g>
     </svg>
+    <div id="world3d" hidden></div>
     <div id="toolbar">
-      <button id="fit" type="button" title="Show the whole floor (F)">Fit</button>
-      <label title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
-      <label id="drawing-label" title="The floor's drawing under the spaces: as printed, or its lines">Drawing
+      <div class="segmented" id="view-mode" role="group" aria-label="View">
+        <button type="button" data-view="2d" class="active" title="The plan: correct rooms, and draw walls, dividers and doors">2D</button>
+        <button type="button" data-view="3d" title="The floor as built: click a room to correct it">3D</button>
+      </div>
+      <button id="update3d" type="button" hidden title="Show the changes made since the 3D view was built">Update 3D</button>
+      <button id="fit" type="button" class="only2d" title="Show the whole floor (F)">Fit</button>
+      <label class="only2d" title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
+      <label id="drawing-label" class="only2d" title="The floor's drawing under the spaces: as printed, or its lines">Drawing
         <select id="drawing-mode">
           <option value="print">as printed</option>
           <option value="lines">lines</option>
@@ -141,7 +156,7 @@
       </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
-      <span class="hint" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
+      <span class="hint only2d" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
       <span id="status" class="meta"></span>
     </div>
   </main>
