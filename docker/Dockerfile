@@ -18,7 +18,8 @@
 # (GPL-3.0-or-later, a separate program; its exact source is in
 # /usr/share/storeypath/source); llama.cpp's llama-server (MIT); a Qwen3.5 model
 # (Apache-2.0) for reading the text in drawings; three.js (MIT), MapLibre GL JS
-# (BSD-3-Clause) and JSZip (MIT) for the viewer. Licences: /usr/share/storeypath/licenses.
+# (BSD-3-Clause) and JSZip (MIT) for the viewer; Node.js (MIT), the program alone, to
+# build the floors' 3D ahead of time when exporting. Licences: /usr/share/storeypath/licenses.
 
 ARG DEBIAN=trixie
 
@@ -63,7 +64,9 @@ RUN cd "libredwg-${LIBREDWG_VERSION}" \
     && cp "/src/libredwg-${LIBREDWG_VERSION}.tar.gz" /opt/source/ \
     && cp COPYING /opt/licenses/LICENSE-libredwg.txt
 
-# ---- the 2D plan engine (viewer/svg), compiled from its TypeScript ---------------------
+# ---- the 2D plan engine (viewer/svg), compiled from its TypeScript; and Node.js, ---------
+# whose program alone goes into the image: Studio runs the viewer's baker with it
+# (viewer/world/bake.mjs, in Studio's package, with three.js and JSZip beside it)
 FROM node:22-slim AS plan
 COPY viewer/svg /build/svg
 RUN cd /build/svg && npm ci --no-audit --no-fund && npm run build
@@ -106,6 +109,8 @@ COPY --from=libredwg /opt/source /usr/share/storeypath/source
 COPY --from=libredwg /opt/licenses /usr/share/storeypath/licenses
 COPY --from=studio /opt/storeypath /opt/storeypath
 COPY --from=studio /build/symbols /opt/storeypath/symbols
+COPY --from=plan /usr/local/bin/node /opt/node/bin/node
+COPY --from=plan /usr/local/LICENSE /usr/share/storeypath/licenses/LICENSE-node.js.txt
 COPY docker/models/${MODEL} /opt/storeypath/models/${MODEL}
 COPY viewer/vendor/LICENSE-maplibre-gl.txt viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
 COPY viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
@@ -124,6 +129,7 @@ ENV PATH="/opt/storeypath/bin:/opt/llama:/opt/libredwg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/llama:/opt/libredwg/lib" \
     STOREYPATH_MODELS=/opt/storeypath/models \
     STOREYPATH_SYMBOLS=/opt/storeypath/symbols \
+    STOREYPATH_NODE=/opt/node/bin/node \
     PYTHONUNBUFFERED=1
 
 USER storeypath
