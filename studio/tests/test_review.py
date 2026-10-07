@@ -14,7 +14,7 @@ import pytest
 from shapely.geometry import LineString, shape
 
 from storeypath.review import NotFound, Review
-from storeypath.samples import office_floor, write_sheet_dxf
+from storeypath.samples import office_floor, write_floor_dxf, write_sheet_dxf
 from storeypath.server import Studio, make_server
 from storeypath.workspace import Override, Workspace
 
@@ -728,3 +728,64 @@ def test_a_package_opened_gets_its_drawing_back_and_keeps_its_ids(studio, tmp_pa
     assert {r.id for r in ws.floor_objects(first_id) if r.kind == "space"} == rooms  # the same rooms, the same IDs
     assert ws.effective(ws.objects[named.id])["name"] == "Board room"  # kept over the drawing's reading
     assert ws.floor(first_id).source.path.endswith("sheet.dxf")
+
+
+def test_buildings_on_the_site_plan(studio, tmp_path):
+    # A second building drawn at the same origin as the first is put beside it; one
+    # drawn in the site's coordinates, apart, stays; a person moves and turns them,
+    # lays them out side by side, and puts the site on the map.
+    from storeypath.export import site_footprint, site_positions
+
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Campus"})
+    code = created["code"]
+    for name, origin in (("a.dxf", (100.0, 50.0)), ("b.dxf", (100.0, 50.0)), ("c.dxf", (100.0, 120.0))):
+        write_floor_dxf(tmp_path / name, office_floor(0), origin=origin, title="GROUND FLOOR PLAN")
+
+    def add(name, building):
+        call(f"{base}/api/projects/{code}/drawings/{name}?private=0", raw=(tmp_path / name).read_bytes())
+        _, job = call(f"{base}/api/projects/{code}/drawings/{name}/plans", {})
+        plan = max(wait(base, job)["plans"], key=lambda x: x["size"][0] * x["size"][1])
+        _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": name, "plans": [
+            {"index": plan["index"], "title": plan["title"], "region": plan["region"], "building": building, "ordinal": 0}]})
+        wait(base, job)
+
+    add("a.dxf", "Admin")
+    add("b.dxf", "Clinic")
+    add("c.dxf", "Labs")
+
+    def site():
+        ws = Workspace.load(app.path(code))
+        loc = ws.locations[0]
+        pos = site_positions(loc)
+        return ws, loc, {b.name: site_footprint(b, pos[b.code]) for b in loc.buildings}
+
+    ws, loc, fps = site()
+    assert fps["Admin"].intersection(fps["Clinic"]).area < 1e-6  # put beside it
+    assert next(b for b in loc.buildings if b.name == "Labs").site is None  # apart as drawn: stays
+    assert fps["Labs"].intersection(fps["Admin"]).area < 1e-6
+
+    _, p = call(f"{base}/api/projects/{code}")
+    b = next(b for b in p["locations"][0]["buildings"] if b["name"] == "Labs")
+    assert b["footprint"] and not b["site"]["set"]
+    status, moved = call(f"{base}/api/projects/{code}/buildings/{b['id']}/site", {"x": 500, "y": -20, "rotation": 370})
+    assert status == 200 and moved["site"]["rotation"] == 10
+    ws, loc, fps = site()
+    labs = next(x for x in loc.buildings if x.name == "Labs")
+    assert (labs.site.x, labs.site.y) == (500, -20) and all(x.site is not None for x in loc.buildings)  # the others stay put
+    status, error = call(f"{base}/api/projects/{code}/buildings/{b['id']}/site", {"x": "far", "y": 0, "rotation": 0})
+    assert status == 400
+
+    status, _ = call(f"{base}/api/projects/{code}/locations/{p['locations'][0]['id']}/arrange", {})
+    ws, loc, fps = site()
+    order = sorted(fps.items(), key=lambda kv: kv[1].bounds[0])
+    assert [n for n, _ in order] == ["Admin", "Clinic", "Labs"]  # by code: ADMIN, CLINIC, LABS
+    for (_, left), (_, right) in zip(order, order[1:]):
+        assert right.bounds[0] - left.bounds[2] >= 9.99
+
+    status, placed = call(f"{base}/api/projects/{code}/locations/{p['locations'][0]['id']}/placement",
+                          {"lat": 25.28, "lon": 51.53, "bearing": 10})
+    assert status == 200 and placed["placement"]["bearing"] == 10
+    with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath") as res:
+        manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
+    assert all(pl["placed"] and abs(pl["lat"] - 25.28) < 1e-9 for pl in manifest["placements"].values())

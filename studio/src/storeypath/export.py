@@ -6,12 +6,14 @@ import csv
 import hashlib
 import io
 import json
+import math
 import zipfile
 from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
 import shapely
+from shapely.ops import transform as shapely_transform
 from shapely.geometry import MultiPolygon, Polygon, mapping, shape
 from shapely.ops import polylabel, unary_union
 
@@ -33,7 +35,7 @@ from .package import (
 )
 from .levels import DEFAULT_PARAPET_M
 from .types import OpeningType, SpaceType
-from .workspace import ExportRecord, Placement, Workspace, utcnow
+from .workspace import ExportRecord, Placement, SitePosition, Workspace, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
 
@@ -96,20 +98,100 @@ def unplaced(ws: Workspace) -> list[str]:
             if b.placement is None and any(f.outline for f in b.floors)]
 
 
+SITE_GAP_M = 10.0  # buildings laid out side by side on a site plan stand this far apart
+
+
+def footprint(b) -> object | None:
+    """A building's footprint in its own drawing metres: its floors' outlines."""
+    outlines = [shape(f.outline) for f in b.floors if f.outline]
+    return unary_union(outlines) if outlines else None
+
+
+def site_positions(loc) -> dict[str, SitePosition]:
+    """Where each building of a location stands on its site plan (by building code).
+    A building given no position stands as its drawing places it: around the site's
+    drawing origin once buildings were given positions, else around the middle of
+    them all."""
+    if loc.site_origin is not None:
+        mx, my = loc.site_origin
+    else:
+        loose = [b for b in loc.buildings if b.site is None]
+        shapes = [fp for b in loose if (fp := footprint(b)) is not None]
+        middle = unary_union(shapes).centroid if shapes else None
+        mx, my = (middle.x, middle.y) if middle is not None else (0.0, 0.0)
+    out = {}
+    for b in loc.buildings:
+        if b.site is not None:
+            out[b.code] = b.site
+            continue
+        fp = footprint(b)
+        c = fp.centroid if fp is not None else None
+        cx, cy = (c.x, c.y) if c is not None else (mx, my)
+        out[b.code] = SitePosition(x=round(cx - mx, 3), y=round(cy - my, 3), rotation=0.0,
+                                   pivot=(round(cx, 3), round(cy, 3)))
+    return out
+
+
+def on_site(site: SitePosition, x: float, y: float) -> tuple[float, float]:
+    """A point of a building (its drawing metres) on its site plan."""
+    r = math.radians(site.rotation)
+    dx, dy = x - site.pivot[0], y - site.pivot[1]
+    return site.x + dx * math.cos(r) + dy * math.sin(r), site.y - dx * math.sin(r) + dy * math.cos(r)
+
+
+def site_footprint(b, pos: SitePosition):
+    """A building's footprint on its site plan (None before any floor is read)."""
+    fp = footprint(b)
+    return None if fp is None else shapely_transform(lambda x, y, z=None: _on_site_xy(pos, x, y), fp)
+
+
+def _on_site_xy(pos: SitePosition, xs, ys):
+    r = math.radians(pos.rotation)
+    xs, ys = np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)
+    dx, dy = xs - pos.pivot[0], ys - pos.pivot[1]
+    return pos.x + dx * math.cos(r) + dy * math.sin(r), pos.y - dx * math.sin(r) + dy * math.cos(r)
+
+
+def beside(loc, b, gap: float = SITE_GAP_M) -> SitePosition | None:
+    """A position for a building on its site plan beside the others (to their right,
+    ``gap`` metres off, level with them), as it is turned; None when it has no
+    footprint or there are no others to stand beside."""
+    positions = site_positions(loc)
+    others = [site_footprint(o, positions[o.code]) for o in loc.buildings if o is not b]
+    others = [g for g in others if g is not None]
+    pos = positions[b.code]
+    own = site_footprint(b, pos)
+    if own is None or not others:
+        return None
+    x0, y0, x1, y1 = unary_union(others).bounds
+    ox0, oy0, ox1, oy1 = own.bounds
+    return SitePosition(x=round(pos.x + (x1 + gap - ox0), 3), y=round(pos.y + ((y0 + y1) / 2 - (oy0 + oy1) / 2), 3),
+                        rotation=pos.rotation, pivot=pos.pivot)
+
+
 def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
-    """Each building's placement, and whether it is a real one. A building not
-    placed yet goes around 0°N 0°E: its shape and size are true, its position on
-    earth is not. Unplaced buildings of one location share an anchor (the middle of
-    them all), so they keep their positions relative to each other as drawn."""
+    """Each building's placement, and whether it is a real one. A building placed
+    on the map by itself keeps its placement. Any other stands where the site plan
+    has it (site_positions): on the map when its location is placed, else around
+    0°N 0°E, where its shape and size are true and its position on earth is not."""
     out = {}
     for loc in ws.locations:
-        loose = [b for b in loc.buildings if b.placement is None]
-        outlines = [shape(f.outline) for b in loose for f in b.floors if f.outline]
-        middle = unary_union(outlines).centroid if outlines else None
-        provisional = Placement(lon=0.0, lat=0.0, x=round(middle.x, 3) if middle else 0.0,
-                                y=round(middle.y, 3) if middle else 0.0, bearing=0.0)
+        site = loc.placement or Placement(lon=0.0, lat=0.0, x=0.0, y=0.0, bearing=0.0)
+        positions = site_positions(loc)
         for b in loc.buildings:
-            out[make_id(ws.id, loc.code, b.code)] = (b.placement, True) if b.placement else (provisional, False)
+            b_id = make_id(ws.id, loc.code, b.code)
+            if b.placement is not None:
+                out[b_id] = (b.placement, True)
+                continue
+            # Every building of the site is anchored at the site's centre (one projection
+            # for them all, so they stand exactly where the site plan has them): the
+            # drawing point there is the one the building's position and turn put there.
+            pos = positions[b.code]
+            r = math.radians(pos.rotation)
+            ax = pos.pivot[0] - (pos.x * math.cos(r) - pos.y * math.sin(r))
+            ay = pos.pivot[1] - (pos.x * math.sin(r) + pos.y * math.cos(r))
+            out[b_id] = (Placement(lon=site.lon, lat=site.lat, x=round(ax, 4), y=round(ay, 4),
+                                   bearing=round((site.bearing + pos.rotation) % 360, 6)), loc.placement is not None)
     return out
 
 

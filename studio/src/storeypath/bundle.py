@@ -232,6 +232,27 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                                                 geometry={"type": "Point", "coordinates": [0.0, 0.0]},
                                                 status="retired", retired_at=exported_at))
 
+    # a building not on the map stands where the package's site plan has it: its
+    # anchor (the drawing point at the site's centre) and turn give its position
+    from .export import footprint
+    import math as _math
+    from .workspace import SitePosition
+
+    for b_id, b in buildings.items():
+        pl = manifest.placements.get(b_id)
+        if b.placement is not None or pl is None:
+            continue
+        fp = footprint(b)
+        c = fp.centroid if fp is not None else None
+        pivot = (round(c.x, 3), round(c.y, 3)) if c is not None else (pl.x, pl.y)
+        r = _math.radians(pl.bearing)
+        dx, dy = pivot[0] - pl.x, pivot[1] - pl.y
+        b.site = SitePosition(x=round(dx * _math.cos(r) + dy * _math.sin(r), 4),
+                              y=round(-dx * _math.sin(r) + dy * _math.cos(r), 4), rotation=pl.bearing, pivot=pivot)
+        loc = next(l for l in ws.locations if any(x is b for x in l.buildings))
+        if loc.site_origin is None and abs(pl.bearing) < 1e-9:
+            loc.site_origin = (pl.x, pl.y)  # the drawing point at the site's centre, as drawn
+
     # each building gives new IDs after every one it gave
     for b_id, b in buildings.items():
         codes = [parse_id(i).code for i in ws.objects if i.startswith(b_id + "-") and parse_id(i).level == "object"]

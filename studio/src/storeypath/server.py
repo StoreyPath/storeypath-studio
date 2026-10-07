@@ -240,9 +240,12 @@ class Studio:
         path = self.path(code)
         ws = Workspace.load(path)
         info = self.review(code).project()
+        from .export import footprint, site_positions
+
         tree = []
         for loc in ws.locations:
             buildings = []
+            positions = site_positions(loc)
             for b in loc.buildings:
                 b_id = f"{ws.id}-{loc.code}-{b.code}"
                 outline = [shape(f.outline) for f in b.floors if f.outline]
@@ -250,6 +253,10 @@ class Studio:
                 buildings.append({
                     "id": b_id, "code": b.code, "name": b.name,
                     "placement": b.placement.model_dump() if b.placement else None,
+                    # its place on the site plan (as its drawing places it when not set) and
+                    # its footprint in its own drawing metres, for the site plan to draw
+                    "site": {**positions[b.code].model_dump(), "set": b.site is not None},
+                    "footprint": _rings(footprint(b)),
                     "centre": [round(centre.x, 2), round(centre.y, 2)] if centre is not None else None,
                     "floors": [{"id": f"{b_id}-{f.code}", "name": f.name, "ordinal": f.ordinal,
                                 "drawing": Path(f.source.path).name if f.source else None,
@@ -258,7 +265,8 @@ class Studio:
                                 "method": f.method}
                                for f in sorted(b.floors, key=lambda f: f.ordinal)],
                 })
-            tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings})
+            tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
+                         "placement": loc.placement.model_dump() if loc.placement else None})
         drawings = sorted(p.name for p in (path.parent / "drawings").glob("*")
                           if p.suffix.lower() in DRAWING_TYPES and not p.name.startswith(INCOMING)
                           and not p.name.endswith(WORDS)) \
@@ -609,9 +617,39 @@ class Studio:
                                 saved_floor.source.offset = f.source.offset
                 saved.save(ws_path)
             self._convert(ws_path, [f for fs in added.values() for f in fs], job)
+            if made_buildings:
+                self._stand_apart(ws_path, set(made_buildings.values()), job)
             return {"floors": [f for fs in added.values() for f in fs]}
 
         return self.jobs.submit(f"Adding floors from {drawing.name}", run)
+
+    def _stand_apart(self, ws_path: Path, new: set[str], job: Job) -> None:
+        """A new building whose drawing would put it on top of another of its site (or
+        far off: a drawing with its own origin) is placed beside the others."""
+        from .export import beside, site_footprint, site_positions
+
+        with self._changing(ws_path):
+            ws = Workspace.load(ws_path)
+            moved = False
+            for loc in ws.locations:
+                for b in loc.buildings:
+                    b_id = f"{ws.id}-{loc.code}-{b.code}"
+                    if b_id not in new or b.site is not None or b.placement is not None:
+                        continue
+                    positions = site_positions(loc)
+                    own = site_footprint(b, positions[b.code])
+                    others = [g for o in loc.buildings if o is not b and (g := site_footprint(o, positions[o.code])) is not None]
+                    if own is None or not others:
+                        continue
+                    near = unary_union(others)
+                    if own.intersection(near).area < 0.01 * min(own.area, near.area) and own.distance(near) < FAR_APART_M:
+                        continue  # stands apart already, as drawn (its drawing shares the site's coordinates)
+                    _settle(loc, positions)
+                    b.site = beside(loc, b)
+                    moved = True
+                    job.say(f"{b.name}: its drawing put it on top of another building (or far off): placed beside them on the site plan")
+            if moved:
+                ws.save(ws_path)
 
     def convert(self, code: str, floor: str | None = None) -> Job:
         ws_path = self.path(code)
@@ -647,6 +685,73 @@ class Studio:
                 summaries.append(report.summary())
                 ws.save(ws_path)
         return {"summaries": summaries}
+
+    def move(self, code: str, building_id: str, body: dict) -> dict:
+        """A building moved on its location's site plan: ``x``, ``y`` (metres from the
+        site's centre) and ``rotation`` (degrees clockwise). The other buildings stay
+        where they are on it."""
+        from .export import site_positions
+        from .workspace import SitePosition
+
+        x, y, rotation = (_number(body, k) for k in ("x", "y", "rotation"))
+        ws_path = self.path(code)
+        with self._changing(ws_path):
+            ws = Workspace.load(ws_path)
+            loc, b = self._building_of(ws, building_id)
+            positions = _settle(loc, site_positions(loc))
+            b.site = SitePosition(x=round(x, 3), y=round(y, 3), rotation=round(rotation % 360, 3), pivot=positions[b.code].pivot)
+            ws.save(ws_path)
+        return {"site": b.site.model_dump()}
+
+    def arrange(self, code: str, location_id: str) -> dict:
+        """The location's buildings side by side on its site plan, left to right in the
+        order of their codes, SITE_GAP_M apart, each as it is turned, centred on the
+        site's centre line."""
+        from .export import SITE_GAP_M, site_footprint, site_positions
+        from .workspace import SitePosition
+
+        ws_path = self.path(code)
+        with self._changing(ws_path):
+            ws = Workspace.load(ws_path)
+            loc = ws.location(location_id)
+            positions = _settle(loc, site_positions(loc))
+            cursor = None
+            for b in sorted(loc.buildings, key=lambda b: b.code):
+                at_centre = SitePosition(rotation=positions[b.code].rotation, pivot=positions[b.code].pivot)
+                fp = site_footprint(b, at_centre)
+                if fp is None:
+                    continue
+                x0, y0, x1, y1 = fp.bounds
+                dx = 0.0 if cursor is None else cursor - x0
+                b.site = SitePosition(x=round(dx, 3), y=round(-(y0 + y1) / 2, 3), rotation=at_centre.rotation, pivot=at_centre.pivot)
+                cursor = x1 + dx + SITE_GAP_M
+            ws.save(ws_path)
+        return {"sites": {b.code: b.site.model_dump() if b.site else None for b in loc.buildings}}
+
+    def place_site(self, code: str, location_id: str, body: dict) -> dict:
+        """The location's site on the map: its centre at ``lat``, ``lon``, its up at
+        ``bearing``; every building not placed by itself goes with it. ``clear``
+        takes it off the map."""
+        ws_path = self.path(code)
+        with self._changing(ws_path):
+            ws = Workspace.load(ws_path)
+            loc = ws.location(location_id)
+            if body.get("clear"):
+                loc.placement = None
+            else:
+                lat, lon = _number(body, "lat"), _number(body, "lon")
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    raise ValueError("latitude is -90…90 and longitude -180…180")
+                loc.placement = Placement(lat=lat, lon=lon, x=0.0, y=0.0, bearing=_number(body, "bearing", 0.0) % 360)
+            ws.save(ws_path)
+        return {"placement": loc.placement.model_dump() if loc.placement else None}
+
+    def _building_of(self, ws: Workspace, building_id: str):
+        for loc in ws.locations:
+            for b in loc.buildings:
+                if f"{ws.id}-{loc.code}-{b.code}" == building_id:
+                    return loc, b
+        raise NotFound(f"no building {building_id}")
 
     def place(self, code: str, building_id: str, body: dict) -> dict:
         ws_path = self.path(code)
@@ -753,6 +858,45 @@ class Studio:
         if not path.is_file():
             raise NotFound(f"no export {name}")
         return path
+
+
+FAR_APART_M = 2000.0  # a building drawn this far from the others has a drawing of its own origin
+
+
+def _settle(loc, positions: dict) -> dict:
+    """Every building of the location keeps the place it has on the site plan now (as
+    drawn, until then): moving one moves no other; and a building added later as
+    drawn stands where its drawing puts it relative to them."""
+    if loc.site_origin is None:
+        for b in loc.buildings:
+            if b.site is None and b.code in positions:
+                p = positions[b.code]
+                loc.site_origin = (round(p.pivot[0] - p.x, 4), round(p.pivot[1] - p.y, 4))
+                break
+    for b in loc.buildings:
+        if b.site is None:
+            b.site = positions[b.code]
+    return positions
+
+
+def _number(body: dict, key: str, default: float | None = None) -> float:
+    value = body.get(key, default)
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} is a number") from None
+    if v != v or v in (float("inf"), float("-inf")):
+        raise ValueError(f"{key} is a number")
+    return v
+
+
+def _rings(geom) -> list | None:
+    """A footprint's outer rings, simplified, for drawing it small: [[[x, y], …], …]."""
+    if geom is None or geom.is_empty:
+        return None
+    geom = geom.simplify(0.05)
+    polys = getattr(geom, "geoms", [geom])
+    return [[[round(x, 2), round(y, 2)] for x, y in p.exterior.coords] for p in polys if hasattr(p, "exterior")]
 
 
 MIN_ALIGN_OVERLAP = 0.25  # floors from two drawings are moved to line up only when this much of their walls do
@@ -1011,6 +1155,12 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080) -> Th
                 return studio.add_floors(code, body)
             case "POST", ["projects", code, "convert"]:
                 return studio.convert(code, body.get("floor"))
+            case "POST", ["projects", code, "buildings", b_id, "site"]:
+                return studio.move(code, b_id, body)
+            case "POST", ["projects", code, "locations", loc_id, "arrange"]:
+                return studio.arrange(code, loc_id)
+            case "POST", ["projects", code, "locations", loc_id, "placement"]:
+                return studio.place_site(code, loc_id, body)
             case "POST", ["projects", code, "buildings", b_id, "placement"]:
                 return studio.place(code, b_id, body)
             case "POST", ["projects", code, "export"]:

@@ -118,10 +118,24 @@ class Floor(BaseModel):
     edits: FloorEdits = Field(default_factory=FloorEdits)  # drawn by a person in review
 
 
+class SitePosition(BaseModel):
+    """Where a building stands on its location's site plan: around a centre of the
+    site's own, not on the map. The building's point ``pivot`` (its middle, in its
+    own drawing metres) sits ``x``, ``y`` metres from the site's centre, the
+    building turned ``rotation`` degrees clockwise. Placing the site on the map
+    (Location.placement) places every building on it."""
+
+    x: float = 0.0
+    y: float = 0.0
+    rotation: float = 0.0
+    pivot: tuple[float, float] = (0.0, 0.0)
+
+
 class Building(BaseModel):
     code: str
     name: str
-    placement: Placement | None = None
+    placement: Placement | None = None  # on the map by itself: wins over its site position
+    site: SitePosition | None = None  # on its location's site plan (None: as its drawing places it)
     floors: list[Floor] = Field(default_factory=list)
     next_object_seq: int = 1
 
@@ -130,6 +144,11 @@ class Location(BaseModel):
     code: str
     name: str
     address: str | None = None
+    # the site on the map: its centre (x, y unused) at lon, lat, its up at bearing
+    placement: Placement | None = None
+    # the drawing point (metres) at the site's centre for buildings that stand as drawn:
+    # set when buildings are first given positions, so the others stay where they are
+    site_origin: tuple[float, float] | None = None
     buildings: list[Building] = Field(default_factory=list)
 
 

@@ -153,6 +153,7 @@ async function projectPage(code) {
           title: "The project as it is now, in 3D: orbit it as a dollhouse or walk through it" }, "Walk in 3D") : null)),
     drawingsCard(code, p, plansArea),
     plansArea,
+    ...p.locations.filter((loc) => loc.buildings.some((b) => b.footprint)).map((loc) => siteCard(code, loc)),
     buildingsCard(code, p),
     exportCard(code, p),
     deleteCard(code, p),
@@ -583,6 +584,222 @@ function buildingsCard(code, p) {
   )));
 }
 
+// ---- the site plan ---------------------------------------------------------------
+// Where a location's buildings stand relative to each other, around a centre of the
+// site's own (not the map): drag a building to move it, its round handle to turn it
+// (Shift: by 15°), or use the keys (arrows: 1 m, Shift: 10 m; [ and ]: 1°, Shift:
+// 15°). Placing the site on the map places every building on it.
+
+const SITE_STEP_M = 1;
+
+function siteCard(code, loc) {
+  const buildings = loc.buildings.filter((b) => b.footprint).map((b) => ({ ...b, site: { ...b.site } }));
+  let chosen = buildings.find((b) => !b.placement)?.id ?? null;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.classList.add("site-plan");
+  svg.setAttribute("role", "application");
+  svg.setAttribute("aria-label", `Site plan of ${loc.name}: drag a building to move it, its handle to turn it`);
+  const x = el("input", { type: "number", step: "0.1" });
+  const y = el("input", { type: "number", step: "0.1" });
+  const rot = el("input", { type: "number", step: "1" });
+  const which = el("strong", {});
+  const note = el("p", { class: "muted small" });
+
+  const onSite = (b, [px, py]) => {
+    const r = (b.site.rotation * Math.PI) / 180;
+    const dx = px - b.site.pivot[0], dy = py - b.site.pivot[1];
+    return [b.site.x + dx * Math.cos(r) + dy * Math.sin(r), b.site.y - dx * Math.sin(r) + dy * Math.cos(r)];
+  };
+  const extent = () => {
+    const pts = buildings.flatMap((b) => b.footprint.flat().map((p) => onSite(b, p))).concat([[0, 0]]);
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  };
+  let view = null; // fixed while dragging, so the plan does not slide under the pointer
+  const fit = () => {
+    const [x0, y0, x1, y1] = extent();
+    const pad = Math.max(10, 0.08 * Math.max(x1 - x0, y1 - y0));
+    view = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+  };
+  const toSite = (e) => { // a pointer's place on the site (metres, y up)
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return [q.x, -q.y];
+  };
+  const draw = () => {
+    const [vx0, vy0, vx1, vy1] = view;
+    svg.setAttribute("viewBox", `${vx0} ${-vy1} ${vx1 - vx0} ${vy1 - vy0}`);
+    // the grid, 10 m, beyond the view too: the box is seldom its shape
+    const parts = [];
+    const step = 10, w = vx1 - vx0, h = vy1 - vy0;
+    const [gx0, gy0, gx1, gy1] = [vx0 - 2 * w, vy0 - 2 * h, vx1 + 2 * w, vy1 + 2 * h];
+    for (let gx = Math.ceil(gx0 / step) * step; gx <= gx1; gx += step) parts.push(`<line class="grid" x1="${gx}" y1="${-gy1}" x2="${gx}" y2="${-gy0}"/>`);
+    for (let gy = Math.ceil(gy0 / step) * step; gy <= gy1; gy += step) parts.push(`<line class="grid" x1="${gx0}" y1="${-gy}" x2="${gx1}" y2="${-gy}"/>`);
+    svg.innerHTML = parts.join("");
+    for (const b of buildings) {
+      const pts = b.footprint.map((ring) => ring.map((p) => onSite(b, p)));
+      const d = pts.map((ring) => `M${ring.map(([a, bb]) => `${a.toFixed(2)},${(-bb).toFixed(2)}`).join("L")}Z`).join("");
+      const g = document.createElementNS(SVG_NS, "g");
+      g.classList.add("building");
+      if (b.placement) g.classList.add("fixed");
+      if (b.id === chosen) g.classList.add("chosen");
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("tabindex", "0");
+      path.dataset.id = b.id;
+      const all = pts.flat();
+      const top = Math.max(...all.map((p) => p[1]));
+      const [cx, cy] = [b.site.x, b.site.y];
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", cx);
+      label.setAttribute("y", -cy);
+      label.setAttribute("font-size", ((vx1 - vx0) / 45).toFixed(2));
+      label.textContent = b.name;
+      g.append(path, label);
+      if (!b.placement && b.id === chosen) {
+        // the turning handle: above its middle, turned with it
+        const r = (b.site.rotation * Math.PI) / 180, len = top - cy + Math.max(3, (vx1 - vx0) / 40);
+        const hx = cx + len * Math.sin(r), hy = cy + len * Math.cos(r);
+        const stem = document.createElementNS(SVG_NS, "line");
+        Object.entries({ x1: cx, y1: -cy, x2: hx, y2: -hy, class: "stem" }).forEach(([k, v]) => stem.setAttribute(k, v));
+        const handle = document.createElementNS(SVG_NS, "circle");
+        Object.entries({ cx: hx, cy: -hy, r: Math.max(1.2, (vx1 - vx0) / 90), class: "handle" }).forEach(([k, v]) => handle.setAttribute(k, v));
+        handle.dataset.turn = b.id;
+        g.append(stem, handle);
+      }
+      svg.append(g);
+    }
+    const c = Math.max(2, (vx1 - vx0) / 60); // the centre, over the buildings
+    svg.insertAdjacentHTML("beforeend", `<g class="centre"><line x1="${-c}" y1="0" x2="${c}" y2="0"/><line x1="0" y1="${-c}" x2="0" y2="${c}"/><circle r="${c / 3}"/></g>`);
+    const b = buildings.find((o) => o.id === chosen);
+    which.textContent = b ? b.name : "";
+    if (b) {
+      x.value = b.site.x.toFixed(2);
+      y.value = b.site.y.toFixed(2);
+      rot.value = b.site.rotation.toFixed(1);
+    }
+    for (const input of [x, y, rot]) input.disabled = !b || Boolean(b.placement);
+    note.textContent = b?.placement
+      ? `${b.name} is placed on the map by itself: it stands there whatever the site plan says.`
+      : "Drag a building to move it; drag its round handle to turn it (Shift: by 15°). Keys: arrows move 1 m (Shift: 10 m), [ and ] turn 1° (Shift: 15°).";
+  };
+  const save = async (b) => {
+    try {
+      const r = await api(`projects/${code}/buildings/${b.id}/site`, { x: b.site.x, y: b.site.y, rotation: b.site.rotation });
+      Object.assign(b.site, r.site);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+  let saving = null;
+  const saveSoon = (b) => { clearTimeout(saving); saving = setTimeout(() => save(b), 400); };
+
+  let drag = null;
+  svg.addEventListener("pointerdown", (e) => {
+    const id = e.target.dataset?.turn || e.target.closest?.("[data-id]")?.dataset.id;
+    const b = buildings.find((o) => o.id === id);
+    if (!b) return;
+    chosen = b.id;
+    if (b.placement) return draw();
+    e.preventDefault();
+    svg.setPointerCapture(e.pointerId);
+    drag = { b, turn: Boolean(e.target.dataset?.turn), from: toSite(e), at: [b.site.x, b.site.y] };
+    draw();
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const p = toSite(e);
+    if (drag.turn) {
+      let deg = (Math.atan2(p[0] - drag.b.site.x, p[1] - drag.b.site.y) * 180) / Math.PI;
+      deg = e.shiftKey ? Math.round(deg / 15) * 15 : Math.round(deg);
+      drag.b.site.rotation = (deg + 360) % 360;
+    } else {
+      drag.b.site.x = Math.round((drag.at[0] + p[0] - drag.from[0]) * 10) / 10;
+      drag.b.site.y = Math.round((drag.at[1] + p[1] - drag.from[1]) * 10) / 10;
+    }
+    draw();
+  });
+  const drop = () => {
+    if (!drag) return;
+    const b = drag.b;
+    drag = null;
+    save(b);
+  };
+  svg.addEventListener("pointerup", drop);
+  svg.addEventListener("pointercancel", drop);
+  svg.addEventListener("keydown", (e) => {
+    const b = buildings.find((o) => o.id === (e.target.dataset?.id || chosen));
+    if (!b || b.placement) return;
+    const step = e.shiftKey ? 10 : SITE_STEP_M, turn = e.shiftKey ? 15 : 1;
+    const moves = { ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], ArrowUp: [0, step, 0], ArrowDown: [0, -step, 0],
+      "[": [0, 0, -turn], "]": [0, 0, turn], "{": [0, 0, -15], "}": [0, 0, 15] };
+    const m = moves[e.key];
+    if (!m) return;
+    e.preventDefault();
+    chosen = b.id;
+    b.site.x += m[0];
+    b.site.y += m[1];
+    b.site.rotation = (b.site.rotation + m[2] + 360) % 360;
+    draw();
+    svg.querySelector(`[data-id="${b.id}"]`)?.focus();
+    saveSoon(b);
+  });
+  for (const [input, key] of [[x, "x"], [y, "y"], [rot, "rotation"]]) {
+    input.addEventListener("change", () => {
+      const b = buildings.find((o) => o.id === chosen);
+      if (!b || !Number.isFinite(Number(input.value))) return;
+      b.site[key] = key === "rotation" ? (Number(input.value) % 360 + 360) % 360 : Number(input.value);
+      fit();
+      draw();
+      save(b);
+    });
+  }
+  const sideBySide = el("button", { type: "button", title: "Every building of this site in a row, 10 m apart, in the order of their codes" }, "Side by side");
+  sideBySide.addEventListener("click", async () => {
+    try {
+      const r = await api(`projects/${code}/locations/${loc.id}/arrange`, {});
+      for (const b of buildings) if (r.sites[b.code]) Object.assign(b.site, r.sites[b.code]);
+      fit();
+      draw();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+  const fitButton = el("button", { type: "button" }, "Fit");
+  fitButton.addEventListener("click", () => { fit(); draw(); });
+
+  // the site on the map
+  const pl = loc.placement || {};
+  const lat = el("input", { type: "number", step: "any", value: pl.lat ?? "", placeholder: "e.g. 25.2854" });
+  const lon = el("input", { type: "number", step: "any", value: pl.lon ?? "", placeholder: "e.g. 51.5310" });
+  const bearing = el("input", { type: "number", step: "any", value: pl.bearing ?? 0 });
+  const onMap = el("form", { class: "placement", onsubmit: async (e) => {
+    e.preventDefault();
+    try {
+      await api(`projects/${code}/locations/${loc.id}/placement`, { lat: lat.value, lon: lon.value, bearing: bearing.value });
+      toast(`${loc.name} placed on the map`);
+      projectPage(code);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  } }, el("label", {}, "Latitude of the centre", lat), el("label", {}, "Longitude", lon),
+  el("label", {}, "Bearing of up (°)", bearing), el("button", { type: "submit" }, loc.placement ? "Update" : "Place on the map"));
+
+  fit();
+  draw();
+  return el("section", { class: "card site-card" },
+    el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), sideBySide, fitButton),
+    svg,
+    el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot)),
+    note,
+    el("p", { class: "muted small", style: "margin-top: 12px" }, loc.placement
+      ? "On the map: the site's centre (the cross) sits at this latitude and longitude; up points to this bearing."
+      : "Not on the map: the buildings stand where the site plan has them, around 0°N 0°E, their shapes and sizes true. Give the latitude and longitude of the centre (the cross), and the compass bearing of up, to put them all on the map."),
+    onMap);
+}
+
 function placementForm(code, b) {
   const pl = b.placement || {};
   const lat = el("input", { type: "number", step: "any", value: pl.lat ?? "", placeholder: "e.g. 24.7136" });
@@ -602,7 +819,7 @@ function placementForm(code, b) {
   } },
     el("p", { class: "muted small", style: "margin: 14px 0 0" }, b.placement
       ? "On the map: the building's middle sits at this latitude and longitude."
-      : "Location on the map (optional). Without it the building exports and shows in 3D with its true shape and size; give the latitude and longitude of its middle, and the compass bearing of the drawing's up direction, when you want it on a map."),
+      : "On the map by itself (optional): it then stands there whatever the site plan says. Usually the site is placed on the map instead (Site plan, above), and every building with it."),
     el("div", { class: "placement" },
       el("label", {}, "Latitude", lat), el("label", {}, "Longitude", lon), el("label", {}, "Bearing of up (°)", bearing), save));
 }
