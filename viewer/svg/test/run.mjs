@@ -170,6 +170,19 @@ test("a floor's items: where each stands, the way it faces in the drawing, its t
   equal(floorFromPackage(older, older.floors[0].id).items, [], "an older package has none");
 });
 
+// a colour of the package's that would be CSS of its own in a style attribute
+const BEACON = "red;fill:url(https://attacker.example/beacon.svg#a)";
+
+test("a catalogue colour that is not #rrggbb is not used: the item takes the default colour", () => {
+  const changed = structuredClone(pkg);
+  const given = { COPIER: BEACON, "ACCESS-POINT": "#1F9D8B", SOFA: "rgb(1, 2, 3)", TV: "#abc", "BED-KING": "#3b6ea5\n",
+    "DESK-DIRECTOR": 0x8a6238, "DESK-SENIOR": "url(#a)", "DESK-JUNIOR": "#3b6ea5 " };
+  for (const t of changed.catalogue.types) if (t.code in given) t.color = given[t.code];
+  const colors = Object.fromEntries(floorFromPackage(changed, "EWBSSN-DEMO-HQ-F00").items.map((i) => [i.type, i.color]));
+  equal(Object.keys(given).map((type) => colors[type]),
+    ["#8a8a8a", "#1F9D8B", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a"], "colours");
+});
+
 // format 0.7: a package a building, each item placed in its building (`local`);
 // campus-hq-2 is the same building after it was moved on the map (shifted, turned 15°)
 const hq = readPackage(join(conformance, "packages/campus-hq.storeypath"));
@@ -307,6 +320,25 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
   equal(got.bed, 4, "the bed: its headboard, two pillows and where its covers turn down");
   equal(got.ap, [true, 2, true], "the access point: overhead, a wifi mark, upright on the screen");
   equal(got.fill, "rgb(59, 110, 165)", "the copier in its type's colour");
+});
+
+inChrome("an item's colour reaches the page as a colour, never as CSS of its own", async (page) => {
+  const changed = structuredClone(pkg);
+  for (const t of changed.catalogue.types) if (t.code === "COPIER") t.color = BEACON;
+  const plan = floorFromPackage(changed, "EWBSSN-DEMO-HQ-F00");
+  const copier = plan.items.find((i) => i.type === "COPIER").id;
+  for (const type of ["SOFA", "ACCESS-POINT"]) { // and the host's own, square and round, coloured so
+    plan.items.push({ ...plan.items.find((i) => i.type === type), id: `HOST-${type}`, color: BEACON });
+  }
+  const got = await page.run(async (plan, copier) => {
+    await window.fresh({}, plan);
+    const body = (id) => document.querySelector(`[data-sp-item="${id}"] .sp-item-body`);
+    return { styles: [...document.querySelectorAll(".sp-items [style]")].map((e) => e.getAttribute("style")),
+      copier: getComputedStyle(body(copier)).fill, host: ["HOST-SOFA", "HOST-ACCESS-POINT"].map((id) => body(id).style.fill) };
+  }, plan, copier);
+  truly(got.styles.length > 0 && got.styles.every((s) => /^fill: [^;]*;$/.test(s) && !/url/.test(s)), `styles: ${got.styles}`);
+  equal(got.copier, "rgb(138, 138, 138)", "the package's: the default colour");
+  equal(got.host, ["", ""], "the host's: not a colour, none");
 });
 
 inChrome("a click on an item chooses it: a select event with the item", async (page) => {

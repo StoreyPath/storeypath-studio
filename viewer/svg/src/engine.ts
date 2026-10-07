@@ -419,12 +419,16 @@ export class FloorPlanEngine extends EventTarget {
       this.opts.interactiveItems === false && "sp-item-passive"];
     const g = svg("g", { class: classes.filter(Boolean).join(" "), "data-sp-item": it.id });
     const mark = (tag: "path" | "rect" | "line" | "circle", attrs: Record<string, string | number>, cls = "sp-item-mark") =>
-      g.append(svg(tag, { class: cls, ...attrs }));
+      g.appendChild(svg(tag, { class: cls, ...attrs }));
+    // its colour as one property's value, never as CSS of its own
+    const body = (tag: "rect" | "circle", attrs: Record<string, string | number>): void => {
+      mark(tag, attrs, "sp-item-body").style.fill = it.color ?? "";
+    };
     let ring: XY[];
     if (circle) {
       const r = Math.max(Math.min(w, d) / 2, 0.3); // big enough to see
       g.setAttribute("transform", `translate(${round(it.at[0])},${round(it.at[1])}) scale(1,${this.ySign})`);
-      mark("circle", { r: round(r), style: `fill:${it.color ?? ""}` }, "sp-item-body");
+      body("circle", { r: round(r) });
       if (kind === "ap") { // a dot and two arcs over it: wifi
         const at = 0.35 * r;
         mark("circle", { cy: round(at), r: round(0.09 * r) }, "sp-item-dot");
@@ -436,8 +440,7 @@ export class FloorPlanEngine extends EventTarget {
       ring = Array.from({ length: 24 }, (_, i): XY => [it.at[0] + r * Math.cos((i * Math.PI) / 12), it.at[1] + r * Math.sin((i * Math.PI) / 12)]);
     } else {
       g.setAttribute("transform", `matrix(${fine(u[0])} ${fine(u[1])} ${fine(f[0])} ${fine(f[1])} ${round(it.at[0])} ${round(it.at[1])})`);
-      mark("rect", { x: round(-w / 2), y: round(-d / 2), width: round(w), height: round(d), style: `fill:${it.color ?? ""}` },
-        "sp-item-body");
+      body("rect", { x: round(-w / 2), y: round(-d / 2), width: round(w), height: round(d) });
       if (kind === "desk") { // its chair, before it
         mark("rect", { x: -0.22, y: round(d / 2 + 0.1), width: 0.44, height: 0.42, rx: 0.1 }, "sp-item-chair");
       } else if (kind === "sofa") { // its seat, between the arms and before the back

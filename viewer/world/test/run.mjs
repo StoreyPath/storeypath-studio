@@ -237,6 +237,19 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
   }
 });
 
+test("a catalogue colour that is not #rrggbb is not used: the item takes the default colour", async () => {
+  const given = { COPIER: "red;fill:url(https://attacker.example/beacon.svg#a)", "ACCESS-POINT": "#1F9D8B", SOFA: "rgb(1, 2, 3)",
+    TV: "#abc", "BED-KING": "#3b6ea5\n", "DESK-DIRECTOR": 0x8a6238, "DESK-SENIOR": "url(#a)", "DESK-JUNIOR": "#3b6ea5 " };
+  const pkg = await loadPackage(repack(join(packages, "campus-hq.storeypath"), (files) => {
+    for (const t of files.get("catalogue.json").types) if (t.code in given) t.color = given[t.code];
+  }));
+  const colors = {};
+  for (const floor of pkg.floorsOf(HQ)) for (const it of planFloor(pkg, floor, originOf(pkg, HQ)).items) colors[it.type] = it.color;
+  const got = Object.keys(given).map((type) => colors[type]);
+  truly(JSON.stringify(got) === JSON.stringify(["#8a8a8a", "#1F9D8B", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a", "#8a8a8a"]),
+    `colours: ${JSON.stringify(got)}`);
+});
+
 /** The same, numbers to a tolerance; or where they differ. */
 const unlike = (a, b, tolerance, where = "") => {
   if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) <= tolerance ? null : `${where}: ${a} vs ${b}`;

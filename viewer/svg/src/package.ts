@@ -54,7 +54,9 @@ export interface FromPackageOptions {
   showHidden?: boolean;
 }
 
-const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe
+const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe (or not as #rrggbb)
+/** The colours a package may give (catalogue.json): #rrggbb, nothing else reaches the page. */
+const COLOR = /^#[0-9a-f]{6}$/i;
 
 /** A floor of a package, ready to draw. */
 export function floorFromPackage(pkg: PackageLike, floorId: string, options: FromPackageOptions = {}): FloorPlan {
@@ -107,7 +109,8 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
   // there (format 0.7: its rotation, counter-clockwise from -y); in older packages,
   // from the map: its point, and its heading from north to the drawing's own (its +y
   // is turned to the placement's bearing)
-  const colors = new Map((pkg.catalogue?.types ?? []).map((t) => [t.code, t.color]));
+  const colors = new Map((pkg.catalogue?.types ?? []).filter((t) => typeof t.color === "string" && COLOR.test(t.color))
+    .map((t) => [t.code, t.color]));
   const items: PlanItem[] = [];
   for (const f of pkg.items ?? []) {
     const p = f.properties;

@@ -37,7 +37,8 @@ const PANE = 1.0; // m: a mullion about this often across a window
 const DOUBLE_DOOR = 1.3; // m: a door wider than this, drawn without its swings, has two leaves
 const OUTDOOR = new Set(["terrace", "balcony"]); // open to the sky, behind parapets
 const PARAPET = 1.1; // m, when the package gives no parapet height
-const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe
+const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe (or not as #rrggbb)
+const COLOR = /^#[0-9a-f]{6}$/i; // the colours a package may give (catalogue.json): nothing else is used
 const WALL_ITEM = 1.2; // m, the bottom of an item on a wall, when the package does not say
 
 /** The pieces of a floor: the material each is drawn with (a name in materials.js;
@@ -285,9 +286,10 @@ export function planFloor(pkg, floor, origin, options = {}) {
     // the drawing's +y faces the placement's bearing, so its -y the opposite way
     const heading = own ? (placement.bearing || 0) + 180 - (own.rotation_deg || 0) : p.heading ?? 0;
     const h = (heading * Math.PI) / 180;
+    const color = pkg.itemType?.(p.type)?.color;
     const it = { id: item.id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
       width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
-      color: pkg.itemType?.(p.type)?.color ?? ITEM_COLOR };
+      color: typeof color === "string" && COLOR.test(color) ? color : ITEM_COLOR };
     it.y = it.mount === "ceiling" ? wallHeight - it.height - 0.01 : p.elevation_m ?? (it.mount === "wall" ? WALL_ITEM : 0);
     plan.items.push(it);
     if (it.mount !== "floor") continue;
