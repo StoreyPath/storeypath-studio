@@ -25,8 +25,10 @@ const (
 // oneBuildingFrom: from format 0.7 a package holds exactly one building.
 const oneBuildingFrom = 7
 
-// The files of a package, by role. Items and the catalogue (format 0.6) are found
-// through the manifest's files ("items", "catalogue"), and are not in older packages.
+// The files of a package, by the names they usually have. A reader finds each
+// through the manifest's files, by its role; the names are for a manifest that
+// does not list a file every package has. Items and the catalogue (format 0.6) are
+// read only when it lists them ("items", "catalogue"): older packages have none.
 const (
 	FileManifest  = "manifest.json"
 	FileLocation  = "location.geojson"
@@ -40,6 +42,17 @@ const (
 	FileItems     = "items.geojson"
 	FileCatalogue = "catalogue.json"
 )
+
+// usualNames: the files of a package by role, where they are when the manifest's
+// files do not say.
+var usualNames = map[string]string{
+	"location": FileLocation, "buildings": FileBuildings, "floors": FileFloors, "spaces": FileSpaces,
+	"zones": FileZones, "openings": FileOpenings, "objects": FileObjects, "changes": FileChanges,
+	"items": FileItems, "catalogue": FileCatalogue,
+}
+
+// optionalRoles: files a package has only when its manifest lists them.
+var optionalRoles = map[string]bool{"items": true, "catalogue": true}
 
 // Manifest is manifest.json: what the package is and holds.
 type Manifest struct {
@@ -200,7 +213,8 @@ type Package struct {
 
 	problems []Problem           // found while reading, reported by Validate
 	files    map[string]bool     // the files in the ZIP
-	read     map[string]bool     // the feature files read without a problem
+	names    map[string]string   // role → the file read for it
+	read     map[string]bool     // the roles whose file was read without a problem
 	kinds    map[string][]string // id → kinds it was read as (duplicates show as more than one)
 	byID     map[string]any
 }
@@ -325,112 +339,89 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 		return nil, fmt.Errorf("manifest.json: %w", err)
 	}
 
+	// Each file is where the manifest's files say, or where it usually is when they
+	// do not say; items and their catalogue (format 0.6) only when they list them.
+	p.names = map[string]string{}
+	for role, name := range usualNames {
+		if listed := p.Manifest.Files[role]; listed != "" {
+			name = listed
+		}
+		p.names[role] = name
+	}
 	// bad: a file the package has, unreadable as its kind; a limit passed fails Read
 	bad := func(name string, err error) error {
 		if errors.Is(err, ErrTooLarge) {
-			return fmt.Errorf("%s: %w", name, err)
+			return fmt.Errorf("%s: %w", clip(name), err)
 		}
-		p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: clip(name), Message: clip(name) + ": " + err.Error()})
 		return nil
 	}
-	collections := []struct {
-		file string
-		read func([]byte) error
+	files := []struct {
+		role   string
+		decode func([]byte) error
 	}{
-		{FileLocation, func(b []byte) error {
+		{"location", func(b []byte) error {
 			return decode(b, "location", max, &p.Locations, func(f *Location, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-		{FileBuildings, func(b []byte) error {
+		{"buildings", func(b []byte) error {
 			return decode(b, "building", max, &p.Buildings, func(f *Building, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-		{FileFloors, func(b []byte) error {
+		{"floors", func(b []byte) error {
 			return decode(b, "floor", max, &p.Floors, func(f *Floor, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-		{FileSpaces, func(b []byte) error {
+		{"spaces", func(b []byte) error {
 			return decode(b, "space", max, &p.Spaces, func(f *Space, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-		{FileZones, func(b []byte) error {
+		{"zones", func(b []byte) error {
 			return decode(b, "zone", max, &p.Zones, func(f *Zone, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-		{FileOpenings, func(b []byte) error {
+		{"openings", func(b []byte) error {
 			return decode(b, "opening", max, &p.Openings, func(f *Opening, id string, g *Geometry) { f.ID, f.Geometry = id, g })
 		}},
-	}
-	for _, c := range collections {
-		data, ok, err := a.read(c.file)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: c.file, Message: "missing file " + c.file})
-			continue
-		}
-		if err := c.read(data); err != nil {
-			if err := bad(c.file, err); err != nil {
-				return nil, err
+		{"items", func(b []byte) error {
+			return decode(b, "item", max, &p.Items, func(f *Item, id string, g *Geometry) { f.ID, f.Geometry = id, g })
+		}},
+		{"catalogue", func(b []byte) error {
+			var c Catalogue
+			if err := decodeJSON(b, &c, max); err != nil {
+				return err
 			}
-		} else {
-			p.read[c.file] = true
-		}
-	}
-
-	// furniture and equipment, and their types (format 0.6), when the manifest lists them
-	if name := p.Manifest.Files["items"]; name != "" {
-		data, ok, err := a.read(name)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
-		} else if err := decode(data, "item", max, &p.Items, func(f *Item, id string, g *Geometry) { f.ID, f.Geometry = id, g }); err != nil {
-			if err := bad(name, err); err != nil {
-				return nil, err
-			}
-		} else {
-			p.read[name] = true
-		}
-	}
-	if name := p.Manifest.Files["catalogue"]; name != "" {
-		data, ok, err := a.read(name)
-		if err != nil {
-			return nil, err
-		}
-		var c Catalogue
-		if !ok {
-			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
-		} else if err := decodeJSON(data, &c, max); err != nil {
-			if err := bad(name, err); err != nil {
-				return nil, err
-			}
-		} else {
 			c.index()
 			p.Catalogue = &c
-		}
+			return nil
+		}},
+		{"objects", func(b []byte) (err error) {
+			// every feature read, and maybe rows of kinds a later format adds
+			features := len(p.Locations) + len(p.Buildings) + len(p.Floors) + len(p.Spaces) + len(p.Zones) + len(p.Openings) + len(p.Items)
+			p.Objects, err = readObjects(b, features+1+max)
+			return err
+		}},
+		{"changes", func(b []byte) error {
+			var c Changes
+			if err := decodeJSON(b, &c, max); err != nil {
+				return err
+			}
+			p.Changes = &c
+			return nil
+		}},
 	}
-
-	// objects.csv lists every feature read, and may have rows of kinds a later format adds
-	features := len(p.Locations) + len(p.Buildings) + len(p.Floors) + len(p.Spaces) + len(p.Zones) + len(p.Openings) + len(p.Items)
-	if data, ok, err := a.read(FileObjects); err != nil {
-		return nil, err
-	} else if !ok {
-		p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: FileObjects, Message: "missing file " + FileObjects})
-	} else if p.Objects, err = readObjects(data, features+1+max); err != nil {
-		if err := bad(FileObjects, err); err != nil {
+	for _, f := range files {
+		if optionalRoles[f.role] && p.Manifest.Files[f.role] == "" {
+			continue
+		}
+		name := p.names[f.role]
+		data, ok, err := a.read(name)
+		if err != nil {
 			return nil, err
 		}
-	}
-	if data, ok, err := a.read(FileChanges); err != nil {
-		return nil, err
-	} else if !ok {
-		p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: FileChanges, Message: "missing file " + FileChanges})
-	} else {
-		var c Changes
-		if err := decodeJSON(data, &c, max); err != nil {
-			if err := bad(FileChanges, err); err != nil {
+		if !ok {
+			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: clip(name), Message: "missing file " + clip(name)})
+		} else if err := f.decode(data); err != nil {
+			if err := bad(name, err); err != nil {
 				return nil, err
 			}
 		} else {
-			p.Changes = &c
+			p.read[f.role] = true
 		}
 	}
 	p.index()
@@ -596,6 +587,14 @@ func (p *Package) index() {
 	for _, f := range p.Items {
 		add(f.ID, "item", f)
 	}
+}
+
+// file is the name of the package's file with a role, as Read found it.
+func (p *Package) file(role string) string {
+	if name, ok := p.names[role]; ok {
+		return name
+	}
+	return usualNames[role]
 }
 
 // Get is the feature with an ID: a *Location, *Building, *Floor, *Space, *Zone,

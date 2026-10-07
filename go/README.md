@@ -68,6 +68,10 @@ for _, b := range pkg.Buildings {
   centimetre (it keeps 7 decimals of a degree).
 - `ParseID`: an ID's project, parent, code and the prefix at any level.
 
+Each file is found through the manifest's `files`, as the format asks (at its usual
+name when a manifest does not list a file every package has; items and their
+catalogue only when it lists them).
+
 Properties a later format version adds are ignored, as the format asks, and so are
 `objects.csv` rows of kinds this module does not know (with their IDs in
 `changes.json`). A package this module cannot process is reported by `Validate`

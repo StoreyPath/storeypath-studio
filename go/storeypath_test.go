@@ -845,6 +845,86 @@ func TestRowsOfKindsThisReaderDoesNotKnowAreLeftAlone(t *testing.T) {
 	}
 }
 
+func TestFilesAreFoundThroughTheManifest(t *testing.T) {
+	// Every file is where manifest.files says, whatever its name; a file every
+	// package has, at its usual name when they do not say.
+	plain := open(t, "campus-hq.storeypath")
+	moved := map[string]string{} // usual name → where it is moved to
+	for role, name := range plain.Manifest.Files {
+		if usualNames[role] != "" {
+			moved[name] = "data/" + role + "-" + name
+		}
+	}
+	listMoved := editJSON(FileManifest, func(doc map[string]any) {
+		files := doc["files"].(map[string]any)
+		for role, name := range files {
+			if to, ok := moved[name.(string)]; ok {
+				files[role] = to
+			}
+		}
+	})
+	missing := 0
+	for _, pr := range rewriteFrom(t, "campus-hq.storeypath", listMoved).Validate() {
+		if pr.Code == ProblemMissingFile && strings.HasPrefix(pr.File, "data/") {
+			missing++
+		}
+	}
+	if missing != len(moved) {
+		t.Fatalf("the manifest lists %d files where they are not: %d missing", len(moved), missing)
+	}
+	p, err := readZip(renamed(t, zipFrom(t, "campus-hq.storeypath", listMoved, zip.Deflate), moved), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := p.Validate(); len(problems) != 0 {
+		t.Fatalf("every file moved, and listed where it is: %v", problems)
+	}
+	if len(p.Spaces) != len(plain.Spaces) || len(p.Items) != len(plain.Items) || p.Catalogue == nil ||
+		len(p.Objects) != len(plain.Objects) || p.Changes == nil || p.file("spaces") != "data/spaces-spaces.geojson" {
+		t.Errorf("%d spaces, %d items, catalogue %v, %d objects, changes %v", len(p.Spaces), len(p.Items),
+			p.Catalogue != nil, len(p.Objects), p.Changes != nil)
+	}
+	// spaces listed at rooms.geojson, not there: the problem names the file listed
+	rooms := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		doc["files"].(map[string]any)["spaces"] = "rooms.geojson"
+	}))
+	if problems := rooms.Validate(); len(problems) == 0 || problems[0].Code != ProblemMissingFile || problems[0].File != "rooms.geojson" {
+		t.Errorf("spaces listed at rooms.geojson, not there: %v", problems)
+	}
+	// a manifest that does not list a file every package has: at its usual name
+	unlisted := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		delete(doc["files"].(map[string]any), "spaces")
+		delete(doc["files"].(map[string]any), "objects")
+	}))
+	if problems := unlisted.Validate(); len(problems) != 0 || len(unlisted.Spaces) != len(plain.Spaces) {
+		t.Errorf("spaces and objects not listed: %v", problems)
+	}
+}
+
+// renamed is a package's ZIP with files renamed (from → to).
+func renamed(t *testing.T, data []byte, names map[string]string) []byte {
+	t.Helper()
+	src, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for _, f := range src.File {
+		rc, _ := f.Open()
+		d, _ := io.ReadAll(rc)
+		rc.Close()
+		name := f.Name
+		if to, ok := names[name]; ok {
+			name = to
+		}
+		out, _ := w.Create(name)
+		out.Write(d)
+	}
+	w.Close()
+	return buf.Bytes()
+}
+
 func TestAProjectFileIsNotAPackage(t *testing.T) {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)

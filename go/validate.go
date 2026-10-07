@@ -72,9 +72,10 @@ var knownKinds = map[string]bool{"project": true, "location": true, "building": 
 // building (the package keeps 7 decimals of a degree, about a centimetre).
 const localAgreesM = 0.05
 
-var collectionFiles = map[string]string{
-	"location": FileLocation, "building": FileBuildings, "floor": FileFloors,
-	"space": FileSpaces, "zone": FileZones, "opening": FileOpenings, "item": FileItems,
+// kindRoles: the role of the file each kind of feature is in.
+var kindRoles = map[string]string{
+	"location": "location", "building": "buildings", "floor": "floors",
+	"space": "spaces", "zone": "zones", "opening": "openings", "item": "items",
 }
 
 // Validate checks the package as Studio's validator does: its files, the
@@ -91,9 +92,13 @@ func (p *Package) Validate() []Problem {
 				args[i] = clip(s)
 			}
 		}
-		out = append(out, Problem{Code: code, File: file, ID: clip(id), Message: fmt.Sprintf(format, args...)})
+		out = append(out, Problem{Code: code, File: clip(file), ID: clip(id), Message: fmt.Sprintf(format, args...)})
 	}
 	m := p.Manifest
+	// the files, where the manifest's files say
+	buildingsFile, floorsFile, spacesFile, zonesFile := p.file("buildings"), p.file("floors"), p.file("spaces"), p.file("zones")
+	openingsFile, itemsFile, objectsFile, changesFile := p.file("openings"), p.file("items"), p.file("objects"), p.file("changes")
+	fileOf := func(kind string) string { return p.file(kindRoles[kind]) }
 	if m.Format != FormatName {
 		add(ProblemFormat, FileManifest, "", "unknown format %q", m.Format)
 	}
@@ -107,17 +112,17 @@ func (p *Package) Validate() []Problem {
 		"spaces": len(p.Spaces), "zones": len(p.Zones), "openings": len(p.Openings)}
 	roles := []string{"location", "buildings", "floors", "spaces", "zones", "openings"}
 	for _, role := range roles {
-		file := role + ".geojson"
-		if !p.read[file] { // missing or unreadable: already a problem of its own
+		file := p.file(role)
+		if !p.read[role] { // missing or unreadable: already a problem of its own
 			continue
 		}
 		if got, ok := m.Counts[role]; !ok || got != counts[role] {
 			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts[role], counts[role])
 		}
 	}
-	if file := m.Files["items"]; file != "" && p.read[file] {
+	if p.read["items"] {
 		if got, ok := m.Counts["items"]; !ok || got != len(p.Items) {
-			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts["items"], len(p.Items))
+			add(ProblemCount, itemsFile, "", "%s: manifest counts %d, file has %d", itemsFile, m.Counts["items"], len(p.Items))
 		}
 	}
 
@@ -129,26 +134,26 @@ func (p *Package) Validate() []Problem {
 	for _, id := range ids {
 		kinds := p.kinds[id]
 		if len(kinds) > 1 {
-			add(ProblemDuplicateID, collectionFiles[kinds[0]], id, "duplicate ID %s", id)
+			add(ProblemDuplicateID, fileOf(kinds[0]), id, "duplicate ID %s", id)
 		}
 		if kinds[0] == "item" { // the project's and its own number: where it is, is data
 			if !IsItemID(id) {
-				add(ProblemBadID, FileItems, id, "%s: not an item ID (the project's code, -I and six digits)", id)
+				add(ProblemBadID, itemsFile, id, "%s: not an item ID (the project's code, -I and six digits)", id)
 			} else if !strings.HasPrefix(id, project+"-") {
-				add(ProblemWrongProject, FileItems, id, "%s: project segment is not the package's project %s", id, project)
+				add(ProblemWrongProject, itemsFile, id, "%s: project segment is not the package's project %s", id, project)
 			}
 			continue
 		}
 		pid, err := ParseID(id)
 		if err != nil {
-			add(ProblemBadID, collectionFiles[kinds[0]], id, "%s: %v", collectionFiles[kinds[0]], err)
+			add(ProblemBadID, fileOf(kinds[0]), id, "%s: %v", fileOf(kinds[0]), err)
 			continue
 		}
 		if pid.Project() != project {
-			add(ProblemWrongProject, collectionFiles[kinds[0]], id, "%s: project segment is not the package's project %s", id, project)
+			add(ProblemWrongProject, fileOf(kinds[0]), id, "%s: project segment is not the package's project %s", id, project)
 		}
 		if want := kindLevel[kinds[0]]; pid.Level() != want {
-			add(ProblemIDLevel, collectionFiles[kinds[0]], id, "%s: a %s ID needs %d segments", id, kinds[0], levelDepth(want))
+			add(ProblemIDLevel, fileOf(kinds[0]), id, "%s: a %s ID needs %d segments", id, kinds[0], levelDepth(want))
 		}
 	}
 	kindOf := func(id string) string {
@@ -165,15 +170,15 @@ func (p *Package) Validate() []Problem {
 		}
 	}
 	for _, b := range p.Buildings {
-		parent(b.ID, b.Location, "location", FileBuildings)
+		parent(b.ID, b.Location, "location", buildingsFile)
 	}
 	if oneBuilding { // from 0.7, a package holds one building and names it
 		if m.Scope == nil || len(m.Scope.Buildings) != 1 {
 			add(ProblemScope, FileManifest, "", "a package of format %s holds one building: its manifest's scope names it", m.FormatVersion)
 		}
 		if len(p.Buildings) != 1 {
-			add(ProblemScope, FileBuildings, "", "%s: a package of format %s holds one building, this one %d",
-				FileBuildings, m.FormatVersion, len(p.Buildings))
+			add(ProblemScope, buildingsFile, "", "%s: a package of format %s holds one building, this one %d",
+				buildingsFile, m.FormatVersion, len(p.Buildings))
 		}
 	}
 	if m.Scope != nil {
@@ -186,74 +191,74 @@ func (p *Package) Validate() []Problem {
 		}
 		for _, b := range p.Buildings {
 			if !listed[b.ID] {
-				add(ProblemScope, FileBuildings, b.ID, "building %s is in the package but not in its scope", b.ID)
+				add(ProblemScope, buildingsFile, b.ID, "building %s is in the package but not in its scope", b.ID)
 			}
 		}
 	}
 	for _, f := range p.Floors {
-		parent(f.ID, f.Building, "building", FileFloors)
+		parent(f.ID, f.Building, "building", floorsFile)
 	}
 	zonesOf := map[string]map[string]bool{}
 	for _, s := range p.Spaces {
-		parent(s.ID, s.Floor, "floor", FileSpaces)
+		parent(s.ID, s.Floor, "floor", spacesFile)
 		zonesOf[s.ID] = map[string]bool{}
 		for _, z := range s.Zones {
 			zonesOf[s.ID][z] = true
 			if kindOf(z) != "zone" {
-				add(ProblemZone, FileSpaces, s.ID, "%s: lists unknown zone %s", s.ID, z)
+				add(ProblemZone, spacesFile, s.ID, "%s: lists unknown zone %s", s.ID, z)
 			}
 		}
-		geometryOf(s.ID, s.Geometry, FileSpaces, false, add)
+		geometryOf(s.ID, s.Geometry, spacesFile, false, add)
 	}
 	for _, z := range p.Zones {
-		parent(z.ID, z.Floor, "floor", FileZones)
+		parent(z.ID, z.Floor, "floor", zonesFile)
 		if kindOf(z.Space) != "space" {
-			add(ProblemZone, FileZones, z.ID, "%s: zone of unknown space %s", z.ID, z.Space)
+			add(ProblemZone, zonesFile, z.ID, "%s: zone of unknown space %s", z.ID, z.Space)
 		} else if !zonesOf[z.Space][z.ID] {
-			add(ProblemZone, FileZones, z.ID, "%s: not listed in the zones of its space %s", z.ID, z.Space)
+			add(ProblemZone, zonesFile, z.ID, "%s: not listed in the zones of its space %s", z.ID, z.Space)
 		}
-		geometryOf(z.ID, z.Geometry, FileZones, false, add)
+		geometryOf(z.ID, z.Geometry, zonesFile, false, add)
 	}
 	for _, o := range p.Openings {
-		parent(o.ID, o.Floor, "floor", FileOpenings)
+		parent(o.ID, o.Floor, "floor", openingsFile)
 		for _, s := range o.Connects {
 			if kindOf(s) != "space" {
-				add(ProblemOpening, FileOpenings, o.ID, "%s: connects to unknown space %s", o.ID, s)
+				add(ProblemOpening, openingsFile, o.ID, "%s: connects to unknown space %s", o.ID, s)
 			} else if !strings.HasPrefix(s, o.Floor+"-") {
-				add(ProblemOpening, FileOpenings, o.ID, "%s: connects to %s on another floor", o.ID, s)
+				add(ProblemOpening, openingsFile, o.ID, "%s: connects to %s on another floor", o.ID, s)
 			}
 		}
-		geometryOf(o.ID, o.Geometry, FileOpenings, true, add)
+		geometryOf(o.ID, o.Geometry, openingsFile, true, add)
 	}
 	for _, it := range p.Items {
 		if kindOf(it.Floor) != "floor" || !strings.HasPrefix(it.Floor, it.Building+"-") {
-			add(ProblemItem, FileItems, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
+			add(ProblemItem, itemsFile, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
 		}
 		for _, in := range []struct {
 			id   *string
 			kind string
 		}{{it.Space, "space"}, {it.Zone, "zone"}} {
 			if in.id != nil && (kindOf(*in.id) != in.kind || !strings.HasPrefix(*in.id, it.Floor+"-")) {
-				add(ProblemItem, FileItems, it.ID, "%s: in unknown %s %s (or not on its floor)", it.ID, in.kind, *in.id)
+				add(ProblemItem, itemsFile, it.ID, "%s: in unknown %s %s (or not on its floor)", it.ID, in.kind, *in.id)
 			}
 		}
 		if p.Catalogue != nil && p.Catalogue.Type(it.Type) == nil {
-			add(ProblemItemType, FileItems, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
+			add(ProblemItemType, itemsFile, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
 		}
 		if it.Local == nil && oneBuilding {
-			add(ProblemItem, FileItems, it.ID, "%s: no position in its building (local)", it.ID)
+			add(ProblemItem, itemsFile, it.ID, "%s: no position in its building (local)", it.ID)
 		} else if f, err := p.Frame(it.Building); it.Local != nil && err == nil {
 			at := f.ToLonLat(it.Local.X, it.Local.Y)
 			off := math.Hypot((at[0]-it.Label[0])*111320*math.Cos(at[1]*math.Pi/180), (at[1]-it.Label[1])*110574)
 			if off > localAgreesM {
-				add(ProblemItem, FileItems, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
+				add(ProblemItem, itemsFile, it.ID, "%s: its map position is %.2f m from its position in its building", it.ID, off)
 			}
 		}
-		geometryOf(it.ID, it.Geometry, FileItems, false, add)
+		geometryOf(it.ID, it.Geometry, itemsFile, false, add)
 	}
 
 	unknown := map[string]bool{} // rows of a later format's kinds
-	if p.files[FileObjects] {
+	if p.files[objectsFile] {
 		listed := map[string]bool{}
 		for _, row := range p.Objects {
 			if !knownKinds[row.Kind] {
@@ -274,31 +279,31 @@ func (p *Package) Validate() []Problem {
 			}
 		}
 		if extra+missing > 0 {
-			add(ProblemObjects, FileObjects, "", "%s: rows do not match the features (%d extra, %d missing)", FileObjects, extra, missing)
+			add(ProblemObjects, objectsFile, "", "%s: rows do not match the features (%d extra, %d missing)", objectsFile, extra, missing)
 		}
 	}
 
 	if c := p.Changes; c != nil {
 		for _, id := range append(append([]string(nil), c.Added...), c.Changed...) {
 			if _, ok := p.kinds[id]; !ok && !unknown[id] {
-				add(ProblemChanges, FileChanges, id, "%s: %s is listed as added/changed but not in the package", FileChanges, id)
+				add(ProblemChanges, changesFile, id, "%s: %s is listed as added/changed but not in the package", changesFile, id)
 			}
 		}
 		for _, id := range c.AllRetired {
 			if _, ok := p.kinds[id]; ok {
-				add(ProblemChanges, FileChanges, id, "%s: retired ID %s is still in the package", FileChanges, id)
+				add(ProblemChanges, changesFile, id, "%s: retired ID %s is still in the package", changesFile, id)
 			}
 		}
 		for _, mv := range c.MovedAway {
 			if _, here := p.kinds[mv.ID]; here || !IsItemID(mv.ID) {
-				add(ProblemChanges, FileChanges, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", FileChanges, mv.ID)
+				add(ProblemChanges, changesFile, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", changesFile, mv.ID)
 			}
 			if _, here := p.kinds[mv.Building]; here || !strings.HasPrefix(mv.Building, project+"-") {
-				add(ProblemChanges, FileChanges, mv.ID, "%s: %s moved to %s, not another building of the project", FileChanges, mv.ID, mv.Building)
+				add(ProblemChanges, changesFile, mv.ID, "%s: %s moved to %s, not another building of the project", changesFile, mv.ID, mv.Building)
 			}
 		}
 		if c.Sequence != m.Export.Sequence {
-			add(ProblemChanges, FileChanges, "", "%s: sequence does not match the manifest", FileChanges)
+			add(ProblemChanges, changesFile, "", "%s: sequence does not match the manifest", changesFile)
 		}
 	}
 	return out
