@@ -304,10 +304,13 @@ def words(drawing: Annotated[Path, typer.Argument(help="DWG or DXF file")]):
 def align(
     workspace: WorkspaceArg,
     building_id: str,
-    reference: Annotated[Optional[str], typer.Option(help="floor ID the others are lined up with (default: lowest)")] = None,
+    reference: Annotated[Optional[str], typer.Option(help="floor ID the others are lined up with (default: the "
+                                                          "lowest floor converted already, else the lowest)")] = None,
 ):
     """Line up a building's floors drawn side by side in one drawing (or shifted
-    between drawings): finds where each plan's walls overlap the reference floor's."""
+    between drawings): finds where each plan's walls overlap the reference floor's.
+    Floors converted already stay where they are (their rooms' IDs stand on it):
+    only floors not converted yet are moved."""
     from .cad import meters_per_unit, read_drawing
     from .sheets import align as align_walls, floor_walls
 
@@ -319,7 +322,10 @@ def align(
     floors = sorted((f for f in b.floors if f.source), key=lambda f: f.ordinal)
     if len(floors) < 2:
         _fail("align needs at least two floors with drawings")
-    ref = next((f for f in floors if f"{building_id}-{f.code}" == reference), None) if reference else floors[0]
+    if reference:
+        ref = next((f for f in floors if f"{building_id}-{f.code}" == reference), None)
+    else:  # a floor already there: the new ones are lined up with it
+        ref = next((f for f in floors if f.converted_at is not None), floors[0])
     if ref is None:
         _fail(f"no floor {reference} in {building_id}")
     docs: dict[str, object] = {}
@@ -338,14 +344,19 @@ def align(
         return floor_walls(doc, profile, scale, src.region), scale
 
     try:
-        ref_walls, _ = walls(ref)
+        ref_walls, ref_scale = walls(ref)
         ref_offset = ref.source.offset or (0.0, 0.0)
         for f in floors:
             if f is ref:
                 continue
+            if f.converted_at is not None:  # moving it would give all its rooms new IDs
+                typer.echo(f"{building_id}-{f.code}: converted already: kept where it is")
+                continue
             other, scale = walls(f)
             (tx, ty), overlap = align_walls(ref_walls, other)
-            f.source.offset = (round(ref_offset[0] + tx / scale, 6), round(ref_offset[1] + ty / scale, 6))
+            # in this floor's drawing units, from where the reference stands (meters between)
+            f.source.offset = (round((ref_offset[0] * ref_scale + tx) / scale, 6),
+                               round((ref_offset[1] * ref_scale + ty) / scale, 6))
             note = "" if overlap >= 0.3 else "  (little overlap: check this floor in review)"
             typer.echo(f"{building_id}-{f.code}: shifted {tx:.3f}, {ty:.3f} m onto {building_id}-{ref.code}; "
                        f"{overlap:.0%} of its walls line up{note}")

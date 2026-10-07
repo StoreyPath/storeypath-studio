@@ -164,6 +164,68 @@ def test_the_studio_converts_the_other_floors_when_one_fails(tmp_path, monkeypat
     assert first > 10 and failed == 0 and last > 10
 
 
+# ---- lining floors up again ---------------------------------------------------------
+
+
+def _cli(*args) -> str:
+    result = runner.invoke(app, [str(a) for a in args])
+    assert result.exit_code == 0, result.output
+    return result.output.strip()
+
+
+def test_aligning_again_moves_only_the_floors_not_converted(tmp_path):
+    # The README's way: floors from one sheet, aligned, converted. Later a basement
+    # is added and align run again: the floors converted keep their frames and IDs.
+    from storeypath.samples import write_sheet_dxf
+
+    write_sheet_dxf(tmp_path / "sheet.dxf", [(office_floor(0), (125.0, 48.0), "GROUND FLOOR PLAN"),
+                                             (office_floor(1), (185.0, 48.0), "FIRST FLOOR PLAN"),
+                                             (office_floor(-1), (245.0, 48.0), "BASEMENT FLOOR PLAN")])
+    ws_file = tmp_path / "p.spproj"
+    _cli("new", ws_file, "--name", "P")
+    loc = _cli("add-location", ws_file, "SITE", "--name", "S")
+    b = _cli("add-building", ws_file, loc, "HQ", "--name", "HQ")
+    _cli("add-floor", ws_file, b, tmp_path / "sheet.dxf", "--ordinal", "0", "--view", "ground", "--no-model")
+    _cli("add-floor", ws_file, b, tmp_path / "sheet.dxf", "--ordinal", "1", "--view", "first", "--no-model")
+    _cli("align", ws_file, b)
+    _cli("convert", ws_file, "--no-model", "--no-symbols", "--no-vision")
+    ws = Workspace.load(ws_file)
+    offsets = {f.code: f.source.offset for f in ws.building(b).floors}
+    rooms = {i for i, r in ws.objects.items() if r.kind == "space" and r.status == "active"}
+
+    _cli("add-floor", ws_file, b, tmp_path / "sheet.dxf", "--ordinal", "-1", "--view", "basement", "--no-model")
+    out = _cli("align", ws_file, b)
+    assert "converted already: kept where it is" in out
+    _cli("convert", ws_file, "--no-model", "--no-symbols", "--no-vision")
+    ws = Workspace.load(ws_file)
+    floors = {f.code: f for f in ws.building(b).floors}
+    assert all(floors[code].source.offset == offset for code, offset in offsets.items())
+    assert all(ws.objects[i].status == "active" for i in rooms)
+    # the basement stands where the ground floor does: 120 m to its left on the sheet
+    ground, basement = (floors[c].source.offset or (0.0, 0.0) for c in ("F00", "B01"))
+    assert abs(basement[0] - ground[0] - 120000) < 50 and abs(basement[1] - ground[1]) < 50
+
+
+def test_floors_drawn_in_other_units_are_lined_up_in_metres(tmp_path):
+    # The reference floor is drawn in millimetres and already moved; the other is
+    # drawn in metres elsewhere: its offset, in its own units, puts it on the reference.
+    write_floor_dxf(tmp_path / "mm.dxf", office_floor(0), origin=(125.0, 48.0))
+    write_floor_dxf(tmp_path / "m.dxf", office_floor(1), origin=(30.0, 10.0))
+    doc = ezdxf.readfile(tmp_path / "m.dxf")
+    for e in doc.modelspace():
+        e.scale_uniform(0.001)
+    doc.units = ezdxf.units.M
+    doc.saveas(tmp_path / "m.dxf")
+    ws = Workspace.new("T")
+    b = ws.add_building(ws.add_location("S", "S"), "B", "B")
+    ws.add_floor(b, 0, source=SourceDrawing(path="mm.dxf", profile="ncs", units="mm", offset=(125000.0, 48000.0)))
+    f1 = ws.add_floor(b, 1, source=SourceDrawing(path="m.dxf", profile="ncs", units="m"))
+    ws.save(tmp_path / "p.spproj")
+    _cli("align", tmp_path / "p.spproj", b)
+    x, y = Workspace.load(tmp_path / "p.spproj").floor(f1).source.offset
+    assert abs(x - 30.0) < 0.05 and abs(y - 10.0) < 0.05
+
+
 # ---- a malformed answer costs one question ---------------------------------------
 
 
