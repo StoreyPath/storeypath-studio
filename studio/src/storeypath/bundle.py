@@ -24,7 +24,10 @@ up on the walls the floor has).
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -158,9 +161,11 @@ def project_code(source: Path) -> str | None:
 def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
     """A project from a file, put in ``data/<code>/``. A project file gives the
     project as it was; a package, its building rebuilt from it. Raises
-    ProjectExists when the project is here and ``replace`` is not set: a project
-    file is then put in its place; a package's building is added to it, or put in
-    place of that building (the project's others are left as they are)."""
+    ProjectExists when the project is here (wherever the Studio keeps it:
+    find_project) and ``replace`` is not set: a project file is then put in its
+    place, once it has been read through whole (a damaged file leaves the project as
+    it was); a package's building is added to it, or put in place of that building
+    (the project's others are left as they are)."""
     from .validate import validate_package
 
     with zipfile.ZipFile(source) as z:
@@ -180,8 +185,7 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
         code = ws.project.code
         if not re.fullmatch(r"[A-Z0-9]{4,16}", code):
             raise ValueError(f"not a project code: {code!r}")
-        folder = data / code
-        existing = next(folder.glob("*.spproj"), None) if folder.exists() else None
+        existing = find_project(data, code)  # wherever the Studio keeps it
         if how == "package" and existing is not None:
             here = Workspace.load(existing)
             b_ids = [b for b in _building_ids(ws)]
@@ -194,7 +198,9 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
             return {"code": code, "name": here.project.name, "how": "building", "buildings": b_ids,
                     "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
                     "item_types_added": learned}
-        if folder.exists():
+        # in place of the project kept here (its folder), else in data/<code>/
+        folder = existing.parent if existing is not None and existing.parent != data else data / code
+        if existing is not None or folder.exists():
             if not replace:
                 name = ws.project.name
                 if existing is not None:
@@ -203,22 +209,74 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
                     except (OSError, ValueError, KeyError):
                         pass
                 raise ProjectExists(code, name)
-            _remove(folder, data)
-        (folder / "drawings").mkdir(parents=True)
-        drawings = 0
-        for info in infos:
-            if not info.filename.startswith(DRAWINGS) or info.is_dir():
-                continue
-            name = PurePosixPath(info.filename).name  # a name only: nothing outside the project
-            if not name or name.startswith(".") or name != info.filename[len(DRAWINGS):]:
-                continue
-            (folder / "drawings" / name).write_bytes(z.read(info))
-            drawings += 1
-    ws.save(folder / f"{code}.spproj")
+        # made whole beside it first: the project here is left as it is until the file has
+        # been read through (a damaged one changes nothing)
+        staging = data / f".unpacking-{uuid.uuid4().hex}"
+        try:
+            (staging / "drawings").mkdir(parents=True)
+            drawings = 0
+            for info in infos:
+                if not info.filename.startswith(DRAWINGS) or info.is_dir():
+                    continue
+                name = PurePosixPath(info.filename).name  # a name only: nothing outside the project
+                if not name or name.startswith(".") or name != info.filename[len(DRAWINGS):]:
+                    continue
+                (staging / "drawings" / name).write_bytes(z.read(info))  # its CRC checked
+                drawings += 1
+            unseen = staging / f".{code}.spproj.new"  # no project file until it is in place
+            ws.save(unseen)
+            Workspace.load(unseen)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    _put_in_place(staging, folder, data)
+    os.replace(folder / unseen.name, folder / f"{code}.spproj")
+    if existing is not None and existing.parent == data:
+        existing.unlink(missing_ok=True)  # a project kept as a file of the data folder: replaced
     learned = _learn_types(data, source)
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
             "item_types_added": learned}
+
+
+def find_project(data: Path, code: str) -> Path | None:
+    """The workspace file of the project with this code in a Studio's data folder,
+    found as the Studio finds its projects (server.Studio._workspaces): a *.spproj in
+    the data folder, or in a folder of it, holding that project code; the first of
+    them, in that order. Folders being unpacked (hidden) are not projects."""
+    for path in sorted(data.glob("*.spproj")) + sorted(data.glob("*/*.spproj")):
+        if any(part.startswith(".") for part in path.relative_to(data).parts):
+            continue
+        try:
+            if json.loads(path.read_text(encoding="utf-8"))["project"]["code"] == code:
+                return path
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
+def _put_in_place(staging: Path, folder: Path, data: Path) -> None:
+    """A project folder made whole (``staging``) put in place of ``folder`` (one of the
+    data folder), by renaming: the old one is removed only once the new one is there,
+    and is put back when it cannot be."""
+    if folder.resolve().parent != data.resolve():
+        shutil.rmtree(staging, ignore_errors=True)
+        raise ValueError("not a project folder")
+    aside = None
+    try:
+        if folder.exists():
+            aside = data / f".replaced-{uuid.uuid4().hex}"
+            os.replace(folder, aside)
+        os.replace(staging, folder)
+    except BaseException:
+        if aside is not None and not folder.exists():
+            os.replace(aside, folder)
+            aside = None
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    finally:
+        if aside is not None and folder.exists():
+            shutil.rmtree(aside, ignore_errors=True)
 
 
 def _building_ids(ws: Workspace) -> list[str]:
@@ -418,15 +476,6 @@ def _learn_types(data: Path, source: Path) -> list[str]:
         ours.types.extend(new)
         catalogue.save(data, ours)
     return [t.code for t in new]
-
-
-def _remove(folder: Path, data: Path) -> None:
-    import shutil
-
-    folder = folder.resolve()
-    if folder.parent != data.resolve():
-        raise ValueError("not a project folder")
-    shutil.rmtree(folder)
 
 
 def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:

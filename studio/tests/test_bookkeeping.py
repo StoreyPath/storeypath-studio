@@ -472,6 +472,78 @@ def test_a_building_of_a_site_stays_on_it_when_its_package_is_opened(campus, tmp
     assert annex not in _read(tmp_path / "annex-2.storeypath")[0]["changed"]
 
 
+def _damaged(source, out):
+    """A copy of a project file with one drawing's bytes damaged (its CRC no longer agrees)."""
+    with zipfile.ZipFile(source) as z, zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as w:
+        for info in z.infolist():
+            w.writestr(info.filename, z.read(info.filename))
+    raw = bytearray(out.read_bytes())
+    with zipfile.ZipFile(out) as z:
+        info = next(i for i in z.infolist() if i.filename.startswith("studio/drawings/") and i.filename.endswith(".dxf"))
+    at = info.header_offset + 30 + len(info.filename) + 2000
+    raw[at:at + 7] = b"XXXXXXX"
+    out.write_bytes(bytes(raw))
+    return out
+
+
+def _projects(data):
+    """What a data folder holds but its catalogue of item types: projects, and anything left over."""
+    return sorted(p.name for p in data.iterdir() if p.name != "catalogue.json")
+
+
+def _tree(folder):
+    return {str(p.relative_to(folder)): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def test_a_damaged_project_file_leaves_the_project_as_it_was(campus, tmp_path):
+    from storeypath.bundle import export_project, open_file
+
+    ws, ws_path, _, _ = campus
+    data, path = _in_studio(ws, ws_path)
+    export_project(path, tmp_path / "p.storeypath-project")
+    bad = _damaged(tmp_path / "p.storeypath-project", tmp_path / "bad.storeypath-project")
+    before = _tree(data)
+    with pytest.raises(zipfile.BadZipFile):
+        open_file(data, bad, replace=True)
+    assert _tree(data) == before and _projects(data) == [ws.id]
+    open_file(data, tmp_path / "p.storeypath-project", replace=True)  # a whole one is put in its place
+    assert _projects(data) == [ws.id] and Workspace.load(path).id == ws.id
+    assert len(list((data / ws.id / "drawings").glob("*.dxf"))) == 5
+
+
+def test_a_project_kept_elsewhere_in_the_data_folder_is_the_one_opened_into(campus, tmp_path):
+    # Not in data/<code>/: a folder of another name, as the Studio finds it.
+    from storeypath.bundle import ProjectExists, export_project, open_file
+
+    ws, ws_path, hq, _ = campus
+    data = ws_path.parent.parent
+    ws.save(ws_path)
+    export_package(ws, tmp_path / "hq.storeypath", building=hq)
+    export_project(ws_path, tmp_path / "p.storeypath-project")
+    with pytest.raises(ProjectExists):
+        open_file(data, tmp_path / "hq.storeypath")
+    assert open_file(data, tmp_path / "hq.storeypath", replace=True)["replaced"] == [hq]
+    with pytest.raises(ProjectExists):
+        open_file(data, tmp_path / "p.storeypath-project")
+    open_file(data, tmp_path / "p.storeypath-project", replace=True)
+    assert _projects(data) == ["demo"]  # no second copy
+    assert Workspace.load(data / "demo" / f"{ws.id}.spproj").id == ws.id
+
+
+def test_a_project_kept_as_a_file_of_the_data_folder_is_replaced_not_doubled(campus, tmp_path):
+    from storeypath.bundle import ProjectExists, export_project, open_file
+
+    ws, ws_path, _, _ = campus
+    export_project(ws_path, tmp_path / "p.storeypath-project")
+    data = tmp_path / "loose"
+    data.mkdir()
+    ws.save(data / "mine.spproj")
+    with pytest.raises(ProjectExists):
+        open_file(data, tmp_path / "p.storeypath-project")
+    open_file(data, tmp_path / "p.storeypath-project", replace=True)
+    assert _projects(data) == [ws.id]
+
+
 def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
     from storeypath.export import ExportError
 
