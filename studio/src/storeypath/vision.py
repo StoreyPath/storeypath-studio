@@ -210,9 +210,18 @@ def _print_config():
                          lineweight_scaling=0.6, min_lineweight=0.25)
 
 
+_DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
+
+
 def print_png(doc, bbox, width: int, height: int) -> bytes:
     """A part of the drawing as printed, black on white: ``bbox`` (drawing units)
-    filling ``width`` × ``height`` pixels (the same shape). PNG."""
+    filling ``width`` × ``height`` pixels (the same shape). PNG. Drawn one at a
+    time with vision's views (the review's prints are drawn while a floor is looked at)."""
+    with _DRAWING:
+        return _print_png(doc, bbox, width, height)
+
+
+def _print_png(doc, bbox, width: int, height: int) -> bytes:
     from ezdxf.addons.drawing import Frontend, RenderContext
     from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -264,9 +273,6 @@ def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters
     ax.set_aspect("equal")
     ax.axis("off")
     return fig
-
-
-_DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
 
 
 def render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:

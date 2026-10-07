@@ -772,6 +772,21 @@ def test_only_the_last_few_tiles_of_a_floor_are_kept(monkeypatch):
     assert len(printed) == 10 and len(sheet._tiles) == vision.FloorPrint.KEEP_TILES
 
 
+def test_a_review_print_is_never_drawn_while_vision_draws(monkeypatch):
+    import threading
+
+    others_could_draw = []
+
+    def drawing(doc, bbox, width, height):  # meanwhile, another thread tries to draw a view
+        t = threading.Thread(target=lambda: others_could_draw.append(vision._DRAWING.acquire(blocking=False)))
+        t.start()
+        t.join()
+        return b"png"
+
+    monkeypatch.setattr(vision, "_print_png", drawing)
+    assert vision.print_png(None, (0, 0, 1, 1), 10, 10) == b"png" and others_could_draw == [False]
+
+
 def test_a_room_that_cannot_be_drawn_costs_that_room_only():
     kept = []
 
