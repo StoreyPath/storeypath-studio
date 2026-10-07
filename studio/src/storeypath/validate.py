@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from .catalogue import Catalogue
 from .ids import LEVELS, is_item_id, parse_id
 from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
-                      ItemProps, Manifest, version_tuple)
+                      ItemProps, Manifest, version_problem, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -50,8 +50,8 @@ def validate_package(path: str | Path) -> list[str]:
             return [f"manifest.json: {e}"]
         if manifest.format != FORMAT_NAME:
             errors.append(f"unknown format {manifest.format!r}")
-        if manifest.format_version.split(".")[0] != FORMAT_VERSION.split(".")[0]:
-            errors.append(f"unsupported format version {manifest.format_version}")
+        if (why := version_problem(manifest.format_version)) is not None:
+            errors.append(why)
         project = manifest.project.id
         one_building = version_tuple(manifest.format_version) >= ONE_BUILDING_FROM
 

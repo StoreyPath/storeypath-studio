@@ -63,8 +63,10 @@ for _, b := range pkg.Buildings {
 
 Properties a later format version adds are ignored, as the format asks, and so are
 `objects.csv` rows of kinds this module does not know (with their IDs in
-`changes.json`); a package of another major version is reported by `Validate`
-(`VERSION`). So are files it
+`changes.json`). A package this module cannot process is reported by `Validate`
+(`VERSION`), and `CheckVersion` says so from the manifest's `format_version` alone:
+another major version, or before 1.0 a newer minor one (0.8 for this 0.7 reader),
+with a message to update the reader. So are files it
 does not read: a package's floors pre-built in 3D (format 0.5, `world/`) are for
 viewers.
 

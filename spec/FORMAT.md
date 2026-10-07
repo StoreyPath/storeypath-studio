@@ -422,7 +422,12 @@ those), `campus-whole-1`, `campus-part`, `campus-whole-3` (0.4), `simple-office`
 
 ## Versioning
 
-`manifest.json → format_version` follows semantic versioning. Readers should accept
-any package with the same major version and ignore unknown files, properties, and
-`objects.csv` rows of kinds they do not know (as 0.6 added items), with the IDs of those
-rows where `changes.json` lists them.
+`manifest.json → format_version` follows semantic versioning, and says which readers
+can process a package. A reader reads packages of its own major version that are not
+newer than it, and ignores unknown files, properties, and `objects.csv` rows of kinds it
+does not know (as 0.6 added items), with the IDs of those rows where `changes.json` lists
+them. Before 1.0 a minor version may change what a package means (0.4's `scope`, 0.7's
+one building per package), so a reader refuses a package of a newer minor version
+(0.8 for a reader of 0.7), saying it must be updated; a newer patch version (0.7.1)
+only adds properties and is read. From 1.0, a reader reads any package of its major
+version.

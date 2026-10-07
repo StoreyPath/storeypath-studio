@@ -733,3 +733,19 @@ func TestSeating(t *testing.T) {
 		}
 	}
 }
+
+func TestAPackageNewerThanTheReaderIsRefused(t *testing.T) {
+	// Before 1.0 a minor version may change what a package means: a newer one is
+	// refused with a message to update the reader; older ones and newer patches are read.
+	for v, ok := range map[string]bool{FormatVersion: true, "0.6.0": true, "0.4.1": true, "0.7.9": true,
+		"0.8.0": false, "0.10.0": false, "1.0.0": false} {
+		if err := CheckVersion(v); (err == nil) != ok {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	newer := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = "0.8.0" }))
+	problems := newer.Validate()
+	if !slices.Contains(codes(problems), ProblemVersion) || !strings.Contains(problems[0].Message, "update the reader") {
+		t.Errorf("0.8.0: %v", problems)
+	}
+}

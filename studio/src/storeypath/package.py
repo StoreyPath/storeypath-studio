@@ -294,6 +294,17 @@ class Changes(BaseModel):
         "project (format 0.7): not retired, they keep their IDs"))
 
 
+def version_problem(version: str) -> str | None:
+    """Why this Studio does not read packages of a format version, or None: one of
+    another major version, or (before 1.0, where a minor version may change what a
+    package means) of a newer minor version. Older ones, and newer patches, are read."""
+    if version.split(".")[0] != FORMAT_VERSION.split(".")[0]:
+        return f"unsupported format version {version} (this Studio reads {FORMAT_VERSION.split('.')[0]}.x)"
+    if FORMAT_VERSION.startswith("0.") and version_tuple(version) > version_tuple(FORMAT_VERSION):
+        return f"format version {version} is newer than this Studio's {FORMAT_VERSION}: update StoreyPath Studio to read it"
+    return None
+
+
 def version_tuple(version: str) -> tuple[int, int]:
     """A format version's major and minor numbers ("0.7.0" → (0, 7))."""
     parts = (version.split(".") + ["0", "0"])[:2]

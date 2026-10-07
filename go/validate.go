@@ -75,9 +75,8 @@ func (p *Package) Validate() []Problem {
 	if m.Format != FormatName {
 		add(ProblemFormat, FileManifest, "", "unknown format %q", m.Format)
 	}
-	if major(m.FormatVersion) != major(FormatVersion) {
-		add(ProblemVersion, FileManifest, "", "unsupported format version %s (this reader reads %s.x)",
-			m.FormatVersion, major(FormatVersion))
+	if err := CheckVersion(m.FormatVersion); err != nil {
+		add(ProblemVersion, FileManifest, "", "%v", err)
 	}
 	project := m.Project.ID
 	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
@@ -299,6 +298,21 @@ func geometryOf(id string, g *Geometry, file string, point bool, add func(code, 
 }
 
 func major(version string) string { return strings.SplitN(version, ".", 2)[0] }
+
+// CheckVersion says whether this module reads packages of a format version: one
+// of another major version, or (before 1.0, where a minor version may change
+// what a package means, as 0.4's scope and 0.7's one building per package did)
+// of a newer minor version, is refused with a message to update the reader.
+// Older versions, and newer patch versions (properties added), are read.
+func CheckVersion(version string) error {
+	if major(version) != major(FormatVersion) {
+		return fmt.Errorf("unsupported format version %s (this reader reads %s.x)", version, major(FormatVersion))
+	}
+	if major(FormatVersion) == "0" && minor(version) > minor(FormatVersion) {
+		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", version, FormatVersion)
+	}
+	return nil
+}
 
 // minor is a format version's minor number ("0.7.0" → 7; 0 when it has none).
 func minor(version string) int {

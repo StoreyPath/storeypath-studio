@@ -183,3 +183,23 @@ def test_rows_of_kinds_a_reader_does_not_know_are_left_alone(tmp_path):
     out = _rewritten(PACKAGES / "campus-hq.storeypath", tmp_path / "a.storeypath",
                      **{"objects.csv": row, "changes.json": listed})
     assert validate_package(out) == []
+
+
+def test_a_package_newer_than_this_studio_is_refused(tmp_path):
+    # Before 1.0 a minor version may change what a package means: a newer one is
+    # refused, saying so; older ones and newer patches are read.
+    from storeypath.package import FORMAT_VERSION, version_problem
+
+    assert version_problem(FORMAT_VERSION) is None and version_problem("0.4.0") is None
+    major, minor, _ = FORMAT_VERSION.split(".")
+    assert version_problem(f"{major}.{minor}.9") is None
+    assert "update StoreyPath Studio" in version_problem(f"{major}.{int(minor) + 1}.0")
+    assert "unsupported" in version_problem("1.0.0")
+
+    def newer(text):
+        m = json.loads(text)
+        m["format_version"] = f"{major}.{int(minor) + 1}.0"
+        return json.dumps(m)
+
+    errors = validate_package(_rewritten(PACKAGES / "campus-hq.storeypath", tmp_path / "n.storeypath", **{"manifest.json": newer}))
+    assert len(errors) == 1 and "newer than this Studio" in errors[0]
