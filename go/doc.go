@@ -1,6 +1,7 @@
 // Package storeypath reads StoreyPath packages (*.storeypath): the buildings,
-// floors, spaces, zones and openings of a project, with their stable IDs, as
-// StoreyPath Studio exports them. See spec/FORMAT.md in the StoreyPath repository.
+// floors, spaces, zones and openings of a project, with their stable IDs, and the
+// furniture and equipment on its floors (items, and the catalogue of their types),
+// as StoreyPath Studio exports them. See spec/FORMAT.md in the StoreyPath repository.
 //
 // A system that consumes packages keeps its own records and IDs and links each to
 // a StoreyPath ID: Open reads a package, Validate checks it, and the lookups give

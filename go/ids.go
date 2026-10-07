@@ -26,6 +26,17 @@ type ID struct {
 	Segments []string
 }
 
+var itemCodeRE = regexp.MustCompile(`^I\d{6}$`)
+
+// IsItemID says whether an ID is an item's (format 0.6): the project's code and the
+// item's own number, I and six digits (K7Q2XM-I000142). An item's ID is not part of
+// the place hierarchy: ParseID reads it as two segments, and its floor is in the
+// item, not in its ID.
+func IsItemID(value string) bool {
+	project, code, ok := strings.Cut(value, "-")
+	return ok && segmentRE.MatchString(project) && itemCodeRE.MatchString(code)
+}
+
 // ParseID checks an ID and takes it apart.
 func ParseID(value string) (ID, error) {
 	segments := strings.Split(value, "-")

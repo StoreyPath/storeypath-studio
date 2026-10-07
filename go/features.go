@@ -127,3 +127,99 @@ type Unit struct {
 	Hidden   bool
 	Ignored  bool
 }
+
+// Item is a piece of furniture or equipment placed on a floor (items.geojson,
+// format 0.6): a desk, a photocopier, an access point, a sofa, a TV. Its ID is the
+// project's code and its own number (K7Q2XM-I000142), not its place: carried to
+// another room or floor it keeps it, and where it stands is in Floor, Space and
+// Zone. Its geometry is its footprint.
+type Item struct {
+	ID       string
+	Geometry *Geometry
+	// Type is a code of the catalogue (DESK-MANAGER, COPIER, …); Name is that
+	// type's English name, for a reader that does not read the catalogue.
+	Type     string `json:"type"`
+	Category string `json:"category"` // furniture, equipment or appliance
+	Name     string `json:"name"`
+	Floor    string `json:"floor_id"`
+	Building string `json:"building_id"`
+	// Space, and Zone when the space is divided, are where its middle stood when
+	// the package was exported: nil when it is in none.
+	Space *string `json:"space_id"`
+	Zone  *string `json:"zone_id"`
+	Label LonLat  `json:"display_point"`
+	// Heading is the way its front faces (where a desk's user sits), in degrees
+	// clockwise from north.
+	Heading float64 `json:"heading"`
+	// Width along its front, Depth front to back, Height (m).
+	Width  float64 `json:"width_m"`
+	Depth  float64 `json:"depth_m"`
+	Height float64 `json:"height_m"`
+	// Mount: floor, wall or ceiling. Elevation is how high above the floor its
+	// bottom is; nil for one on the ceiling (just under it).
+	Mount     string   `json:"mount"`
+	Elevation *float64 `json:"elevation_m"`
+	// Values are its details entered in StoreyPath, by the catalogue's field keys:
+	// strings, or numbers as float64. The fields the system that manages the asset
+	// owns are never in a package: that system keeps them, by the item's ID.
+	Values map[string]any `json:"values"`
+}
+
+// Catalogue is catalogue.json (format 0.6): the types of items, the organization's,
+// the same for every project.
+type Catalogue struct {
+	Format        string     `json:"format"`
+	FormatVersion int        `json:"format_version"`
+	Types         []ItemType `json:"types"`
+}
+
+// Type is the item type with a code, or nil.
+func (c *Catalogue) Type(code string) *ItemType {
+	if c == nil {
+		return nil
+	}
+	for i := range c.Types {
+		if c.Types[i].Code == code {
+			return &c.Types[i]
+		}
+	}
+	return nil
+}
+
+// ItemType is a type of item. Its Code is kept for good and never given to another
+// type: a type no longer used is Retired, not removed.
+type ItemType struct {
+	Code     string `json:"code"`
+	NameEN   string `json:"name_en"`
+	NameAR   string `json:"name_ar"`
+	Category string `json:"category"`
+	// Width along its front, Depth front to back, Height (m).
+	Width  float64 `json:"width"`
+	Depth  float64 `json:"depth"`
+	Height float64 `json:"height"`
+	Mount  string  `json:"mount"`
+	// Elevation is its bottom above the floor; nil: on the floor, 1.2 m up a wall,
+	// just under the ceiling.
+	Elevation *float64    `json:"elevation"`
+	Color     string      `json:"color"` // #rrggbb
+	Fields    []ItemField `json:"fields"`
+	Retired   bool        `json:"retired"`
+}
+
+// ItemField is a detail the items of a type carry, and who enters it.
+type ItemField struct {
+	Key     string   `json:"key"`
+	NameEN  string   `json:"name_en"`
+	NameAR  string   `json:"name_ar"`
+	Kind    string   `json:"kind"` // text, number, choice or color
+	Choices []string `json:"choices"`
+	// Owner is OwnerStoreyPath (what is physical: a colour, a model) or OwnerSystem
+	// (the system that manages the asset: its network, its asset tag).
+	Owner string `json:"owner"`
+}
+
+// Who enters a field of an item type.
+const (
+	OwnerStoreyPath = "storeypath"
+	OwnerSystem     = "system"
+)

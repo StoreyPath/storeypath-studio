@@ -35,6 +35,8 @@ const (
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
 	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
 	ProblemScope        = "SCOPE"         // a package of part of a project holds a building its scope does not list, or lacks one it does
+	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor
+	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
 )
 
 var kindLevel = map[string]string{
@@ -44,12 +46,14 @@ var kindLevel = map[string]string{
 
 var collectionFiles = map[string]string{
 	"location": FileLocation, "building": FileBuildings, "floor": FileFloors,
-	"space": FileSpaces, "zone": FileZones, "opening": FileOpenings,
+	"space": FileSpaces, "zone": FileZones, "opening": FileOpenings, "item": FileItems,
 }
 
 // Validate checks the package as Studio's validator does: its files, the
 // manifest's counts, every ID and every reference between features, objects.csv
-// and changes.json. No problems means the package can be linked to as it is.
+// and changes.json, and the items (format 0.6): their IDs, the floor, space and zone
+// each stands in, its type in the catalogue. No problems means the package can be
+// linked to as it is.
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
 	add := func(code, file, id, format string, args ...any) {
@@ -77,6 +81,11 @@ func (p *Package) Validate() []Problem {
 			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts[role], counts[role])
 		}
 	}
+	if file := m.Files["items"]; file != "" && p.read[file] {
+		if got, ok := m.Counts["items"]; !ok || got != len(p.Items) {
+			add(ProblemCount, file, "", "%s: manifest counts %d, file has %d", file, m.Counts["items"], len(p.Items))
+		}
+	}
 
 	ids := make([]string, 0, len(p.kinds))
 	for id := range p.kinds {
@@ -87,6 +96,14 @@ func (p *Package) Validate() []Problem {
 		kinds := p.kinds[id]
 		if len(kinds) > 1 {
 			add(ProblemDuplicateID, collectionFiles[kinds[0]], id, "duplicate ID %s", id)
+		}
+		if kinds[0] == "item" { // the project's and its own number: where it is, is data
+			if !IsItemID(id) {
+				add(ProblemBadID, FileItems, id, "%s: not an item ID (the project's code, -I and six digits)", id)
+			} else if !strings.HasPrefix(id, project+"-") {
+				add(ProblemWrongProject, FileItems, id, "%s: project segment is not the package's project %s", id, project)
+			}
+			continue
 		}
 		pid, err := ParseID(id)
 		if err != nil {
@@ -164,6 +181,23 @@ func (p *Package) Validate() []Problem {
 			}
 		}
 		geometryOf(o.ID, o.Geometry, FileOpenings, true, add)
+	}
+	for _, it := range p.Items {
+		if kindOf(it.Floor) != "floor" || !strings.HasPrefix(it.Floor, it.Building+"-") {
+			add(ProblemItem, FileItems, it.ID, "%s: on unknown floor %s (or not of building %s)", it.ID, it.Floor, it.Building)
+		}
+		for _, in := range []struct {
+			id   *string
+			kind string
+		}{{it.Space, "space"}, {it.Zone, "zone"}} {
+			if in.id != nil && (kindOf(*in.id) != in.kind || !strings.HasPrefix(*in.id, it.Floor+"-")) {
+				add(ProblemItem, FileItems, it.ID, "%s: in unknown %s %s (or not on its floor)", it.ID, in.kind, *in.id)
+			}
+		}
+		if p.Catalogue != nil && p.Catalogue.Type(it.Type) == nil {
+			add(ProblemItemType, FileItems, it.ID, "%s: type %s is not in the catalogue", it.ID, it.Type)
+		}
+		geometryOf(it.ID, it.Geometry, FileItems, false, add)
 	}
 
 	if p.files[FileObjects] {

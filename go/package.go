@@ -17,10 +17,11 @@ import (
 // same major version are read; properties and files it does not know are ignored.
 const (
 	FormatName    = "storeypath-package"
-	FormatVersion = "0.5.0"
+	FormatVersion = "0.6.0"
 )
 
-// The files of a package, by role.
+// The files of a package, by role. Items and the catalogue (format 0.6) are found
+// through the manifest's files ("items", "catalogue"), and are not in older packages.
 const (
 	FileManifest  = "manifest.json"
 	FileLocation  = "location.geojson"
@@ -31,6 +32,8 @@ const (
 	FileOpenings  = "openings.geojson"
 	FileObjects   = "objects.csv"
 	FileChanges   = "changes.json"
+	FileItems     = "items.geojson"
+	FileCatalogue = "catalogue.json"
 )
 
 // Manifest is manifest.json: what the package is and holds.
@@ -135,6 +138,10 @@ type Package struct {
 	Spaces    []*Space
 	Zones     []*Zone
 	Openings  []*Opening
+	// Items: the furniture and equipment on the floors (format 0.6), none in older
+	// packages. Catalogue: their types, nil when the package has none.
+	Items     []*Item
+	Catalogue *Catalogue
 
 	problems []Problem           // found while reading, reported by Validate
 	files    map[string]bool     // the files in the ZIP
@@ -245,6 +252,35 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: c.file, Message: c.file + ": " + err.Error()})
 		} else {
 			p.read[c.file] = true
+		}
+	}
+
+	// furniture and equipment, and their types (format 0.6), when the manifest lists them
+	if name := p.Manifest.Files["items"]; name != "" {
+		data, ok, err := read(name)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
+		} else if err := decode(data, "item", &p.Items, func(f *Item, id string, g *Geometry) { f.ID, f.Geometry = id, g }); err != nil {
+			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		} else {
+			p.read[name] = true
+		}
+	}
+	if name := p.Manifest.Files["catalogue"]; name != "" {
+		data, ok, err := read(name)
+		if err != nil {
+			return nil, err
+		}
+		var c Catalogue
+		if !ok {
+			p.problems = append(p.problems, Problem{Code: ProblemMissingFile, File: name, Message: "missing file " + name})
+		} else if err := json.Unmarshal(data, &c); err != nil {
+			p.problems = append(p.problems, Problem{Code: ProblemBadFile, File: name, Message: name + ": " + err.Error()})
+		} else {
+			p.Catalogue = &c
 		}
 	}
 
@@ -364,16 +400,18 @@ func (p *Package) index() {
 	for _, f := range p.Openings {
 		add(f.ID, "opening", f)
 	}
+	for _, f := range p.Items {
+		add(f.ID, "item", f)
+	}
 }
 
-// Get is the feature with an ID: a *Location, *Building, *Floor, *Space, *Zone
-// or *Opening.
+// Get is the feature with an ID: a *Location, *Building, *Floor, *Space, *Zone,
+// *Opening or *Item.
 func (p *Package) Get(id string) (any, bool) {
 	f, ok := p.byID[id]
 	return f, ok
 }
 
-// Building, Floor, Space, Zone and Opening find a feature of that kind by ID.
 // Holds reports whether the package holds a building, so that what it says about
 // the building (its floors, spaces, what changed) is the whole truth: always, for a
 // package of the whole project; for a part of one, when the building is in its
@@ -390,11 +428,30 @@ func (p *Package) Holds(buildingID string) bool {
 	return false
 }
 
+// Building, Floor, Space, Zone, Opening and Item find a feature of that kind by ID
+// (nil when there is none).
 func (p *Package) Building(id string) *Building { f, _ := p.byID[id].(*Building); return f }
 func (p *Package) Floor(id string) *Floor       { f, _ := p.byID[id].(*Floor); return f }
 func (p *Package) Space(id string) *Space       { f, _ := p.byID[id].(*Space); return f }
 func (p *Package) Zone(id string) *Zone         { f, _ := p.byID[id].(*Zone); return f }
 func (p *Package) Opening(id string) *Opening   { f, _ := p.byID[id].(*Opening); return f }
+func (p *Package) Item(id string) *Item         { f, _ := p.byID[id].(*Item); return f }
+
+// ItemsOn is the furniture and equipment on a floor, in file order. An item's ID
+// does not say where it is: its Floor does.
+func (p *Package) ItemsOn(floorID string) []*Item {
+	var out []*Item
+	for _, it := range p.Items {
+		if it.Floor == floorID {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// ItemType is the catalogue's type with a code (an item's Type), or nil when the
+// package has no catalogue or no such type.
+func (p *Package) ItemType(code string) *ItemType { return p.Catalogue.Type(code) }
 
 // FloorsOf is a building's floors, lowest first.
 func (p *Package) FloorsOf(buildingID string) []*Floor {

@@ -129,6 +129,88 @@ func TestFloorsSpacesZonesAndUnits(t *testing.T) {
 	}
 }
 
+func TestItemsAndTheirCatalogue(t *testing.T) {
+	// campus has furniture and equipment (format 0.6); simple-office, an older
+	// package, has none.
+	p := open(t, "campus.storeypath")
+	if len(p.Items) != p.Manifest.Counts["items"] || len(p.Items) < 10 || p.Catalogue == nil {
+		t.Fatalf("%d items (manifest %d), catalogue %v", len(p.Items), p.Manifest.Counts["items"], p.Catalogue)
+	}
+	hq := p.FloorsOf(p.Manifest.Project.ID + "-DEMO-HQ")
+	var types []string
+	var zoned *Item
+	for _, it := range p.ItemsOn(hq[0].ID) {
+		types = append(types, it.Type)
+		if it.Floor != hq[0].ID || !IsItemID(it.ID) || p.Item(it.ID) != it {
+			t.Errorf("%s: floor %s, an item ID %v, found by ID %v", it.ID, it.Floor, IsItemID(it.ID), p.Item(it.ID) == it)
+		}
+		if f, ok := p.Get(it.ID); !ok || f.(*Item) != it {
+			t.Errorf("Get does not find item %s", it.ID)
+		}
+	}
+	for _, want := range []string{"DESK-DIRECTOR", "COPIER", "ACCESS-POINT", "SOFA", "TV"} {
+		if !slices.Contains(types, want) {
+			t.Errorf("no %s on the ground floor: %v", want, types)
+		}
+	}
+	for _, it := range p.Items {
+		if it.Zone != nil {
+			zoned = it
+		}
+		switch it.Type {
+		case "COPIER":
+			if it.Space == nil || p.Space(*it.Space).Type != "corridor" || it.Values["model"] != "MFP-C450" || it.Mount != "floor" {
+				t.Errorf("the copier: %+v", it)
+			}
+		case "ACCESS-POINT":
+			if it.Mount != "ceiling" || it.Elevation != nil {
+				t.Errorf("an access point is under the ceiling: %+v", it)
+			}
+		case "TV":
+			if it.Mount != "wall" || it.Elevation == nil || *it.Elevation != 1.2 || it.Values["size_in"] != 65.0 {
+				t.Errorf("the TV: %+v", it)
+			}
+		}
+		if poly, err := it.Geometry.Polygons(); err != nil || len(poly) != 1 || len(poly[0][0]) != 5 {
+			t.Errorf("%s: its footprint is four corners: %v %v", it.ID, poly, err)
+		}
+	}
+	if zoned == nil || p.Zone(*zoned.Zone).Space != *zoned.Space {
+		t.Fatal("no item in a zone of its space")
+	}
+	ap := p.ItemType("ACCESS-POINT")
+	owners := map[string]string{}
+	for _, f := range ap.Fields {
+		owners[f.Key] = f.Owner
+	}
+	if ap.Mount != "ceiling" || ap.Color != "#1f9d8b" || owners["ssid"] != OwnerSystem || owners["color"] != OwnerStoreyPath {
+		t.Errorf("the access point's type: %+v", ap)
+	}
+	if p.ItemType("SPACESHIP") != nil {
+		t.Error("a type that is not in the catalogue")
+	}
+	// an item's row in objects.csv says where it is
+	for _, row := range p.Objects {
+		if row.Kind == "item" && (row.Floor != p.Item(row.ID).Floor || row.Building != p.Item(row.ID).Building) {
+			t.Errorf("%s: row %+v", row.ID, row)
+		}
+	}
+
+	old := open(t, "simple-office.storeypath")
+	if len(old.Items) != 0 || old.Catalogue != nil || old.ItemType("COPIER") != nil || old.ItemsOn(old.Floors[0].ID) != nil {
+		t.Error("an older package has no items")
+	}
+}
+
+func TestItemIDs(t *testing.T) {
+	for id, want := range map[string]bool{"K7Q2XM-I000142": true, "K7Q2XM-I00014": false, "K7Q2XM-RUH": false,
+		"K7Q2XM-I000142-X": false, "k7q2xm-I000142": false, "I000142": false} {
+		if IsItemID(id) != want {
+			t.Errorf("IsItemID(%q) = %v", id, !want)
+		}
+	}
+}
+
 func TestTheLocalFrameAgreesWithStudio(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(corpus, "localframe.json"))
 	if err != nil {
@@ -330,6 +412,45 @@ func TestBrokenPackagesAreFound(t *testing.T) {
 		{"a count wrong", editJSON(FileManifest, func(doc map[string]any) {
 			doc["counts"].(map[string]any)["spaces"] = 1
 		}), []string{ProblemCount}},
+		{"items counted wrong", editJSON(FileManifest, func(doc map[string]any) {
+			doc["counts"].(map[string]any)["items"] = 1
+		}), []string{ProblemCount}},
+		{"an item on a floor that is not there", editJSON(FileItems, func(doc map[string]any) {
+			props(features(doc)[0])["floor_id"] = "NOPE"
+		}), []string{ProblemItem}},
+		{"an item of another building's floor", editJSON(FileItems, func(doc map[string]any) {
+			b := props(features(doc)[0])["building_id"].(string)
+			props(features(doc)[0])["building_id"] = strings.Replace(b, "-HQ", "-ANNEX", 1)
+		}), []string{ProblemItem}},
+		{"an item in a space on another floor", editJSON(FileItems, func(doc map[string]any) {
+			p := props(features(doc)[0])
+			p["space_id"] = strings.Replace(p["space_id"].(string), "-F00-", "-F01-", 1)
+		}), []string{ProblemItem}},
+		{"an item in a zone that is not there", editJSON(FileItems, func(doc map[string]any) {
+			props(features(doc)[0])["zone_id"] = props(features(doc)[0])["floor_id"].(string) + "-9999"
+		}), []string{ProblemItem}},
+		{"an item of a type the catalogue does not have", editJSON(FileItems, func(doc map[string]any) {
+			props(features(doc)[0])["type"] = "SPACESHIP"
+		}), []string{ProblemItemType}},
+		{"an item whose ID says where it is", editJSON(FileItems, func(doc map[string]any) {
+			f := features(doc)[0].(map[string]any)
+			f["id"] = props(f)["floor_id"].(string) + "-0999"
+		}), []string{ProblemBadID}},
+		{"an item of another project", editJSON(FileItems, func(doc map[string]any) {
+			features(doc)[0].(map[string]any)["id"] = "ZZZZZZ-I000001"
+		}), []string{ProblemWrongProject, ProblemObjects}},
+		{"items.geojson unreadable", func(n string, d []byte) []byte {
+			if n == FileItems {
+				return []byte("[]")
+			}
+			return d
+		}, []string{ProblemBadFile}},
+		{"no catalogue.json", func(n string, d []byte) []byte {
+			if n == FileCatalogue {
+				return nil
+			}
+			return d
+		}, []string{ProblemMissingFile}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -424,9 +545,10 @@ func TestAPackageWithItsFloorsPreBuiltReadsAsWithout(t *testing.T) {
 	if p.Manifest.FormatVersion != FormatVersion || p.Manifest.Files["world"] != "world/" {
 		t.Fatalf("format %s, files %v", p.Manifest.FormatVersion, p.Manifest.Files)
 	}
-	if len(p.Floors) != len(plain.Floors) || len(p.Spaces) != len(plain.Spaces) || len(p.Openings) != len(plain.Openings) {
-		t.Fatalf("%d floors, %d spaces, %d openings; without world/: %d, %d, %d", len(p.Floors), len(p.Spaces),
-			len(p.Openings), len(plain.Floors), len(plain.Spaces), len(plain.Openings))
+	if len(p.Floors) != len(plain.Floors) || len(p.Spaces) != len(plain.Spaces) || len(p.Openings) != len(plain.Openings) ||
+		len(p.Items) != len(plain.Items) || len(p.Items) == 0 {
+		t.Fatalf("%d floors, %d spaces, %d openings, %d items; without world/: %d, %d, %d, %d", len(p.Floors), len(p.Spaces),
+			len(p.Openings), len(p.Items), len(plain.Floors), len(plain.Spaces), len(plain.Openings), len(plain.Items))
 	}
 	for _, f := range p.Floors {
 		if !p.files["world/"+f.ID+".glb"] {

@@ -1,8 +1,8 @@
 # storeypath (Go)
 
 Reads StoreyPath packages (`*.storeypath`) for systems written in Go: the
-buildings, floors, spaces, zones and openings of a project with their stable IDs.
-Standard library only; Go 1.25.
+buildings, floors, spaces, zones and openings of a project with their stable IDs,
+and the furniture and equipment on its floors. Standard library only; Go 1.25.
 
 ```go
 import storeypath "github.com/storeypath/storeypath/go"
@@ -19,6 +19,10 @@ for _, b := range pkg.Buildings {
 			rings, _ := frame.PolygonsToLocal(u.Geometry)
 			_ = rings
 		}
+		for _, it := range pkg.ItemsOn(f.ID) { // desks, photocopiers, access points, …
+			t := pkg.ItemType(it.Type)     // its type in the catalogue (nil if none)
+			_, _ = it.Space, t             // where it stands; its ID is not its place
+		}
 	}
 }
 ```
@@ -29,11 +33,17 @@ for _, b := range pkg.Buildings {
   bytes) against broken or hostile ZIPs. Fails only when a package cannot be read
   at all; everything else is reported by `Validate`.
 - `Validate`: the checks Studio's validator makes, each `Problem` with a stable
-  `Code` (`MISSING_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`, …), the
-  file and the ID it is about.
+  `Code` (`MISSING_FILE`, `DUPLICATE_ID`, `PARENT`, `ZONE`, `CHANGES`, `ITEM`,
+  `ITEM_TYPE`, …), the file and the ID it is about.
 - Lookups: `Get`, `Building`, `Floor`, `Space`, `Zone`, `Opening`, `FloorsOf`,
   `SpacesOn`, `ZonesOf`, `OpeningsOn`, and `UnitsOn`: the zones of a divided space
   and every space with none, which is what a system placing people should use.
+- Items (format 0.6): `Items`, `Item`, `ItemsOn`, the `Catalogue` of their types
+  and `ItemType`. An item's ID is the project's and its own number
+  (`K7Q2XM-I000142`, `IsItemID`), not its place: where it stands is its `Floor`,
+  `Space` and `Zone`. Its `Values` are the details entered in StoreyPath; the
+  fields the managing system owns (`OwnerSystem`) are never in a package. Older
+  packages have no items and no catalogue.
 - `LocalFrame`: a building's longitude and latitude back to the local metres
   Studio drew it in, and back (azimuthal equidistant on WGS84, Vincenty), within a
   millimetre of Studio; positions read from a package are within about a
