@@ -63,6 +63,11 @@ RUN cd "libredwg-${LIBREDWG_VERSION}" \
     && cp "/src/libredwg-${LIBREDWG_VERSION}.tar.gz" /opt/source/ \
     && cp COPYING /opt/licenses/LICENSE-libredwg.txt
 
+# ---- the 2D plan engine (viewer/svg), compiled from its TypeScript ---------------------
+FROM node:22-slim AS plan
+COPY viewer/svg /build/svg
+RUN cd /build/svg && npm ci --no-audit --no-fund && npm run build
+
 # ---- StoreyPath Studio ---------------------------------------------------------------
 FROM debian:${DEBIAN}-slim AS studio
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
@@ -84,6 +89,7 @@ RUN if [ -f /build/symbols/weights/best.pth ]; then \
 COPY studio /build/studio
 COPY spec /build/spec
 COPY viewer /build/viewer
+COPY --from=plan /build/svg/dist /build/viewer/svg/dist
 RUN cd /build/studio && uv build --wheel -o /build/dist \
     && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache "$(ls /build/dist/*.whl)[vision]"
 

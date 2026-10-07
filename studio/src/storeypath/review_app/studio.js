@@ -76,9 +76,12 @@ async function runJob(started) {
 
 // ---- status -----------------------------------------------------------------
 
+let planPage = false; // the 2D plan page is there (Studio's status says)
+
 async function showStatus() {
   try {
     const s = await api("status");
+    planPage = Boolean(s.plan);
     $("status").replaceChildren(
       el("span", { class: `chip ${s.model ? (s.model_ready ? "ok" : "") : "off"}`, title: "Reads room names, sheet titles and layer names" },
         s.model ? `Model: ${s.model}${s.model_ready ? "" : " (loading…)"}` : "No language model"),
@@ -905,6 +908,8 @@ function exportCard(code, p) {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),
         el("a", { href: url, download: f }, "Download"),
+        planPage ? el("a", { href: `/viewer/svg/example/index.html?package=${encodeURIComponent(url)}`, target: "_blank",
+          title: "Each floor as a plan: walls, doors with their swings, windows, rooms coloured by type" }, "2D plan") : null,
         el("a", { href: `/viewer/examples/world/index.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
           title: "The building as built: walls, doors and windows; walk through it, or orbit it as a dollhouse" }, "3D"),
         el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
@@ -915,5 +920,4 @@ function exportCard(code, p) {
 }
 
 window.addEventListener("hashchange", route);
-showStatus();
-route();
+showStatus().finally(route); // what Studio can do first: the pages offer only that

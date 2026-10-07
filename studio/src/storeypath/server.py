@@ -209,6 +209,8 @@ class Studio:
             "vision": self.vision.name if self.vision.available() else None,
             "dwg": bool(which("dwg2dxf")) or odafc.is_installed(),
             "data": str(self.data),
+            # the 2D plan page: the plan engine compiled (npm run build in viewer/svg)
+            "plan": (asset_dir("viewer") / "svg" / "dist" / "index.js").is_file(),
         }
 
     def projects(self) -> list[dict]:

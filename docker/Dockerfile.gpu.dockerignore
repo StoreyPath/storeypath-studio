@@ -8,6 +8,7 @@
 !docker/models/vision/gemma-4-31B-it-Q4_K_M.gguf
 !docker/models/vision/mmproj-F16.gguf
 studio/.venv
+viewer/**/node_modules
 studio/**/__pycache__
 studio/src/storeypath/_bundled
 studio/eval
