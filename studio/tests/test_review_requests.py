@@ -129,3 +129,42 @@ def test_an_item_change_refused_changes_nothing(demo):
     assert (shown["x"], shown["retired"]) == (10, False)
     moved = r.change_item(item["id"], {"x": 12, "rotation": 450, "values": {"model": "A4"}})
     assert (moved["x"], moved["rotation"], moved["values"]) == (12, 90, {"model": "A4"})
+
+
+def test_taking_away_takes_what_was_chosen(demo):
+    """A wall drawn across a space drawn in review (a colonnade, say): taking the wall
+    away leaves the space, and the space the wall."""
+    ws_path, ws, f0 = demo
+    r = Review(ws_path)
+    ring = [[200, 200], [210, 200], [210, 206], [200, 206]]
+    wall, divider, span = [[205, 200], [205, 206]], [[200, 203], [210, 203]], [[201, 200], [202, 200]]
+
+    def drawn():
+        e = Workspace.load(ws_path).floor(f0).edits
+        return e.walls, e.dividers, [o.span for o in e.openings], e.spaces
+
+    def draw():
+        for add in ({"space": ring}, {"wall": wall}, {"divider": divider}, {"opening": {"type": "door", "span": span}}):
+            r.edit(f0, {"add": add})
+
+    draw()
+    r.edit(f0, {"remove": {"kind": "wall", "at": [205, 203], "shape": wall}})  # as the page sends it
+    assert drawn() == ([], [divider], [span], [ring])
+    r.edit(f0, {"remove": {"kind": "space", "at": [205, 203], "shape": ring + [ring[0]]}})  # closed, or not
+    assert drawn() == ([], [divider], [span], [])
+    r.edit(f0, {"remove": {"kind": "opening", "at": [201.5, 200], "shape": span}})
+    assert drawn() == ([], [divider], [], [])
+    with pytest.raises(NotFound):  # not drawn so: nothing else is taken
+        r.edit(f0, {"remove": {"kind": "divider", "shape": [[200, 203], [209, 203]]}})
+    with pytest.raises(NotFound):  # inside a space drawn, but no wall near: not the space
+        r.edit(f0, {"remove": {"kind": "wall", "at": [201, 205]}})
+    with pytest.raises(ValueError):
+        r.edit(f0, {"remove": {"kind": ["wall"], "at": [201, 205]}})
+    assert drawn() == ([], [divider], [], [])
+
+    # a page that sends only a point: at one distance, the line before the space it lies in
+    r.edit(f0, {"remove": {"kind": "divider", "shape": divider}})
+    draw()
+    r.edit(f0, {"remove": {"at": [205, 203]}})  # the wall's middle, on the divider too
+    walls, dividers, *_ = drawn()
+    assert len(walls) + len(dividers) == 1 and drawn()[3] == [ring]

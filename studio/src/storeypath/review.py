@@ -14,9 +14,13 @@ command line can be used side by side. The web server is in server.py:
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
                                                   {"ignored": bool} deletes a space or an opening (or restores it)
     POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}}, {"add": {"divider": …}},
-                                                  {"add": {"opening": {"type", "span"}}} or {"remove": {"at": [x, y]}}:
+                                                  {"add": {"opening": {"type", "span"}}} or
+                                                  {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
                                                   what a person draws, kept through every conversion; then
                                                   the floor is read again (a job)
+
+A change is refused (Busy, answered 409) while a job works on the project: the job
+would save over it.
 """
 
 from __future__ import annotations
@@ -288,7 +292,7 @@ class Review:
     def edit(self, floor_id: str, body: dict) -> None:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
-        takes what was drawn nearest a point."""
+        takes the one of its kind drawn as the page shows it (_remove)."""
         with self._writing() as ws:
             f = self._floor(ws, floor_id)
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
@@ -310,26 +314,12 @@ class Review:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
                 self._resize(ws, floor_id, f, body["resize"])
-            elif isinstance(body.get("remove"), dict) and "at" in body["remove"]:
-                at = Point(_points([body["remove"]["at"]], 1)[0])
-                lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings,
-                         "space": f.edits.spaces}
-
-                def reach(kind, x):  # a drawn space: anywhere inside it
-                    if kind == "space":
-                        return Polygon(x).distance(at)
-                    return LineString(x.span if kind == "opening" else x).distance(at)
-
-                drawn = [(reach(kind, x), kind, i) for kind, items in lists.items() for i, x in enumerate(items)]
-                near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
-                if not near:
-                    raise NotFound("nothing drawn there")
-                _, kind, i = min(near)
-                lists[kind].pop(i)
+            elif isinstance(body.get("remove"), dict) and ("at" in body["remove"] or "shape" in body["remove"]):
+                _remove(f, body["remove"])
             else:
                 raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}}, '
                                  '{"add": {"space": [[x, y], …]}}, {"resize": {"at": [x, y], "width", "sill", '
-                                 '"height"}} or {"remove": {"at": [x, y]}}')
+                                 '"height"}} or {"remove": {"kind", "shape": its points as drawn, "at": [x, y]}}')
             self._save(ws)
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
@@ -455,6 +445,57 @@ class Review:
                 doc, profile, meters_per_unit(doc, src.units), src.region, src.offset
             )
         return self._drawings[key]
+
+
+DRAWN_KINDS = ("wall", "divider", "opening", "space")
+SAME_POINT_M = 0.001  # a shape sent back is the one drawn when its points are this near
+
+
+def _remove(f, body: dict) -> None:
+    """What a person drew on a floor, taken away: of its ``kind`` (wall, divider,
+    opening, space) the one whose points are ``shape`` (as the floor's edits give
+    them), else the one nearest ``at``. Without a kind (an older page), the nearest of
+    any, a line before a space it lies in."""
+    lists = {"wall": f.edits.walls, "divider": f.edits.dividers, "opening": f.edits.openings,
+             "space": f.edits.spaces}
+    kind = body.get("kind")
+    if kind is not None and (not isinstance(kind, str) or kind not in lists):
+        raise ValueError(f"kind is one of {', '.join(DRAWN_KINDS)}")
+    kinds = [kind] if kind else list(DRAWN_KINDS)
+
+    def points(k, x):
+        return x.span if k == "opening" else x
+
+    if body.get("shape") is not None:
+        want = _closed(_xy(body["shape"], "shape: its points [[x, y], …], as drawn"))
+        for k in kinds:
+            for i, x in enumerate(lists[k]):
+                have = _closed(points(k, x))
+                if len(have) == len(want) and all(abs(a - b) <= SAME_POINT_M for p, q in zip(have, want)
+                                                  for a, b in zip(p, q)):
+                    lists[k].pop(i)
+                    return
+        raise NotFound(f"no {kind or 'drawing'} drawn so here: it may have been taken away already")
+    at = Point(_points([body["at"]], 1)[0])
+
+    def reach(k, x):  # a drawn space: anywhere inside it
+        if k == "space":
+            return Polygon(x).distance(at)
+        return LineString(points(k, x)).distance(at)
+
+    # nearest first; at one distance, a line before a space (one drawn across it lies in it)
+    drawn = [(reach(k, x), k == "space", DRAWN_KINDS.index(k), i) for k in kinds for i, x in enumerate(lists[k])]
+    near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
+    if not near:
+        raise NotFound(f"no {kind or 'drawing'} drawn there")
+    _, _, k, i = min(near)
+    lists[DRAWN_KINDS[k]].pop(i)
+
+
+def _closed(pts) -> list:
+    """A ring's points without the first again at its end."""
+    pts = [list(p) for p in pts]
+    return pts[:-1] if len(pts) > 2 and pts[0] == pts[-1] else pts
 
 
 DRAWN_SPACE_MIN_M2 = 1.0

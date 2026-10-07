@@ -723,7 +723,7 @@ function bindPane(pane) {
     const door = openingNear(p);
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);
-    if (line) return selectItem({ kind: line.kind, at: line.at });
+    if (line) return selectItem({ kind: line.kind, at: line.at, line: line.line });
     // on the plan, what was clicked; on the print, the space drawn there
     select(pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null);
   };
@@ -1254,16 +1254,36 @@ function openingNear(p, px = 9) {
   return best?.d || null;
 }
 
-/** A wall or dividing line drawn here, under the pointer: {kind, at} (at: its middle). */
+/** A wall or dividing line drawn here, under the pointer: {kind, at, line} (at: its
+ * middle; line: its two ends, as saved, to take away that one and no other). */
 function drawnNear(p, px = 8) {
   const reach = px / state.view.k;
   let best = null;
   const lines = [...(state.floor?.edits?.walls || []).map((w) => ["wall", w]), ...(state.floor?.edits?.dividers || []).map((w) => ["divider", w])];
   for (const [kind, [a, b]] of lines) {
     const dist = toSegment(p, a, b);
-    if (dist <= reach && (!best || dist < best.dist)) best = { kind, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], length: Math.hypot(b[0] - a[0], b[1] - a[1]), dist };
+    if (dist <= reach && (!best || dist < best.dist)) best = { kind, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], length: Math.hypot(b[0] - a[0], b[1] - a[1]), line: [a, b], dist };
   }
-  return best ? { kind: best.kind, at: best.at, length: best.length } : null;
+  return best ? { kind: best.kind, at: best.at, length: best.length, line: best.line } : null;
+}
+
+/** Taking away what was drawn here: its kind and its points as saved (the server
+ * takes that one, never another drawn near it), and where it is, for an older server. */
+function takeAway(kind, at, shape) {
+  return submitEdit({ remove: { kind, at, ...(shape ? { shape } : {}) } }, "Taking it away…");
+}
+
+/** The opening drawn here that the floor reads as this door, window or opening: of
+ * those drawn, the one whose middle is nearest its middle. */
+function drawnOpeningOf(d) {
+  const mid = d.middle || [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2];
+  let best = null;
+  for (const o of state.floor?.edits?.openings || []) {
+    const m = [(o.span[0][0] + o.span[1][0]) / 2, (o.span[0][1] + o.span[1][1]) / 2];
+    const dist = Math.hypot(m[0] - mid[0], m[1] - mid[1]);
+    if (dist <= 0.5 && (!best || dist < best.dist)) best = { o, dist };
+  }
+  return { at: mid, span: best?.o.span || null };
 }
 
 function selectItem(item) {
@@ -1398,7 +1418,7 @@ function openMenu(cx, cy, p) {
     items.push(menuItem(d.drawn ? "Take it away" : d.ignored ? "Restore" : "Delete", () => deleteItem(), { danger: !d.ignored || d.drawn, hint: "Del" }));
     items.push(el("hr"));
   } else if (line) {
-    selectItem({ kind: line.kind, at: line.at });
+    selectItem({ kind: line.kind, at: line.at, line: line.line });
     items.push(el("div", { class: "heading" }, line.kind === "wall" ? "Wall drawn here" : "Dividing line drawn here"),
       el("div", { class: "meta" }, `${line.length.toFixed(2)} m long`));
     items.push(menuItem("Take it away", () => deleteItem(), { danger: true, hint: "Del" }));
@@ -1422,7 +1442,7 @@ function openMenu(cx, cy, p) {
   items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, p)));
   const drawnSpace = (state.floor?.edits?.spaces || []).find((ring) => inRing(p, ring));
   if (drawnSpace) {
-    items.push(menuItem("Take the drawn space away", () => submitEdit({ remove: { at: p } }, "Taking it away…"), { danger: true }));
+    items.push(menuItem("Take the drawn space away", () => takeAway("space", p, drawnSpace), { danger: true }));
   }
   $("menu").replaceChildren(...items);
   placeMenu(cx, cy);
@@ -1491,12 +1511,12 @@ function startLine(tool, p) {
 async function deleteItem() {
   const item = state.item;
   if (!item || state.busy) return;
-  if (item.kind === "wall" || item.kind === "divider") return submitEdit({ remove: { at: item.at } }, "Taking it away…");
+  if (item.kind === "wall" || item.kind === "divider") return takeAway(item.kind, item.at, item.line);
   const d = state.floor.doors.find((x) => x.id === item.id);
   if (!d) return;
   if (d.drawn) {
-    const mid = [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2];
-    return submitEdit({ remove: { at: mid } }, "Taking it away…");
+    const { at, span } = drawnOpeningOf(d);
+    return takeAway("opening", at, span);
   }
   try {
     const updated = await request(`${BASE}/objects/${d.id}`, { ignored: !d.ignored });
