@@ -901,6 +901,47 @@ func TestEveryBuildingHasAPlacement(t *testing.T) {
 	}
 }
 
+func TestAZoneIsPartOfOneSpace(t *testing.T) {
+	// A zone also listed by another space of its floor passed: UnitsOn listed it
+	// twice, and the other space was used through it, not as a whole.
+	plain := open(t, "campus-hq.storeypath")
+	zone := plain.Zones[0]
+	var other *Space
+	for _, s := range plain.SpacesOn(zone.Floor) {
+		if s.ID != zone.Space && len(s.Zones) == 0 {
+			other = s
+			break
+		}
+	}
+	listing := func(space string, zones ...any) func(string, []byte) []byte {
+		return editJSON(FileSpaces, func(doc map[string]any) {
+			for _, f := range features(doc) {
+				if f.(map[string]any)["id"] == space {
+					props(f)["zones"] = zones
+				}
+			}
+		})
+	}
+	problems := rewriteFrom(t, "campus-hq.storeypath", listing(other.ID, zone.ID)).Validate()
+	if len(problems) != 1 || problems[0].Code != ProblemZone || problems[0].ID != other.ID || !strings.Contains(problems[0].Message, "part of space "+zone.Space) {
+		t.Errorf("%s listed by %s too: %v", zone.ID, other.ID, problems)
+	}
+	own := plain.Space(zone.Space)
+	twice := append(append([]any{}, toAny(own.Zones)...), zone.ID)
+	problems = rewriteFrom(t, "campus-hq.storeypath", listing(own.ID, twice...)).Validate()
+	if len(problems) != 1 || problems[0].Code != ProblemZone || !strings.Contains(problems[0].Message, "twice") {
+		t.Errorf("%s listed twice by its space: %v", zone.ID, problems)
+	}
+}
+
+func toAny(s []string) []any {
+	out := make([]any, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
+}
+
 func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
 	// campus-hq-2: a desk carried to the Annex (moved away), the TV taken away
 	// (retired); campus-annex-2 holds the desk, changed.

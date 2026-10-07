@@ -49,7 +49,7 @@ const (
 	ProblemWrongProject = "WRONG_PROJECT" // an ID is not of the package's project
 	ProblemIDLevel      = "ID_LEVEL"      // an ID has the wrong number of segments for its kind
 	ProblemParent       = "PARENT"        // a feature's parent is missing, or its ID does not start with it
-	ProblemZone         = "ZONE"          // a zone and its space do not list each other
+	ProblemZone         = "ZONE"          // a zone and its space do not list each other, or a space lists another's zone (or one twice)
 	ProblemOpening      = "OPENING"       // an opening joins a space that is not there, or on another floor
 	ProblemObjects      = "OBJECTS"       // objects.csv does not list exactly the features
 	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
@@ -221,9 +221,14 @@ func (p *Package) Validate() []Problem {
 		parent(s.ID, s.Floor, "floor", spacesFile)
 		zonesOf[s.ID] = map[string]bool{}
 		for _, z := range s.Zones {
+			if zonesOf[s.ID][z] {
+				add(ProblemZone, spacesFile, s.ID, "%s: lists zone %s twice", s.ID, z)
+			}
 			zonesOf[s.ID][z] = true
 			if kindOf(z) != "zone" {
 				add(ProblemZone, spacesFile, s.ID, "%s: lists unknown zone %s", s.ID, z)
+			} else if of := p.Zone(z).Space; of != s.ID { // a zone is part of one space
+				add(ProblemZone, spacesFile, s.ID, "%s: lists zone %s, which is part of space %s", s.ID, z, of)
 			}
 		}
 		geometryOf(s.ID, s.Geometry, spacesFile, false, add)
