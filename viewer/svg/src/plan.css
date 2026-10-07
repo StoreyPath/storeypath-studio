@@ -41,7 +41,9 @@
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.sp-unit[tabindex]:focus-visible { outline: none; stroke: var(--sp-select); stroke-width: 2.5; }
+/* focus shows as the space's outline: never the browser's ring (on a shape it is a blob) */
+.sp-unit:focus { outline: none; }
+.sp-unit[tabindex]:focus-visible { stroke: var(--sp-select); stroke-width: 2.5; }
 .sp-unit.sp-zone { stroke: var(--sp-zone-stroke); stroke-dasharray: 3 3; }
 .sp-unit.sp-dim { opacity: var(--sp-dim-opacity); }
 .sp-unit.sp-highlight { stroke: var(--sp-highlight); stroke-width: 2.5; }

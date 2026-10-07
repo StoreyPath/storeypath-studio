@@ -293,6 +293,7 @@ inChrome("the keyboard: Tab to a space, Enter chooses it and keeps the focus", a
   await page.key("Enter", "Enter", 13);
   equal(await page.run(() => window.chosen), [focused], "chosen");
   equal(await page.run(() => document.activeElement.getAttribute("data-sp-id")), focused, "still focused");
+  equal(await page.run(() => getComputedStyle(document.activeElement).outlineStyle), "none", "no browser focus ring on a shape");
   const k = await page.run(() => window.engine.camera().k);
   await page.key("+", "Equal", 187);
   truly((await page.run(() => window.engine.camera().k)) > k, "+ zooms in");
