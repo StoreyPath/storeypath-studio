@@ -325,9 +325,10 @@ async function findPlans(code, drawing, area, units) {
   // Earlier results go: no floors are added from plans being found again.
   area.replaceChildren(el("section", { class: "card" }, el("h2", {}, `Plans in ${drawing}`),
     el("p", { class: "muted small" }, units ? `Finding the plans again, in ${UNITS[units]}…` : "Finding the plans…")));
-  let result;
+  let result, project;
   try {
     result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {}));
+    project = await api(`projects/${code}`); // its locations, buildings and floors, to add to
   } catch (e) {
     toast(e.message, true);
     area.replaceChildren();
@@ -338,7 +339,7 @@ async function findPlans(code, drawing, area, units) {
   }
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
-  const cards = result.plans.map((plan) => planCard(plan, top, result.levels));
+  const cards = result.plans.map((plan) => planCard(plan, top, result.levels, project));
   // One plan per floor of a building to start with, the largest: a second "ground
   // floor plan" on a sheet is often an outbuilding's.
   const largest = new Map();
@@ -347,6 +348,10 @@ async function findPlans(code, drawing, area, units) {
     if (!largest.has(key) || c.area > largest.get(key).area) largest.set(key, c);
   }
   cards.forEach((c) => { if (c.chosen() && largest.get(c.place().key) !== c) c.choose(false); });
+  // A drawing of one floor whose plan does not say which (one file per floor is
+  // common): the building's next floor.
+  const floorPlans = cards.filter((c) => c.plan.kind === "floor_plan");
+  if (floorPlans.length === 1 && floorPlans[0].plan.floor === null) floorPlans[0].nextFloor();
   // The plans are found at the drawing's scale, so other units mean finding them again.
   const unitChoice = el("select", { onchange: () => findPlans(code, drawing, area, unitChoice.value) },
     Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
@@ -359,7 +364,11 @@ async function findPlans(code, drawing, area, units) {
     for (const c of cards) {
       const { key, building, floor } = c.place();
       const others = (byPlace.get(key) || []).filter((o) => o !== c).map((o) => o.plan.title || `plan ${o.plan.index}`);
-      if (!others.length) c.say("");
+      const has = c.existing();
+      if (has && c.chosen() && !c.replacing()) {
+        c.say(`${building} already has floor ${floor} (${has.name}${has.drawing ? `, from ${has.drawing}` : ""}): replace its drawing, or give this plan another floor.`, true);
+        clash = { building, floor };
+      } else if (!others.length) c.say(has && c.replacing() ? `Replaces the drawing of ${has.name}: its rooms keep their IDs.` : "");
       else if (c.chosen()) {
         c.say(`${others.join(", ")} is also floor ${floor} of ${building}: give one of them another floor or building.`, true);
         clash = { building, floor };
@@ -395,11 +404,35 @@ async function findPlans(code, drawing, area, units) {
   area.scrollIntoView({ behavior: "smooth" });
 }
 
-function planCard(plan, top, levels) {
+const NEW = "__new__"; // a new location or building, named in the box beside it
+
+function planCard(plan, top, levels, project) {
   const isFloor = plan.kind === "floor_plan" || plan.kind === "roof_plan";
   const ordinal = plan.kind === "roof_plan" ? top + 1 : plan.floor;
   const check = el("input", { type: "checkbox", checked: isFloor && plan.kind !== "site_plan" && ordinal !== null });
-  const building = el("input", { type: "text", value: plan.building || "Main building" });
+  // Where it goes: project → location → building → floor. An existing location and
+  // building are chosen from the project's; a new one is named.
+  const locations = project.locations;
+  const location = el("select", {}, ...locations.map((l) => el("option", { value: l.id }, l.name)),
+    el("option", { value: NEW }, "New location…"));
+  const locationName = el("input", { type: "text", value: project.project.name, placeholder: "location name" });
+  const building = el("select");
+  const buildingName = el("input", { type: "text", value: plan.building || "Main building", placeholder: "building name" });
+  const floors = el("p", { class: "muted small" });
+  const replace = el("input", { type: "checkbox" });
+  const replaceLabel = el("label", { class: "check", hidden: true }, replace, "Replace its drawing (its rooms keep their IDs)");
+  const chosenLocation = () => locations.find((l) => l.id === location.value) || null;
+  const chosenBuilding = () => chosenLocation()?.buildings.find((b) => b.id === building.value) || null;
+  const fillBuildings = () => {
+    const loc = chosenLocation();
+    const list = loc ? loc.buildings : [];
+    building.replaceChildren(...list.map((b) => el("option", { value: b.id }, b.name)), el("option", { value: NEW }, "New building…"));
+    // the building the plan names, else the only one there is, else a new one
+    const named = list.find((b) => b.name.trim().toLowerCase() === (plan.building || "").trim().toLowerCase());
+    building.value = named ? named.id : list.length === 1 ? list[0].id : NEW;
+  };
+  if (!locations.length) location.value = NEW;
+  fillBuildings();
   const floor = el("input", { type: "number", step: "1", value: ordinal ?? 0 });
   const name = el("input", { type: "text", value: plan.kind === "roof_plan" ? "Roof" : FLOOR_NAMES[ordinal ?? 0] || `Floor ${ordinal}` });
   floor.addEventListener("input", () => { name.value = FLOOR_NAMES[floor.value] || `Floor ${floor.value}`; });
@@ -415,6 +448,20 @@ function planCard(plan, top, levels) {
     if (!heightSet) height.value = heightOf(Number(floor.value));
     if (!parapetSet) parapet.value = parapetOf(Number(floor.value));
   });
+  const existing = () => chosenBuilding()?.floors.find((f) => f.ordinal === Number(floor.value)) || null;
+  const show = () => {
+    locationName.hidden = location.value !== NEW;
+    buildingName.hidden = building.value !== NEW;
+    const b = chosenBuilding();
+    floors.textContent = b ? (b.floors.length ? `${b.name} has: ${b.floors.map((f) => `${f.name} (${f.ordinal})`).join(", ")}` : `${b.name} has no floors yet`) : "";
+    floors.hidden = !b;
+    replaceLabel.hidden = !existing();
+    if (!existing()) replace.checked = false;
+  };
+  location.addEventListener("change", () => { fillBuildings(); show(); });
+  building.addEventListener("change", show);
+  floor.addEventListener("input", show);
+  show();
   const note = el("p", { class: "small", hidden: true });
   const node = el("article", { class: "plan" },
     thumbnail(plan),
@@ -424,10 +471,13 @@ function planCard(plan, top, levels) {
       el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
       el("label", { class: "check" }, check, "Add as a floor"),
       el("div", { class: "fields" },
-        el("label", {}, "Building", building), el("label", {}, "Floor", floor),
-        el("label", { style: "grid-column: 1 / -1" }, "Floor name", name),
+        el("label", { style: "grid-column: 1 / -1" }, "Location", location, locationName),
+        el("label", { style: "grid-column: 1 / -1" }, "Building", building, buildingName),
+        el("label", {}, "Floor", floor),
+        el("label", {}, "Floor name", name),
         el("label", { title: "Floor to floor" }, "Height (m)", height),
         el("label", { title: "The low walls around its terraces and balconies" }, "Parapet (m)", parapet)),
+      floors, replaceLabel,
       note));
   const sync = () => node.classList.toggle("chosen", check.checked);
   sync();
@@ -437,19 +487,41 @@ function planCard(plan, top, levels) {
     area: plan.size[0] * plan.size[1],
     chosen: () => check.checked,
     choose: (yes) => { check.checked = yes; sync(); },
-    /** The floor of a building this plan would be: buildings are known by their name. */
+    existing,
+    replacing: () => replace.checked,
+    /** The chosen building's next floor (0 for a new building), chosen. */
+    nextFloor: () => {
+      const b = chosenBuilding();
+      floor.value = b && b.floors.length ? Math.max(...b.floors.map((f) => f.ordinal)) + 1 : 0;
+      floor.dispatchEvent(new Event("input"));
+      check.checked = true;
+      sync();
+    },
+    /** The floor of a building this plan would be. */
     place: () => {
-      const b = building.value.trim() || "Main building";
-      return { key: `${b.toLowerCase()}|${Number(floor.value)}`, building: b, floor: Number(floor.value) };
+      const b = chosenBuilding();
+      const locKey = location.value === NEW ? `new:${locationName.value.trim().toLowerCase()}` : location.value;
+      const bName = b ? b.name : buildingName.value.trim() || "Main building";
+      const bKey = b ? b.id : `${locKey}|new:${bName.toLowerCase()}`;
+      return { key: `${bKey}|${Number(floor.value)}`, building: bName, floor: Number(floor.value) };
     },
     say: (text, warn = false) => { note.textContent = text; note.hidden = !text; note.className = warn ? "unsure small" : "muted small"; },
     onChange: (fn) => {
       check.addEventListener("change", () => { sync(); fn(); });
-      building.addEventListener("input", fn);
-      floor.addEventListener("input", fn);
+      for (const input of [location, locationName, building, buildingName, floor, replace]) {
+        input.addEventListener(input.tagName === "SELECT" || input.type === "checkbox" ? "change" : "input", fn);
+      }
     },
-    value: () => ({ index: plan.index, title: plan.title, region: plan.region, building: building.value,
-      ordinal: Number(floor.value), name: name.value, height: Number(height.value), parapet: Number(parapet.value) }),
+    value: () => {
+      const b = chosenBuilding();
+      return {
+        index: plan.index, title: plan.title, region: plan.region,
+        ...(location.value === NEW ? { location: locationName.value.trim() || project.project.name } : { location_id: location.value }),
+        ...(b ? { building_id: b.id } : { building: buildingName.value.trim() || "Main building" }),
+        ordinal: Number(floor.value), name: name.value, height: Number(height.value), parapet: Number(parapet.value),
+        replace: Boolean(existing() && replace.checked),
+      };
+    },
   };
 }
 

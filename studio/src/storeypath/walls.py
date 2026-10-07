@@ -158,7 +158,9 @@ def spaces_from_walls(
 
     envelope = _envelope(mass, cfg.max_opening)
     edge = envelope.boundary.buffer(SNAP_M)
-    glazing = openings.buffer(cfg.max_thickness / 2 + 0.05) if openings is not None else None
+    # each line widened, then joined: widening thousands of lines joined in one is
+    # very slow (minutes on a large building's door and window layers)
+    glazing = shapely.union_all(shapely.buffer(opening_lines, cfg.max_thickness / 2 + 0.05)) if opening_lines else None
     spaces, pockets, open_edges = [], [], []
     regions = [r for r in as_polygons(envelope.difference(mass))
                if r.area >= min_area and not r.buffer(-cfg.min_width / 2).is_empty]

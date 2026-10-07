@@ -50,12 +50,14 @@ from importlib import resources
 from importlib.metadata import version
 from pathlib import Path
 from queue import Queue
+from typing import NamedTuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
 from .assets import asset_dir
+from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import read_title
@@ -482,57 +484,105 @@ class Studio:
         _floors_to_add(Workspace.load(ws_path), plans)  # two plans as one floor: say so now, change nothing
 
         def run(job: Job):
-            from .convert import convert_floor
             from .sheets import align, floor_walls
             from .analyse import analyse
 
             with self._changing(ws_path):
                 ws = Workspace.load(ws_path)
-                loc = ws.locations[0] if ws.locations else None
                 places = _floors_to_add(ws, plans)
-                loc_id = f"{ws.id}-{loc.code}" if loc else ws.add_location("SITE", ws.project.name)
-                added: dict[str, list[str]] = {}
-                for b_code, b_name, ordinal, p in places:
-                    b_id = f"{loc_id}-{b_code}"
-                    try:
-                        ws.building(b_id)
-                    except KeyError:
-                        ws.add_building(loc_id, b_code, b_name)
-                        job.say(f"building {b_name} ({b_code})")
+                added: dict[str, list[str]] = {}  # building -> floors added or given this drawing
+                made_locations: dict[str, str] = {}
+                made_buildings: dict[tuple[str, str], str] = {}
+                for place in places:
+                    p = place.plan
+                    loc_id = place.location_id
+                    if loc_id is None:
+                        code, name = place.location
+                        if code not in made_locations:
+                            made_locations[code] = ws.add_location(code, name)
+                            job.say(f"location {name} ({code})")
+                        loc_id = made_locations[code]
+                    b_id = place.building_id
+                    if b_id is None:
+                        code, name = place.building
+                        if (loc_id, code) not in made_buildings:
+                            made_buildings[loc_id, code] = ws.add_building(loc_id, code, name)
+                            job.say(f"building {name} ({code})")
+                        b_id = made_buildings[loc_id, code]
                     source = SourceDrawing(path=str(drawing.relative_to(ws_path.parent)), profile=AUTO,
                                            units=units, region=tuple(p["region"]), view=p.get("title"))
-                    f_id = ws.add_floor(b_id, ordinal, name=p.get("name") or None, source=source,
-                                        height=float(p.get("height") or DEFAULT_HEIGHT_M),
-                                        parapet_height=float(p["parapet"]) if p.get("parapet") else None)
+                    if place.replaces:
+                        # a new drawing of a floor the building has: its spaces keep their IDs
+                        f = ws.floor(place.replaces)
+                        f.source = source
+                        if p.get("name"):
+                            f.name = p["name"]
+                        if p.get("height"):
+                            f.height = float(p["height"])
+                        if p.get("parapet"):
+                            f.parapet_height = float(p["parapet"])
+                        f_id = place.replaces
+                        job.say(f"floor {f_id}: its drawing is now {p.get('title') or 'plan ' + str(p.get('index'))}")
+                    else:
+                        f_id = ws.add_floor(b_id, place.ordinal, name=p.get("name") or None, source=source,
+                                            height=float(p.get("height") or DEFAULT_HEIGHT_M),
+                                            parapet_height=float(p["parapet"]) if p.get("parapet") else None)
+                        job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}")
                     added.setdefault(b_id, []).append(f_id)
-                    job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}")
                 for b_id in added:
                     ws.restack(b_id)  # elevations from the heights
                 ws.save(ws_path)
 
-            doc = read_drawing(drawing)
-            for b_id in added:
-                floors = sorted(ws.building(b_id).floors, key=lambda f: f.ordinal)
+            # Each floor added lines up with its building's lowest floor (from this
+            # drawing or another: one drawing per floor is common), so floors stand on
+            # one another.
+            docs: dict[Path, object] = {}
+
+            def doc_of(f):
+                path = ws_path.parent / f.source.path
+                if path not in docs:
+                    docs[path] = read_drawing(path)
+                return docs[path]
+
+            def walls(f):
+                doc = doc_of(f)
+                scale = meters_per_unit(doc, f.source.units)
+                prof = analyse(doc, scale, f.source.region, None, load_profile(AUTO)).profile
+                return floor_walls(doc, prof, scale, f.source.region), scale
+
+            for b_id, new in added.items():
+                floors = sorted((f for f in ws.building(b_id).floors if f.source is not None), key=lambda f: f.ordinal)
                 if len(floors) < 2:
                     continue
-                job.say(f"lining up the floors of {b_id}")
-                ref = floors[0]
-                scale = meters_per_unit(doc, ref.source.units)
-
-                def walls(f):
-                    prof = analyse(doc, scale, f.source.region, None, load_profile(AUTO)).profile
-                    return floor_walls(doc, prof, scale, f.source.region)
-
-                ref_walls = walls(ref)
-                for f in floors[1:]:
-                    if f.source is None or Path(f.source.path).name != drawing.name:
+                # the lowest floor that was there before, else the lowest one added
+                ids = {fl_id.rsplit("-", 1)[-1] for fl_id in new}
+                ref = next((f for f in floors if f.code not in ids), floors[0])
+                job.say(f"lining up the floors of {b_id} with {ref.name}")
+                ref_walls, ref_scale = walls(ref)
+                ref_off = ref.source.offset or (0.0, 0.0)
+                for f in floors:
+                    if f is ref or f.code not in ids:
                         continue
-                    (tx, ty), overlap = align(ref_walls, walls(f))
-                    off = ref.source.offset or (0.0, 0.0)
-                    f.source.offset = (off[0] + tx / scale, off[1] + ty / scale)
-                    job.say(f"  {f.name}: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} of walls line up")
+                    f_walls, scale = walls(f)
+                    (tx, ty), overlap = align(ref_walls, f_walls)
+                    if f.source.path != ref.source.path and overlap < MIN_ALIGN_OVERLAP:
+                        # another drawing, its walls too unlike: as its drawing places it (one
+                        # drawing per floor usually shares the building's coordinates)
+                        tx = ty = 0.0
+                        job.say(f"  {f.name}: too few walls line up ({overlap:.0%}): kept where its drawing has it")
+                    else:
+                        job.say(f"  {f.name}: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} of walls line up")
+                    # in this floor's drawing units, from where the reference stands
+                    f.source.offset = ((ref_off[0] * ref_scale + tx) / scale, (ref_off[1] * ref_scale + ty) / scale)
             with self._changing(ws_path):
-                ws.save(ws_path)
+                saved = Workspace.load(ws_path)
+                for b_id in added:
+                    for f in ws.building(b_id).floors:
+                        if f.source is not None:
+                            saved_floor = next(x for x in saved.building(b_id).floors if x.code == f.code)
+                            if saved_floor.source is not None:
+                                saved_floor.source.offset = f.source.offset
+                saved.save(ws_path)
             self._convert(ws_path, [f for fs in added.values() for f in fs], job)
             return {"floors": [f for fs in added.values() for f in fs]}
 
@@ -634,38 +684,104 @@ class Studio:
         return path
 
 
-def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[tuple[str, str, int, dict]]:
-    """Where each chosen plan goes: (building code, building name, floor, plan). A
-    building is known by its name; a new one gets a code from its name that no other
-    building has. Fails, before anything changes, when two plans would be the same
-    floor of a building or the building already has that floor."""
-    loc = ws.locations[0] if ws.locations else None
-    existing = {b.name.strip().lower(): b for b in loc.buildings} if loc else {}
-    codes = {key: b.code for key, b in existing.items()}
-    taken = set(codes.values())
+MIN_ALIGN_OVERLAP = 0.25  # floors from two drawings are moved to line up only when this much of their walls do
+
+
+class FloorPlace(NamedTuple):
+    """Where a chosen plan goes: its location and building (an ID when they exist,
+    else a new code and name), its floor, and the floor it replaces (its ID) when it
+    is a new drawing of a floor the building has."""
+
+    location_id: str | None
+    location: tuple[str, str] | None  # (code, name) of a new location
+    building_id: str | None
+    building: tuple[str, str] | None  # (code, name) of a new building
+    ordinal: int
+    plan: dict
+    replaces: str | None
+
+
+def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
+    """Where each chosen plan goes. A plan names its location and building by ID
+    (``location_id``, ``building_id``) or as new ones by name (``location``,
+    ``building``; a building named like one of the location's is that one); without
+    any, the project's first location, and a building of that name or "Main
+    building". New ones get codes from their names that no other has. A plan on a
+    floor the building has replaces that floor's drawing (its spaces keep their IDs)
+    when it says ``replace``. Fails, before anything changes, when two plans would be
+    the same floor, or a plan a floor that exists and is not to be replaced."""
+    loc_codes = {loc.code for loc in ws.locations}
+    new_locations: dict[str, tuple[str, str]] = {}  # name (lower) -> (code, name)
+    new_buildings: dict[tuple[str, str], tuple[str, str]] = {}  # (location key, name lower) -> (code, name)
     chosen: dict[tuple[str, int], str] = {}
     out = []
     for p in plans:
-        name = (p.get("building") or "Main building").strip()
-        key = name.lower()
-        if key not in codes:
-            code = base = _code(p.get("building_code") or name)
-            n = 2
-            while code in taken:  # "Main building" and "Main kitchen" are two buildings
-                code, n = f"{base[:14]}{n}", n + 1
-            codes[key] = code
-            taken.add(code)
-        ordinal = int(p["ordinal"])
         title = p.get("title") or f"plan {p.get('index')}"
-        if (key, ordinal) in chosen:
-            raise ValueError(f"{chosen[key, ordinal]} and {title} are both floor {ordinal} of {name}: give one "
+        # the location
+        loc_id, new_loc, loc = p.get("location_id") or None, None, None
+        if loc_id:
+            try:
+                loc = ws.location(loc_id)
+            except KeyError:
+                raise ValueError(f"{title}: no location {loc_id}") from None
+        elif (p.get("location") or "").strip():
+            name = p["location"].strip()
+            loc = next((x for x in ws.locations if x.name.strip().lower() == name.lower()), None)
+            if loc is not None:
+                loc_id = make_id(ws.id, loc.code)
+            else:
+                if name.lower() not in new_locations:
+                    new_locations[name.lower()] = (_unique(_code(name, "SITE"), loc_codes), name)
+                new_loc = new_locations[name.lower()]
+        elif ws.locations:
+            loc = ws.locations[0]
+            loc_id = make_id(ws.id, loc.code)
+        else:
+            if "" not in new_locations:
+                new_locations[""] = ("SITE", ws.project.name)
+            new_loc = new_locations[""]
+        loc_key = loc_id or f"new:{new_loc[0]}"
+        # the building
+        b_id, new_b, building = p.get("building_id") or None, None, None
+        if b_id:
+            try:
+                building = ws.building(b_id)
+            except KeyError:
+                raise ValueError(f"{title}: no building {b_id}") from None
+            if loc_id and not b_id.startswith(loc_id + "-"):
+                raise ValueError(f"{title}: building {b_id} is not in location {loc_id}")
+        else:
+            name = (p.get("building") or "Main building").strip()
+            building = next((b for b in (loc.buildings if loc else []) if b.name.strip().lower() == name.lower()), None)
+            if building is not None:
+                b_id = f"{loc_id}-{building.code}"
+            else:
+                key = (loc_key, name.lower())
+                if key not in new_buildings:
+                    taken = {b.code for b in (loc.buildings if loc else [])} | {c for (k, _), (c, _) in new_buildings.items() if k == loc_key}
+                    new_buildings[key] = (_unique(_code(p.get("building_code") or name), taken), name)
+                new_b = new_buildings[key]
+        b_key = b_id or f"{loc_key}:{new_b[0]}"
+        b_name = building.name if building is not None else new_b[1]
+        # the floor
+        ordinal = int(p["ordinal"])
+        if (b_key, ordinal) in chosen:
+            raise ValueError(f"{chosen[b_key, ordinal]} and {title} are both floor {ordinal} of {b_name}: give one "
                              "of them another floor or building, or leave it out")
-        has = next((f for f in existing[key].floors if f.ordinal == ordinal), None) if key in existing else None
-        if has:
-            raise ValueError(f"{name} already has floor {ordinal} ({has.name}): give {title} another floor "
-                             "or building")
-        chosen[key, ordinal] = title
-        out.append((codes[key], name, ordinal, p))
+        has = next((f for f in building.floors if f.ordinal == ordinal), None) if building is not None else None
+        if has and not p.get("replace"):
+            raise ValueError(f"{b_name} already has floor {ordinal} ({has.name}): give {title} another floor, "
+                             "or replace that floor's drawing")
+        chosen[b_key, ordinal] = title
+        out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None))
+    return out
+
+
+def _unique(code: str, taken: set[str]) -> str:
+    """A code no other has: "Main building" and "Main kitchen" are MAIN and MAIN2."""
+    out, n = code, 2
+    while out in taken:
+        out, n = f"{code[:14]}{n}", n + 1
     return out
 
 
@@ -673,10 +789,10 @@ def _words_of(drawing: Path) -> Path:
     return drawing.with_name(drawing.name + WORDS)
 
 
-def _code(text: str) -> str:
-    """A building code from its name: its first word ("Main building" → MAIN)."""
+def _code(text: str, default: str = "B1") -> str:
+    """A code from a name: its first word ("Main building" → MAIN)."""
     words = re.findall(r"[A-Z0-9]+", text.upper())
-    return words[0][:8] if words else "B1"
+    return words[0][:8] if words else default
 
 
 # ---- HTTP ----------------------------------------------------------------------

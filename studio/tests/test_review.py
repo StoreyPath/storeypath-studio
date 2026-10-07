@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import ezdxf
 import pytest
@@ -236,7 +237,65 @@ def test_two_plans_as_one_floor_are_refused_before_anything_changes(studio, tmp_
     assert [(b.code, b.name, len(b.floors)) for b in buildings] == [("MAIN", "Main building", 1), ("MAIN2", "Main annex", 1)]
 
     status, error = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [plan(house, "main building")]})
-    assert status == 400 and error["error"].startswith("main building already has floor 0 (")
+    assert status == 400 and error["error"].startswith("Main building already has floor 0 (")
+    assert "replace that floor's drawing" in error["error"]
+
+
+def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
+    # A building drawn one floor per file, in the same coordinates: each file's plan
+    # is added to the building chosen by its ID, lined up without moving; a revised
+    # drawing of a floor replaces its drawing, its rooms keeping their IDs; another
+    # location is made when asked for.
+    from storeypath.samples import write_floor_dxf
+
+    base, app = studio
+    _, created = call(f"{base}/api/projects", {"name": "Large building"})
+    code = created["code"]
+    for n in (0, 1):
+        write_floor_dxf(tmp_path / f"level-{n}.dxf", office_floor(n), origin=(100.0, 50.0), title=f"LEVEL {n} PLAN")
+    write_floor_dxf(tmp_path / "level-0-rev.dxf", office_floor(0), origin=(100.0, 50.0), title="LEVEL 0 PLAN")
+
+    def add(name, **where):
+        call(f"{base}/api/projects/{code}/drawings/{name}?private=0", raw=(tmp_path / name).read_bytes())
+        _, job = call(f"{base}/api/projects/{code}/drawings/{name}/plans", {})
+        plan = max(wait(base, job)["plans"], key=lambda x: x["size"][0] * x["size"][1])
+        status, job = call(f"{base}/api/projects/{code}/floors", {"drawing": name, "plans": [
+            {"index": plan["index"], "title": plan["title"], "region": plan["region"], **where}]})
+        return status, job
+
+    status, job = add("level-0.dxf", building="Engineering", ordinal=0)
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    loc_id = f"{ws.id}-{ws.locations[0].code}"
+    b_id = f"{loc_id}-{ws.locations[0].buildings[0].code}"
+    status, job = add("level-1.dxf", location_id=loc_id, building_id=b_id, ordinal=1)
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    b = ws.building(b_id)
+    assert [(f.ordinal, Path(f.source.path).name) for f in sorted(b.floors, key=lambda f: f.ordinal)] == \
+        [(0, "level-0.dxf"), (1, "level-1.dxf")]
+    first = next(f for f in b.floors if f.ordinal == 1)
+    assert first.converted_at is not None and max(abs(v) for v in (first.source.offset or (0, 0))) < 0.05  # lined up as drawn
+    assert len(ws.locations) == 1 and len(ws.locations[0].buildings) == 1
+
+    # floor 0 again: refused, unless its drawing is replaced
+    status, error = add("level-0-rev.dxf", building_id=b_id, ordinal=0)
+    assert status == 400 and "already has floor 0" in error["error"]
+    ground_id = f"{b_id}-{next(f.code for f in b.floors if f.ordinal == 0)}"
+    before = {r.id for r in ws.floor_objects(ground_id) if r.kind == "space"}
+    status, job = add("level-0-rev.dxf", building_id=b_id, ordinal=0, replace=True)
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    ground = ws.floor(ground_id)
+    assert Path(ground.source.path).name == "level-0-rev.dxf"
+    assert {r.id for r in ws.floor_objects(ground_id) if r.kind == "space"} == before  # the same rooms, the same IDs
+
+    # a building in another location
+    status, job = add("level-1.dxf", location="North campus", building="Workshop", ordinal=0)
+    wait(base, job)
+    ws = Workspace.load(app.path(code))
+    assert [loc.name for loc in ws.locations] == ["Large building", "North campus"]
+    assert ws.locations[1].code == "NORTH" and [b.name for b in ws.locations[1].buildings] == ["Workshop"]
 
 def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     base, app = studio
