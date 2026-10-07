@@ -271,10 +271,10 @@ func (a *archive) read(name string) (data []byte, ok bool, err error) {
 	}
 	size, l := f.UncompressedSize64, a.limits
 	if size > uint64(l.MaxFileBytes) {
-		return nil, true, fmt.Errorf("%w: %s is larger than %d bytes", ErrTooLarge, name, l.MaxFileBytes)
+		return nil, true, fmt.Errorf("%w: %s is larger than %d bytes", ErrTooLarge, clip(name), l.MaxFileBytes)
 	}
 	if size > ratioFloor && (size-1)/uint64(l.MaxRatio) >= f.CompressedSize64 { // size > MaxRatio × compressed
-		return nil, true, fmt.Errorf("%w: %s is more than %d times its size in the package", ErrTooLarge, name, l.MaxRatio)
+		return nil, true, fmt.Errorf("%w: %s is more than %d times its size in the package", ErrTooLarge, clip(name), l.MaxRatio)
 	}
 	if a.total+int64(size) > l.MaxTotalBytes {
 		return nil, true, fmt.Errorf("%w: the package is larger than %d bytes", ErrTooLarge, l.MaxTotalBytes)
@@ -285,7 +285,7 @@ func (a *archive) read(name string) (data []byte, ok bool, err error) {
 	}
 	defer rc.Close()
 	if data, err = readAll(rc, size); err != nil {
-		return nil, true, fmt.Errorf("%s: %w", name, err)
+		return nil, true, fmt.Errorf("%s: %w", clip(name), err)
 	}
 	a.total += int64(len(data))
 	return data, true, nil

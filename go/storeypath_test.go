@@ -1056,6 +1056,16 @@ func TestFilesAreFoundThroughTheManifest(t *testing.T) {
 	if problems := rooms.Validate(); len(problems) == 0 || problems[0].Code != ProblemMissingFile || problems[0].File != "rooms.geojson" {
 		t.Errorf("spaces listed at rooms.geojson, not there: %v", problems)
 	}
+	// a name of a MiB (stored: compressed, the manifest is too many times its size)
+	long, err := readZip(zipFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
+		doc["files"].(map[string]any)["spaces"] = strings.Repeat("x", 1<<20)
+	}), zip.Store), DefaultLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := long.Validate(); len(problems) == 0 || len(problems[0].File) > 200 || len(problems[0].Message) > 300 {
+		t.Errorf("a name of a MiB: %d problems", len(problems))
+	}
 	// a manifest that does not list a file every package has: at its usual name
 	unlisted := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) {
 		delete(doc["files"].(map[string]any), "spaces")

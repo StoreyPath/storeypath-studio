@@ -67,8 +67,6 @@ var kindLevel = map[string]string{
 	"space": LevelObject, "zone": LevelObject, "opening": LevelObject,
 }
 
-// knownKinds: the kinds of objects.csv rows this reader knows. Rows of others (a
-// later format's), and their IDs in changes.json, are left alone.
 // knownTypes: the types of spaces, zones and openings of this format, for a
 // manifest that does not list them (manifest.json → types lists those a package
 // may use, a later format's too).
@@ -92,6 +90,8 @@ var (
 // maxWorkplaces: the most people who work at one item (a bench of desks).
 const maxWorkplaces = 100
 
+// knownKinds: the kinds of objects.csv rows this reader knows. Rows of others (a
+// later format's), and their IDs in changes.json, are left alone.
 var knownKinds = map[string]bool{"project": true, "location": true, "building": true, "floor": true,
 	"space": true, "zone": true, "opening": true, "item": true}
 
