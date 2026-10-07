@@ -28,7 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 
 from shapely import wkt
@@ -117,9 +117,10 @@ class VisionModel:
             self._checked_at = time.monotonic()
             try:
                 with urllib.request.urlopen(self._request("/models"), timeout=5) as r:
-                    models = json.load(r).get("data") or []
-                if not self.model and models:
-                    self.model = models[0].get("id", "")
+                    listed = json.load(r)
+                models = listed.get("data") if isinstance(listed, dict) else None
+                if not self.model and isinstance(models, list) and models and isinstance(models[0], dict):
+                    self.model = str(models[0].get("id") or "")
                 self._checked = True
             except (OSError, ValueError, urllib.error.URLError) as e:
                 self.failed = f"no vision model at {self.url}: {e}"
@@ -148,13 +149,15 @@ class VisionModel:
             "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}},
             "chat_template_kwargs": {"enable_thinking": False},
         }
+        from .llm import BadAnswer, reply_answer
+
         try:
             with self._slots, urllib.request.urlopen(self._request("/chat/completions", body), timeout=self.timeout) as r:
                 out = json.load(r)
-            answer = json.loads(out["choices"][0]["message"]["content"])
-        except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
+            answer = reply_answer(out)
+        except (OSError, ValueError, BadAnswer, urllib.error.URLError) as e:
             raise VisionUnavailable(f"{self.name}: {e}") from e
-        return {f: answer[f] for f in fields if answer.get(f) in fields[f]}
+        return {f: answer[f] for f in fields if isinstance(answer.get(f), str) and answer[f] in fields[f]}
 
 
 class InWords:
@@ -172,7 +175,7 @@ class InWords:
         return self.vision.available()
 
     def ask(self, system: str, user: str, schema: dict, max_tokens: int = 1024) -> dict:
-        from .llm import ModelUnavailable
+        from .llm import BadAnswer, ModelUnavailable, reply_answer
 
         body = {
             "model": self.vision.model, "temperature": 0, "max_tokens": max_tokens,
@@ -183,9 +186,14 @@ class InWords:
         try:
             with urllib.request.urlopen(self.vision._request("/chat/completions", body), timeout=self.vision.timeout) as r:
                 out = json.load(r)
-            return json.loads(out["choices"][0]["message"]["content"])
-        except (OSError, ValueError, KeyError, urllib.error.URLError) as e:
+        except (OSError, urllib.error.URLError) as e:
             raise ModelUnavailable(f"{self.name}: {e}") from e
+        except ValueError as e:
+            raise BadAnswer(f"{self.name}: the reply is not JSON: {e}") from e
+        try:
+            return reply_answer(out)
+        except BadAnswer as e:
+            raise BadAnswer(f"{self.name}: {e}") from e
 
 
 @dataclass
@@ -363,28 +371,50 @@ def room_key(model: str, sha: str, src, polygon) -> str:
 PROGRESS_S = 15.0  # how often a long look at a floor says how far it has got
 
 
-def _ask_each(todo: list, draw, ask, model: VisionModel, say=None, what: str = "rooms") -> list:
+def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: str = "rooms") -> None:
     """``ask(item, image)`` about each item of ``todo`` as soon as ``draw(item)`` has
     drawn it: drawing one at a time (it is not thread-safe through ezdxf's caches),
-    the questions going out meanwhile, ``model.parallel`` at once. Says how far it
-    has got every PROGRESS_S seconds, as a large floor takes a while. The answers,
-    in order."""
+    the questions going out meanwhile, ``model.parallel`` at once. Each answer is
+    handed to ``keep`` (in this thread) as soon as it comes, so what was answered is
+    kept whatever becomes of the rest; an item that cannot be drawn or asked about is
+    left out, the reason in ``model.failed``: one failure costs one item. Says how far
+    it has got every PROGRESS_S seconds, as a large floor takes a while."""
     last = time.monotonic()
+    done = 0
 
-    def progress(futures) -> None:
+    def progress() -> None:
         nonlocal last
         if say is not None and time.monotonic() - last >= PROGRESS_S:
             last = time.monotonic()
-            say(f"vision: {sum(f.done() for f in futures)} of {len(todo)} {what} looked at")
+            say(f"vision: {done} of {len(todo)} {what} looked at")
+
+    def collect(finished) -> None:
+        nonlocal done
+        for f in finished:
+            done += 1
+            try:
+                keep(f.result())
+            except Exception as e:  # an answer that cannot be used: this item only
+                model.failed = f"one of the {what} was not looked at: {type(e).__name__}: {e}"
 
     with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
-        futures = []
+        pending: set = set()
         for item in todo:
-            futures.append(pool.submit(ask, item, draw(item)))
-            progress(futures)
-        while wait(futures, timeout=PROGRESS_S).not_done:
-            progress(futures)
-        return [f.result() for f in futures]
+            try:
+                image = draw(item)
+            except Exception as e:  # a part of the drawing that cannot be printed
+                model.failed = f"one of the {what} could not be drawn: {type(e).__name__}: {e}"
+                done += 1
+                continue
+            pending.add(pool.submit(ask, item, image))
+            finished = {f for f in pending if f.done()}
+            pending -= finished
+            collect(finished)
+            progress()
+        while pending:
+            finished, pending = wait(pending, timeout=PROGRESS_S, return_when=FIRST_COMPLETED)
+            collect(finished)
+            progress()
 
 
 def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | None, answers: dict[str, dict],
@@ -429,12 +459,16 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
                 model.failed = str(e)
                 return n, key, None
 
-        for n, key, got in _ask_each(todo, draw, one, model, say, "rooms"):
+        def keep(result):
+            nonlocal asked
+            n, key, got = result
             if got and "outline" in got and "type" in got:
                 answers[key] = {"outline": got["outline"], "type": got["type"], "model": name,
                                 "shape": wkt.dumps(polygons[n], rounding_precision=2)}
                 views[n] = RoomView(got["outline"], got["type"])
                 asked += 1
+
+        _ask_each(todo, draw, one, keep, model, say, "rooms")
     return views, asked
 
 
@@ -808,10 +842,14 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
                 model.failed = str(e)
                 return line, {}
 
-        for line, got in _ask_each(todo, draw, one, model, say, "lines across merged rooms"):
+        def keep(result):
+            nonlocal asked
+            line, got = result
             if "a" in got and "b" in got:
                 line[3] = answers[line[2]] = {"a": got["a"], "b": got["b"], "model": name, "cut": line[4]}
                 asked += 1
+
+        _ask_each(todo, draw, one, keep, model, say, "lines across merged rooms")
 
     made: list = []
     rooms = looked = 0
@@ -838,7 +876,12 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
     counting = threading.Lock()
 
     def check(row):
-        found = _checked(row[1], row[2], doc, src, scale, sha, model, answers, sheet)
+        try:
+            found = _checked(row[1], row[2], doc, src, scale, sha, model, answers, sheet)
+        except Exception as e:  # this room stays whole; the others are still divided
+            if model is not None:
+                model.failed = f"a merged room was not divided: {type(e).__name__}: {e}"
+            found = [units[row[0]].polygon], [], 0
         with counting:
             progress["done"] += 1
             if say is not None and time.monotonic() - progress["last"] >= PROGRESS_S:

@@ -1,14 +1,22 @@
 """Reading drawings that are broken, read wrong or answered wrong: one bad piece
 costs that piece, never the floor's IDs or the rest of the conversion."""
 
+import io
+import itertools
+import json
 from pathlib import Path
 
 import ezdxf
+import pytest
 from typer.testing import CliRunner
 
+import storeypath.llm as llm
+import storeypath.vision as vision
 from storeypath.cli import app
 from storeypath.convert import convert_floor
-from storeypath.samples import office_floor, write_floor_dxf
+from storeypath.llm import ModelUnavailable
+from storeypath.samples import office_floor, simple_office, write_floor_dxf
+from storeypath.types import SpaceType
 from storeypath.workspace import SourceDrawing, Workspace
 
 runner = CliRunner()
@@ -90,3 +98,86 @@ def test_the_cli_holds_a_bad_read_back_unless_forced(tmp_path):
     forced = runner.invoke(app, [*args, "--force"])
     assert forced.exit_code == 0, forced.output
     assert not _active(Workspace.load(ws_file), f)
+
+
+# ---- a malformed answer costs one question ---------------------------------------
+
+
+class _Reply(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _replying(*contents):
+    """A stand-in for urlopen answering chat questions with each of ``contents`` in
+    turn (a JSON body each), and the list of models with one."""
+    queue = itertools.cycle(contents)
+
+    def urlopen(req, timeout=None):
+        if req.full_url.endswith("/models"):
+            return _Reply(json.dumps({"data": [{"id": "fake-vl"}]}).encode())
+        return _Reply(json.dumps(next(queue)).encode())
+
+    return urlopen
+
+
+MALFORMED = {
+    "content null": {"choices": [{"message": {"role": "assistant", "content": None, "reasoning_content": "…"}}]},
+    "no choices": {"choices": []},
+    "a JSON list": {"choices": [{"message": {"content": '["office"]'}}]},
+    "a number": {"choices": [{"message": {"content": "7"}}]},
+    "not JSON": {"choices": [{"message": {"content": "an office"}}]},
+    "a list for a reply": [1, 2],
+}
+
+
+@pytest.mark.parametrize("reply", MALFORMED.values(), ids=MALFORMED.keys())
+def test_a_malformed_reply_is_a_model_that_did_not_answer(reply, monkeypatch):
+    monkeypatch.setattr(vision.urllib.request, "urlopen", _replying(reply))
+    model = vision.VisionModel(url="http://vision.invalid/v1", model="x")
+    with pytest.raises(vision.VisionUnavailable):
+        model.ask(b"png", "?", {"outline": vision.OUTLINES})
+    with pytest.raises(ModelUnavailable):
+        vision.InWords(model).ask("system", "user", {})
+    with pytest.raises(ModelUnavailable):
+        llm.LocalModel(url="http://llm.invalid").ask("system", "user", {})
+
+
+def test_one_malformed_label_answer_costs_that_label_only(monkeypatch):
+    good = {"choices": [{"message": {"content": json.dumps({"type": "office"})}}]}
+    monkeypatch.setattr(llm.urllib.request, "urlopen", _replying(good, MALFORMED["content null"], good))
+    read = llm.read_labels(llm.LocalModel(url="http://llm.invalid"), ["BUREAU", "SALA", "MAKTAB"], rooms_only=True)
+    assert len(read) == 2 and all(r.type == SpaceType.OFFICE for r in read.values())
+
+
+def test_a_room_vision_cannot_answer_about_costs_that_room_only(tmp_path, monkeypatch):
+    # An endpoint that answers every room but one, for which its reply has no
+    # content (a reasoning model that spent max_tokens thinking): the conversion
+    # goes on, and every answer received is kept.
+    write_floor_dxf(tmp_path / "f.dxf", simple_office())
+    ws, f = _project(tmp_path, "f.dxf", profile="auto", ordinal=0)
+    answered = {"choices": [{"message": {"content": json.dumps({"outline": "exactly one room", "type": "office"})}}]}
+    monkeypatch.setattr(vision.urllib.request, "urlopen",
+                        _replying(*([answered] * 5), MALFORMED["content null"], *([answered] * 40)))
+    monkeypatch.setattr(vision.FloorPrint, "view", lambda self, *a, **k: b"png")
+    model = vision.VisionModel(url="http://vision.invalid/v1", parallel=2)
+    report = convert_floor(ws, f, tmp_path, vision=model)
+    rooms = sum(1 for r in ws.floor_objects(f) if r.kind == "space")
+    assert rooms > 6 and len(ws.vision) == rooms - 1
+    assert any(w.startswith("vision:") and "no answer" in w for w in report.warnings)
+
+
+def test_a_room_that_cannot_be_drawn_costs_that_room_only():
+    kept = []
+
+    def draw(item):
+        if item == 2:
+            raise ValueError("a broken entity")
+        return b"png"
+
+    model = vision.VisionModel(url="http://vision.invalid/v1", parallel=2)
+    vision._ask_each(list(range(6)), draw, lambda item, image: item, kept.append, model)
+    assert sorted(kept) == [0, 1, 3, 4, 5] and "could not be drawn" in model.failed
