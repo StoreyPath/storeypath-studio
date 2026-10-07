@@ -85,7 +85,9 @@ async function showStatus() {
     $("status").replaceChildren(
       el("span", { class: `chip ${s.model ? (s.model_ready ? "ok" : "") : "off"}`, title: "Reads room names, sheet titles and layer names" },
         s.model ? `Model: ${s.model}${s.model_ready ? "" : " (loading…)"}` : "No language model"),
-      el("span", { class: `chip ${s.dwg ? "ok" : "off"}` }, s.dwg ? "Reads DWG and DXF" : "DXF only (no DWG reader)"),
+      el("span", { class: `chip ${s.dwg ? "ok" : "off"}`, title: s.dwg_converter === "oda" ? "DWG read with the ODA File Converter"
+        : s.dwg_converter === "libredwg" ? "DWG read with LibreDWG (dwg2dxf); the ODA File Converter reads more of a drawing" : "" },
+      s.dwg ? "Reads DWG and DXF" : "DXF only (no DWG reader)"),
       el("span", { class: "chip ok", title: "Nothing is sent anywhere" }, "Runs offline"),
       el("span", { class: "chip" }, `v${s.version}`),
     );
