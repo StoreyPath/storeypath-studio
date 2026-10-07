@@ -21,7 +21,7 @@
       "type": "object"
     }
   },
-  "description": "What changed since the previous export, so importers can update their ID mappings.",
+  "description": "What changed in the building since it was last exported, so importers can update\ntheir ID mappings.",
   "properties": {
     "sequence": {
       "title": "Sequence",
@@ -36,6 +36,7 @@
           "type": "null"
         }
       ],
+      "description": "the sequence of the last export that held this building (format 0.7; null for its first): what changes.json lists changes since. A gap from the last package of the building a reader has applied means it missed one",
       "title": "Previous Sequence"
     },
     "added": {
@@ -53,7 +54,7 @@
       "type": "array"
     },
     "retired": {
-      "description": "IDs removed since the previous export",
+      "description": "IDs removed since the building was last exported",
       "items": {
         "type": "string"
       },
@@ -61,7 +62,7 @@
       "type": "array"
     },
     "all_retired": {
-      "description": "every ID this project has ever retired",
+      "description": "every ID this building has ever retired (from 0.7; before, the project): its own objects', and the items its packages held and that were taken away since, wherever they were then",
       "items": {
         "type": "string"
       },

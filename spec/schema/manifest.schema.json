@@ -22,6 +22,7 @@
             }
           ],
           "default": null,
+          "description": "the sequence of the last export that held this building (format 0.7; null for its first): what changes.json lists changes since. A gap from the last package of the building a reader has applied means it missed one",
           "title": "Previous Sequence"
         }
       },
