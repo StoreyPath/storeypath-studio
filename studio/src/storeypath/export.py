@@ -672,17 +672,29 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
 
 def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict]], changes: Changes,
            extra: dict, cat: Catalogue) -> None:
-    """The package's files, and ``extra`` (name → bytes or a path), into a ZIP."""
+    """The package's files, and ``extra`` (name → bytes or a path), into a ZIP. Every
+    file is made before the ZIP is opened: a value JSON cannot hold (NaN, infinity)
+    is refused, and nothing is written."""
+
+    def strict(name: str, value, **kw) -> str:
+        try:
+            return json.dumps(value, allow_nan=False, **kw)
+        except ValueError:
+            raise ExportError(f"{name}: a value is not a number (NaN or infinite): not written, "
+                              "as other systems could not read it") from None
+
+    files = {"manifest.json": strict("manifest.json", manifest.model_dump(mode="json"), ensure_ascii=False, indent=2)}
+    for role, fs in features.items():
+        files[FILES[role]] = strict(FILES[role], {"type": "FeatureCollection", "features": fs}, ensure_ascii=False)
+    files[FILES["objects"]] = _objects_csv(ws, features)
+    files[FILES["changes"]] = strict(FILES["changes"], changes.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    files[FILES["catalogue"]] = strict(FILES["catalogue"], cat.model_dump(mode="json"), ensure_ascii=False, indent=1)
+    files["FORMAT.md"] = format_spec()
+    for name, schema in json_schemas().items():
+        files[f"schema/{name}"] = json.dumps(schema, indent=2)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("manifest.json", manifest.model_dump_json(indent=2))
-        for role, fs in features.items():
-            z.writestr(FILES[role], json.dumps({"type": "FeatureCollection", "features": fs}, ensure_ascii=False))
-        z.writestr(FILES["objects"], _objects_csv(ws, features))
-        z.writestr(FILES["changes"], changes.model_dump_json(indent=2))
-        z.writestr(FILES["catalogue"], json.dumps(cat.model_dump(), ensure_ascii=False, indent=1))
-        z.writestr("FORMAT.md", format_spec())
-        for name, schema in json_schemas().items():
-            z.writestr(f"schema/{name}", json.dumps(schema, indent=2))
+        for name, text in files.items():
+            z.writestr(name, text)
         for name, data in extra.items():
             if isinstance(data, Path):
                 z.write(data, name)

@@ -176,3 +176,16 @@ def test_a_workspace_of_an_earlier_studio_goes_on_from_what_it_kept(campus, tmp_
     export_package(ws, tmp_path / "annex.storeypath", building=annex)
     changes, _ = _read(tmp_path / "annex.storeypath")
     assert changes["previous_sequence"] == 2 and desk.id in changes["changed"]
+
+
+def test_a_value_json_cannot_hold_is_refused_and_nothing_is_written(campus, tmp_path):
+    from storeypath.export import ExportError
+
+    ws, _, hq, _ = campus
+    ws.building(hq).floors[0].height = float("nan")
+    before = len(ws.exports)
+    for bake in (False, True):
+        out = tmp_path / f"hq-{bake}.storeypath"
+        with pytest.raises(ExportError, match="not a number"):
+            export_package(ws, out, building=hq, bake=bake)
+        assert not out.exists() and len(ws.exports) == before
