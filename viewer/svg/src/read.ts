@@ -1,6 +1,7 @@
 // Reading a package file (*.storeypath, a ZIP archive) in the browser or in Node,
 // with what the platform has: no library to load.
 
+import type { Navigation } from "./navigation.js";
 import type { PackageLike } from "./package.js";
 
 export const FORMAT = "storeypath-package";
@@ -52,7 +53,9 @@ export async function readPackage(source: ArrayBuffer | Uint8Array | Blob): Prom
   const [floors, spaces, zones, openings, items] = await Promise.all(["floors", "spaces", "zones", "openings", "items"].map(features));
   // the types of the items (format 0.6): their colours
   const catalogue = manifest.files["catalogue"] ? ((await json(manifest.files["catalogue"])) as PackageLike["catalogue"]) : null;
-  return { manifest, floors: floors!, spaces: spaces!, zones: zones!, openings: openings!, items: items!, catalogue };
+  // the walking network (format 0.8): route() finds the way on it
+  const navigation = manifest.files["navigation"] ? ((await json(manifest.files["navigation"])) as Navigation) : null;
+  return { manifest, floors: floors!, spaces: spaces!, zones: zones!, openings: openings!, items: items!, catalogue, navigation };
 }
 
 interface Entry {

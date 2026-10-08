@@ -25,6 +25,17 @@
   --sp-item-front: #1d1d1f;
   --sp-item-mark: rgba(0, 0, 0, 0.55);
   --sp-item-chair: #5b5f69;
+  /* a way through the building (showRoute) */
+  --sp-route: #1a73e8;
+  --sp-route-width: 5px;
+  --sp-route-casing: rgba(255, 255, 255, 0.95);
+  --sp-route-casing-width: 9px;
+  --sp-route-arrow: #ffffff;
+  --sp-route-start: #0f9d58;
+  --sp-route-end: #d62d50;
+  --sp-route-marker-ring: #ffffff;
+  --sp-route-change: #6a3fc8;
+  --sp-route-change-text: #ffffff;
   display: block;
   width: 100%;
   height: 100%;
@@ -102,6 +113,25 @@
 .sp-pin path { fill: var(--sp-pin); stroke: var(--sp-pin-dot); stroke-width: 1.5; }
 .sp-pin circle { fill: var(--sp-pin-dot); }
 
+/* a way through the building: its line over the floor, its marks on the screen,
+   under the labels */
+.sp-route path { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
+.sp-route-casing { stroke: var(--sp-route-casing); stroke-width: var(--sp-route-casing-width); }
+.sp-route-line { stroke: var(--sp-route); stroke-width: var(--sp-route-width); }
+.sp-route-marks { pointer-events: none; }
+.sp-route-arrow { fill: none; stroke: var(--sp-route-arrow); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sp-route-start-ring { fill: var(--sp-route-start); stroke: var(--sp-route-marker-ring); stroke-width: 2.5; }
+.sp-route-start-dot { fill: var(--sp-route-marker-ring); }
+.sp-route-end-pin { fill: var(--sp-route-end); stroke: var(--sp-route-marker-ring); stroke-width: 1.5; }
+.sp-route-end-dot { fill: var(--sp-route-marker-ring); }
+.sp-route-change-dot { fill: var(--sp-route-change); stroke: var(--sp-route-marker-ring); stroke-width: 2; }
+.sp-route-change-tag { fill: var(--sp-route-change); stroke: var(--sp-route-marker-ring); stroke-width: 1.5; }
+.sp-route-change-text {
+  fill: var(--sp-route-change-text);
+  font: 600 12px system-ui, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif;
+  unicode-bidi: plaintext;
+}
+
 /* dark, as Studio's plan: walls dark between the rooms, light labels */
 @media (prefers-color-scheme: dark) {
   .sp-plan {
@@ -117,6 +147,14 @@
     --sp-item-front: #f1f1f3;
     --sp-item-mark: rgba(255, 255, 255, 0.6);
     --sp-item-chair: #8b909b;
+    --sp-route: #8ab4f8;
+    --sp-route-casing: rgba(16, 16, 20, 0.9);
+    --sp-route-arrow: #10243f;
+    --sp-route-start: #34c27a;
+    --sp-route-end: #ff6b85;
+    --sp-route-marker-ring: #16161a;
+    --sp-route-change: #a58cf0;
+    --sp-route-change-text: #16161a;
   }
 }
 

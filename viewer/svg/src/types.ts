@@ -25,6 +25,8 @@ export interface PlanSpace {
   label?: string | null;
   /** For a zone: the space it is part of. */
   container?: string | null;
+  /** A lift's, stairs', escalator's or ramp's stack (format 0.8): the same on every floor it serves. */
+  stack?: string | null;
 }
 
 export interface PlanOpening {
@@ -101,4 +103,13 @@ export interface Camera {
   k: number;
   tx: number;
   ty: number;
+}
+
+/** A way to draw (showRoute): as route() gives it (format 0.8, navigation.js), or any
+ * object of this shape: the walking on each floor, and the rides between floors. */
+export interface PlanRoute {
+  /** The walking on one floor between rides: its line, in the floor's metres. */
+  legs: { floor_id: string; points: XY[] }[];
+  /** Each ride from floor to floor, between leg i and leg i + 1. */
+  changes: { by: string; from_floor_id: string; to_floor_id: string }[];
 }
