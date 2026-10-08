@@ -200,6 +200,10 @@ class Override(BaseModel):
     ignored: bool | None = None
     # how many people it is meant to seat, set by a person; None: as its desks say
     capacity: int | None = Field(None, ge=0, le=10000)
+    # a lift's, stairs' or escalator's link to the same one on other floors (stacks.py),
+    # set by a person: the ID of a space on another floor it is linked with, or "" for
+    # linked with none; None: linked as found (same object code, or footprints overlapping)
+    stack: str | None = Field(None, max_length=100)
 
 
 class Reading(BaseModel):
