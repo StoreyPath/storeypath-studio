@@ -433,8 +433,8 @@ their IDs, and its location ([spec/FORMAT.md](../spec/FORMAT.md), format 0.7).
 | Opening, units, plans, lining up, walls, spaces, doors, IDs | rules | rules |
 | Room names, sheet titles, unit notes, level labels | rules, then the language model on the CPU | the same; in the GPU image the language model runs on the GPU |
 | Private texts in a drawing, schedule rows | rules and the language model | rules and the vision model, asked in words |
-| Is it a room? Merged rooms divided into zones; corridors kept as ways through | not done: a person checks the review list | the vision model, each decision listed for review |
-| A type for a room with no name | stays without one, listed for review (or symbols, research only) | the type the vision model sees |
+| Is it a room? Merged rooms divided into zones; corridors kept as ways through | not done: a person checks the review list | the vision model, each decision marked for a person to check |
+| A type for a room with no name | stays without one (stairs excepted, by their treads), listed for review; or symbols, research only | the type the vision model sees |
 
 Without any model at all (`convert --no-model --no-vision`), everything still works
 on the rules alone, with more left for a person to type in review. Answers kept from
