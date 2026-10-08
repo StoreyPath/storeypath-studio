@@ -711,6 +711,22 @@ class Accounts:
             db.execute("INSERT INTO project_access (code, owner) VALUES (?, ?) "
                        "ON CONFLICT (code) DO UPDATE SET owner = excluded.owner", (code, user_id))
 
+    def give(self, code: str, user_id: str, by: str | None) -> str | None:
+        """A project given another owner (by an admin): the owner before keeps share on
+        the whole project, as a grant of their own (shown, and taken away like any). The
+        owner before (their id), if any."""
+        with self._write() as db:
+            row = db.execute("SELECT owner FROM project_access WHERE code = ?", (code,)).fetchone()
+            before = row["owner"] if row else None
+            db.execute("INSERT INTO project_access (code, owner) VALUES (?, ?) "
+                       "ON CONFLICT (code) DO UPDATE SET owner = excluded.owner", (code, user_id))
+            if before is not None and before != user_id:
+                db.execute("INSERT INTO grants (project, scope_kind, scope_id, user, level, given_by, given_at) "
+                           "VALUES (?, 'project', '', ?, 'share', ?, ?) ON CONFLICT (project, scope_kind, scope_id, user) "
+                           "DO UPDATE SET level = 'share', given_by = excluded.given_by, given_at = excluded.given_at",
+                           (code, before, by, utcnow()))
+        return before
+
     def claim(self, code: str, user_id: str) -> bool:
         """A new project's owner: only when nothing is kept of a project of that code (no
         owner, no grants), never in place of what is. Whether it was."""

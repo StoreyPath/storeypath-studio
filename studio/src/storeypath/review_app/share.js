@@ -113,7 +113,9 @@ export async function openShare(code, me, changed = () => {}) {
         } catch (err) {
           fail(err);
         }
-      } }, el("label", {}, "Owner", pick), el("button", { type: "submit" }, "Make owner"));
+      } }, el("label", {}, "Owner", pick), el("button", { type: "submit",
+        title: "The owner before keeps share on the whole project: a grant of theirs, listed below, that may be removed" },
+      "Make owner"));
     }
     body.replaceChildren(...[
       el("p", { class: "owner-line" }, a.owner

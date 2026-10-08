@@ -254,6 +254,18 @@ def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):
     assert accounts.login("ali", PASSWORD, "192.0.2.1")[1].username == "ali"  # unchanged, and not locked elsewhere
 
 
+def test_the_owner_before_keeps_share_on_the_project_given_to_another(campus):
+    port, studio, accounts, users, tokens, ids = campus
+    code = ids["demo"]
+    status, listing, _ = call(port, "POST", f"/api/projects/{code}/owner", {"user": users["bob"].id}, token=tokens["boss"])
+    assert status == 200 and listing["owner"]["username"] == "bob"
+    kept = [(g["user"]["username"], g["scope"]["kind"], g["level"]) for g in listing["grants"]]
+    assert ("eng", "project", "share") in kept  # shown, and may be taken away like any grant
+    assert call(port, "GET", f"/api/projects/{code}", token=tokens["eng"])[0] == 200
+    entry = next(e for e in accounts.audit_tail() if e["action"] == "owner changed")
+    assert entry["owner"] == "bob" and entry["was"] == "eng"
+
+
 def test_two_studios_on_one_machine_keep_their_own_sessions(tmp_path):
     """Browsers keep one host's cookies for all its ports: each Studio's is named by its port."""
     import http.cookiejar

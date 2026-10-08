@@ -251,7 +251,7 @@ def test_sharing_goes_no_wider_than_the_sharers_own(campus):
     status, listing, _ = call(port, "POST", f"/api/projects/{code}/owner", {"user": users["bob"].id},
                               token=tokens["boss"])
     assert status == 200 and listing["owner"]["username"] == "bob"
-    assert call(port, "GET", f"/api/projects/{code}", token=owner)[0] == 404  # eng owned it; no more
+    assert call(port, "GET", f"/api/projects/{code}", token=owner)[0] == 200  # eng owned it: keeps share on it
 
 
 def test_projects_belong_to_their_maker_and_go_with_their_access(campus):

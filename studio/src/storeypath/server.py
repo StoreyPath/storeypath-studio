@@ -1771,12 +1771,13 @@ class Gate:
         return self.access(code, self.see(code))
 
     def set_owner(self, code: str, body: dict) -> dict:
+        """The project given another owner; the owner before keeps share on the whole of
+        it, as a grant of their own (Accounts.give)."""
         self._workspace(code)
         user = self.accounts.user(body.get("user")) if self.accounts and isinstance(body.get("user"), str) else None
         if user is None or not user.active:
             raise ValueError("no such user (or disabled)")
-        before = self.accounts.project_access(code).owner
-        self.accounts.set_owner(code, user.id)
+        before = self.accounts.give(code, user.id, self.uid)
         self.audit("owner changed", code, owner=user.username,
                    was=(self._person(before) or {}).get("username"))
         return self.access(code, self.see(code))

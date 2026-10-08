@@ -86,7 +86,7 @@ them, and is offered only what they may do there.
 
 | Role | |
 |---|---|
-| admin | manages users (add, change role and capabilities, disable, reset a password), sees and does everything, gives a project another owner |
+| admin | manages users (add, change role and capabilities, disable, reset a password), sees and does everything, gives a project another owner (the owner before keeps share on the whole project: a grant of theirs, shown in the Share dialog, that may be taken away) |
 | engineer | creates projects and opens packages and project files as new projects; owns what they make |
 | user | sees only what is shared with them |
 
@@ -190,7 +190,7 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
 | `POST …/delete` | its owner or an admin |
 | `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |
-| `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin |
+| `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
 | `GET users` | someone who may share something, or an admin: active users' id, username and name |
 | `PUT …/drawings/<name>`, `POST …/incoming/…`, `GET …/drawings/<name>/words`, `POST …/drawings/<name>/plans` | edit on the project (a drawing is the project's, and may hold several floors) |
 | `POST …/floors` (add floors) | view on the project (the drawing is the project's) and edit on each building they go into (on the project for a new building) |
