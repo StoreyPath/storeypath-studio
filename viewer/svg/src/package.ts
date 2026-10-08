@@ -4,6 +4,7 @@
 // whatever its bearing on the map).
 
 import { LocalFrame, type Placement } from "./frame.js";
+import type { Navigation } from "./navigation.js";
 import type { FloorPlan, PlanItem, PlanOpening, PlanSpace, Polygon, XY } from "./types.js";
 
 type LonLat = [number, number];
@@ -23,6 +24,8 @@ interface FloorProps { building_id: string; walls?: Geometry | null; parapets?: 
 interface SpaceProps {
   floor_id: string; type: string; name?: string | null; number?: string | null; drawing_label?: string | null;
   display_point: LonLat; zones?: string[]; hidden?: boolean; ignored?: boolean;
+  /** A lift's, stairs', escalator's or ramp's stack (format 0.8): the same on every floor it serves. */
+  stack?: string | null;
 }
 interface ZoneProps extends SpaceProps { space_id: string }
 interface OpeningProps {
@@ -47,6 +50,8 @@ export interface PackageLike {
   /** Furniture and equipment (format 0.6; placed in their building, 0.7), and the catalogue of their types. */
   items?: Feature<ItemProps>[];
   catalogue?: { types: { code: string; color?: string; grade?: string | null }[] } | null;
+  /** The building's walking network (navigation.json, format 0.8), or null: route() finds the way on it. */
+  navigation?: Navigation | null;
 }
 
 export interface FromPackageOptions {
@@ -88,6 +93,7 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
   const unit = (f: Feature<SpaceProps>, kind: "space" | "zone", container: string | null): PlanSpace => ({
     id: f.id, kind, polygons: polygons(f.geometry), marker: local(f.properties.display_point), type: f.properties.type,
     name: f.properties.name ?? null, number: f.properties.number ?? null, label: f.properties.drawing_label ?? null, container,
+    ...(f.properties.stack ? { stack: f.properties.stack } : {}),
   });
   for (const s of pkg.spaces) {
     if (s.properties.floor_id !== floorId || !shown(s.properties)) continue;

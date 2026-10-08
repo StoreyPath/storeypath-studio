@@ -40,6 +40,8 @@ from .package import (
     json_schemas,
 )
 from .levels import DEFAULT_PARAPET_M
+from .navigation import NAVIGATION_FILE, navigation_file
+from .stacks import stack_of
 from .types import OpeningType, SpaceType
 from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, utcnow
 
@@ -344,6 +346,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
         for b in loc.buildings:
             b_id = child_id(loc_id, b.code)
             g = Georeferencer(placed[b_id][0])
+            stack = stack_of(ws, b_id)  # each lift's and stairs' key, the same on every floor it serves
             outlines = []
             for f in sorted(b.floors, key=lambda f: f.ordinal):
                 f_id = child_id(b_id, f.code)
@@ -382,6 +385,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "zones": list(r.zones), "outdoor": r.id in sky,
                                  "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
+                                 "stack": stack.get(r.id),
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
@@ -668,11 +672,15 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         scope=Scope(buildings=buildings),
     )
 
+    # the walking network of its building (format 0.8)
+    navigation = navigation_file(ws, buildings, cat, placed)
+    manifest.files["navigation"] = NAVIGATION_FILE
+
     world: dict[str, bytes] = {}
     if bake:  # the package as it is so far, for the baker to read
         with tempfile.TemporaryDirectory(prefix="storeypath-export-") as tmp:
             plain = Path(tmp) / "package.storeypath"
-            _write(plain, ws, manifest, features, changes, {}, cat)
+            _write(plain, ws, manifest, features, changes, {}, cat, navigation)
             world, why = bake_world(plain)
         if world:
             manifest.files["world"] = WORLD_DIR
@@ -681,7 +689,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    _write(out_path, ws, manifest, features, changes, world, cat)
+    _write(out_path, ws, manifest, features, changes, world, cat, navigation)
 
     if record:
         held_now = dict(held_before)
@@ -699,7 +707,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
 
 
 def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict]], changes: Changes,
-           extra: dict, cat: Catalogue) -> None:
+           extra: dict, cat: Catalogue, navigation: dict | None = None) -> None:
     """The package's files, and ``extra`` (name → bytes or a path), into a ZIP. Every
     file is made before the ZIP is opened: a value JSON cannot hold (NaN, infinity)
     is refused, and nothing is written."""
@@ -717,6 +725,8 @@ def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict
     files[FILES["objects"]] = _objects_csv(ws, features)
     files[FILES["changes"]] = strict(FILES["changes"], changes.model_dump(mode="json"), ensure_ascii=False, indent=2)
     files[FILES["catalogue"]] = strict(FILES["catalogue"], cat.model_dump(mode="json"), ensure_ascii=False, indent=1)
+    if navigation is not None:
+        files[FILES["navigation"]] = strict(FILES["navigation"], navigation, ensure_ascii=False, separators=(",", ":"))
     files["FORMAT.md"] = format_spec()
     for name, schema in json_schemas().items():
         files[f"schema/{name}"] = json.dumps(schema, indent=2)

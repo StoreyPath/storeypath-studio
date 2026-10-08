@@ -17,6 +17,10 @@
 // desks costs nothing until then. Their geometry is made (or taken from the
 // pre-built file) the first time a floor shows them: detailed when one floor is
 // shown, a box each when more are.
+//
+// A way through the building (format 0.8: route() in ../navigation.js) is drawn with
+// showRoute: a ribbon just over each floor it walks on, through the lift or stairs
+// between them, its start and end marked; flyRoute takes the camera along it.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -51,6 +55,11 @@ const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
 const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door", "item"]);
 const TAKES = new Set([...CASTS, "floor", "glass"]);
 const ORDER = { volume: 2, glass: 4 };
+// a way through the building: its ribbon this high over the floor and this wide, seen
+// through what is in front of it, and arrows on it this far apart
+const ROUTE = { lift: 0.14, width: 0.55, casing: 0.16, arrows: 3, order: 20, faded: 0.18,
+  // its colours by default: the plan viewer's (viewer/svg/src/plan.css, --sp-route…)
+  colours: { color: "#1a73e8", casing: "#ffffff", arrow: "#ffffff", start: "#0f9d58", end: "#d62d50" } };
 
 export class StoreyPathWorld extends EventTarget {
   #o;
@@ -86,6 +95,8 @@ export class StoreyPathWorld extends EventTarget {
   #ghostLook = null; // its materials
   #orbitView = null; // the dollhouse view before walking: { position, target }
   #caster = new THREE.Raycaster();
+  #route = null; // the way shown: { route, legs, links, marks, materials }
+  #tour = null; // the camera going along it
 
   constructor(container, options = {}) {
     super();
@@ -220,12 +231,15 @@ export class StoreyPathWorld extends EventTarget {
   /** Build and show a building; with ``keep`` (the same building, read again), where it
    * was: the view, the floor shown, what is selected and the walker kept, and its frame. */
   #show(id, { keep = false } = {}) {
-    const was = keep ? { floor: this.#floor, selected: this.#selected } : null;
+    const was = keep ? { floor: this.#floor, selected: this.#selected, route: this.#route } : null;
+    if (keep) this.clearRoute(); // drawn again on the floors built again
     if (this.#buildingGroup) {
       this.#scene.remove(this.#buildingGroup);
       this.#dispose(this.#buildingGroup);
     }
     this.#building = id;
+    this.#endTour();
+    this.#route = null; // drawn on the floors taken away
     this.#floors.clear();
     this.#floor = null;
     this.#selected = null;
@@ -245,6 +259,7 @@ export class StoreyPathWorld extends EventTarget {
         this.#highlight(found);
         this.#selected = was.selected;
       }
+      if (was.route) this.showRoute(was.route.route, was.route.colours);
       return;
     }
     this.#applyVisibility();
@@ -286,6 +301,8 @@ export class StoreyPathWorld extends EventTarget {
     if (!old || !floor) return;
     if (this.#ghost?.parent === old.group) this.#ghost = null; // goes with it
     if (this.#lit?.parent === old.group) this.#lit = null;
+    const route = this.#route;
+    if (route) this.clearRoute(); // drawn again over the floor built again
     const built = this.#buildFloor(floor);
     if (given && old.given) {
       built.given = old.given;
@@ -297,6 +314,7 @@ export class StoreyPathWorld extends EventTarget {
     this.#buildingGroup.add(built.group);
     this.#applyVisibility();
     this.#relight();
+    if (route) this.showRoute(route.route, route.colours);
   }
 
   /** The highlight made again where what is selected is now (it may have moved), or
@@ -780,6 +798,183 @@ export class StoreyPathWorld extends EventTarget {
     };
   }
 
+  // ---- a way through the building ---------------------------------------------
+
+  /** The way shown (showRoute), or null. */
+  get route() { return this.#route?.route ?? null; }
+
+  /** Draw a way (as route() in navigation.js finds it, format 0.8): a ribbon just over
+   * each floor it walks on, edged, arrows the way it goes, joined through the lift or
+   * stairs between floors, its start and end marked; seen through what is in front of
+   * it, and through the floors above it, which the dollhouse view of the whole building
+   * leaves out. Null: none. With `fly`, the camera goes along it (flyRoute). Its
+   * colours (CSS colours: a page gives its own, light or dark): `color`, `casing` (its
+   * edge), `arrow`, `start`, `end`; by default the plan viewer's. */
+  showRoute(route, { fly = false, ...colours } = {}) {
+    this.clearRoute();
+    const placement = this.#pkg?.manifest.placements?.[this.#building];
+    if (!route || !placement || !route.legs?.some((leg) => this.#floors.has(leg.floor_id))) return Promise.resolve();
+    // a point of the building's drawings, in the world: x east, z south
+    const at = ([x, y]) => {
+      const [wx, n] = localOf(this.#origin, toLonLat(placement, [x, y]));
+      return [wx, -n];
+    };
+    const colour = (key) => {
+      const c = new THREE.Color(ROUTE.colours[key]);
+      try {
+        if (colours[key] !== undefined && colours[key] !== null) c.set(colours[key]);
+      } catch {
+        // not a colour: the default
+      }
+      return c;
+    };
+    const shown = { route, colours, legs: [], links: [], marks: [], materials: [] }; // (colours: drawn again so)
+    const material = (key, more = {}) => {
+      const m = new THREE.MeshBasicMaterial({ color: colour(key), side: THREE.DoubleSide, depthTest: false, transparent: true,
+        ...more });
+      shown.materials.push(m);
+      return m;
+    };
+    const add = (mesh, name, parent, order = ROUTE.order) => {
+      mesh.name = name;
+      mesh.renderOrder = order;
+      parent.add(mesh);
+      return mesh;
+    };
+    route.legs.forEach((leg, i) => {
+      const f = this.#floors.get(leg.floor_id);
+      if (!f) return;
+      const points = leg.points.map(at);
+      const y = f.elevation + ROUTE.lift;
+      // each leg its own materials: the legs not on the floor the camera is going along fade
+      const entry = { floor: f, points, y, mesh: null, materials: [] };
+      if (points.length > 1) {
+        const casing = material("casing", { opacity: 0.95 }), ribbon = material("color", { opacity: 0.95 });
+        entry.materials.push(casing, ribbon);
+        shown.marks.push(add(new THREE.Mesh(ribbonOf(points, y - 0.004, ROUTE.width + 2 * ROUTE.casing), casing),
+          `route:casing:${i}`, f.group, ROUTE.order - 1));
+        entry.mesh = add(new THREE.Mesh(ribbonOf(points, y, ROUTE.width), ribbon), `route:leg:${i}`, f.group);
+        const marks = arrowsOf(points, y + 0.01, ROUTE.width, ROUTE.arrows);
+        if (marks) {
+          const arrow = material("arrow");
+          entry.materials.push(arrow);
+          shown.marks.push(add(new THREE.Mesh(marks, arrow), `route:arrows:${i}`, f.group, ROUTE.order + 1));
+        }
+      }
+      shown.legs.push(entry);
+      if (i === 0) {
+        const dot = add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.12, 24), material("start")), "route:start", f.group,
+          ROUTE.order + 2);
+        dot.position.set(points[0][0], y + 0.06, points[0][1]);
+        shown.marks.push(dot);
+      }
+      if (i === route.legs.length - 1) {
+        const pin = add(new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.3, 20), material("end")), "route:end", f.group, ROUTE.order + 2);
+        const last = points[points.length - 1];
+        pin.rotation.x = Math.PI; // its point down, on the destination
+        pin.position.set(last[0], y + 0.65, last[1]);
+        shown.marks.push(pin);
+      }
+    });
+    // between floors: through the lift or stairs, from where one leg ends to where the next starts
+    for (let i = 0; i + 1 < shown.legs.length; i++) {
+      const a = shown.legs[i], b = shown.legs[i + 1];
+      const ribbon = material("color", { opacity: 0.95 });
+      const mesh = add(new THREE.Mesh(new THREE.CylinderGeometry(ROUTE.width / 2.5, ROUTE.width / 2.5, 1, 12, 1, true), ribbon),
+        `route:link:${i}`, this.#buildingGroup);
+      shown.links.push({ a, b, from: a.points[a.points.length - 1], to: b.points[0], mesh, materials: [ribbon] });
+    }
+    this.#route = shown;
+    this.#applyVisibility();
+    return fly ? this.flyRoute() : Promise.resolve();
+  }
+
+  /** The way's legs as the camera goes along it: the one it is on (and the rides to and
+   * from it) clear, the others faded; all clear with null. */
+  #fadeRoute(leg) {
+    const shown = this.#route;
+    if (!shown) return;
+    const clear = (i) => leg === null || i === leg;
+    shown.legs.forEach((l, i) => {
+      for (const m of l.materials) m.opacity = clear(i) ? 0.95 : ROUTE.faded;
+    });
+    shown.links.forEach((l, i) => {
+      for (const m of l.materials) m.opacity = leg === null || i === leg || i + 1 === leg ? 0.95 : ROUTE.faded;
+    });
+  }
+
+  /** Take the way away (and stop going along it). */
+  clearRoute() {
+    this.#endTour();
+    const shown = this.#route;
+    this.#route = null;
+    if (!shown) return;
+    for (const m of [...shown.legs.map((l) => l.mesh), ...shown.links.map((l) => l.mesh), ...shown.marks]) {
+      if (!m) continue;
+      m.removeFromParent();
+      m.geometry.dispose();
+    }
+    for (const m of shown.materials) m.dispose();
+    this.#applyVisibility();
+  }
+
+  /** Take the camera along the way shown, over `seconds`, in the dollhouse view;
+   * resolves when it is there (or when the way is taken away). */
+  flyRoute({ seconds = 14 } = {}) {
+    if (!this.#route) return Promise.resolve();
+    if (this.#mode === "walk") this.setMode("dollhouse");
+    this.#endTour();
+    const points = [], legOf = [];
+    this.#route.legs.forEach((leg, i) => {
+      const dy = leg.floor.group.position.y;
+      for (const [x, z] of leg.points) {
+        points.push(new THREE.Vector3(x, leg.y + dy, z));
+        legOf.push(i);
+      }
+    });
+    if (points.length < 2) return Promise.resolve();
+    const along = [0];
+    for (let i = 1; i < points.length; i++) along.push(along[i - 1] + points[i].distanceTo(points[i - 1]));
+    this.#flight = null;
+    return new Promise((resolve) => {
+      this.#tour = { points, along, legOf, leg: -1, t: 0, seconds: Math.max(0.1, seconds), resolve };
+    });
+  }
+
+  #endTour() {
+    const tour = this.#tour;
+    this.#tour = null;
+    if (tour) this.#fadeRoute(null);
+    tour?.resolve();
+  }
+
+  /** The point `s` metres along the tour's line, and the leg it is on. */
+  #tourAt(tour, s) {
+    const { points, along } = tour;
+    const total = along[along.length - 1];
+    s = Math.max(0, Math.min(total, s));
+    let i = 1;
+    while (i < along.length - 1 && along[i] < s) i++;
+    const span = along[i] - along[i - 1] || 1;
+    const point = points[i - 1].clone().lerp(points[i], (s - along[i - 1]) / span);
+    point.leg = tour.legOf[i - 1] === tour.legOf[i] ? tour.legOf[i] : tour.legOf[s - along[i - 1] < span / 2 ? i - 1 : i];
+    return point;
+  }
+
+  /** The way's links between floors where the floors are now (one apart from the
+   * other in the exploded view), and shown when both floors are. */
+  #placeRoute() {
+    for (const link of this.#route?.links ?? []) {
+      const a = new THREE.Vector3(link.from[0], link.a.y + link.a.floor.group.position.y, link.from[1]);
+      const b = new THREE.Vector3(link.to[0], link.b.y + link.b.floor.group.position.y, link.to[1]);
+      const length = a.distanceTo(b);
+      link.mesh.visible = link.a.floor.group.visible && link.b.floor.group.visible && length > 1e-3;
+      link.mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      link.mesh.scale.set(1, Math.max(length, 1e-3), 1);
+      link.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    }
+  }
+
   /** Where the walker is: x, z (local meters), heading (radians) and floor. */
   get player() {
     const dir = new THREE.Vector3();
@@ -790,6 +985,7 @@ export class StoreyPathWorld extends EventTarget {
   }
 
   destroy() {
+    this.#endTour();
     this.#renderer.setAnimationLoop(null);
     this.#walker.dispose();
     this.#orbit.dispose();
@@ -1029,9 +1225,12 @@ export class StoreyPathWorld extends EventTarget {
     const one = this.#shownFloors() <= 1;
     const items = this.#o.items ?? one;
     const form = one ? "detailed" : "light";
+    // a way shown, over the whole building: the floors above the highest it goes to are left out
+    const top = !walking && !this.#floor && this.#route
+      ? Math.max(...this.#route.legs.map((l) => l.floor.ordinal)) : Infinity;
     for (const f of this.#floors.values()) {
       // Walking: the floors up to yours, open to the sky. Dollhouse: one or all.
-      const shown = walking ? Boolean(wf) && f.ordinal <= wf.ordinal : !this.#floor || f.id === this.#floor;
+      const shown = walking ? Boolean(wf) && f.ordinal <= wf.ordinal : (!this.#floor || f.id === this.#floor) && f.ordinal <= top;
       f.group.visible = shown;
       f.group.position.y = this.#offset(f);
       const cut = !walking && this.#cutaway;
@@ -1051,6 +1250,7 @@ export class StoreyPathWorld extends EventTarget {
       if (f === wf) this.#walker.obstacles = this.#obstaclesOf(f, furnished);
     }
     if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space?.tucked;
+    this.#placeRoute();
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
     for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door]) {
@@ -1201,7 +1401,27 @@ export class StoreyPathWorld extends EventTarget {
   #frame() {
     this.#timer.update();
     const dt = this.#timer.getDelta();
-    if (this.#flight) {
+    if (this.#tour) { // along the way: from behind and above where it has got to, looking ahead
+      const tour = this.#tour;
+      tour.t = Math.min(tour.seconds, tour.t + dt);
+      const total = tour.along[tour.along.length - 1];
+      const s = (tour.t / tour.seconds) * total;
+      const here = this.#tourAt(tour, s), ahead = this.#tourAt(tour, s + 4);
+      if (here.leg !== tour.leg) {
+        tour.leg = here.leg;
+        this.#fadeRoute(here.leg);
+      }
+      const back = here.clone().sub(ahead).setY(0);
+      if (back.lengthSq() < 1e-6) back.copy(this.#camera.position).sub(here).setY(0);
+      back.normalize().multiplyScalar(9);
+      const want = here.clone().add(back).add(new THREE.Vector3(0, 8, 0));
+      this.#camera.position.lerp(want, tour.t >= tour.seconds ? 1 : Math.min(1, dt * 3));
+      this.#orbit.target.lerp(here, Math.min(1, dt * 4));
+      if (tour.t >= tour.seconds) {
+        this.#orbit.target.copy(here);
+        this.#endTour();
+      }
+    } else if (this.#flight) {
       const f = this.#flight;
       f.t = Math.min(1, f.t + dt / 0.9);
       const k = f.t < 0.5 ? 2 * f.t * f.t : 1 - (-2 * f.t + 2) ** 2 / 2;
@@ -1332,4 +1552,55 @@ export class StoreyPathWorld extends EventTarget {
       if (o.isCSS2DObject) o.element.remove();
     });
   }
+}
+
+/** A ribbon `width` wide along points [x, z] at height y: a strip of triangles, its
+ * corners mitred (no further out than twice its half-width). */
+function ribbonOf(points, y, width) {
+  const half = width / 2, pos = [], index = [];
+  const n = points.length;
+  const unit = (dx, dz) => {
+    const l = Math.hypot(dx, dz) || 1;
+    return [dx / l, dz / l];
+  };
+  for (let i = 0; i < n; i++) {
+    const [x, z] = points[i];
+    const into = i > 0 ? unit(x - points[i - 1][0], z - points[i - 1][1]) : null;
+    const out = i < n - 1 ? unit(points[i + 1][0] - x, points[i + 1][1] - z) : null;
+    const [tx, tz] = unit((into?.[0] ?? 0) + (out?.[0] ?? 0), (into?.[1] ?? 0) + (out?.[1] ?? 0));
+    const side = [-tz, tx]; // across the way
+    const across = into ?? out;
+    const k = half / Math.max(0.5, Math.abs(side[0] * -across[1] + side[1] * across[0]));
+    pos.push(x + side[0] * k, y, z + side[1] * k, x - side[0] * k, y, z - side[1] * k);
+    if (i > 0) index.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(index);
+  return g;
+}
+
+/** Arrows on a ribbon, `every` metres along it, each pointing the way it goes; null
+ * for a way too short for one. */
+function arrowsOf(points, y, width, every) {
+  const pos = [];
+  let next = every / 2, walked = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [x0, z0] = points[i - 1], [x1, z1] = points[i];
+    const seg = Math.hypot(x1 - x0, z1 - z0);
+    while (seg > 0 && next <= walked + seg) {
+      const t = (next - walked) / seg;
+      const dx = (x1 - x0) / seg, dz = (z1 - z0) / seg;
+      const cx = x0 + (x1 - x0) * t, cz = z0 + (z1 - z0) * t;
+      const l = width * 0.45, w = width * 0.32;
+      pos.push(cx + dx * l, y, cz + dz * l, cx - dz * w - dx * l * 0.4, y, cz + dx * w - dz * l * 0.4,
+        cx + dz * w - dx * l * 0.4, y, cz - dx * w - dz * l * 0.4);
+      next += every;
+    }
+    walked += seg;
+  }
+  if (!pos.length) return null;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  return g;
 }

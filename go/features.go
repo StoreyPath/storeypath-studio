@@ -63,6 +63,12 @@ type Space struct {
 	// Outdoor: open to the sky (a terrace or balcony with no windows of its own).
 	Outdoor bool `json:"outdoor"`
 	Seating
+	// Stack (format 0.8): the key the spaces of one lift, staircase or escalator (or
+	// ramp between floors) share on every floor it serves, and no other space of the
+	// building has: the ID of its space on the lowest of them. Nil for any other
+	// space, and in older packages. A system keys its own lifts and stairs to the
+	// spaces' IDs; Stack says which of them are one.
+	Stack *string `json:"stack"`
 	// Hidden: real, but not shown unless asked for. Ignored: judged not worth
 	// anything by a person; best left out.
 	Hidden  bool `json:"hidden"`

@@ -30,6 +30,7 @@ await build({ ...common, entryPoints: [join(here, "src/index.js")], outfile: joi
 await build({ ...common, entryPoints: [join(here, "src/support.js")], outfile: join(dist, "support.js") });
 copyFileSync(join(here, "src/world.d.ts"), join(dist, "world.d.ts"));
 copyFileSync(join(here, "src/support.d.ts"), join(dist, "support.d.ts"));
+copyFileSync(join(here, "../src/navigation.d.ts"), join(dist, "navigation.d.ts")); // the way (format 0.8), shared
 
 const version = (path) => readFileSync(path, "utf8");
 writeFileSync(join(dist, "THIRD-PARTY-LICENSES.txt"), [

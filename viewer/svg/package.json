@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/plan.css dist/plan.css",
+    "build": "tsc -p tsconfig.json && cp src/plan.css dist/plan.css && cp ../src/navigation.js ../src/navigation.d.ts dist/",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node test/run.mjs"
   },

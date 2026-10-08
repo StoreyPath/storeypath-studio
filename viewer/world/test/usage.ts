@@ -1,6 +1,6 @@
 // Type-checked by `npm run check`: the declarations describe the module as a
 // strict TypeScript application uses it.
-import { StoreyPathWorld, loadPackage, webglSupport, type Feature, type GivenItem, type WorldEvents, type WorldPoint } from '@storeypath/viewer-world';
+import { StoreyPathWorld, loadPackage, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents, type WorldPoint } from '@storeypath/viewer-world';
 import { webglSupport as check } from '@storeypath/viewer-world/support';
 
 export async function show(element: HTMLElement, data: ArrayBuffer): Promise<string | null> {
@@ -45,6 +45,15 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 	world.pause();
 	world.resume();
 	await world.reload(data, { floors: floor ? [floor] : [] });
+	// the way from the first kiosk to the office, without stairs (format 0.8)
+	const kiosk = pkg.items.find((i) => i.properties.type === 'KIOSK');
+	const way: Route | null = pkg.navigation && kiosk && office ? route(pkg, kiosk.id, office.id, { accessible: true }) : null;
+	if (way) {
+		console.log(way.steps.map((s) => s.text).join('; '), way.metres, way.changes[0]?.by);
+		await world.showRoute(way, { fly: false });
+		await world.flyRoute({ seconds: 8 });
+		world.clearRoute();
+	}
 	const again = await loadPackage(new Blob([data]));
 	world.destroy();
 	return again.project.id;

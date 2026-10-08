@@ -27,7 +27,28 @@ VDI desktops, kiosks with no GPU), is refused: the world does run there, at a
 frame a second or so.
 
 The module exports `StoreyPathWorld`, `loadPackage`, `StoreyPathPackage`,
-`TYPE_COLORS` and `webglSupport`; `dist/world.d.ts` declares them.
+`TYPE_COLORS`, `webglSupport` and, to find the way through a building (format 0.8),
+`route`, `Graph` and `shortest` (the module both viewers share); `dist/world.d.ts`
+declares them.
+
+```ts
+import { route, type Route } from "@storeypath/viewer-world";
+
+const pkg = await world.open(data);
+const way: Route | null = route(pkg, kioskItemId, officeId, { accessible: true });
+if (way) {
+  await world.showRoute(way);      // a ribbon over each floor of it, through the lift
+  await world.flyRoute({ seconds: 12 });
+}
+```
+
+`showRoute(route, { fly, color, casing, arrow, start, end })` draws the way as an
+edged ribbon just over each floor it walks on, seen through what is in front of it,
+joined through the lift or stairs between floors, its start and end marked, in the
+page's colours (CSS colours, light or dark as the page is; by default the plan
+viewer's); the dollhouse view of the whole building leaves out the floors above it.
+`flyRoute({ seconds })` takes the camera along it, the floors it is not on faded
+meanwhile; `clearRoute()` takes it away; `route` is the way shown.
 
 ## Pre-built 3D
 

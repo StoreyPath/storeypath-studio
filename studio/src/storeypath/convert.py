@@ -16,7 +16,7 @@ from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
-from .extract import (ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
+from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
                       keep_to_the_building, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
@@ -380,27 +380,99 @@ def _opening_type(source: str) -> str:
 DRAWN_NOTE = "drawn in review: where the drawing encloses no space"
 
 
+CARVE_SHARE = 0.5  # a space drawn this much inside the rooms found is cut out of them
+WAY_ROOM_M = 1.5  # its way through is on the edge with the most room in front of it, this deep
+CARVED_NOTE = "drawn in review: cut out of the room it was drawn in"
+
+
 def _drawn_spaces(ex: FloorExtraction, drawn, min_area: float) -> None:
-    """The spaces a person drew where the drawing encloses none (a colonnade between
-    columns), without what the rooms found already cover: added as spaces, and to
-    the floor's outline."""
+    """The spaces a person drew. Where the drawing encloses none (a colonnade between
+    columns): without what the rooms found already cover, and joined to the ways
+    through around it that led nowhere until then. Drawn mostly inside the rooms found
+    (a lift or stairs the drawing left in a corridor): cut out of them, with a way
+    through where they meet (no wall is drawn there); a room it covers whole is left as
+    it is. Added as spaces, and to the floor's outline."""
     from shapely import union_all
     from shapely.geometry import Polygon
 
     from .geometry import as_polygons
 
-    rooms = union_all([s.polygon for s in ex.spaces if not s.ignored]) if ex.spaces else None
     added = []
     for ring in drawn:
+        rooms = union_all([s.polygon for s in ex.spaces if not s.ignored]) if ex.spaces else None
         area = Polygon(ring).buffer(0)
+        if rooms is not None and not rooms.is_empty and area.intersection(rooms).area > CARVE_SHARE * area.area:
+            added += _carve(ex, area, min_area)
+            continue
         if rooms is not None and not rooms.is_empty:
             area = area.difference(rooms)
         for part in as_polygons(area):
             if part.area >= min_area:
                 ex.spaces.append(ExtractedSpace(polygon=part, layer="drawn", issues=[DRAWN_NOTE]))
                 added.append(part)
+                _join_loose_doors(ex, len(ex.spaces) - 1)
     if added and ex.outline is not None:
         ex.outline = union_all([ex.outline, *added])
+
+
+def _carve(ex: FloorExtraction, area, min_area: float) -> list:
+    """A space drawn inside rooms found: cut out of each (one it covers whole stays as
+    it is, and is left out of it), the largest part of each kept; and a way through
+    (an opening, "split") on the longest edge it shares with each."""
+    from shapely.geometry import LineString
+
+    from .geometry import as_polygons
+
+    hosts = []
+    for i, s in enumerate(ex.spaces):
+        if s.ignored or not s.polygon.intersects(area):
+            continue
+        rest = s.polygon.difference(area)
+        if rest.area < min_area:  # covered whole: it is the room drawn, as it was found
+            area = area.difference(s.polygon)
+            continue
+        if s.polygon.intersection(area).area < 0.01:
+            continue
+        s.polygon = max(as_polygons(rest), key=lambda p: p.area)
+        for z in ex.zones:
+            if z.space == i:
+                left = [p for p in as_polygons(z.polygon.difference(area)) if p.area >= 0.01]
+                if left:
+                    z.polygon = max(left, key=lambda p: p.area)
+        hosts.append(i)
+    out = []
+    for part in as_polygons(area.buffer(0)):
+        if part.area < min_area:
+            continue
+        ex.spaces.append(ExtractedSpace(polygon=part, layer="drawn", issues=[CARVED_NOTE]))
+        new = len(ex.spaces) - 1
+        out.append(part)
+        for i in hosts:
+            shared = part.exterior.intersection(ex.spaces[i].polygon.buffer(0.02))
+            edges = [LineString([a, b]) for g in getattr(shared, "geoms", [shared]) if isinstance(g, LineString)
+                     for a, b in zip(g.coords, list(g.coords)[1:])]
+            edges = [e for e in edges if e.length >= 0.3]
+            if not edges:
+                continue
+            # the edge that opens onto most of the room (not onto a strip left by a wall)
+            host = ex.spaces[i].polygon
+            span = max(edges, key=lambda e: (round(e.buffer(WAY_ROOM_M, cap_style="flat").difference(part)
+                                                   .intersection(host).area, 2), e.length))
+            ex.doors.append(ExtractedDoor(footprint=span.buffer(0.15, cap_style="flat"),
+                                          point=span.interpolate(0.5, normalized=True), connects=[i, new],
+                                          source="split", span=span, width=round(span.length, 3)))
+    return out
+
+
+def _join_loose_doors(ex: FloorExtraction, new: int, reach: float = 0.4) -> None:
+    """Ways through that led out of the floor (one space on their side) and open onto a
+    space drawn where there was none: joined to it."""
+    space = ex.spaces[new].polygon.buffer(reach)
+    for d in ex.doors:
+        if d.source == "window" or len(d.connects) != 1 or new in d.connects:
+            continue
+        if d.footprint.intersects(space):
+            d.connects.append(new)
 
 
 def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:

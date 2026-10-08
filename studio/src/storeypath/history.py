@@ -11,8 +11,8 @@ Every change is a row of the project's history in Studio's database (db/store.py
     part      what it changed: "object" (a space, zone or opening), "item", "edit"
               (what was drawn on the floor), "floor" (read again; taken over), "building",
               "project"
-    kind      the change: correct, reset, delete, restore, hide, show, capacity (an
-              object); add, move, turn, retype, values, carry, delete, restore (an
+    kind      the change: correct, reset, delete, restore, hide, show, capacity, link,
+              unlink, as found (an object); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
               open, import, floors, align, site, place, arrange, export, drawing…
     floors    the floors it changed (none: the building's, or the project's)
@@ -228,8 +228,12 @@ def _describe(e: dict) -> str:
             seats = (e.get("after") or {}).get("override") or {}
             return f"set {it} to seat {seats['capacity']}" if seats.get("capacity") is not None \
                 else f"left what {it} seats to its desks"
+        if kind == "link":  # a lift's or stairs' link to another floor's (stacks.py)
+            to = ((e.get("after") or {}).get("override") or {}).get("stack")
+            return f"linked {it} with {short(to)} on another floor" if to else f"linked {it} with another floor's"
         return {"reset": f"took the corrections off {it}", "delete": f"deleted {it}", "restore": f"restored {it}",
-                "hide": f"hid {it}", "show": f"showed {it} again"}.get(kind, f"changed {it}")
+                "hide": f"hid {it}", "show": f"showed {it} again", "unlink": f"unlinked {it} from other floors",
+                "as found": f"linked {it} through the floors as found"}.get(kind, f"changed {it}")
     if part == "item":
         verbs = {"add": "placed", "move": "moved", "turn": "turned", "values": "changed the details of",
                  "delete": "deleted", "restore": "restored"}

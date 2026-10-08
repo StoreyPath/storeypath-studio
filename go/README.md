@@ -2,7 +2,8 @@
 
 Reads StoreyPath packages (`*.storeypath`) for systems written in Go: the
 buildings, floors, spaces, zones and openings of a project with their stable IDs,
-and the furniture and equipment on its floors. Standard library only; Go 1.25.
+the furniture and equipment on its floors, and (format 0.8) the way from one place
+in a building to another. Standard library only; Go 1.25.
 
 ```go
 import storeypath "github.com/storeypath/storeypath/go"
@@ -63,6 +64,11 @@ for _, b := range pkg.Buildings {
   StoreyPath's review, `CapacityFrom` "review", or its desks' workplaces, "items")
   and `Grade` (who it is laid out for: its highest desk), defaults a system placing
   people may keep its own instead of; the catalogue's `Workplaces` and `Grade`.
+- Stacks (format 0.8): each lift, stairs and escalator space's `Stack`, the key
+  its spaces share on every floor it serves (nil on other spaces): which of them
+  are one.
+- Navigation (format 0.8): the building's walking network (`Navigation()`, nil for
+  a package without one) and the way on it (`Route`, below).
 - One building per package (format 0.7): `Manifest.Scope` names it; `Holds` says
   whether a package holds a building. Older packages may hold several, or a whole
   project; a StoreyPath project file (`.storeypath-project`) is refused by `Read`.
@@ -83,7 +89,7 @@ Properties a later format version adds are ignored, as the format asks, and so a
 is reported by `Validate` (`VERSION`), and `CheckVersion` says so from the
 manifest's `format_version` alone: what is not a format version (`major.minor`,
 a `.patch` if any, then a `-` or `+` suffix if any: ASCII digits and letters),
-another major version, or before 1.0 a newer minor one (0.8 for this 0.7
+another major version, or before 1.0 a newer minor one (0.9 for this 0.8
 reader), with a message to update the reader. `ReadManifest` reads the manifest
 alone, so a server can refuse a package before reading the rest of it:
 
@@ -93,6 +99,48 @@ if err == nil {
 	err = storeypath.CheckVersion(m.FormatVersion)
 }
 ```
+
+## Navigation
+
+A package of format 0.8 carries its building's walking network (`navigation.json`):
+doors and the points in front of them, a point in each space and zone, lifts and
+stairs on each floor, entrances and wayfinding kiosks, and the walks and rides
+between them. `Route` finds the way on it, the same way Studio and the viewers do
+(spec/FORMAT.md, "Navigation"; `../spec/conformance/routes.json` holds ways all of
+them must agree on): from a kiosk to an office, say, as a kiosk in a lobby does when
+someone types their employee number.
+
+```go
+// the kiosk is an item of the package (IsKiosk, KiosksOn); the office a space
+// (or a zone) the system keeps people in, by its ID
+way, err := pkg.Route(kioskItemID, officeSpaceID, storeypath.RouteOptions{})
+switch {
+case errors.Is(err, storeypath.ErrNoRoute): // no way (or none without stairs)
+case err != nil:                            // an ID the network does not know
+}
+for _, s := range way.Steps {
+	fmt.Println(s.Text) // "Walk 24 m along CORRIDOR to the lift", "Take the lift up to Floor 1", …
+}
+for _, leg := range way.Legs {
+	_ = leg.Points // the line to draw on leg.Floor, in the building's own metres
+}
+```
+
+- From and to: a node's ID (`kiosk:<item>`, `door:<opening>`, `room:<space>`, …),
+  a space's or zone's ID (where it is arrived at: a divided space's nearest zone),
+  or an item's (a kiosk's node; any other, the zone or space it stands in).
+- `RouteOptions{Accessible: true}`: lifts and ramps alone, no stairs or escalators.
+- A `Route` has its `Nodes`, `Legs` (the walking on each floor between rides: the
+  line to draw, as `LocalFrame` turns it onto the map), `Changes` (each ride: by
+  lift or stairs, from which floor to which, up or down), `Metres` and `Seconds`,
+  and `Steps`: each a `Kind` (start, walk, take, arrive), its values (places and
+  floors by ID, whole metres, the side the destination's door is on) and `Text` in
+  English. A system words steps in its own language from the kind and values.
+- `Navigation()` gives the network itself (`Nodes`, `Edges`, `Places` with what a
+  step calls them, `Floors`; `Node`, `Place`); `Navigation().Route` routes on it by
+  node, space and zone IDs alone. Both may be used from several goroutines.
+
+`ErrNoNavigation` is returned for a package without a network (older than 0.8).
 
 ## Tests
 

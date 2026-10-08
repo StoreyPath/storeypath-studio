@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StoreyPath Navigate</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <!-- the plan engine's look (viewer/svg, built: npm run build); without it the steps still show -->
+  <link rel="stylesheet" href="/viewer/svg/dist/plan.css">
+  <link rel="stylesheet" href="navigate.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/viewer/vendor/three/three.module.js",
+        "three/addons/": "/viewer/vendor/three/addons/",
+        "jszip": "/viewer/vendor/jszip.mjs"
+      }
+    }
+  </script>
+</head>
+<body class="navigate">
+  <aside id="panel">
+    <header>
+      <div id="account"></div>
+      <a id="back" class="back" href="/">← Projects</a>
+      <h1>Find the way</h1>
+      <div id="project-meta" class="meta"></div>
+    </header>
+
+    <section>
+      <label class="field">Building
+        <select id="building"></select>
+      </label>
+    </section>
+
+    <section class="ends" aria-label="From where to where">
+      <div class="picker" id="from">
+        <label class="field" for="from-input">From <span class="hint">a kiosk, an entrance or any room</span></label>
+        <input id="from-input" type="search" autocomplete="off" placeholder="Search a kiosk, entrance or room"
+               role="combobox" aria-expanded="false" aria-controls="from-list" aria-autocomplete="list">
+        <ul id="from-list" class="choices" role="listbox" hidden></ul>
+      </div>
+      <button id="swap" type="button" class="icon swap" title="Swap from and to" aria-label="Swap from and to">⇅</button>
+      <div class="picker" id="to">
+        <label class="field" for="to-input">To <span class="hint">a room, by name or number</span></label>
+        <input id="to-input" type="search" autocomplete="off" placeholder="Search a room by name or number"
+               role="combobox" aria-expanded="false" aria-controls="to-list" aria-autocomplete="list">
+        <ul id="to-list" class="choices" role="listbox" hidden></ul>
+      </div>
+      <label class="check"><input type="checkbox" id="accessible"> Avoid stairs <span class="hint">lifts and ramps only</span></label>
+    </section>
+
+    <section id="result" hidden aria-live="polite">
+      <div id="summary"></div>
+      <ol id="steps"></ol>
+    </section>
+    <p id="message" class="meta" role="status"></p>
+  </aside>
+
+  <main id="views">
+    <div id="bar">
+      <div class="segmented" id="view-mode" role="group" aria-label="View">
+        <button type="button" data-view="plan" class="active" title="Each floor's plan, with the way on it">Plan</button>
+        <button type="button" data-view="3d" title="The building in 3D, with the way through it">3D</button>
+        <button type="button" data-view="both" title="The plan and the 3D view side by side">Both</button>
+      </div>
+      <nav id="floors" aria-label="Floors"></nav>
+      <span class="grow"></span>
+      <button id="fit" type="button" class="only-plan" title="Show the whole floor; press again for the way on it alone">Fit</button>
+      <button id="fly" type="button" class="only-3d" title="Move the 3D view along the way" disabled>Fly along</button>
+    </div>
+    <div id="panes" class="plan">
+      <div id="plan-pane" class="pane">
+        <div id="plan"></div>
+        <p id="plan-note" class="note" hidden></p>
+      </div>
+      <div id="world-pane" class="pane">
+        <div id="world3d"></div>
+        <p id="world-note" class="note" hidden></p>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" hidden></div>
+  <script type="module" src="navigate.js"></script>
+</body>
+</html>

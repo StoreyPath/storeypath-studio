@@ -1,12 +1,14 @@
 """The review editor's calls: a floor, its drawing and print, what is drawn on it, its
-items, its spaces, zones and openings corrected, and the floor read again; who edits
-it (one person at a time: the first change takes its lock, Done editing lets it go, an
-admin may take it over)."""
+items, its spaces, zones and openings corrected, the floor read again, its lifts and
+stairs drawn and linked through the floors (vertical.py); who edits it (one person at a
+time: the first change takes its lock, Done editing lets it go, an admin may take it
+over)."""
 
 from __future__ import annotations
 
 from fastapi import Request
 
+from .. import vertical
 from ..review import floor_print, floor_print_png
 from .calls import Body, Calls, May, TheStudio, answer
 
@@ -65,7 +67,7 @@ def convert_floor(code: str, floor_id: str, request: Request, may: May, studio: 
 
 @calls.post("/api/projects/{code}/objects/{object_id}")
 def correct(code: str, object_id: str, request: Request, may: May, studio: TheStudio, body: Body):
-    may.object(code, object_id)
+    may.object(code, object_id, body)
     return answer(request, studio.review(code).correct(object_id, body, by=may.user, editor=may.editor))
 
 
@@ -84,3 +86,24 @@ def take_over(code: str, floor_id: str, request: Request, may: May, studio: TheS
     if done["from"] is not None:
         may.audit("floor taken over", floor_id, project=code, was=done["from"].get("username"))
     return answer(request, done)
+
+
+# ---- lifts and stairs: drawn where the drawing leaves them out, linked through the floors ----
+
+@calls.post(F + "/vertical")
+def add_vertical(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.floor(code, floor_id, "edit")
+    return answer(request, vertical.add(studio, code, floor_id, body, by=may.user, editor=may.editor))
+
+
+@calls.get("/api/projects/{code}/objects/{object_id}/stack")
+def stack(code: str, object_id: str, request: Request, may: May, studio: TheStudio):
+    sight = may.stack(code, object_id)
+    return answer(request, vertical.serves(studio.workspace(code), object_id, sight, studio.store.locks(code),
+                                           may.user.id if may.user is not None else None))
+
+
+@calls.post("/api/projects/{code}/objects/{object_id}/copy")
+def copy_vertical(code: str, object_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.copy_vertical(code, object_id, body)
+    return answer(request, vertical.copy(studio, code, object_id, body, by=may.user, editor=may.editor))

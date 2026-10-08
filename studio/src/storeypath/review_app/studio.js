@@ -657,6 +657,9 @@ function buildingsCard(code, p) {
   }
   return el("section", { class: "buildings" }, buildings.map((b) => el("div", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, b.name), el("code", { class: "muted small" }, b.id),
+      b.floors.some((f) => f.converted) && onBuilding(p, b.id, "view")
+        ? el("a", { class: "button", href: `/navigate.html?${new URLSearchParams({ p: code, building: b.id })}`,
+          title: "Find the way in this building: from a kiosk, an entrance or any room, to any room" }, "Navigate") : null,
       b.floors.some((f) => f.converted)
         ? el("a", { class: "button", href: worldUrl(code, { building: b.id }), target: "_blank" }, "3D") : null),
     el("table", { class: "floors" },

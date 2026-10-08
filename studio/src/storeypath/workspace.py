@@ -200,6 +200,10 @@ class Override(BaseModel):
     ignored: bool | None = None
     # how many people it is meant to seat, set by a person; None: as its desks say
     capacity: int | None = Field(None, ge=0, le=10000)
+    # a lift's, stairs' or escalator's link to the same one on other floors (stacks.py),
+    # set by a person: the ID of a space on another floor it is linked with, or "" for
+    # linked with none; None: linked as found (same object code, or footprints overlapping)
+    stack: str | None = Field(None, max_length=100)
 
 
 class Reading(BaseModel):
@@ -469,11 +473,12 @@ class Workspace(BaseModel):
             "name": ((o.name or None) if o and o.name is not None else record.name),
             "number": ((o.number or None) if o and o.number is not None else record.number),
             # corrected, or checked by a person: a correction that sets its type, name or
-            # number, or nothing at all (accepted as it is); with a capacity, accepted as it
-            # is says so with hidden false (nothing is hidden as detected). A capacity
-            # alone is not a check: how many a room seats says nothing of what it is.
+            # number, or nothing at all (accepted as it is); with a capacity (or a link to
+            # other floors), accepted as it is says so with hidden false (nothing is hidden
+            # as detected). A capacity alone is not a check: how many a room seats says
+            # nothing of what it is; nor a lift's link alone.
             "corrected": o is not None and (o.type is not None or o.name is not None or o.number is not None
-                                            or o.capacity is None or o.hidden is False),
+                                            or (o.capacity is None and o.stack is None) or o.hidden is False),
             "hidden": bool(o and o.hidden),
             "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
             "capacity": o.capacity if o is not None else None,

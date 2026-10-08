@@ -10,6 +10,7 @@ import { LocalFrame } from "../dist/frame.js";
 import { floorFromPackage } from "../dist/package.js";
 import { inside } from "../dist/geometry.js";
 import { FORMAT_VERSION, readPackage as readInBrowsers } from "../dist/read.js";
+import { Graph, route } from "../dist/navigation.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -131,9 +132,9 @@ test("a package of a newer minor version, or of no version, is refused; older on
       return e.message;
     }
   };
-  for (const v of ["0.7.0", "0.7.12", "0.7", "0.6.0", "0.3.1", "0.7.1-rc.1", "0.7.0+build.5"]) equal(await said(v), "read", v);
-  for (const v of ["0.8.0", "0.8", "0.99.0", "0.8.0-rc1", "1.0.0", "2.7.0"]) {
-    equal(await said(v), `This package is format ${v}, newer than this viewer's 0.7: update the viewer.`, v);
+  for (const v of ["0.8.0", "0.8.12", "0.8", "0.7.0", "0.6.0", "0.3.1", "0.8.1-rc.1", "0.8.0+build.5"]) equal(await said(v), "read", v);
+  for (const v of ["0.9.0", "0.9", "0.99.0", "0.9.0-rc1", "1.0.0", "2.7.0"]) {
+    equal(await said(v), `This package is format ${v}, newer than this viewer's 0.8: update the viewer.`, v);
   }
   for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
     "٠.٧", "０.７", 0.7, null, undefined]) {
@@ -282,6 +283,73 @@ test("an unplaced building reads in its own metres too", () => {
   for (const s of plan.spaces) truly(inside(s.polygons, s.marker), `${s.id}: its label point is inside it`);
 });
 
+// format 0.8: the walking network, and the way on it (navigation.js, the module both
+// viewers share, as the plan engine's package carries it)
+const routes = JSON.parse(readFileSync(join(conformance, "routes.json"), "utf8"));
+const packages = new Map();
+const packageOf = (name) => {
+  if (!packages.has(name)) packages.set(name, readPackage(join(conformance, "packages", name)));
+  return packages.get(name);
+};
+/** The same, whatever the order of an object's keys; numbers to a tolerance. */
+const sameAs = (a, b, tolerance, what) => {
+  if (typeof a === "number" && typeof b === "number") {
+    if (!(Math.abs(a - b) <= tolerance)) throw new Error(`${what}: ${a} vs ${b}`);
+  } else if (a && b && typeof a === "object" && typeof b === "object") {
+    equal(Object.keys(a).sort(), Object.keys(b).sort(), `${what}: its keys`);
+    for (const k of Object.keys(a)) sameAs(a[k], b[k], tolerance, `${what}.${k}`);
+  } else equal(a, b, what);
+};
+
+for (const c of routes.routes) {
+  test(`the way ${c.name}: found as Studio finds it`, () => {
+    const got = route(packageOf(c.package), c.from, c.to, { accessible: c.accessible });
+    const want = c.expect;
+    truly(got, "no way found");
+    sameAs(got.nodes, want.nodes, 0, "nodes");
+    sameAs(got.changes, want.changes, 0, "changes");
+    sameAs(got.steps, want.steps, 0, "steps");
+    sameAs(got.legs, want.legs, 0, "legs");
+    sameAs([got.metres, got.seconds], [want.metres, want.seconds], Math.min(routes.tolerance_m, routes.tolerance_s), "length and time");
+    sameAs(got, want, 0, "the whole way");
+  });
+}
+
+test("a 0.8 package carries its network, and its lifts' and stairs' stacks", async () => {
+  const nav = hq.navigation;
+  truly(nav && nav.nodes.length > 200 && nav.edges.length > 200 && nav.buildings[0] === HQ, "its network");
+  equal((await readInBrowsers(readFileSync(join(conformance, "packages/campus-hq.storeypath")))).navigation, nav, "read in browsers too");
+  equal(pkg.navigation, null, "an older package has none");
+  const lifts = hq.spaces.filter((s) => s.properties.type === "elevator");
+  equal(lifts.length, 6, "two lifts on three floors");
+  const stacks = [...new Set(lifts.map((s) => s.properties.stack))];
+  equal(stacks.length, 2, "two stacks");
+  for (const key of stacks) truly(lifts.some((s) => s.id === key && s.properties.floor_id === `${HQ}-F00`), `${key}: its ground floor space`);
+  truly(hq.spaces.filter((s) => s.properties.type === "office").every((s) => s.properties.stack === null), "an office has none");
+  const plan = floorFromPackage(hq, `${HQ}-F01`);
+  equal(plan.spaces.filter((s) => s.stack).map((s) => s.stack).sort(), [...stacks, hq.spaces.find((s) => s.properties.type === "stairs").properties.stack].sort(),
+    "the plan's lifts and stairs carry theirs");
+});
+
+test("no way is null; an ID the network does not have, or a package without one, is an error", () => {
+  const easy = routes.routes.find((c) => c.accessible && c.package === "campus-hq.storeypath");
+  const noLifts = { ...hq.navigation, edges: hq.navigation.edges.filter((e) => e.kind !== "lift") };
+  equal(route(noLifts, easy.from, easy.to, { accessible: true, items: hq.items }), null, "no lift: no way without stairs");
+  truly(route(noLifts, easy.from, easy.to, { items: hq.items }).changes[0].by === "stairs", "with stairs, a way");
+  const said = (fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return e.message;
+    }
+    return "";
+  };
+  truly(/no node, place or item NOWHERE/.test(said(() => route(hq, "NOWHERE", easy.to))), "an unknown ID");
+  truly(/no walking network/.test(said(() => route(pkg, "A", "B"))), "a package of 0.6");
+  const g = new Graph(hq.navigation);
+  equal(route(g, easy.to, easy.to).steps.at(-1).side, "here", "a Graph routes too");
+});
+
 // ---- in Chrome ----------------------------------------------------------------
 
 const browser = [];
@@ -312,7 +380,8 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
       ap: [ap.classList.contains("sp-item-overhead"), ap.querySelectorAll("path").length, /scale\(1,-1\)/.test(ap.getAttribute("transform"))],
       fronts: count(".sp-item-front"), buttons: count('.sp-items [role="button"][tabindex="0"]'),
       fill: getComputedStyle(document.querySelector(".sp-item-copier .sp-item-body")).fill,
-      labelsLast: document.querySelector(".sp-labels").previousElementSibling === document.querySelector(".sp-world") };
+      labelsLast: [...document.querySelector(".sp-plan").children].indexOf(document.querySelector(".sp-labels"))
+        > [...document.querySelector(".sp-plan").children].indexOf(document.querySelector(".sp-world")) };
   });
   equal(got.layers.indexOf("sp-items"), got.layers.indexOf("sp-containers") + 1, "over the spaces");
   truly(got.layers.indexOf("sp-items") < got.layers.indexOf("sp-walls") && got.labelsLast, `under the walls and labels: ${got.layers}`);
@@ -671,6 +740,91 @@ inChrome("a new floor keeps the view when asked to", async (page) => {
   equal(await page.run(() => window.engine.camera()), cam, "same view");
   equal(await page.run(() => document.querySelector("svg").dataset.cam.split(",").length), 3, "data-cam");
   truly((await page.run(() => window.cameras)) > 0, "camerachange events");
+});
+
+// a way from the kiosk in the Headquarters' reception up to an office, by lift
+const lifted = routes.routes.find((c) => c.accessible && c.package === "campus-hq.storeypath" && c.expect.changes.length);
+const floorNames = Object.fromEntries(hq.floors.map((f) => [f.id, f.properties.name]));
+
+inChrome("a way is drawn on the floor it is on: its line, arrows, its start, and where it changes floor", async (page) => {
+  const way = route(hq, lifted.from, lifted.to, { accessible: true });
+  const [ground, up] = [way.legs[0], way.legs[1]];
+  await page.run((p) => window.fresh({}, p), floorFromPackage(hq, ground.floor_id));
+  const look = (shown = way) => page.run((way, names) => {
+    if (way) window.engine.showRoute(way, { floorName: (id) => names[id] });
+    const mark = (s) => [...document.querySelectorAll(s)].map((m) => ({ at: [Number(m.dataset.planX), Number(m.dataset.planY)],
+      screen: m.getAttribute("transform"), text: m.querySelector("text")?.textContent ?? null, side: m.dataset.spRouteChange ?? null }));
+    const r = window.engine.svg.getBoundingClientRect();
+    return { legs: document.querySelector(".sp-route").dataset.spRoute ?? null, lines: document.querySelectorAll(".sp-route path").length,
+      arrows: document.querySelectorAll(".sp-route-arrow").length, start: mark("[data-sp-route-start]"),
+      end: mark("[data-sp-route-end]"), change: mark("[data-sp-route-change]"),
+      box: [r.width, r.height] };
+  }, shown, floorNames);
+  const at = (p) => page.run((p) => window.engine.toScreen(p).map((v) => Math.round(v * 100) / 100), p);
+  const where = (m) => m.screen.match(/translate\(([-\d.]+),([-\d.]+)\)/).slice(1).map(Number);
+  let got = await look();
+  equal([got.legs, got.lines, got.start.length, got.end.length, got.change.length], ["1", 2, 1, 0, 1], "the ground floor's leg");
+  truly(got.arrows >= 2, `arrows along it: ${got.arrows}`);
+  near(got.start[0].at, ground.points[0], 0.001, "the start, at the way's first point");
+  near(where(got.start[0]), await at(ground.points[0]), 1, "…on the screen, to a pixel");
+  equal([got.change[0].side, got.change[0].text], ["to", "Lift to Floor 1"], "where it leaves the floor");
+  near(got.change[0].at, ground.points.at(-1), 0.001, "…at the lift");
+  // the view moves: the marks with it
+  await page.run(() => window.engine.zoomBy(2, [300, 200]));
+  got = await look(null);
+  near(where(got.start[0]), await at(ground.points[0]), 1, "the start, after zooming");
+  // another floor: its leg, kept
+  await page.run((p) => window.engine.setFloor(p), floorFromPackage(hq, up.floor_id));
+  got = await look(null);
+  equal([got.legs, got.start.length, got.end.length, got.change.length], ["1", 0, 1, 1], "the first floor's leg");
+  equal([got.change[0].side, got.change[0].text], ["from", "Lift from Ground floor"], "where it comes onto the floor");
+  near(got.end[0].at, up.points.at(-1), 0.001, "the end, at the way's last point");
+  near(where(got.end[0]), await at(up.points.at(-1)), 1, "…on the screen, to a pixel");
+  // a floor it does not go to: nothing; and taken away
+  await page.run((p) => window.engine.setFloor(p), floorFromPackage(hq, `${HQ}-F02`));
+  got = await look(null);
+  equal([got.legs, got.lines, got.start.length, got.end.length, got.change.length, got.arrows], [null, 0, 0, 0, 0, 0], "the second floor");
+  await page.run((p) => window.engine.setFloor(p), floorFromPackage(hq, up.floor_id));
+  equal((await look(null)).lines, 2, "back on the first floor");
+  await page.run(() => window.engine.clearRoute());
+  got = await look(null);
+  equal([got.legs, got.lines, got.end.length, got.change.length, got.arrows], [null, 0, 0, 0, 0], "cleared");
+  equal(await page.run(() => window.engine.route), null, "no way shown");
+});
+
+inChrome("a way is under the labels, its line as wide at any zoom, styled by the host's CSS", async (page) => {
+  const way = route(hq, lifted.from, lifted.to, { accessible: true });
+  await page.run((p) => window.fresh({}, p), floorFromPackage(hq, way.legs[0].floor_id));
+  const got = await page.run((way) => {
+    window.engine.showRoute(way, { fit: true });
+    const svg = window.engine.svg;
+    const order = [...svg.children].map((c) => c.getAttribute("class"));
+    const world = [...document.querySelector(".sp-world").children].map((c) => c.getAttribute("class"));
+    const line = document.querySelector(".sp-route-line");
+    const width = () => line.getBoundingClientRect();
+    const before = getComputedStyle(line).strokeWidth;
+    window.engine.zoomBy(3);
+    const after = getComputedStyle(line).strokeWidth;
+    svg.style.setProperty("--sp-route", "rgb(1, 2, 3)");
+    const styled = getComputedStyle(line).stroke;
+    // fitted: the leg's points inside the plan's box
+    const r = svg.getBoundingClientRect();
+    return { order, world, before, after, styled, effect: getComputedStyle(line).vectorEffect, box: [r.width, r.height] };
+  }, way);
+  truly(got.order.indexOf("sp-route-marks") < got.order.indexOf("sp-labels") && got.order.indexOf("sp-world") < got.order.indexOf("sp-route-marks"),
+    `the marks over the plan, under the labels: ${got.order}`);
+  equal(got.world.at(-1), "sp-route", "the line over the walls and doors");
+  equal([got.before, got.after, got.effect], ["5px", "5px", "non-scaling-stroke"], "as wide at any zoom");
+  equal(got.styled, "rgb(1, 2, 3)", "the host's colour");
+  await page.run((way) => { window.engine.setCamera({ k: 0.5, tx: 0, ty: 0 }); window.engine.showRoute(way, { fit: true }); }, way);
+  const inView = await page.run((points) => {
+    const r = window.engine.svg.getBoundingClientRect();
+    return points.every((p) => {
+      const [x, y] = window.engine.toScreen(p);
+      return x >= 0 && y >= 0 && x <= r.width && y <= r.height;
+    });
+  }, way.legs[0].points);
+  truly(inView, "fit: the way on this floor in view");
 });
 
 // ---- run ----------------------------------------------------------------------

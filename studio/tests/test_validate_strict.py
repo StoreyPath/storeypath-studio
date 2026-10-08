@@ -98,7 +98,8 @@ def test_a_format_version_is_read_strictly():
     assert version_tuple("0.7.0") == (0, 7) and version_tuple("0.7") == (0, 7)
     assert version_tuple("0.7.1-rc.1") == (0, 7) and version_tuple("0.7.0+build.5") == (0, 7)
     assert version_problem(FORMAT_VERSION) is None and version_problem("0.7.1-rc.1") is None
-    for newer in ("0.8.0-rc1", "0.8-rc1", "0.8", "0.10.0"):  # 0.8-rc1 was read as 0.0, and taken
+    assert version_problem("0.8.1-rc.1") is None and version_problem("0.7.0") is None
+    for newer in ("0.9.0-rc1", "0.9-rc1", "0.9", "0.10.0"):  # 0.9-rc1 was read as 0.0, and taken
         assert "newer" in version_problem(newer), newer
     for bad in ("", " 0.7.0", "0.7.0 ", "0.7.0\n", "1_0.7", "0.8a.0", "0.٧.0", "0", "0.7.0.1", "v0.7.0"):
         with pytest.raises(ValueError):
@@ -107,7 +108,7 @@ def test_a_format_version_is_read_strictly():
 
 
 @pytest.mark.parametrize("version, why", [("0.8a.0", "is not a version"), (" 8", "is not a version"),
-                                          ("", "is not a version"), ("0.8-rc1", "newer than this Studio")])
+                                          ("", "is not a version"), ("0.9-rc1", "newer than this Studio")])
 def test_a_package_whose_version_is_not_one_it_reads_is_refused(tmp_path, version, why):
     out = rewritten(tmp_path, **{"manifest.json": edited(lambda m: m.update(format_version=version))})
     errors = validate_package(out)

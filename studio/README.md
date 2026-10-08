@@ -214,6 +214,7 @@ log).
 | `POST …/convert` | edit on the project; with `floor`, edit on that floor |
 | `POST …/buildings/<id>/site`, `…/placement` | edit on the building |
 | `POST …/locations/<id>/arrange`, `…/placement` | edit on the project |
+| `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
 | `POST …/export {building}` | edit on that building |
 | `GET …/exports/<file>` | view on the building it holds (on the project, for one no export entered) |
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
@@ -223,6 +224,9 @@ log).
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and their locks) |
 | `POST …/floors/<id>/release` | view on the floor: their own lock of it let go (Done editing; leaving the floor) |
 | `POST …/floors/<id>/take-over` | an admin who sees the floor: its lock taken from whoever holds it, recorded in the history and the audit log |
+| `POST …/floors/<id>/vertical {type, space}` | edit on the floor, and its lock: a lift, stairs or escalator drawn there ([Navigation](#navigation)) |
+| `GET …/objects/<id>/stack` | view on its floor: the floors a lift or stairs serves, those they may see |
+| `POST …/objects/<id>/copy {floors}` | edit on its floor and on each floor it is added on (each floor's lock: one someone else edits is left out, and named) |
 | `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
 | `GET backup` | admin, or `backup` |
 | `GET admin/helpers`, `POST admin/helpers {helpers}`, `POST admin/helpers/test {url, key?}` | admin: the GPU helpers ([Looking at the plans](#looking-at-the-plans-vision)) |
@@ -650,6 +654,42 @@ its items' types are not in the catalogue).
 
 A space's or zone's capacity is the number set in review, else the workplaces of the
 items standing in it; its grade is the highest grade among its desks.
+
+## Navigation
+
+Every package carries its building's walking network (`navigation.json`, format 0.8:
+[navigation.py](src/storeypath/navigation.py), spec/FORMAT.md "Navigation"): each door
+and opening and the points in front of it, a point in each space and zone, the lifts
+and stairs on each floor by their stack, entrances and wayfinding kiosks, and the
+walks and rides between them. It is made at export (and in the previews Studio's own
+viewers show) in a fraction of a second for most buildings; a floor of 900 rooms takes
+a few seconds. Studio, the Go module and the viewers find the same way on it
+(`spec/conformance/routes.json`).
+
+**Navigate** (`navigate.html?p=<code>&building=<id>`, reached from a building on the
+project page or Review's toolbar) finds the way between two places of a building, as a
+kiosk in its lobby would show it. Choose where to start (a wayfinding kiosk, an
+entrance or any room) and where to go (any room, by name or number), optionally
+avoiding stairs. The page lists the steps ("Walk 48 m along CORRIDOR to the lift",
+"Take the lift up to Floor 1", "OFFICE 112 is on your left") with the length and time,
+and draws the way on each floor's plan and through the building in 3D (*Fly along*);
+its address keeps what it shows. It needs view on the whole building. Its call,
+`GET /api/projects/<code>/buildings/<id>/navigation`, answers the building's network as
+it is now (worked out once a version of the project); with `from`, `to` (a kiosk's
+item, a node, a space, zone or item ID) and `accessible=1`, the way between them (404
+when there is none).
+
+**Lifts and stairs a drawing leaves out**: Review's *Stairs*, *Lift* and *Escalator*
+buttons draw one (two opposite corners and Enter for a rectangle, or its corners); it
+is added already typed, cut out of the room it is drawn in with a way through, and the
+floor is read again. A lift's or stairs' editor lists the floors of its building it
+serves and what is linked there (the same code, drawn over it, or linked by hand);
+*Add on floors…* draws it where it is on the floors ticked, typed and linked to it;
+*Link with…*, *Unlink* and *Link as found* correct the link. Each takes the floors'
+locks as any change does. Packages carry the result as each space's `stack`
+([stacks.py](src/storeypath/stacks.py)), and the way rides those lifts and stairs.
+Calls: `POST …/floors/<id>/vertical`, `GET …/objects/<id>/stack`,
+`POST …/objects/<id>/copy`, and `{"stack": …}` on a space's correction.
 
 ## Other settings
 

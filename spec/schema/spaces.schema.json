@@ -253,6 +253,19 @@
           "description": "who it is laid out for (format 0.7): the highest grade among the desks standing in it (president, c_level, director, manager, section_head, senior, junior); null without one",
           "title": "Grade"
         },
+        "stack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "a lift's, stairs', escalator's (or a ramp's between floors) stack (format 0.8): the same key on every floor the same one serves (the ID of its space on the lowest of them), no other's; null for any other space",
+          "title": "Stack"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for (a shaft, a plant room)",

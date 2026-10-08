@@ -70,6 +70,8 @@ install `three` and `jszip` alongside it.
 | `setXray(on)`, `setCutaway(on)`, `setLabels(on)`, `setShowHidden(on)`, `setExplode(m)` | |
 | `setItems(on)` | furniture and equipment: `true`, `false`, or `null` (shown when one floor is) |
 | `plan(floorId)` | a floor's walls, rooms, items and obstacles in local meters, for drawing a minimap |
+| `showRoute(route, { fly, color, casing, arrow, start, end })` | draw a way (`route()`, below): an edged ribbon over each floor it walks on, through the lift or stairs between them, its start and end marked, in the page's colours (CSS colours; by default the plan viewer's); with `fly`, the camera goes along it |
+| `flyRoute({ seconds })` | take the camera along the way shown, the floors it is not on faded meanwhile (a promise); `clearRoute()` takes it away; `route` is the way shown |
 | `destroy()` | |
 
 Properties: `package`, `building`, `floor`, `mode`, `selected`, `room` (the space
@@ -108,6 +110,36 @@ openings' `span` (format 0.1); a package without them shows rooms but no walls.
 
 [examples/world](examples/world) is a complete page: floor picker, dollhouse
 controls, room details, the walking HUD and minimap.
+
+## Finding the way
+
+A package of format 0.8 carries its building's walking network (`navigation.json`,
+`pkg.navigation`; null in older packages). [src/navigation.js](src/navigation.js),
+one module both viewers share (no dependencies), finds the way on it exactly as
+StoreyPath Studio and the Go module do (spec/FORMAT.md, "Navigation (0.8)";
+spec/conformance/routes.json):
+
+```js
+import { route } from "@storeypath/viewer/navigation"; // or from @storeypath/viewer, -world, -svg
+
+const pkg = await loadPackage("/files/headquarters.storeypath");
+// from a kiosk (its item's ID) to an office (a space's, a zone's, an item's or a node's ID)
+const way = route(pkg, "K7Q2XM-I000017", "K7Q2XM-RUH-HQ-F01-0069", { accessible: true });
+way.steps.map((s) => s.text);
+// ["Start at the kiosk in RECEPTION 017", "Walk 48 m along CORRIDOR to the lift",
+//  "Take the lift up to Floor 1", "Walk 24 m along CORRIDOR to OFFICE 112", "OFFICE 112 is on your left"]
+world.showRoute(way, { fly: true });
+```
+
+`route(pkg, from, to, { accessible })` answers the way: `nodes`, `legs` (the walking
+on each floor: `floor_id`, `points` in the building's own metres, `metres`),
+`changes` (each ride between floors: `by`, `from_floor_id`, `to_floor_id`,
+`floors`, `direction`), `metres`, `seconds` and `steps` (each a `kind` — `start`,
+`walk`, `take`, `arrive` — its values, and its `text` in English, for a system to
+word in its own language); `null` when there is none (none without stairs, with
+`accessible`); it throws for an ID the network does not have. `Graph` and
+`shortest` are there for more. Spaces of lifts and stairs carry their `stack`: the
+same on every floor one serves.
 
 ## The map view
 

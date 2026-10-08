@@ -1,10 +1,11 @@
 """The conformance corpus: what every reader of the format (Studio's Python, the Go
 module in go/, the viewer's JavaScript) must read the same way.
 
-Packages of this format (0.7: one building per package), made by ``campus``: one
-project, the demo campus (two buildings placed on the map, one floor's corridor
-divided into two zones by a line drawn in review, and furniture and equipment,
-furnish below), exported a building at a time:
+Packages of this format (0.8: one building per package, with its walking network),
+made by ``campus``: one project, the demo campus (two buildings placed on the map,
+with lifts and stairs through their floors, one floor's corridor divided into two
+zones by a line drawn in review and named there, CORRIDOR and HALL, and furniture and
+equipment, furnish below), exported a building at a time:
 
 - packages/campus-hq.storeypath (export 1) and campus-annex.storeypath (export 2):
   the Headquarters with desks of several grades in offices (two in one office, one
@@ -37,6 +38,13 @@ F0-322 retyped, the open office's south half divided again);
 simple-office-world.storeypath (``world``: simple-office pre-built in 3D, as Studio
 exports it when Node.js is there).
 
+routes.json (``routes``, which ``campus`` runs too): ways on campus-hq and
+campus-annex (format 0.8, Navigation) that every reader must find the same, each
+from a place to a place (a kiosk's item, an entrance, a room, a zone, a desk), some
+on lifts alone (accessible), with the way Studio finds: its nodes, legs, changes of
+floor, length, time and steps. Kept to the packages as they are: run ``routes``
+alone after a change to routing that leaves the packages as they are.
+
 localframe.json: points in Studio's local drawing metres and where they are on
 earth, for each building's placement, as Studio's projection gives them: a reader
 that turns lon/lat back into local metres must agree to a millimetre.
@@ -44,7 +52,7 @@ that turns lon/lat back into local metres must agree to a millimetre.
 Readers make their own broken variants of these packages to test their checks.
 Run from studio/ after a format change, and commit the result:
 
-    uv run python ../spec/conformance/make.py campus           # one step: campus, simple-office, world
+    uv run python ../spec/conformance/make.py campus           # one step: campus, simple-office, world, routes
 
 Every run makes new projects, so new IDs: remake only what changed. ``world`` makes
 no project: it bakes simple-office as it is (it needs Node.js), so run it after a
@@ -61,7 +69,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-STEPS = ("campus", "simple-office", "world")
+STEPS = ("campus", "simple-office", "world", "routes")
 
 
 def main(names: list[str]) -> None:
@@ -78,6 +86,8 @@ def main(names: list[str]) -> None:
             simple_office(work)
         if "world" in names:
             world()
+        if "campus" in names or "routes" in names:
+            routes()
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -137,6 +147,12 @@ def campus(work: Path) -> None:
     mid = (x0 + x1) / 2
     ws.floor(f_id).edits.dividers.append([[mid, y0 - 0.1], [mid, y1 + 0.1]])
     convert_floor(ws, f_id, ws_path.parent)
+    # in review, its halves named and typed (the corridor's label lies on the line drawn)
+    from storeypath.workspace import Override
+
+    west, east = sorted((r for r in ws.floor_objects(f_id) if r.kind == "zone"), key=lambda r: shape(r.geometry).bounds[0])
+    ws.overrides[west.id] = Override(type="corridor", name="CORRIDOR")
+    ws.overrides[east.id] = Override(type="open_area", name="HALL")
     furnish(ws)
     ws.exports = []  # the demo's own exports aside: these are the project's first
     hq, annex = (make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings)
@@ -172,6 +188,59 @@ def campus(work: Path) -> None:
                             "local": [x, y], "lonlat": [lon, lat]})
     (HERE / "localframe.json").write_text(json.dumps({"tolerance_m": 0.001, "vectors": vectors}, indent=1) + "\n")
     print(f"wrote {out}/campus-hq, campus-annex, campus-hq-2 and campus-annex-2 (.storeypath), and localframe.json")
+
+
+def routes() -> None:
+    """routes.json: ways on campus-hq and campus-annex, as Studio finds them on the
+    packages' own networks (navigation.json), as every reader must."""
+    from storeypath.navigation import Graph, route
+
+    def read(name: str) -> tuple[dict, dict, dict]:
+        with zipfile.ZipFile(HERE / "packages" / name) as z:
+            nav = json.loads(z.read("navigation.json"))
+            items = {f["id"]: f for f in json.loads(z.read("items.geojson"))["features"]}
+            spaces = {f["id"]: f for f in json.loads(z.read("spaces.geojson"))["features"]}
+            spaces |= {f["id"]: f for f in json.loads(z.read("zones.geojson"))["features"]}
+        return nav, items, spaces
+
+    nav, items, spaces = read("campus-hq.storeypath")
+
+    def unit(floor: str, number: str) -> str:  # a space or zone by its floor (code) and number
+        return next(i for i, f in sorted(spaces.items()) if f["properties"]["floor_id"].endswith(floor)
+                    and f["properties"]["number"] == number)
+
+    def item(kind: str, floor: str) -> str:
+        return next(i for i, f in sorted(items.items()) if f["properties"]["type"] == kind
+                    and f["properties"]["floor_id"].endswith(floor))
+
+    kiosk = item("KIOSK", "HQ-F00")
+    entrance = next(n["id"] for n in nav["nodes"] if n["kind"] == "entrance" and n["floor_id"].endswith("HQ-F00"))
+    zone_desk = next(i for i, f in sorted(items.items()) if f["properties"]["zone_id"])
+    cases = [
+        ("the kiosk to an office upstairs", "campus-hq.storeypath", kiosk, unit("HQ-F01", "112"), False),
+        ("the kiosk to an office upstairs, without stairs", "campus-hq.storeypath", kiosk, unit("HQ-F01", "112"), True),
+        ("the kiosk to an office two floors up, without stairs", "campus-hq.storeypath", kiosk, unit("HQ-F02", "207"),
+         True),
+        ("the entrance to the meeting room", "campus-hq.storeypath", entrance, unit("HQ-F00", "004"), False),
+        ("an office to the open office upstairs", "campus-hq.storeypath", unit("HQ-F00", "001"), unit("HQ-F01", "117"),
+         False),
+        ("the kiosk to a desk in a zone of the divided hall", "campus-hq.storeypath", kiosk, zone_desk, False),
+        ("an office to itself", "campus-hq.storeypath", unit("HQ-F01", "112"), unit("HQ-F01", "112"), False),
+    ]
+    nav_a, items_a, _ = read("campus-annex.storeypath")
+    president = next(i for i, f in sorted(items_a.items()) if f["properties"]["type"] == "DESK-PRESIDENT")
+    entrance_a = next(n["id"] for n in nav_a["nodes"] if n["kind"] == "entrance" and n["floor_id"].endswith("-F00"))
+    cases.append(("the Annex's entrance to the president's desk", "campus-annex.storeypath", entrance_a, president,
+                  False))
+    out = []
+    graphs = {"campus-hq.storeypath": (Graph(nav), items), "campus-annex.storeypath": (Graph(nav_a), items_a)}
+    for name, package, start, end, accessible in cases:
+        graph, its = graphs[package]
+        out.append({"name": name, "package": package, "from": start, "to": end, "accessible": accessible,
+                    "expect": route(graph, start, end, accessible=accessible, items=its)})
+    doc = {"tolerance_m": 0.01, "tolerance_s": 0.1, "routes": out}
+    (HERE / "routes.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
+    print(f"wrote routes.json ({len(out)} ways)")
 
 
 def furnish(ws) -> None:

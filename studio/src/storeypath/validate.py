@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from .catalogue import Catalogue
 from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, parse_id
 from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
-                      ItemFeature, Manifest, version_problem, version_tuple)
+                      ItemFeature, Manifest, Navigation, version_problem, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -212,6 +212,38 @@ def validate_package(path: str | Path) -> list[str]:
                         if not turn <= HEADING_AGREES_DEG:
                             errors.append(f"{f.id}: its heading {q.heading:g}° is {turn:.1f}° from its turn in its "
                                           f"building ({want:.2f}° on the map)")
+
+        # Navigation (format 0.8): the walking network, when the package has it. Its nodes
+        # are on the package's floors, in its spaces and zones; its edges join its nodes.
+        if "navigation" in manifest.files:
+            name = manifest.files["navigation"]
+            nav = load(name, Navigation)
+            if nav is not None:
+                held = {f.id for f in collections.get("buildings", [])}
+                for b in nav.buildings:
+                    if b not in held:
+                        errors.append(f"{name}: building {b} is not in the package")
+                nodes: set[str] = set()
+                for n in nav.nodes:
+                    if n.id in nodes:
+                        errors.append(f"{name}: node {n.id} is there twice")
+                    nodes.add(n.id)
+                    if ids.get(n.floor_id) != "floor":
+                        errors.append(f"{name}: node {n.id} is on unknown floor {n.floor_id}")
+                    for key, kind in ((n.space_id, "space"), (n.zone_id, "zone")):
+                        if key is not None and ids.get(key) != kind:
+                            errors.append(f"{name}: node {n.id} is in unknown {kind} {key}")
+                pairs: set[tuple[str, str]] = set()
+                for e in nav.edges:
+                    for end in (e.from_, e.to):
+                        if end not in nodes:
+                            errors.append(f"{name}: an edge joins unknown node {end}")
+                    pair = tuple(sorted((e.from_, e.to)))
+                    if pair in pairs:
+                        errors.append(f"{name}: two edges join {pair[0]} and {pair[1]}")
+                    pairs.add(pair)
+                    if len(e.path) < 2:
+                        errors.append(f"{name}: the edge from {e.from_} to {e.to} has no line")
 
         unknown: set[str] = set()
         name = file_of("objects")

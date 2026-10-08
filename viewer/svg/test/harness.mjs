@@ -104,7 +104,8 @@ export function readPackage(path) {
   const features = (role) => (manifest.files[role] ? json(manifest.files[role]).features : []);
   return { manifest, floors: features("floors"), spaces: features("spaces"), zones: features("zones"),
     openings: features("openings"), items: features("items"),
-    catalogue: manifest.files.catalogue ? json(manifest.files.catalogue) : null };
+    catalogue: manifest.files.catalogue ? json(manifest.files.catalogue) : null,
+    navigation: manifest.files.navigation ? json(manifest.files.navigation) : null };
 }
 
 const TYPES = { ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".html": "text/html",
