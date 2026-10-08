@@ -74,7 +74,9 @@ give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 | On this computer, for development | `--http` |
 
 Plain `http://` sent to the HTTPS port is redirected to the same address over
-HTTPS. The review editor alone (`storeypath review`) and `storeypath view` serve
+HTTPS. A connection that sends nothing for 60 seconds is closed (a large drawing on a
+slow link uploads for as long as it keeps sending), and Studio serves 128 connections
+at once: one more is closed as it comes. The review editor alone (`storeypath review`) and `storeypath view` serve
 plain HTTP on 127.0.0.1, for this computer only.
 
 ## Users, sharing and backups

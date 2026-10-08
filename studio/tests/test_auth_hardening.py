@@ -6,6 +6,8 @@ they may see."""
 
 import io
 import json
+import socket
+import ssl
 import threading
 import time
 import zipfile
@@ -15,8 +17,10 @@ import pytest
 
 from sessions import call
 from storeypath import accounts as acc
+from storeypath import server as server_module
 from storeypath.accounts import Accounts, Scope, Unauthorized
 from storeypath.bundle import export_project
+from storeypath.tls import context, studio_certificate
 from storeypath.workspace import Project, Workspace
 from test_auth_flows import PASSWORD, campus, quick_hashes, serve  # noqa: F401 (fixtures)
 
@@ -247,3 +251,67 @@ def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):
     status, said, res = change(PASSWORD)
     assert status == 429 and said["retry_after"] > 0, (status, said)
     assert accounts.login("ali", PASSWORD, "192.0.2.1")[1].username == "ali"  # unchanged, and not locked elsewhere
+
+
+# ---- connections -------------------------------------------------------------------------
+
+def closed_soon(sock, within: float) -> bool:
+    """Whether the server closes ``sock`` (sending nothing more) within ``within`` seconds."""
+    sock.settimeout(within)
+    try:
+        while True:
+            if not sock.recv(4096):
+                return True
+    except (ssl.SSLError, ConnectionError):
+        return True
+    except socket.timeout:
+        return False
+
+
+@pytest.mark.parametrize("https", [False, True], ids=["http", "https"])
+def test_a_connection_that_stops_sending_is_let_go(tmp_path, monkeypatch, https):
+    monkeypatch.setattr(server_module, "READ_TIMEOUT_S", 0.5, raising=False)
+    tls = trusting = None
+    if https:
+        made = studio_certificate(tmp_path / "data", "127.0.0.1", [], machine=set())
+        tls, trusting = context(made.cert, made.key), ssl.create_default_context(cafile=str(made.cert))
+    srv, studio, accounts = serve(tmp_path / "data", tls=tls)
+    try:
+        port = srv.server_port
+        raw = socket.create_connection(("127.0.0.1", port))
+        s = trusting.wrap_socket(raw, server_hostname="localhost") if https else raw
+        s.sendall(b"GET /api/me HTTP/1.1\r\nHost: 127.0.0.1\r\n")  # and nothing more
+        assert closed_soon(s, 5), "the connection is held open"
+        s.close()
+        # a request that keeps sending is answered, however long it takes as a whole
+        raw = socket.create_connection(("127.0.0.1", port))
+        s = trusting.wrap_socket(raw, server_hostname="localhost") if https else raw
+        for line in (b"GET /login.html HTTP/1.1\r\n", b"Host: 127.0.0.1\r\n", b"Connection: close\r\n", b"\r\n"):
+            s.sendall(line)
+            time.sleep(0.3)
+        s.settimeout(5)
+        assert s.recv(12).startswith(b"HTTP/1.1 200")
+        s.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_connections_beyond_the_most_are_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(server_module, "MAX_CONNECTIONS", 3, raising=False)
+    srv, studio, accounts = serve(tmp_path / "data")
+    try:
+        port = srv.server_port
+        held = [socket.create_connection(("127.0.0.1", port)) for _ in range(3)]  # each holds a thread
+        time.sleep(0.3)
+        more = socket.create_connection(("127.0.0.1", port))
+        more.sendall(b"GET /login.html HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        assert closed_soon(more, 5), "served beyond the most"
+        more.close()
+        for s in held:
+            s.close()
+        time.sleep(0.3)
+        assert call(port, "GET", "/login.html")[0] == 200  # room again
+    finally:
+        srv.shutdown()
+        srv.server_close()

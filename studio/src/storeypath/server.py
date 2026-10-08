@@ -1901,14 +1901,47 @@ def _is_address(name: str) -> bool:
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 HANDSHAKE_S = 10.0  # a connection says what it speaks, and makes its TLS handshake, within this
+READ_TIMEOUT_S = 60.0  # a connection that sends nothing (or takes nothing sent) for this long is let go
+MAX_CONNECTIONS = 128  # connections served at once (each holds a thread and a file); more are closed
 
 
 class StudioServer(ThreadingHTTPServer):
     """The server: a connection a thread (its TLS handshake made there, not where
-    connections are accepted, so one slow client holds up no other). A connection whose
-    handshake fails or times out is let go quietly."""
+    connections are accepted, so one slow client holds up no other), at most
+    ``max_connections`` at once: one more is closed as it comes. A connection whose
+    handshake fails or times out, or that stops sending, is let go quietly."""
 
     daemon_threads = True
+    max_connections = MAX_CONNECTIONS
+
+    def __init__(self, *args, **kwargs):
+        self._open = 0  # connections being served
+        self._open_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        with self._open_lock:
+            full = self._open >= self.max_connections
+            if not full:
+                self._open += 1
+        if full:
+            self.shutdown_request(request)  # closed: nothing read, nothing answered
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._served()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._served()
+
+    def _served(self) -> None:
+        with self._open_lock:
+            self._open -= 1
 
     def handle_error(self, request, client_address):
         if isinstance(sys.exc_info()[1], (ssl.SSLError, ConnectionError, TimeoutError)):
@@ -1991,7 +2024,11 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
     ``trusted_proxies``: the proxies (addresses or networks; and those of
     STOREYPATH_TRUSTED_PROXIES) whose X-Real-IP (or X-Forwarded-For) says who is asking,
     for the limits on failed logins and the audit; a call through one that does not say
-    is refused (client_address)."""
+    is refused (client_address).
+
+    A connection is let go when it sends nothing (or takes nothing it is sent) for
+    READ_TIMEOUT_S, over HTTPS and plain HTTP alike; MAX_CONNECTIONS are served at once,
+    and one more is closed as it comes."""
     if accounts is None and host not in LOOPBACK:
         raise ValueError(f"without accounts Studio serves this computer alone (127.0.0.1), not {host}")
     app_dir = Path(str(resources.files("storeypath") / "review_app")).resolve()
@@ -2012,6 +2049,9 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # every read (and write) of a connection waits this long at most: a slow link
+        # sending a large file is served as long as it sends; one that stops is let go
+        timeout = READ_TIMEOUT_S
         _unread = 0  # what is left of the request's body: -1, not known (the connection is not kept)
 
         _plain = False  # plain HTTP to a port that speaks HTTPS: answered with a redirect
@@ -2029,8 +2069,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                     self._plain = True
                 else:
                     raise ConnectionError("closed before it said anything")
-                self.request.settimeout(None)
-            super().setup()
+            super().setup()  # (the read timeout, from here on)
 
         def finish(self):
             try:
@@ -2442,4 +2481,6 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return may.backup()
         raise NotFound("not found")
 
-    return StudioServer((host, port), Handler)
+    srv = StudioServer((host, port), Handler)
+    srv.max_connections = MAX_CONNECTIONS
+    return srv
