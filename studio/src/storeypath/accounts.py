@@ -1,7 +1,5 @@
 """Who may use Studio, and what each person may see and change: accounts, sessions,
-sharing and an audit log, kept in one SQLite file of the data folder, ``studio.db``
-(mode 0600). The projects stay files, as they always were; only who may use them is
-in the database.
+sharing and an audit log, kept in Studio's database (db/) beside the projects:
 
     users           the accounts: name, role, capabilities, password (scrypt), whether active
     project_access  per project (by its code): its owner
@@ -23,13 +21,13 @@ on the floor, its building and its project (Sight). The owner has share on the w
 project, an admin everywhere. Scopes are resolved through the workspace (a floor's
 building is the building it is in), never by how IDs begin.
 
-The command line (``storeypath users``) writes the same file while Studio runs: SQLite
-keeps the two apart (WAL, short transactions, a busy timeout). Sessions are kept too, so
-a restart logs nobody out; a session ends when not used for IDLE_S, after ABSOLUTE_S,
-on logout, and when its user's ``session_epoch`` is raised (a password, role or
-capability changed, the account disabled). The schema has a version (PRAGMA
-user_version) and is brought up to date, in order, when Studio or the command line
-opens it.
+The command line (``storeypath users``) writes the same database while Studio runs:
+each change is a short transaction, and those that change who may do what hold one
+lock while they do (an advisory lock), so what one read is still so when it writes.
+Sessions are kept too, so a restart logs nobody out; a session ends when not used for
+IDLE_S, after ABSOLUTE_S, on logout, and when its user's ``session_epoch`` is raised (a
+password, role or capability changed, the account disabled). The tables are the
+database's (db/migrations).
 """
 
 from __future__ import annotations
@@ -41,8 +39,6 @@ import json
 import os
 import re
 import secrets
-import sqlite3
-import stat
 import threading
 import time
 from contextlib import contextmanager
@@ -50,9 +46,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
-DB_FILE = "studio.db"
+DB_FILE = "studio.db"  # where an older Studio kept them (db import brings them in)
+ACCOUNTS_LOCK = 0x5370_0002  # pg_advisory_xact_lock key: changes to who may do what, one at a time
 ROLES = ("admin", "engineer", "user")
 CAPABILITIES = ("backup", "catalogue")
 LEVELS = ("view", "edit", "share")  # each includes the ones before it
@@ -236,83 +235,34 @@ LOCAL = User(id="local", username="local", name="This computer", role="admin", p
 
 # ---- the database ------------------------------------------------------------------
 
-# Each brings the schema from the version before it to its own (PRAGMA user_version is
-# the number of them applied). Never changed once released: a change is a new one.
-MIGRATIONS = [
-    """
-    CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL DEFAULT '',
-        role TEXT NOT NULL CHECK (role IN ('admin', 'engineer', 'user')),
-        capabilities TEXT NOT NULL DEFAULT '[]',
-        active INTEGER NOT NULL DEFAULT 1,
-        password TEXT NOT NULL,
-        must_change_password INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        password_changed_at TEXT,
-        last_login_at TEXT,
-        session_epoch INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE project_access (
-        code TEXT PRIMARY KEY,
-        owner TEXT REFERENCES users(id)
-    );
-    CREATE TABLE grants (
-        project TEXT NOT NULL REFERENCES project_access(code) ON DELETE CASCADE,
-        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('project', 'building', 'floor')),
-        scope_id TEXT NOT NULL DEFAULT '',
-        user TEXT NOT NULL REFERENCES users(id),
-        level TEXT NOT NULL CHECK (level IN ('view', 'edit', 'share')),
-        given_by TEXT REFERENCES users(id),
-        given_at TEXT NOT NULL,
-        UNIQUE (project, scope_kind, scope_id, user)
-    );
-    CREATE INDEX grants_of_user ON grants (user);
-    CREATE TABLE sessions (
-        token_hash TEXT PRIMARY KEY,
-        user TEXT NOT NULL REFERENCES users(id),
-        created REAL NOT NULL,
-        last_seen REAL NOT NULL,
-        expires REAL NOT NULL,
-        epoch INTEGER NOT NULL,
-        address TEXT
-    );
-    CREATE INDEX sessions_of_user ON sessions (user);
-    CREATE TABLE audit (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        at TEXT NOT NULL,
-        user_id TEXT,
-        username TEXT,
-        address TEXT,
-        action TEXT NOT NULL,
-        target TEXT,
-        outcome TEXT NOT NULL,
-        details TEXT NOT NULL DEFAULT '{}'
-    );
-    """,
-]
-
-
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _iso(value) -> str | None:
+    """A time as the accounts give it: ISO 8601, UTC."""
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else str(value)
+
+
 def _user(row) -> User:
     return User(id=row["id"], username=row["username"], name=row["name"], role=row["role"],
-                capabilities=json.loads(row["capabilities"]), active=bool(row["active"]), password=row["password"],
-                must_change_password=bool(row["must_change_password"]), created_at=row["created_at"],
-                password_changed_at=row["password_changed_at"], last_login_at=row["last_login_at"],
+                capabilities=list(row["capabilities"] or []), active=bool(row["active"]), password=row["password"],
+                must_change_password=bool(row["must_change_password"]), created_at=_iso(row["created_at"]),
+                password_changed_at=_iso(row["password_changed_at"]), last_login_at=_iso(row["last_login_at"]),
                 session_epoch=row["session_epoch"])
 
 
 class Accounts:
-    """The accounts, sessions, sharing and audit log of one data folder (its studio.db)."""
+    """The accounts, sessions, sharing and audit log of a Studio, in its database (that of
+    the data folder ``data``, db.default_url, unless ``db`` is given)."""
 
-    def __init__(self, data: str | Path, clock=time.time):
-        self.data = Path(data)
-        self.data.mkdir(parents=True, exist_ok=True)
-        self.path = self.data / DB_FILE
+    def __init__(self, data: str | Path | None = None, clock=time.time, db=None):
+        from . import db as databases
+
+        self.data = Path(data) if data is not None else None
+        self.db = db if db is not None else databases.connect(data=data)
         self.clock = clock
         self._failures: dict[tuple, list[float]] = {}  # a throttle's key -> when its tries failed
         self._noted: dict[tuple, float] = {}  # a throttle's key -> when a wait for it was last audited
@@ -320,64 +270,21 @@ class Accounts:
         self._lock = threading.Lock()  # the failures
         self._checks = threading.BoundedSemaphore(PASSWORD_CHECKS)  # passwords checked at once
         self._dummy: str | None = None
-        if not self.path.exists():  # the accounts' file is the owner's alone
-            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))
-        with self._connect() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            self._owners_alone()  # (its -wal and -shm are there while it is open)
-        self._migrate()
-
-    def _owners_alone(self) -> None:
-        """studio.db, its -wal and -shm, readable and writable by their owner alone (SQLite
-        makes the -wal and -shm with the database's mode; one put there by hand, or by an
-        older Studio, may be more open)."""
-        for path in (self.path, *(self.path.with_name(self.path.name + s) for s in ("-wal", "-shm", "-journal"))):
-            try:
-                if stat.S_IMODE(path.stat().st_mode) != 0o600:
-                    os.chmod(path, 0o600)
-            except OSError:
-                pass  # not there (or not ours to change)
 
     @contextmanager
-    def _connect(self):
-        """A connection of its own (Studio answers each request on a thread of its own):
-        foreign keys on, waiting BUSY_TIMEOUT_MS for another writer; closed after."""
-        db = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-            yield db
-        finally:
-            db.close()
-
-    @contextmanager
-    def _write(self):
-        """A short transaction that writes: it holds the write lock from its start, so what
-        it reads is still so when it writes (BEGIN IMMEDIATE); undone when it fails."""
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                yield db
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
-            db.execute("COMMIT")
-
-    def _migrate(self) -> None:
-        with self._write() as db:
-            have = db.execute("PRAGMA user_version").fetchone()[0]
-            if have > len(MIGRATIONS):
-                raise RuntimeError(f"{self.path} was made by a newer Studio (schema {have}): update Studio")
-            for n, script in enumerate(MIGRATIONS[have:], start=have + 1):
-                for statement in (s.strip() for s in script.split(";")):
-                    if statement:
-                        db.execute(statement)
-                db.execute(f"PRAGMA user_version={n}")
+    def _write(self, lock: bool = True):
+        """A short transaction that writes; ``lock``: holding the accounts' lock from its
+        start, so what it reads is still so when it writes (no two changes to who may do
+        what at once). Undone when it fails."""
+        with self.db.transaction() as conn:
+            if lock:
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (ACCOUNTS_LOCK,))
+            with conn.cursor(row_factory=dict_row) as cur:
+                yield cur
 
     def _read(self, sql: str, args=()) -> list:
-        with self._connect() as db:
-            return db.execute(sql, args).fetchall()
+        with self.db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            return cur.execute(sql, args).fetchall()
 
     # ---- users ------------------------------------------------------------------
 
@@ -385,12 +292,12 @@ class Accounts:
         return [_user(r) for r in self._read("SELECT * FROM users ORDER BY username")]
 
     def user(self, user_id: str | None) -> User | None:
-        rows = self._read("SELECT * FROM users WHERE id = ?", (user_id,)) if isinstance(user_id, str) else []
+        rows = self._read("SELECT * FROM users WHERE id = %s", (user_id,)) if isinstance(user_id, str) else []
         return _user(rows[0]) if rows else None
 
     def by_username(self, username: str) -> User | None:
         name = (username or "").strip().lower() if isinstance(username, str) else ""
-        rows = self._read("SELECT * FROM users WHERE username = ?", (name,))
+        rows = self._read("SELECT * FROM users WHERE username = %s", (name,))
         return _user(rows[0]) if rows else None
 
     def has_users(self) -> bool:
@@ -406,14 +313,15 @@ class Accounts:
         hashed = hash_password(password)  # before the transaction: it takes a while
         now = utcnow()
         with self._write() as db:
-            if db.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            if db.execute("SELECT 1 FROM users WHERE username = %s", (username,)).fetchone():
                 raise ValueError(f"there is a user {username} already")
-            taken = {r[0] for r in db.execute("SELECT id FROM users")}
+            taken = {r["id"] for r in db.execute("SELECT id FROM users")}
             uid = _new_id(taken)
             db.execute("INSERT INTO users (id, username, name, role, capabilities, active, password, "
-                       "must_change_password, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-                       (uid, username, _name(name) or username, role, json.dumps(capabilities), hashed,
-                        int(must_change_password), now, now))
+                       "must_change_password, created_at, password_changed_at) "
+                       "VALUES (%s, %s, %s, %s, %s, true, %s, %s, %s, %s)",
+                       (uid, username, _name(name) or username, role, Jsonb(capabilities), hashed,
+                        bool(must_change_password), now, now))
         return self.user(uid)
 
     def update_user(self, user_id: str, *, name=None, role=None, capabilities=None, active=None) -> User:
@@ -421,7 +329,7 @@ class Accounts:
         or capabilities changed, or the account disabled, ends their sessions. Refused
         when it would leave no admin who can log in."""
         with self._write() as db:
-            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            row = db.execute("SELECT * FROM users WHERE id = %s FOR UPDATE", (user_id,)).fetchone()
             if row is None:
                 raise KeyError(f"no user {user_id}")
             user = _user(row)
@@ -437,13 +345,13 @@ class Accounts:
                     raise ValueError("active is true or false")
                 user.active = active
             ended = (user.role, sorted(user.capabilities), user.active) != before
-            db.execute("UPDATE users SET name = ?, role = ?, capabilities = ?, active = ?, "
-                       "session_epoch = session_epoch + ? WHERE id = ?",
-                       (user.name, user.role, json.dumps(user.capabilities), int(user.active), int(ended), user_id))
-            if not db.execute("SELECT 1 FROM users WHERE role = 'admin' AND active = 1").fetchone():
+            db.execute("UPDATE users SET name = %s, role = %s, capabilities = %s, active = %s, "
+                       "session_epoch = session_epoch + %s WHERE id = %s",
+                       (user.name, user.role, Jsonb(user.capabilities), user.active, int(ended), user_id))
+            if not db.execute("SELECT 1 FROM users WHERE role = 'admin' AND active").fetchone():
                 raise ValueError("Studio needs an admin who can log in: make another admin first")
             if ended:
-                db.execute("DELETE FROM sessions WHERE user = ?", (user_id,))
+                db.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
         return self.user(user_id)
 
     def set_password(self, user_id: str, password: str, *, temporary: bool) -> User:
@@ -455,9 +363,9 @@ class Accounts:
         check_password(password, user.username)
         hashed = hash_password(password)
         with self._write() as db:
-            db.execute("UPDATE users SET password = ?, must_change_password = ?, password_changed_at = ?, "
-                       "session_epoch = session_epoch + 1 WHERE id = ?", (hashed, int(temporary), utcnow(), user_id))
-            db.execute("DELETE FROM sessions WHERE user = ?", (user_id,))
+            db.execute("UPDATE users SET password = %s, must_change_password = %s, password_changed_at = %s, "
+                       "session_epoch = session_epoch + 1 WHERE id = %s", (hashed, bool(temporary), utcnow(), user_id))
+            db.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
         return self.user(user_id)
 
     # ---- logging in ---------------------------------------------------------------
@@ -485,8 +393,8 @@ class Accounts:
                 attempt.user = user
                 raise Unauthorized("wrong username or password")
             attempt.ok()
-        with self._write() as db:
-            db.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (utcnow(), user.id))
+        with self._write(lock=False) as db:
+            db.execute("UPDATE users SET last_login_at = %s WHERE id = %s", (utcnow(), user.id))
         self.audit("login", user, address)
         return self.start_session(user, address), user
 
@@ -604,10 +512,10 @@ class Accounts:
         """A new session of ``user``: its token, for the cookie; only its hash is kept."""
         token = secrets.token_urlsafe(32)
         now = self.clock()
-        with self._write() as db:
-            db.execute("DELETE FROM sessions WHERE expires < ? OR last_seen < ?", (now, now - IDLE_S))
-            db.execute("INSERT INTO sessions (token_hash, user, created, last_seen, expires, epoch, address) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        with self._write(lock=False) as db:
+            db.execute("DELETE FROM sessions WHERE expires < %s OR last_seen < %s", (now, now - IDLE_S))
+            db.execute("INSERT INTO sessions (token_hash, user_id, created, last_seen, expires, epoch, address) "
+                       "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                        (_token_hash(token), user.id, now, now, now + ABSOLUTE_S, user.session_epoch, address))
         return token
 
@@ -618,30 +526,29 @@ class Accounts:
         if not token or not isinstance(token, str) or len(token) > 200:
             return None
         key, now = _token_hash(token), self.clock()
-        rows = self._read("SELECT s.last_seen, s.expires, s.epoch, u.* FROM sessions s JOIN users u ON u.id = s.user "
-                          "WHERE s.token_hash = ?", (key,))
+        rows = self._read("SELECT s.last_seen, s.expires, s.epoch, u.* FROM sessions s JOIN users u "
+                          "ON u.id = s.user_id WHERE s.token_hash = %s", (key,))
         if not rows:
             return None
         row = rows[0]
         user = _user(row)
         if now - row["last_seen"] > IDLE_S or now > row["expires"] or not user.active \
                 or user.session_epoch != row["epoch"]:
-            with self._write() as db:
-                db.execute("DELETE FROM sessions WHERE token_hash = ?", (key,))
+            with self._write(lock=False) as db:
+                db.execute("DELETE FROM sessions WHERE token_hash = %s", (key,))
             return None
         if now - row["last_seen"] >= SEEN_EVERY_S:
-            with self._write() as db:
-                db.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, key))
+            with self._write(lock=False) as db:
+                db.execute("UPDATE sessions SET last_seen = %s WHERE token_hash = %s", (now, key))
         return user
 
     def logout(self, token: str | None) -> User | None:
         if not token or not isinstance(token, str):
             return None
         key = _token_hash(token)
-        with self._write() as db:
-            row = db.execute("SELECT user FROM sessions WHERE token_hash = ?", (key,)).fetchone()
-            db.execute("DELETE FROM sessions WHERE token_hash = ?", (key,))
-        return self.user(row["user"]) if row else None
+        with self._write(lock=False) as db:
+            row = db.execute("DELETE FROM sessions WHERE token_hash = %s RETURNING user_id", (key,)).fetchone()
+        return self.user(row["user_id"]) if row else None
 
     def change_own_password(self, user: User, current, new, address: str = "") -> str:
         """A person's own password changed (``current`` checked, a wrong one counted and
@@ -676,7 +583,7 @@ class Accounts:
 
     def default_password(self, user: User) -> bool:
         """Whether ``admin`` still has the password it was made with (admin)."""
-        stored = self._read("SELECT password FROM users WHERE id = ?", (user.id,))
+        stored = self._read("SELECT password FROM users WHERE id = %s", (user.id,))
         if user.username != FIRST_ADMIN or not stored:
             return False
         with self._checking():
@@ -688,21 +595,21 @@ class Accounts:
         out: dict[str, ProjectAccess] = {}
         for r in self._read(f"SELECT code, owner FROM project_access {where}", args):
             out[r["code"]] = ProjectAccess(owner=r["owner"])
-        for r in self._read(f"SELECT * FROM grants {where.replace('code', 'project')} ORDER BY given_at, rowid", args):
+        for r in self._read(f"SELECT * FROM grants {where.replace('code', 'project')} ORDER BY given_at, id", args):
             out.setdefault(r["project"], ProjectAccess()).grants.append(
-                Grant(user=r["user"], scope=Scope(kind=r["scope_kind"], id=r["scope_id"] or None), level=r["level"],
-                      by=r["given_by"], at=r["given_at"]))
+                Grant(user=r["user_id"], scope=Scope(kind=r["scope_kind"], id=r["scope_id"] or None), level=r["level"],
+                      by=r["given_by"], at=_iso(r["given_at"])))
         return out
 
     def project_access(self, code: str) -> ProjectAccess:
-        return self._entries("WHERE code = ?", (code,)).get(code) or ProjectAccess()
+        return self._entries("WHERE code = %s", (code,)).get(code) or ProjectAccess()
 
     def all_access(self) -> dict[str, ProjectAccess]:
         return self._entries()
 
     def set_owner(self, code: str, user_id: str | None) -> None:
         with self._write() as db:
-            db.execute("INSERT INTO project_access (code, owner) VALUES (?, ?) "
+            db.execute("INSERT INTO project_access (code, owner) VALUES (%s, %s) "
                        "ON CONFLICT (code) DO UPDATE SET owner = excluded.owner", (code, user_id))
 
     def give(self, code: str, user_id: str, by: str | None) -> str | None:
@@ -710,13 +617,14 @@ class Accounts:
         the whole project, as a grant of their own (shown, and taken away like any). The
         owner before (their id), if any."""
         with self._write() as db:
-            row = db.execute("SELECT owner FROM project_access WHERE code = ?", (code,)).fetchone()
+            row = db.execute("SELECT owner FROM project_access WHERE code = %s", (code,)).fetchone()
             before = row["owner"] if row else None
-            db.execute("INSERT INTO project_access (code, owner) VALUES (?, ?) "
+            db.execute("INSERT INTO project_access (code, owner) VALUES (%s, %s) "
                        "ON CONFLICT (code) DO UPDATE SET owner = excluded.owner", (code, user_id))
             if before is not None and before != user_id:
-                db.execute("INSERT INTO grants (project, scope_kind, scope_id, user, level, given_by, given_at) "
-                           "VALUES (?, 'project', '', ?, 'share', ?, ?) ON CONFLICT (project, scope_kind, scope_id, user) "
+                db.execute("INSERT INTO grants (project, scope_kind, scope_id, user_id, level, given_by, given_at) "
+                           "VALUES (%s, 'project', '', %s, 'share', %s, %s) "
+                           "ON CONFLICT (project, scope_kind, scope_id, user_id) "
                            "DO UPDATE SET level = 'share', given_by = excluded.given_by, given_at = excluded.given_at",
                            (code, before, by, utcnow()))
         return before
@@ -725,14 +633,14 @@ class Accounts:
         """A new project's owner: only when nothing is kept of a project of that code (no
         owner, no grants), never in place of what is. Whether it was."""
         with self._write() as db:
-            return db.execute("INSERT OR IGNORE INTO project_access (code, owner) VALUES (?, ?)",
+            return db.execute("INSERT INTO project_access (code, owner) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                               (code, user_id)).rowcount == 1
 
     def unclaim(self, code: str, user_id: str) -> None:
         """A claim undone (the project was not made after all): when it is still only that."""
         with self._write() as db:
-            db.execute("DELETE FROM project_access WHERE code = ? AND owner = ? AND NOT EXISTS "
-                       "(SELECT 1 FROM grants WHERE project = ?)", (code, user_id, code))
+            db.execute("DELETE FROM project_access WHERE code = %s AND owner = %s AND NOT EXISTS "
+                       "(SELECT 1 FROM grants WHERE project = %s)", (code, user_id, code))
 
     def set_grant(self, code: str, user_id: str, scope: Scope, level: str | None, by: str | None) -> str:
         """``user_id``'s grant on ``scope`` of a project set to ``level`` (None: taken
@@ -742,42 +650,43 @@ class Accounts:
             raise ValueError(f"a level is one of {', '.join(LEVELS)}, or null to take it away")
         key = (code, scope.kind, scope.id or "", user_id)
         with self._write() as db:
-            db.execute("INSERT OR IGNORE INTO project_access (code) VALUES (?)", (code,))
-            have = db.execute("SELECT level FROM grants WHERE project = ? AND scope_kind = ? AND scope_id = ? "
-                              "AND user = ?", key).fetchone()
+            db.execute("INSERT INTO project_access (code) VALUES (%s) ON CONFLICT DO NOTHING", (code,))
+            have = db.execute("SELECT level FROM grants WHERE project = %s AND scope_kind = %s AND scope_id = %s "
+                              "AND user_id = %s", key).fetchone()
             if level is None:
                 if have is None:
                     return "nothing"
-                db.execute("DELETE FROM grants WHERE project = ? AND scope_kind = ? AND scope_id = ? AND user = ?", key)
+                db.execute("DELETE FROM grants WHERE project = %s AND scope_kind = %s AND scope_id = %s "
+                           "AND user_id = %s", key)
                 return "removed"
             if have is not None:
                 if have["level"] == level:
                     return "nothing"
-                db.execute("UPDATE grants SET level = ?, given_by = ?, given_at = ? WHERE project = ? AND "
-                           "scope_kind = ? AND scope_id = ? AND user = ?", (level, by, utcnow(), *key))
+                db.execute("UPDATE grants SET level = %s, given_by = %s, given_at = %s WHERE project = %s AND "
+                           "scope_kind = %s AND scope_id = %s AND user_id = %s", (level, by, utcnow(), *key))
                 return "changed"
-            db.execute("INSERT INTO grants (project, scope_kind, scope_id, user, level, given_by, given_at) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, level, by, utcnow()))
+            db.execute("INSERT INTO grants (project, scope_kind, scope_id, user_id, level, given_by, given_at) "
+                       "VALUES (%s, %s, %s, %s, %s, %s, %s)", (*key, level, by, utcnow()))
             return "added"
 
     def forget(self, code: str) -> None:
         """A project deleted: who it was shared with, gone with it."""
         with self._write() as db:
-            db.execute("DELETE FROM project_access WHERE code = ?", (code,))
+            db.execute("DELETE FROM project_access WHERE code = %s", (code,))
 
     def edits_somewhere(self, user: User) -> bool:
         """Whether a person may change anything of any project (to open a package into it)."""
         if user.role == "admin":
             return True
-        return bool(self._read("SELECT 1 FROM project_access WHERE owner = ? UNION ALL SELECT 1 FROM grants "
-                               "WHERE user = ? AND level IN ('edit', 'share') LIMIT 1", (user.id, user.id)))
+        return bool(self._read("SELECT 1 FROM project_access WHERE owner = %s UNION ALL SELECT 1 FROM grants "
+                               "WHERE user_id = %s AND level IN ('edit', 'share') LIMIT 1", (user.id, user.id)))
 
     def shares_somewhere(self, user: User) -> bool:
         """Whether a person may share anything (to be shown the users to share with)."""
         if user.role == "admin":
             return True
-        return bool(self._read("SELECT 1 FROM project_access WHERE owner = ? UNION ALL "
-                               "SELECT 1 FROM grants WHERE user = ? AND level = 'share' LIMIT 1", (user.id, user.id)))
+        return bool(self._read("SELECT 1 FROM project_access WHERE owner = %s UNION ALL "
+                               "SELECT 1 FROM grants WHERE user_id = %s AND level = 'share' LIMIT 1", (user.id, user.id)))
 
     # ---- the audit log --------------------------------------------------------------
 
@@ -785,21 +694,25 @@ class Accounts:
               **more) -> None:
         """What was done, recorded: when, who (id and username), from where, what, to what,
         how it went, and anything more."""
-        with self._write() as db:
+        with self._write(lock=False) as db:
             db.execute("INSERT INTO audit (at, user_id, username, address, action, target, outcome, details) "
-                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                        (utcnow(), user.id if user else None, user.username if user else None, address or None,
                         action, None if target is None else str(target), outcome,
-                        json.dumps(more, ensure_ascii=False, default=str)))
+                        Jsonb(more, dumps=_dumps)))
 
     def audit_tail(self, n: int = 200) -> list[dict]:
         """The latest ``n`` entries, newest first."""
         out = []
-        for r in self._read("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (n,)):
-            out.append({"at": r["at"], "user": {"id": r["user_id"], "username": r["username"]} if r["user_id"] else None,
+        for r in self._read("SELECT * FROM audit ORDER BY id DESC LIMIT %s", (n,)):
+            out.append({"at": _iso(r["at"]), "user": {"id": r["user_id"], "username": r["username"]} if r["user_id"] else None,
                         "address": r["address"], "action": r["action"], "target": r["target"],
-                        "outcome": r["outcome"], **json.loads(r["details"] or "{}")})
+                        "outcome": r["outcome"], **(r["details"] or {})})
         return out
+
+
+def _dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _new_id(taken: set[str]) -> str:

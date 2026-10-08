@@ -1,19 +1,20 @@
 """Accounts, sessions and sharing (accounts.py): passwords kept as scrypt hashes in
-studio.db (WAL, a versioned schema, written by Studio and the command line at once),
-sessions kept by the hash of their token and ended when they should, logins
-throttled, and each person's level on a project, building and floor."""
+Studio's database (written by Studio and the command line at once), sessions kept by
+the hash of their token and ended when they should, logins throttled, and each
+person's level on a project, building and floor."""
 
 import json
 import os
-import sqlite3
 import stat
 import subprocess
 import sys
 import threading
 
+import psycopg
 import pytest
 
 from storeypath import accounts as acc
+from storeypath import db as studio_db
 from storeypath.accounts import (Accounts, Forbidden, Gone, ProjectAccess, Scope, Sight, Throttled, Unauthorized,
                                  check_password, check_username, hash_password, temporary_password, verify_password)
 from storeypath.workspace import Workspace
@@ -62,47 +63,51 @@ def test_a_password_is_whatever_its_person_chooses():
 
 # ---- the database -------------------------------------------------------------------
 
-def test_accounts_are_kept_in_a_private_sqlite_file(tmp_path):
+def test_accounts_are_kept_in_studios_database_and_no_file(tmp_path, databases):
     a = Accounts(tmp_path)
     user = a.add_user("ali", PASSWORD, role="engineer")
-    db = tmp_path / "studio.db"
-    assert stat.S_IMODE(db.stat().st_mode) == 0o600
-    with sqlite3.connect(db) as raw:
-        assert raw.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert raw.execute("PRAGMA user_version").fetchone()[0] == len(acc.MIGRATIONS)
-        (stored,) = raw.execute("SELECT password FROM users WHERE username = 'ali'").fetchone()
-    assert stored.startswith("scrypt$") and PASSWORD.encode() not in db.read_bytes()
+    assert not (tmp_path / "studio.db").exists() and list(tmp_path.iterdir()) == []
+    with psycopg.connect(databases.url(tmp_path)) as raw:
+        (stored,) = raw.execute("SELECT password FROM storeypath.users WHERE username = 'ali'").fetchone()
+        (applied,) = raw.execute("SELECT max(number) FROM storeypath.migrations").fetchone()
+    assert stored.startswith("scrypt$") and PASSWORD not in stored
+    assert applied == len(studio_db.migrations())
     with pytest.raises(ValueError, match="already"):
         a.add_user("ALI", PASSWORD)  # unique whatever the case
     assert a.by_username("Ali").id == user.id and user.id.startswith("U") and len(user.id) == 11
-    assert Accounts(tmp_path).user(user.id) == user  # opened again: brought up to date once, nothing lost
+    assert Accounts(tmp_path).user(user.id) == user  # opened again: nothing lost, every time kept as it was
 
 
-def test_a_database_of_a_newer_studio_is_not_opened(tmp_path):
+def test_a_database_of_a_newer_studio_is_not_opened(tmp_path, databases):
+    url = databases.url(tmp_path)
     Accounts(tmp_path)
-    with sqlite3.connect(tmp_path / "studio.db") as raw:
-        raw.execute(f"PRAGMA user_version={len(acc.MIGRATIONS) + 1}")
-    with pytest.raises(RuntimeError, match="newer Studio"):
+    with psycopg.connect(url, autocommit=True) as raw:
+        raw.execute("INSERT INTO storeypath.migrations (number, name) VALUES (%s, 'from-the-future.sql')",
+                    (len(studio_db.migrations()) + 1,))
+    studio_db.forget(url)
+    with pytest.raises(studio_db.DatabaseError, match="newer Studio"):
         Accounts(tmp_path)
 
 
-def test_sessions_are_kept_by_the_hash_of_their_token_and_outlive_a_restart(tmp_path):
+def test_sessions_are_kept_by_the_hash_of_their_token_and_outlive_a_restart(tmp_path, databases):
     a = Accounts(tmp_path)
     user = a.add_user("ali", PASSWORD, must_change_password=False)
     token, _ = a.login("ali", PASSWORD, "10.0.0.7")
-    with sqlite3.connect(tmp_path / "studio.db") as raw:
-        rows = raw.execute("SELECT token_hash, user, address FROM sessions").fetchall()
+    with psycopg.connect(databases.url(tmp_path)) as raw:
+        rows = raw.execute("SELECT token_hash, user_id, address FROM storeypath.sessions").fetchall()
     assert rows == [(acc._token_hash(token), user.id, "10.0.0.7")] and token not in rows[0][0]
-    assert Accounts(tmp_path).session(token).id == user.id  # Studio started again: still logged in
+    studio_db.forget(databases.url(tmp_path))  # Studio started again: still logged in
+    assert Accounts(tmp_path).session(token).id == user.id
 
 
-def test_writes_from_many_threads_and_another_process_are_all_kept(tmp_path, monkeypatch):
+def test_writes_from_many_threads_and_another_process_are_all_kept(tmp_path, monkeypatch, databases):
     monkeypatch.setattr(acc, "SCRYPT_N", 2**10)  # quicker: what is tested is the lock
     a = Accounts(tmp_path)
     threads = [threading.Thread(target=a.add_user, args=(f"user{i}", PASSWORD)) for i in range(12)]
     code = ("import sys; from storeypath import accounts as acc; acc.SCRYPT_N = 2**10; "
-            f"a = acc.Accounts({str(tmp_path)!r}); [a.add_user(f'proc{{i}}', {PASSWORD!r}) for i in range(8)]")
-    proc = subprocess.Popen([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+            f"a = acc.Accounts(); [a.add_user(f'proc{{i}}', {PASSWORD!r}) for i in range(8)]")
+    proc = subprocess.Popen([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path),
+                                                               studio_db.URL_ENV: databases.url(tmp_path)})
     for t in threads:
         t.start()
     for t in threads:
@@ -110,6 +115,28 @@ def test_writes_from_many_threads_and_another_process_are_all_kept(tmp_path, mon
     assert proc.wait(timeout=60) == 0
     names = {u.username for u in Accounts(tmp_path).users()}
     assert names == {f"user{i}" for i in range(12)} | {f"proc{i}" for i in range(8)}
+
+
+def test_the_last_admin_is_kept_whatever_changes_at_once(tmp_path, monkeypatch):
+    # Two admins each disabled at once, by two connections: one of them stays.
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    a, b = Accounts(tmp_path), Accounts(tmp_path)
+    one = a.add_user("one", PASSWORD, role="admin", must_change_password=False)
+    two = a.add_user("two", PASSWORD, role="admin", must_change_password=False)
+    failed = []
+
+    def disable(acc_, user):
+        try:
+            acc_.update_user(user.id, active=False)
+        except ValueError:
+            failed.append(user.username)
+
+    threads = [threading.Thread(target=disable, args=(x, u)) for x, u in ((a, one), (b, two))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(failed) == 1 and sum(u.active for u in a.users()) == 1
 
 
 def test_a_change_on_disk_is_read_again(tmp_path):
