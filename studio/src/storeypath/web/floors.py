@@ -39,20 +39,20 @@ def print_png(code: str, floor_id: str, request: Request, may: May, studio: TheS
 @calls.post(F + "/edits")
 def edits(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.floor(code, floor_id, "edit")
-    studio.review(code).edit(floor_id, body)
+    studio.review(code).edit(floor_id, body, by=may.user)
     return answer(request, studio.convert(code, floor_id, by=may.uid))
 
 
 @calls.post(F + "/items")
 def add_item(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.floor(code, floor_id, "edit")
-    return answer(request, studio.review(code).add_item(floor_id, body))
+    return answer(request, studio.review(code).add_item(floor_id, body, by=may.user))
 
 
 @calls.post("/api/projects/{code}/items/{item_id}")
 def change_item(code: str, item_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.item(code, item_id, body)
-    return answer(request, studio.review(code).change_item(item_id, body))
+    return answer(request, studio.review(code).change_item(item_id, body, by=may.user))
 
 
 @calls.post(F + "/convert")
@@ -64,4 +64,4 @@ def convert_floor(code: str, floor_id: str, request: Request, may: May, studio: 
 @calls.post("/api/projects/{code}/objects/{object_id}")
 def correct(code: str, object_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.object(code, object_id)
-    return answer(request, studio.review(code).correct(object_id, body))
+    return answer(request, studio.review(code).correct(object_id, body, by=may.user))

@@ -21,14 +21,14 @@ def projects(request: Request, may: May, studio: TheStudio):
 @calls.post("/api/projects")
 def create(request: Request, may: May, studio: TheStudio, body: Body):
     may.create()
-    return answer(request, may.made(studio.create(body.get("name", ""), may.kept_codes())))
+    return answer(request, may.made(studio.create(body.get("name", ""), may.kept_codes(), by=may.user)))
 
 
 @calls.put("/api/open")
 def open_file(request: Request, may: May, studio: TheStudio, sent: Sent, query: Query):
     allow = may.opening()
     return answer(request, may.opened(studio.open(sent.read(), (query.get("replace") or [None])[0], allow,
-                                                  learn_types=may.user.can("catalogue"))))
+                                                  learn_types=may.user.can("catalogue"), by=may.user)))
 
 
 @calls.get("/api/jobs/{job_id}")
@@ -52,7 +52,7 @@ def review_project(code: str, request: Request, may: May, studio: TheStudio):
 @calls.post(P + "/delete")
 def delete(code: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.own(code)
-    return answer(request, may.deleted(code, studio.delete(code, body)))
+    return answer(request, may.deleted(code, studio.delete(code, body, by=may.user)))
 
 
 # ---- sharing ------------------------------------------------------------------------------
@@ -125,25 +125,25 @@ def convert(code: str, request: Request, may: May, studio: TheStudio, body: Body
 @calls.post(P + "/buildings/{building_id}/site")
 def move(code: str, building_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.building(code, building_id, "edit")
-    return answer(request, studio.move(code, building_id, body))
+    return answer(request, studio.move(code, building_id, body, by=may.user))
 
 
 @calls.post(P + "/buildings/{building_id}/placement")
 def place(code: str, building_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.building(code, building_id, "edit")
-    return answer(request, studio.place(code, building_id, body))
+    return answer(request, studio.place(code, building_id, body, by=may.user))
 
 
 @calls.post(P + "/locations/{location_id}/arrange")
 def arrange(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")
-    return answer(request, studio.arrange(code, location_id))
+    return answer(request, studio.arrange(code, location_id, by=may.user))
 
 
 @calls.post(P + "/locations/{location_id}/placement")
 def place_site(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")
-    return answer(request, studio.place_site(code, location_id, body))
+    return answer(request, studio.place_site(code, location_id, body, by=may.user))
 
 
 # ---- packages ----------------------------------------------------------------------------
