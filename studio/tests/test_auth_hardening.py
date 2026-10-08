@@ -24,7 +24,7 @@ import pytest
 
 from sessions import call
 from storeypath import accounts as acc
-from storeypath import server as server_module
+from storeypath.web import serve as served
 from storeypath.accounts import Accounts, Scope, Throttled, Unauthorized
 from storeypath.bundle import export_project
 from storeypath.tls import context, studio_certificate
@@ -476,7 +476,7 @@ def closed_soon(sock, within: float) -> bool:
 
 @pytest.mark.parametrize("https", [False, True], ids=["http", "https"])
 def test_a_connection_that_stops_sending_is_let_go(tmp_path, monkeypatch, https):
-    monkeypatch.setattr(server_module, "READ_TIMEOUT_S", 0.5, raising=False)
+    monkeypatch.setattr(served, "READ_TIMEOUT_S", 0.5, raising=False)
     tls = trusting = None
     if https:
         made = studio_certificate(tmp_path / "data", "127.0.0.1", [], machine=set())
@@ -504,11 +504,11 @@ def test_a_connection_that_stops_sending_is_let_go(tmp_path, monkeypatch, https)
 
 
 def test_connections_beyond_the_most_are_closed(tmp_path, monkeypatch):
-    monkeypatch.setattr(server_module, "MAX_CONNECTIONS", 3, raising=False)
+    monkeypatch.setattr(served, "MAX_CONNECTIONS", 3, raising=False)
     srv, studio, accounts = serve(tmp_path / "data")
     try:
         port = srv.server_port
-        held = [socket.create_connection(("127.0.0.1", port)) for _ in range(3)]  # each holds a thread
+        held = [socket.create_connection(("127.0.0.1", port)) for _ in range(3)]  # each holds a place
         time.sleep(0.3)
         more = socket.create_connection(("127.0.0.1", port))
         more.sendall(b"GET /login.html HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
