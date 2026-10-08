@@ -434,9 +434,11 @@ sessions and an audit log. Everyone logs in.
   twice; `--password-stdin` for scripts), `users list`, `users passwd`, `users disable`
   / `enable`, `users role`.
 - **Backups.** *Download a backup* (admins, and whoever may) or `storeypath backup`
-  gives the whole data folder as one `.tar.gz`: projects, item types, certificate, and
-  a snapshot of `studio.db`. `storeypath restore FILE --data DIR` puts it back into
-  an empty folder.
+  gives the whole data folder as one `.tar.gz`: projects, item types, and a snapshot
+  of `studio.db` (the accounts with their passwords' hashes, sharing and the audit log;
+  no session), so the `backup` capability hands those over too. Studio's certificate
+  is not in it: a restored Studio makes a new one (browsers warn once).
+  `storeypath restore FILE --data DIR` puts it back into an empty folder.
 
 Every setting, the audit log, and what each call of Studio's API needs:
 [studio/README.md](studio/README.md#users-sharing-and-backups).

@@ -2,15 +2,18 @@
 
 A backup (``storeypath-backup-<UTC yyyymmdd-HHMMSS>.tar.gz``) holds every project
 folder (its workspace, drawings, corrections and exports), the catalogue of item
-types, Studio's certificate (tls/), and studio.db: the accounts (with the passwords'
-scrypt hashes), who each project is shared with, the sessions and the audit log, all
-under one folder, ``storeypath-data/``. The database goes in as a snapshot taken whole
-(sqlite3's backup), never as the file in use nor its -wal and -shm. A backup leaves
-out what is half done or made again when needed: files being written (*.tmp, *.part),
-lock files, drawings sent and not yet kept (their private information is still in
-them), packages and projects being written or unpacked, and the prints Studio draws of
-floors (.storeypath-cache). Nothing but regular files and folders goes in: a link is
-neither followed nor kept.
+types, and studio.db: the accounts (with the passwords' scrypt hashes: a restore needs
+them), who each project is shared with and the audit log, all under one folder,
+``storeypath-data/``. Whoever may download one therefore holds every password's hash
+and the whole audit log. The database goes in as a snapshot taken whole (sqlite3's
+backup), never as the file in use nor its -wal and -shm, and with no session in it
+(blanked in the copy, never in the database in use). Studio's certificate and its key
+(tls/) never go in: a Studio restored makes its own (browsers warn once about it).
+A backup leaves out what is half done or made again when needed: files being written
+(*.tmp, *.part), lock files, drawings sent and not yet kept (their private information
+is still in them), packages and projects being written or unpacked, and the prints
+Studio draws of floors (.storeypath-cache). Nothing but regular files and folders goes
+in: a link is neither followed nor kept.
 
 It is written as it is read (a gzip'd tar stream), so a large folder needs no copy on
 the disk. While it is written, no job starts (jobs.lock, held by Studio's job and by a
@@ -46,6 +49,7 @@ SKIP_PREFIXES = (".incoming-", ".writing-", ".opening-", ".unpacking-", ".replac
 SKIP_DIRS = (".storeypath-cache",)
 DB_FILE = "studio.db"  # accounts.DB_FILE: put in as a snapshot, never as it is on the disk
 DB_FILES = (DB_FILE, DB_FILE + "-wal", DB_FILE + "-shm", DB_FILE + "-journal")
+TLS_FOLDER = "tls"  # tls.FOLDER: Studio's certificate and key, never in a backup
 _THREADS: dict[str, threading.Lock] = {}  # where there is no flock: one process's threads
 _THREADS_LOCK = threading.Lock()
 
@@ -108,7 +112,7 @@ def members(data: Path):
             except OSError:
                 continue
             if stat.S_ISDIR(mode):
-                if _kept(e.name, True):
+                if _kept(e.name, True) and not (folder == data and e.name == TLS_FOLDER):
                     yield Path(e.path), rel / e.name
                     yield from walk(Path(e.path), rel / e.name)
             elif stat.S_ISREG(mode) and _kept(e.name, False) and not (folder == data and e.name in DB_FILES):
@@ -152,6 +156,14 @@ def write_backup(data: Path, out) -> dict:
                     source, copy = sqlite3.connect(Path(data) / DB_FILE), sqlite3.connect(tmp)
                     try:
                         source.backup(copy)
+                        source.close()
+                        # no session goes in (in the copy alone), nor what is left of one
+                        # in the file's free pages
+                        if copy.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'"
+                                        ).fetchone():
+                            copy.execute("DELETE FROM sessions")
+                            copy.commit()
+                            copy.execute("VACUUM")
                     finally:
                         copy.close()
                         source.close()

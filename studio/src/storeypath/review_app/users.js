@@ -11,7 +11,8 @@ const ROLES = [
   ["admin", "Admin", "manages users; sees and does everything"],
 ];
 const CAPABILITIES = [
-  ["backup", "Backup", "downloads everything in Studio's data folder"],
+  ["backup", "Backup", "downloads everything in Studio's data folder: every project, and the accounts with their "
+    + "passwords' hashes and the audit log (a restore needs them). Give it only to whom you would trust with those"],
   ["catalogue", "Item types", "changes the catalogue of furniture and equipment"],
 ];
 

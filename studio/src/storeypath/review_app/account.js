@@ -79,7 +79,7 @@ export function accountMenu(me) {
     node("a", { role: "menuitem", href: `/login.html?change=1&next=${encodeURIComponent(here())}` }, "Change password"),
     me.role === "admin" ? node("a", { role: "menuitem", href: "/#/users" }, "Users") : null,
     can("backup") ? node("a", { role: "menuitem", href: "/api/backup", download: "",
-      title: "Everything in Studio's data folder as one .tar.gz: projects, item types, users and sharing" }, "Download a backup") : null,
+      title: "Everything in Studio's data folder as one .tar.gz: projects, item types, users (with their passwords' hashes), sharing and the audit log; keep it safe" }, "Download a backup") : null,
     node("button", { type: "button", role: "menuitem", onclick: logout }, "Log out"),
   ];
   const list = node("div", { class: "account-menu", role: "menu", hidden: true }, items);

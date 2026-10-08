@@ -1,6 +1,7 @@
 """Backups (backup.py): the whole data folder as one .tar.gz, written as it is read, and
 put back only into an empty folder, refusing anything that would land outside it."""
 
+import hashlib
 import io
 import os
 import sqlite3
@@ -59,6 +60,27 @@ def test_a_backup_holds_the_projects_users_sharing_and_audit_and_nothing_half_do
     with sqlite3.connect(copy) as db:  # whole by itself: no -wal beside it
         assert db.execute("SELECT username FROM users").fetchall() == [("boss",)]
         assert db.execute("SELECT action FROM audit").fetchall() == [("login",)]
+
+
+def test_a_backup_holds_no_certificate_nor_any_session(data):
+    (data / "tls").mkdir()
+    (data / "tls" / "studio-key.pem").write_text("-----BEGIN PRIVATE KEY-----")
+    (data / "tls" / "studio-cert.pem").write_text("-----BEGIN CERTIFICATE-----")
+    a = Accounts(data)
+    token = a.start_session(a.by_username("boss"))
+    out = io.BytesIO()
+    write_backup(data, out)
+    got = names(out.getvalue())
+    assert not any(n == f"{ROOT}/tls" or n.startswith(f"{ROOT}/tls/") for n in got), got  # a restored Studio makes its own
+    with tarfile.open(fileobj=io.BytesIO(out.getvalue()), mode="r:gz") as tar:
+        snapshot = tar.extractfile(f"{ROOT}/studio.db").read()
+    assert hashlib.sha256(token.encode()).hexdigest().encode() not in snapshot  # not even in a free page
+    copy = data.parent / "snapshot.db"
+    copy.write_bytes(snapshot)
+    with sqlite3.connect(copy) as db:
+        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (0,)
+        assert db.execute("SELECT password FROM users").fetchone()[0].startswith("scrypt$")  # (restore needs them)
+    assert a.session(token) is not None  # the sessions of the Studio backed up are as they were
 
 
 class Pipe:

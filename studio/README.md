@@ -91,7 +91,9 @@ them, and is offered only what they may do there.
 | user | sees only what is shared with them |
 
 An admin may also give anyone a **capability**: `backup` (download the whole data
-folder) or `catalogue` (change the item types). Admins have both.
+folder) or `catalogue` (change the item types). Admins have both. A backup holds the
+accounts with their passwords' scrypt hashes (a restore needs them) and the audit log:
+`backup` hands those over too, so give it only to whom you would trust with them.
 
 **Sharing.** A project's owner (and anyone they let) gives a person a **level** on a
 **scope**: *view* (see it: plans, review, 3D, its packages), *edit* (change it as
@@ -151,12 +153,16 @@ storeypath restore studio-backup.tar.gz --data /new/empty/folder
 **Backups.** *Download a backup* in the person menu (admins, and whoever has the
 `backup` capability), `GET /api/backup`, or `storeypath backup`, gives the whole
 data folder as `storeypath-backup-<UTC time>.tar.gz`: every project, the item types,
-Studio's certificate and `studio.db` (as a snapshot taken whole, never the file in
-use). It leaves out work in progress (drawings sent and not yet cleaned of private
+and `studio.db` (as a snapshot taken whole, never the file in use): the accounts with
+their passwords' hashes, who each project is shared with, and the audit log, but no
+session (nobody is logged in to a Studio restored from it). Studio's certificate and
+key (`tls/`) never go in: a Studio restored makes a new certificate, and browsers warn
+once about it, as at a first start (or give it yours with `--cert`, `--key`). It
+leaves out work in progress (drawings sent and not yet cleaned of private
 information, packages being written) and the prints Studio draws again when needed;
 no link is followed or kept. It is written as it is sent, and no job starts while it
 is. `storeypath restore` puts one back into an empty folder only, refusing anything
-in it that would land outside.
+in it that would land outside. Keep backups as safe as the data folder itself.
 
 **The audit log**, on the Users page: logins (and failed and throttled ones),
 logouts, passwords changed and reset, users created, changed and disabled, grants

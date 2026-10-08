@@ -810,8 +810,9 @@ def backup(
     data: DataOption = Path("."),
     out: Annotated[Optional[Path], typer.Option(help="the file (default: storeypath-backup-<UTC time>.tar.gz here)")] = None,
 ):
-    """Write the whole data folder (projects, item types, users, sharing, audit log) as
-    one .tar.gz, as Studio's Backup does. Waits for a job Studio is running to finish."""
+    """Write the whole data folder (projects, item types, users with their passwords'
+    hashes, sharing, audit log; no session, no certificate) as one .tar.gz, as Studio's
+    Backup does. Waits for a job Studio is running to finish."""
     from .accounts import Accounts
     from .backup import backup_name, jobs_paused, write_backup
 
@@ -839,7 +840,8 @@ def restore(
     archive: Annotated[Path, typer.Argument(help="a backup (.tar.gz)")],
     data: Annotated[Path, typer.Option(help="an empty folder to restore into (Studio not running on it)")],
 ):
-    """Put a backup into an empty data folder: its projects, item types, users and sharing."""
+    """Put a backup into an empty data folder: its projects, item types, users and sharing.
+    Nobody is logged in to it, and Studio makes a new certificate when it starts on it."""
     from .backup import restore as restore_backup
 
     if not archive.is_file():
