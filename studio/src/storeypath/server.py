@@ -1553,10 +1553,11 @@ class Gate:
         return sight
 
     def job(self, job_id: str) -> Job:
-        """A job, to its person, and to those who may see what it works on."""
+        """A job, to an admin and to those who may see what it works on now (who started
+        it too, as long as they still may: what it reports is of that part)."""
         user = self._who()
         job = self.studio.jobs.get(job_id)
-        if self.accounts is None or user.role == "admin" or (job.user is not None and job.user == user.id):
+        if self.accounts is None or user.role == "admin":
             return job
         try:
             sight = self.see(job.project) if job.project else None

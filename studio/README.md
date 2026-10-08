@@ -201,7 +201,7 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
 | `POST …/floors/<id>/edits`, `…/items`, `…/convert`, `POST …/objects/<id>` | edit on the floor |
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to |
-| `GET jobs/<id>` | who started it, an admin, or view on what it works on (its project, building or floor) |
+| `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
 | `GET backup` | admin, or `backup` |
 
 ## Commands

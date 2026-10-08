@@ -291,6 +291,18 @@ def test_a_bad_body_is_answered_400_and_a_failure_500_without_what_went_wrong(ca
     assert status == 500 and "secret" not in json.dumps(said) and "RuntimeError" not in json.dumps(said), said
 
 
+def test_a_job_is_followed_by_who_may_see_what_it_works_on_now(campus):
+    port, studio, accounts, users, tokens, ids = campus
+    annex = Scope(kind="building", id=ids["annex"])
+    accounts.set_grant(ids["demo"], users["bob"].id, annex, "edit", users["eng"].id)
+    status, job, _ = call(port, "POST", f"/api/projects/{ids['demo']}/export", {"building": ids["annex"]},
+                          token=tokens["bob"])
+    assert status == 200 and call(port, "GET", f"/api/jobs/{job['id']}", token=tokens["bob"])[0] == 200
+    accounts.set_grant(ids["demo"], users["bob"].id, annex, None, users["eng"].id)  # no longer shared with bob
+    assert call(port, "GET", f"/api/jobs/{job['id']}", token=tokens["bob"])[0] == 404  # though bob started it
+    assert call(port, "GET", f"/api/jobs/{job['id']}", token=tokens["eng"])[0] == 200
+
+
 # ---- connections -------------------------------------------------------------------------
 
 def closed_soon(sock, within: float) -> bool:
