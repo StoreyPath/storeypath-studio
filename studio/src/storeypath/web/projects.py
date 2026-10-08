@@ -1,12 +1,12 @@
 """The calls of projects: the list, a new one, a file opened, jobs, a project's page,
-deleting it, sharing it, its drawings, its floors added and read again, its buildings
-and sites, and its packages."""
+deleting it, its history (and each person's undo and redo), sharing it, its drawings,
+its floors added and read again, its buildings and sites, and its packages."""
 
 from __future__ import annotations
 
 from fastapi import Request
 
-from .calls import Body, Calls, May, Query, Sent, TheStudio, answer
+from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, web_of
 
 calls = Calls()
 P = "/api/projects/{code}"
@@ -53,6 +53,34 @@ def review_project(code: str, request: Request, may: May, studio: TheStudio):
 def delete(code: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.own(code)
     return answer(request, may.deleted(code, studio.delete(code, body, by=may.user)))
+
+
+# ---- history: each person undoes and redoes their own changes ------------------------------
+
+def _undone(request: Request, done: dict):
+    job = done.pop("job", None)
+    if job is not None:
+        web_of(request).events.watch(job)  # what was drawn, read again: its progress on the project's events
+    return answer(request, {**done, "job": job.view() if job is not None else None})
+
+
+@calls.post(P + "/undo")
+def undo(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    sight = may.undo(code, body.get("floor"))
+    return _undone(request, studio.undo(code, body.get("floor"), sight, by=may.user, editor=may.editor))
+
+
+@calls.post(P + "/redo")
+def redo(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    sight = may.undo(code, body.get("floor"))
+    return _undone(request, studio.undo(code, body.get("floor"), sight, by=may.user, editor=may.editor, redo=True))
+
+
+@calls.get(P + "/history")
+def history(code: str, request: Request, may: May, studio: TheStudio, query: Query):
+    sight = may.history(code, (query.get("floor") or [None])[0])
+    return answer(request, studio.history(code, (query.get("floor") or [None])[0], (query.get("n") or [None])[0],
+                                          sight, by=may.user))
 
 
 # ---- sharing ------------------------------------------------------------------------------

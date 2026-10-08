@@ -230,6 +230,16 @@ ROWS = [
     Row("GET", "/api/admin/audit", ok=200, passes={"admin"}),
     Row("GET", "/api/backup", ok=200, passes={"admin"}),
     Row("GET", C + "/events", ok=200, passes=PROJECT, hidden=OUTSIDE, stream=True),
+    # many people at once: who edits a floor, each person's undo and redo, the history
+    Row("POST", C + "/floors/{hq0}/take-over", {}, ok=200, passes={"admin"}, hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/floors/{hq0}/release", {}, ok=200, passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/undo", {"floor": "{hq0}"}, ok=(409, "nothing of yours to undo"), passes={"admin", "owner"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/redo", {"floor": "{hq0}"}, ok=(409, "nothing of yours to redo"), passes={"admin", "owner"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("GET", C + "/history?floor={hq0}", ok=200, passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
 ]
 
 
