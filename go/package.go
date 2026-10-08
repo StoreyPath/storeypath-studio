@@ -18,7 +18,7 @@ import (
 // does not know are ignored.
 const (
 	FormatName    = "storeypath-package"
-	FormatVersion = "0.7.0"
+	FormatVersion = "0.8.0"
 )
 
 // oneBuildingFrom: from format 0.7 a package holds exactly one building.
@@ -26,8 +26,9 @@ const oneBuildingFrom = 7
 
 // The files of a package, by the names they usually have. A reader finds each
 // through the manifest's files, by its role; the names are for a manifest that
-// does not list a file every package has. Items and the catalogue (format 0.6) are
-// read only when it lists them ("items", "catalogue"): older packages have none.
+// does not list a file every package has. Items and the catalogue (format 0.6), and
+// the walking network (0.8), are read only when it lists them ("items", "catalogue",
+// "navigation"): older packages have none.
 const (
 	FileManifest  = "manifest.json"
 	FileLocation  = "location.geojson"
@@ -40,6 +41,8 @@ const (
 	FileChanges   = "changes.json"
 	FileItems     = "items.geojson"
 	FileCatalogue = "catalogue.json"
+	// FileNavigation (format 0.8): the building's walking network (navigation.go).
+	FileNavigation = "navigation.json"
 )
 
 // usualNames: the files of a package by role, where they are when the manifest's
@@ -47,11 +50,11 @@ const (
 var usualNames = map[string]string{
 	"location": FileLocation, "buildings": FileBuildings, "floors": FileFloors, "spaces": FileSpaces,
 	"zones": FileZones, "openings": FileOpenings, "objects": FileObjects, "changes": FileChanges,
-	"items": FileItems, "catalogue": FileCatalogue,
+	"items": FileItems, "catalogue": FileCatalogue, "navigation": FileNavigation,
 }
 
 // optionalRoles: files a package has only when its manifest lists them.
-var optionalRoles = map[string]bool{"items": true, "catalogue": true}
+var optionalRoles = map[string]bool{"items": true, "catalogue": true, "navigation": true}
 
 // Manifest is manifest.json: what the package is and holds.
 type Manifest struct {
@@ -213,6 +216,8 @@ type Package struct {
 	// packages. Catalogue: their types, nil when the package has none.
 	Items     []*Item
 	Catalogue *Catalogue
+
+	navigation *Navigation // navigation.json (format 0.8): Navigation()
 
 	problems []Problem           // found while reading, reported by Validate
 	files    map[string]bool     // the files in the ZIP
@@ -412,6 +417,14 @@ func Read(r io.ReaderAt, size int64, limits Limits) (*Package, error) {
 			}
 			c.index()
 			p.Catalogue = &c
+			return nil
+		}},
+		{"navigation", func(b []byte) error {
+			var n Navigation
+			if err := decodeJSON(b, &n, max); err != nil {
+				return err
+			}
+			p.navigation = &n
 			return nil
 		}},
 		{"objects", func(b []byte) (err error) {

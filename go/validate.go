@@ -60,6 +60,7 @@ const (
 	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
 	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
 	ProblemValue        = "VALUE"         // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
+	ProblemNavigation   = "NAVIGATION"    // (0.8) the walking network names a building, floor, space or zone not in the package, holds a node twice, or an edge joins a node it does not have (or two nodes another edge joins), or has no line
 )
 
 var kindLevel = map[string]string{
@@ -116,6 +117,8 @@ var kindRoles = map[string]string{
 // IDs, the floor, space and zone each stands in, its type in the catalogue, and
 // (0.7) their position in their building, which their map position must agree
 // with through the building's placement. From 0.7 a package holds one building.
+// The walking network (0.8), when there is one: what its nodes are on and in, and
+// what its edges join.
 // No problems means the package can be linked to as it is.
 func (p *Package) Validate() []Problem {
 	out := append([]Problem(nil), p.problems...)
@@ -389,6 +392,52 @@ func (p *Package) Validate() []Problem {
 			}
 			if ty.Grade != nil && !slices.Contains(grades, *ty.Grade) {
 				add(ProblemValue, file, ty.Code, "%s: type %s: grade %q is not one of %s", file, ty.Code, *ty.Grade, strings.Join(grades, ", "))
+			}
+		}
+	}
+
+	if n := p.navigation; n != nil {
+		file := p.file("navigation")
+		for _, b := range n.Buildings {
+			if kindOf(b) != "building" {
+				add(ProblemNavigation, file, b, "%s: building %s is not in the package", file, b)
+			}
+		}
+		nodes := map[string]bool{}
+		for _, node := range n.Nodes {
+			if nodes[node.ID] {
+				add(ProblemNavigation, file, node.ID, "%s: node %s is there twice", file, node.ID)
+			}
+			nodes[node.ID] = true
+			if kindOf(node.Floor) != "floor" {
+				add(ProblemNavigation, file, node.ID, "%s: node %s is on unknown floor %s", file, node.ID, node.Floor)
+			}
+			for _, in := range []struct {
+				id   *string
+				kind string
+			}{{node.Space, "space"}, {node.Zone, "zone"}} {
+				if in.id != nil && kindOf(*in.id) != in.kind {
+					add(ProblemNavigation, file, node.ID, "%s: node %s is in unknown %s %s", file, node.ID, in.kind, *in.id)
+				}
+			}
+		}
+		pairs := map[[2]string]bool{}
+		for _, e := range n.Edges {
+			for _, end := range []string{e.From, e.To} {
+				if !nodes[end] {
+					add(ProblemNavigation, file, end, "%s: an edge joins unknown node %s", file, end)
+				}
+			}
+			pair := [2]string{e.From, e.To}
+			if pair[1] < pair[0] {
+				pair = [2]string{e.To, e.From}
+			}
+			if pairs[pair] {
+				add(ProblemNavigation, file, pair[0], "%s: two edges join %s and %s", file, pair[0], pair[1])
+			}
+			pairs[pair] = true
+			if len(e.Path) < 2 {
+				add(ProblemNavigation, file, e.From, "%s: the edge from %s to %s has no line", file, e.From, e.To)
 			}
 		}
 	}
