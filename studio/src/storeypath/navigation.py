@@ -55,6 +55,7 @@ KIOSK_STAND_M = 0.6  # where people stand, in front of a kiosk's screen
 SPANNER_STRETCH = 1.02  # a walk is kept unless the room's other walks join its ends within this…
 SPANNER_SLACK_M = 0.05  # …and this
 JOIN_MIN_M = 0.5  # a lift or stairs with no way in joins a room it shares this much edge with
+CORNER_SLACK_M = 0.03  # the corners a way bends round, of the walking region drawn this much simpler
 WALK_BACK_M = 2.0  # the way a person walks, before a door: over this much of the way
 DECIMALS = 3  # points, in metres
 
@@ -190,12 +191,14 @@ def walks(region, terminals: list[tuple[str, tuple[float, float]]]) -> list[tupl
     way through the room's nodes is nearly as short as (a greedy spanner)."""
     if len(terminals) < 2:
         return []
-    tol = region.buffer(0.005)
+    # the corners of the region drawn a little simpler (a wall drawn with many points
+    # bends a way no more than its line does): a way may come CORNER_SLACK_M nearer a wall
+    tol = region.buffer(CORNER_SLACK_M + 0.005)
     shapely.prepare(tol)
     ids = [t[0] for t in terminals]
     points = [t[1] for t in terminals]
     known = set(points)
-    corners = [c for c in dict.fromkeys(_reflex_corners(region)) if c not in known]
+    corners = [c for c in dict.fromkeys(_reflex_corners(region.simplify(CORNER_SLACK_M))) if c not in known]
     pts = np.array(points + corners, dtype=float)
     n, k = len(pts), len(points)
     ii, jj = np.triu_indices(n, 1)
@@ -453,8 +456,10 @@ def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
     for sid, u in units.items():
         if u.type not in VERTICAL or sid in joined or u.zones:
             continue
+        x0, y0, x1, y1 = u.area.bounds
         for oid, other in units.items():
-            if oid == sid:
+            ox0, oy0, ox1, oy1 = other.area.bounds
+            if oid == sid or ox0 > x1 + 0.3 or ox1 < x0 - 0.3 or oy0 > y1 + 0.3 or oy1 < y0 - 0.3:
                 continue
             shared = u.area.boundary.intersection(other.area.buffer(0.3))
             pieces = [g for g in getattr(shared, "geoms", [shared]) if isinstance(g, LineString) and g.length > 0]

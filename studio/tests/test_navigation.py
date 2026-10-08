@@ -12,7 +12,7 @@ from shapely.geometry import Point, box, mapping, shape
 
 from storeypath.assets import asset_dir
 from storeypath.export import export_package
-from storeypath.navigation import (MARGIN_M, ROOM_PENALTY_S, Graph, NoRoute, build_network, label_of, route,
+from storeypath.navigation import (CORNER_SLACK_M, MARGIN_M, ROOM_PENALTY_S, Graph, NoRoute, build_network, label_of, route,
                                    walking_region)
 from storeypath.samples import build_demo
 from storeypath.stacks import NOT_LINKED, stack_of, stacks
@@ -132,7 +132,7 @@ def test_walks_keep_off_the_walls_where_the_room_is_wide_enough(demo):
         room = spaces[e["space_id"]]
         line = e["path"]
         for p in line:
-            assert room.covers(Point(p).buffer(MARGIN_M - 0.02)), (e["from"], e["to"], p)
+            assert room.covers(Point(p).buffer(MARGIN_M - CORNER_SLACK_M - 0.01)), (e["from"], e["to"], p)
         checked += 1
     assert checked > 100
 
