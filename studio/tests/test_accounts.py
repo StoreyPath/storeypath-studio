@@ -209,8 +209,9 @@ def test_failed_logins_are_throttled_by_username_and_by_address(tmp_path, monkey
         with pytest.raises(Unauthorized):
             a.login("ali", "wrong wrong", "1.1.1.1")
     with pytest.raises(Throttled) as e:
-        a.login("ali", PASSWORD, "2.2.2.2")  # even the right password, from elsewhere: it waits
+        a.login("ali", PASSWORD, "1.1.1.1")  # even the right password, from there: it waits
     assert e.value.more["retry_after"] == acc.THROTTLE_FIRST_S
+    assert a.login("ali", PASSWORD, "2.2.2.2")[1].username == "ali"  # from elsewhere: never locked out
     clock.t += acc.THROTTLE_FIRST_S + 1
     with pytest.raises(Unauthorized):
         a.login("ali", "wrong again", "1.1.1.1")
@@ -227,9 +228,9 @@ def test_failed_logins_are_throttled_by_username_and_by_address(tmp_path, monkey
         a.login("ali", PASSWORD, "6.6.6.6")
     assert a.login("ali", PASSWORD, "7.7.7.7")[1].username == "ali"
     assert any(e["outcome"] == "throttled" for e in a.audit_tail())
-    for _ in range(40):  # never more than the most
-        a._failed([("user", "zed")])
-    assert a._waiting([("user", "zed")]) <= acc.THROTTLE_MAX_S
+    zed = ("user", "zed", "8.8.8.8")
+    a._failures[zed] = [clock.t] * 40  # never more than the most
+    assert a._waiting([zed], clock.t)[0] <= acc.THROTTLE_MAX_S
 
 
 def test_the_setup_token_makes_the_first_admin_once(tmp_path):

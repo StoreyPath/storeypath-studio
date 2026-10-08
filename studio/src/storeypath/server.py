@@ -91,7 +91,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
-from .accounts import (COOKIE, LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Throttled, Unauthorized,
+from .accounts import (COOKIE, LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Unauthorized,
                        User, check_username, rank, temporary_password)
 from .assets import asset_dir
 from .backup import backup_name, jobs_paused, write_backup
@@ -1842,6 +1842,8 @@ CAPABILITY_NAMES = ("backup", "catalogue")
 # ---- HTTP ----------------------------------------------------------------------
 
 MAX_JSON = 64 * 1024 * 1024  # a request's JSON body
+SMALL_JSON = 4096  # …logging in, the setup and one's own password: a few names and passwords
+SMALL_CALLS = (["login"], ["setup"], ["me", "password"])
 DRAIN_MAX = 1024 * 1024  # a refused request's body is read (and dropped) up to this size; else the connection closes
 ALLOWED_HOSTS_ENV = "STOREYPATH_ALLOWED_HOSTS"  # more names Studio may be reached by: "studio.example.org, studio"
 
@@ -2188,7 +2190,9 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 return self._refuse()
-            if self._unread > MAX_JSON:
+            parts = unquote(urlparse(self.path).path).split("/")[2:]
+            # what anyone may send (logging in, the setup) is small: never read beyond it
+            if self._unread > (SMALL_JSON if parts in SMALL_CALLS else MAX_JSON):
                 return self._refuse(413, "too much to send at once")
             try:
                 # NaN and Infinity are not JSON: refused, never stored
@@ -2197,7 +2201,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(400, {"error": "invalid JSON"})
             if not isinstance(body, dict):
                 return self._json(400, {"error": "send a JSON object"})
-            self._api("POST", unquote(urlparse(self.path).path).split("/")[2:], body, {})
+            self._api("POST", parts, body, {})
 
         def _token(self) -> str | None:
             """The session's token, from the request's cookie."""
@@ -2218,7 +2222,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             try:
                 data = route(method, parts, body, query, may)
             except Refused as e:
-                extra = {"Retry-After": str(e.more["retry_after"])} if isinstance(e, Throttled) else None
+                extra = {"Retry-After": str(e.more["retry_after"])} if "retry_after" in e.more else None
                 return self._send(e.status, json.dumps({"error": str(e), **e.more}, ensure_ascii=False).encode(),
                                   "application/json", extra)
             except NotFound as e:

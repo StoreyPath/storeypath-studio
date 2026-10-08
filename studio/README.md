@@ -125,8 +125,14 @@ user, a reset) is temporary: it is changed at the next login before anything els
 A session lasts until it is not used for 8 hours, or a week at most, and survives
 a restart of Studio; logging out, changing one's password, or an admin changing
 someone's role or capabilities or disabling them ends their sessions. After 5 failed
-logins for a username, or 20 from one address, within 15 minutes, logins wait (from
-30 seconds, doubling, up to 15 minutes). Users are never deleted, only disabled.
+logins for a username from one address, or 20 from one address, within 15 minutes,
+logins from there wait (from 30 seconds, doubling, up to 15 minutes): someone else's
+wrong passwords never lock a person out. A wrong current password, changing one's
+own, counts as a failed login. Each try is counted before its password is checked,
+and passwords are checked four at a time (scrypt takes 32 MiB each; more wait a
+moment, then are answered 503); a wait is written in the audit log once in 15
+minutes. Logging in takes at most 4 KB, and a username of more than 64 characters
+is refused unread. Users are never deleted, only disabled.
 
 **From the command line**, on the data folder (also while Studio runs):
 

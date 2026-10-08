@@ -65,10 +65,14 @@ IDLE_S = 8 * 3600  # a session not used for this long ends…
 ABSOLUTE_S = 7 * 24 * 3600  # …and every session after this long
 SEEN_EVERY_S = 60  # a session's last use is written at most this often
 THROTTLE_WINDOW_S = 15 * 60  # failed logins counted over this long
-USER_FAILURES = 5  # failed logins for one username, then it waits
+USER_FAILURES = 5  # failed logins for one username from one address, then it waits
 ADDRESS_FAILURES = 20  # failed logins from one address, then it waits
 THROTTLE_FIRST_S = 30  # the first wait; each failure after it doubles it…
 THROTTLE_MAX_S = 15 * 60  # …up to this
+FAILURE_KEYS_MAX = 10_000  # failed-login counts kept at most (beyond it, the oldest go)
+LONGEST_USERNAME_TRIED = 64  # a longer one is no username: refused before anything else, never kept
+PASSWORD_CHECKS = 4  # passwords checked at once (scrypt: 32 MiB each)…
+PASSWORD_WAIT_S = 5.0  # …one waits this long for its turn, then is answered 503
 BUSY_TIMEOUT_MS = 5000  # a writer waits this long for another (Studio, the command line)
 COOKIE = "sp_session"
 ADMIN_PASSWORD_ENV = "STOREYPATH_ADMIN_PASSWORD"  # unattended first start: the first admin
@@ -114,6 +118,12 @@ class Throttled(Refused):
     """Too many failed logins: try again in ``retry_after`` seconds (429)."""
 
     status = 429
+
+
+class Overloaded(Refused):
+    """Too many passwords being checked at once: try again in ``retry_after`` seconds (503)."""
+
+    status = 503
 
 
 # ---- passwords ------------------------------------------------------------------
@@ -299,8 +309,11 @@ class Accounts:
         self.data.mkdir(parents=True, exist_ok=True)
         self.path = self.data / DB_FILE
         self.clock = clock
-        self._failures: dict[tuple[str, str], list[float]] = {}
+        self._failures: dict[tuple, list[float]] = {}  # a throttle's key -> when its tries failed
+        self._noted: dict[tuple, float] = {}  # a throttle's key -> when a wait for it was last audited
+        self._pruned = 0.0
         self._lock = threading.Lock()  # the failures, and the setup token
+        self._checks = threading.BoundedSemaphore(PASSWORD_CHECKS)  # passwords checked at once
         self._setup: str | None = None
         self._dummy: str | None = None
         if not self.path.exists():  # the accounts' file is the owner's alone
@@ -436,24 +449,26 @@ class Accounts:
     def login(self, username, password, address: str = "") -> tuple[str, User]:
         """A new session (its token) for the person whose username and password these
         are. The same answer for a username not known as for a wrong password, after
-        the same work (a password is checked either way). Throttled: after
-        USER_FAILURES failed logins for a username, or ADDRESS_FAILURES from one
-        address, within THROTTLE_WINDOW_S, each try waits (Throttled), longer each time."""
+        the same work (a password is checked either way). Throttled (_try): after
+        USER_FAILURES failed logins for a username from one address, or ADDRESS_FAILURES
+        from one address, within THROTTLE_WINDOW_S, each try waits (Throttled), longer
+        each time; a person's own logins never wait for someone else's wrong passwords.
+        A "username" longer than LONGEST_USERNAME_TRIED is none: refused as a wrong one
+        without a password checked, kept (in the audit) only cut short."""
+        if isinstance(username, str) and len(username) > LONGEST_USERNAME_TRIED:
+            keys = [("address", _throttled_as(address))]
+            with self._try("login", keys, address, username[:24] + "…"):
+                raise Unauthorized("wrong username or password")
         name = username.strip().lower() if isinstance(username, str) else ""
-        keys = [("user", name), ("address", address or "")]
-        wait = self._waiting(keys)
-        if wait:
-            self.audit("login", None, address, target=name or None, outcome="throttled")
-            raise Throttled(f"too many failed logins: try again in {_duration(wait)}", retry_after=wait)
-        user = self.by_username(name)
-        ok = verify_password(password if isinstance(password, str) else "",
-                             user.password if user else self._dummy_hash())
-        if not (ok and user is not None and user.active):
-            self._failed(keys)
-            self.audit("login", user, address, target=name or None, outcome="failed")
-            raise Unauthorized("wrong username or password")
-        with self._lock:
-            self._failures.pop(keys[0], None)
+        with self._try("login", self._keys(name, address), address, name or None) as attempt:
+            user = self.by_username(name)
+            with self._checking():
+                ok = verify_password(password if isinstance(password, str) else "",
+                                     user.password if user else self._dummy_hash())
+            if not (ok and user is not None and user.active):
+                attempt.user = user
+                raise Unauthorized("wrong username or password")
+            attempt.ok()
         with self._write() as db:
             db.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (utcnow(), user.id))
         self.audit("login", user, address)
@@ -464,28 +479,110 @@ class Accounts:
             self._dummy = hash_password(secrets.token_urlsafe(12))
         return self._dummy
 
-    def _waiting(self, keys) -> int:
-        """How long (seconds) a login must wait, by the failures of its username and address."""
-        now = self.clock()
-        wait = 0.0
-        with self._lock:
-            for key in keys:
-                times = [t for t in self._failures.get(key, []) if now - t < THROTTLE_WINDOW_S]
-                if times:
-                    self._failures[key] = times
-                else:
-                    self._failures.pop(key, None)
-                limit = USER_FAILURES if key[0] == "user" else ADDRESS_FAILURES
-                if len(times) >= limit:
-                    pause = min(THROTTLE_MAX_S, THROTTLE_FIRST_S * 2 ** (len(times) - limit))
-                    wait = max(wait, times[-1] + pause - now)
-        return max(0, int(wait + 0.999))
+    @staticmethod
+    def _keys(username: str, address: str) -> list[tuple]:
+        """The counts a password tried for ``username`` from ``address`` goes into: that
+        username from that address (no one else's wrong passwords make its person wait),
+        and that address."""
+        where = _throttled_as(address)
+        return [("user", username, where), ("address", where)]
 
-    def _failed(self, keys) -> None:
+    @contextmanager
+    def _checking(self):
+        """A turn to check a password (scrypt: 32 MiB of memory each): PASSWORD_CHECKS at
+        once; one that waits PASSWORD_WAIT_S for its turn is answered 503 (Overloaded)."""
+        if not self._checks.acquire(timeout=PASSWORD_WAIT_S):
+            raise Overloaded("Studio is checking many passwords at once: try again in a moment", retry_after=2)
+        try:
+            yield
+        finally:
+            self._checks.release()
+
+    @contextmanager
+    def _try(self, action: str, keys: list[tuple], address: str, target):
+        """A password tried (a login, a password change): counted as a failure for each of
+        ``keys`` before it is checked, so that many tried at once never pass the limits
+        together, and taken back when it is right (``ok()``) or was not checked at all
+        (Overloaded). Raises Throttled, before anything is checked, while the failures
+        counted say to wait (written in the audit once a window for each key that
+        waits). A try ending in Unauthorized or Forbidden is written in the audit as
+        failed (by its ``user``, when known)."""
+        attempt = _Attempt()
         now = self.clock()
         with self._lock:
-            for key in keys:
-                self._failures.setdefault(key, []).append(now)
+            wait, waiting = self._waiting(keys, now)
+            if not wait:
+                for key in keys:
+                    self._failures.setdefault(key, []).append(now)
+                self._prune(now)
+            note = bool(wait) and now - self._noted.get(waiting, -THROTTLE_WINDOW_S) >= THROTTLE_WINDOW_S
+            if note:
+                self._noted[waiting] = now
+        if wait:
+            if note:
+                self.audit(action, None, address, target=target, outcome="throttled")
+            raise Throttled(f"too many failed tries: try again in {_duration(wait)}", retry_after=wait)
+        try:
+            yield attempt
+        except (Unauthorized, Forbidden):
+            self.audit(action, attempt.user, address, target=target, outcome="failed")
+            raise
+        except Overloaded:
+            self._take_back(keys, now)
+            raise
+        finally:
+            if attempt.right:
+                self._take_back(keys, now, forgive=keys[0][0] == "user")
+
+    def _waiting(self, keys, now: float) -> tuple[int, tuple | None]:
+        """How long (seconds) a try must wait by the failures counted for ``keys``, and
+        the key that says so (the lock held)."""
+        wait, waiting = 0.0, None
+        for key in keys:
+            times = [t for t in self._failures.get(key, []) if now - t < THROTTLE_WINDOW_S]
+            if times:
+                self._failures[key] = times
+            else:
+                self._failures.pop(key, None)
+            limit = USER_FAILURES if key[0] == "user" else ADDRESS_FAILURES
+            if len(times) >= limit:
+                pause = min(THROTTLE_MAX_S, THROTTLE_FIRST_S * 2 ** (len(times) - limit))
+                if times[-1] + pause - now > wait:
+                    wait, waiting = times[-1] + pause - now, key
+        return max(0, int(wait + 0.999)), waiting
+
+    def _take_back(self, keys, at: float, forgive: bool = False) -> None:
+        """A try counted at ``at`` taken back; ``forgive``: the failures of its first key
+        (the username's, from that address) forgotten too, as the password was right."""
+        with self._lock:
+            for i, key in enumerate(keys):
+                if forgive and i == 0:
+                    self._failures.pop(key, None)
+                    continue
+                times = self._failures.get(key)
+                if times and at in times:
+                    times.remove(at)
+                    if not times:
+                        del self._failures[key]
+
+    def _prune(self, now: float) -> None:
+        """Failures older than the window forgotten (at most once a minute, or when too
+        many are kept); never more than FAILURE_KEYS_MAX kept: beyond it, those failed
+        longest ago go first. The lock held."""
+        if len(self._failures) <= FAILURE_KEYS_MAX and now - self._pruned < 60:
+            return
+        self._pruned = now
+        last = lambda times: times[-1]  # noqa: E731 (the latest failure of a key)
+        for key in [k for k, times in self._failures.items() if now - last(times) >= THROTTLE_WINDOW_S]:
+            del self._failures[key]
+        for key in [k for k, at in self._noted.items() if now - at >= THROTTLE_WINDOW_S]:
+            del self._noted[key]
+        over = len(self._failures) - FAILURE_KEYS_MAX
+        if over > 0:
+            for key in sorted(self._failures, key=lambda k: last(self._failures[k]))[:over]:
+                del self._failures[key]
+        if len(self._noted) > FAILURE_KEYS_MAX:
+            self._noted.clear()
 
     def start_session(self, user: User, address: str | None = None) -> str:
         """A new session of ``user``: its token, for the cookie; only its hash is kept."""
@@ -531,14 +628,18 @@ class Accounts:
         return self.user(row["user"]) if row else None
 
     def change_own_password(self, user: User, current, new, address: str = "") -> str:
-        """A person's own password changed (``current`` checked): every session of theirs
-        ends, and this one goes on as a new one (its token)."""
-        if not verify_password(current if isinstance(current, str) else "", user.password):
-            self.audit("password changed", user, address, target=user.username, outcome="failed")
-            raise Forbidden("the current password is not right")
-        if isinstance(new, str) and isinstance(current, str) and new == current:
-            raise ValueError("choose a new password, not the one you have")
-        user = self.set_password(user.id, new, temporary=False)
+        """A person's own password changed (``current`` checked, a wrong one counted and
+        waited for as a failed login is, by their username and address): every session
+        of theirs ends, and this one goes on as a new one (its token)."""
+        with self._try("password changed", self._keys(user.username, address), address, user.username) as attempt:
+            attempt.user = user
+            with self._checking():
+                if not verify_password(current if isinstance(current, str) else "", user.password):
+                    raise Forbidden("the current password is not right")
+                attempt.ok()
+                if isinstance(new, str) and isinstance(current, str) and new == current:
+                    raise ValueError("choose a new password, not the one you have")
+                user = self.set_password(user.id, new, temporary=False)
         self.audit("password changed", user, address, target=user.username)
         return self.start_session(user, address)
 
@@ -559,10 +660,12 @@ class Accounts:
         expected = self._setup
         if self.has_users() or expected is None:
             raise Gone("Studio is set up already: log in")
-        if not isinstance(token, str) or not hmac.compare_digest(token.encode(), expected.encode()):
-            self.audit("setup", None, address, outcome="failed")
-            raise Forbidden("this setup link is not the one Studio printed when it started")
-        user = self.add_user(username, password, name=name or "", role="admin", must_change_password=False)
+        with self._try("setup", [("address", _throttled_as(address))], address, None) as attempt:
+            if not isinstance(token, str) or not hmac.compare_digest(token.encode(), expected.encode()):
+                raise Forbidden("this setup link is not the one Studio printed when it started")
+            attempt.ok()
+            with self._checking():
+                user = self.add_user(username, password, name=name or "", role="admin", must_change_password=False)
         with self._lock:
             self._setup = None
         self.audit("setup", user, address, target=user.username)
@@ -713,6 +816,22 @@ def _name(name) -> str:
 
 def _duration(seconds: int) -> str:
     return f"{seconds} seconds" if seconds < 120 else f"{(seconds + 59) // 60} minutes"
+
+
+class _Attempt:
+    """A password tried (Accounts._try): whose it was, when known, and whether it was right."""
+
+    def __init__(self):
+        self.user: User | None = None
+        self.right = False
+
+    def ok(self) -> None:
+        self.right = True
+
+
+def _throttled_as(address: str | None) -> str:
+    """The address failed tries are counted by."""
+    return address or ""
 
 
 # ---- what one person may do in one project ------------------------------------------

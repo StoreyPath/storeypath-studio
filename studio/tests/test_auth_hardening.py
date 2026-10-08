@@ -6,10 +6,16 @@ they may see."""
 
 import io
 import json
+import threading
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from sessions import call
-from storeypath.accounts import Scope
+from storeypath import accounts as acc
+from storeypath.accounts import Accounts, Scope, Unauthorized
 from storeypath.bundle import export_project
 from storeypath.workspace import Project, Workspace
 from test_auth_flows import PASSWORD, campus, quick_hashes, serve  # noqa: F401 (fixtures)
@@ -122,3 +128,122 @@ def test_a_file_opened_adds_item_types_only_for_who_may_change_them(campus):
     status, opened, _ = call(port, "PUT", "/api/open?replace=Demo%20Campus", raw=blob, token=bob)
     assert status == 200 and opened["item_types_added"] == ["ZEBRA-DESK"] and opened["item_types_not_added"] == []
     assert studio.catalogue().get("ZEBRA-DESK") is not None
+
+
+# ---- logging in --------------------------------------------------------------------------
+
+class Clock:
+    def __init__(self, t=1_000_000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+@pytest.fixture
+def proxied(tmp_path):
+    """Studio behind a proxy on this computer: who is asking is the X-Real-IP sent."""
+    srv, studio, accounts = serve(tmp_path / "data", trusted_proxies=["127.0.0.1"])
+    accounts.add_user("ali", PASSWORD, must_change_password=False)
+    yield srv.server_port, studio, accounts
+    srv.shutdown()
+    srv.server_close()
+
+
+def login(port, username, password, address="203.0.113.7"):
+    return call(port, "POST", "/api/login", {"username": username, "password": password},
+                headers={"X-Real-IP": address})
+
+
+def test_a_username_too_long_to_be_one_is_refused_and_not_kept(proxied):
+    port, studio, accounts = proxied
+    status, said, _ = login(port, "x" * 3000, "nope nope")  # (within the body a login may have)
+    assert status == 401 and said["error"] == "wrong username or password"
+    entry = accounts.audit_tail(1)[0]
+    assert entry["action"] == "login" and entry["outcome"] == "failed" and len(entry["target"]) <= 40
+    assert not any(len(str(k)) > 200 for k in accounts._failures)
+
+
+def test_logging_in_takes_a_small_body(proxied):
+    port, studio, accounts = proxied
+    for path in ("/api/login", "/api/setup", "/api/me/password"):
+        status, said, _ = call(port, "POST", path, {"username": "ali", "password": "p" * 5000},
+                               headers={"X-Real-IP": "203.0.113.7"})
+        assert status == 413, (path, status, said)
+    assert not accounts.audit_tail()  # nothing read, nothing kept
+
+
+def test_logins_that_wait_are_written_down_once_a_window(proxied):
+    port, studio, accounts = proxied
+    for _ in range(acc.USER_FAILURES):
+        assert login(port, "ali", "nope nope")[0] == 401
+    for _ in range(20):
+        assert login(port, "ali", "nope nope")[0] == 429
+    outcomes = [e["outcome"] for e in accounts.audit_tail() if e["action"] == "login"]
+    assert outcomes.count("failed") == acc.USER_FAILURES and outcomes.count("throttled") == 1, outcomes
+
+
+def test_failed_logins_are_forgotten_when_old_and_never_kept_without_end(tmp_path, monkeypatch):
+    clock = Clock()
+    a = Accounts(tmp_path, clock=clock)
+    for i in range(30):
+        with pytest.raises(Unauthorized):
+            a.login(f"u{i}", "nope nope", f"198.51.100.{i}")
+    clock.t += acc.THROTTLE_WINDOW_S + 1
+    with pytest.raises(Unauthorized):
+        a.login("late", "nope nope", "198.51.100.200")
+    assert len(a._failures) <= 2  # the old ones gone
+    monkeypatch.setattr(acc, "FAILURE_KEYS_MAX", 50, raising=False)
+    for i in range(200):  # many addresses at once: kept at most so many
+        with pytest.raises(Unauthorized):
+            a.login("u", "nope nope", f"198.18.{i // 250}.{i % 250}")
+    assert len(a._failures) <= 50
+
+
+def test_someone_elses_wrong_passwords_never_lock_a_person_out(proxied):
+    port, studio, accounts = proxied
+    for _ in range(acc.USER_FAILURES + 3):  # someone trying ali's password from elsewhere
+        login(port, "ali", "nope nope", "198.51.100.66")
+    assert login(port, "ali", "nope nope", "198.51.100.66")[0] == 429  # they wait
+    status, me, _ = login(port, "ali", PASSWORD, "203.0.113.7")  # ali does not
+    assert status == 200 and me["user"]["username"] == "ali"
+
+
+def test_passwords_are_counted_before_they_are_checked_and_checked_a_few_at_a_time(proxied, monkeypatch):
+    port, studio, accounts = proxied
+    accounts._dummy_hash()
+    checking, most, checked = [0], [0], [0]
+    lock = threading.Lock()
+
+    def slow(password, stored):  # scrypt: 32 MiB and a tenth of a second each
+        with lock:
+            checking[0] += 1
+            checked[0] += 1
+            most[0] = max(most[0], checking[0])
+        time.sleep(0.2)
+        with lock:
+            checking[0] -= 1
+        return False
+
+    monkeypatch.setattr(acc, "verify_password", slow)
+    with ThreadPoolExecutor(40) as pool:  # a burst from one address, each a username of its own
+        statuses = list(pool.map(lambda i: login(port, f"u{i}", "nope nope", "198.51.100.9")[0], range(40)))
+    assert set(statuses) <= {401, 429, 503}, statuses
+    assert checked[0] <= acc.ADDRESS_FAILURES, checked  # no more than may fail, however many at once
+    assert most[0] <= getattr(acc, "PASSWORD_CHECKS", 4), most
+
+
+def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):
+    port, studio, accounts = proxied
+    ali = accounts.by_username("ali")
+    token = accounts.start_session(ali)
+
+    def change(current):
+        return call(port, "POST", "/api/me/password", {"current": current, "new": "a new password now"},
+                    token=token, headers={"X-Real-IP": "203.0.113.7"})
+
+    for _ in range(acc.USER_FAILURES):
+        assert change("not my password")[0] == 403
+    status, said, res = change(PASSWORD)
+    assert status == 429 and said["retry_after"] > 0, (status, said)
+    assert accounts.login("ali", PASSWORD, "192.0.2.1")[1].username == "ali"  # unchanged, and not locked elsewhere
