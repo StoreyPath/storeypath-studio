@@ -575,8 +575,11 @@ def serve(
 ):
     """Run StoreyPath Studio in the browser: projects, drawings, review, export. Over
     HTTPS, with a certificate Studio makes in <data>/tls/ (browsers warn once: compare
-    the fingerprint it prints), or your own (--cert, --key). People log in: the first
-    start makes the first admin, admin / admin (or with STOREYPATH_ADMIN_PASSWORD);
+    the fingerprint it prints), or your own (--cert, --key). Everything is kept in
+    Studio's database (STOREYPATH_DATABASE_URL); the data folder holds its certificate
+    and cache. The first start with an empty database brings in the projects and
+    accounts an older Studio kept in the data folder. People log in: the first start
+    makes the first admin, admin / admin (or with STOREYPATH_ADMIN_PASSWORD);
     `storeypath users` manages accounts too."""
     import ssl
 
@@ -613,7 +616,14 @@ def serve(
         _fail(str(e))
     if proxies:
         typer.echo(f"behind {', '.join(map(str, proxies))}: who is asking is taken from the X-Real-IP they set")
-    accounts = Accounts(data)
+    database = _database(data)
+    from .db.importer import first_start
+
+    data.mkdir(parents=True, exist_ok=True)
+    imported = first_start(data, database)
+    if imported is not None:
+        _say_imported(imported)
+    accounts = Accounts(data, db=database)
     try:
         made = accounts.bootstrap()
     except ValueError as e:
@@ -623,7 +633,34 @@ def serve(
                    + ("as STOREYPATH_ADMIN_PASSWORD says" if os.environ.get("STOREYPATH_ADMIN_PASSWORD") else "admin")
                    + " (change it in the person menu, top right: Change password)")
     _serve(data, host, port, "/", open_browser, allowed=allowed_host or [], accounts=accounts,
-           tls=tls, secure_cookies=secure_cookies, trusted_proxies=trusted_proxy or [])
+           tls=tls, secure_cookies=secure_cookies, trusted_proxies=trusted_proxy or [], db=database)
+
+
+def _database(data: Path | None = None):
+    """Studio's database (STOREYPATH_DATABASE_URL), opened and brought up to date."""
+    from . import db as databases
+
+    try:
+        database = databases.connect(data=data)
+    except databases.DatabaseError as e:
+        _fail(f"{e} (set {databases.URL_ENV})")
+    typer.echo(f"database: {databases.shown(database.url)}")
+    return database
+
+
+def _say_imported(report: dict) -> None:
+    if report["projects"] or report["skipped"]:
+        typer.echo(f"brought in from the data folder: {len(report['projects'])} projects "
+                   f"({report['drawings']} drawings, {report['packages']} packages)"
+                   + (f", {len(report['skipped'])} left as they were" if report["skipped"] else "")
+                   + ("; the item types" if report["catalogue"] else ""))
+    if report["users"] or report["grants"] or report["audit"]:
+        typer.echo(f"brought in from studio.db: {report['users']} users, {report['grants']} grants, "
+                   f"{report['audit']} audit entries (nobody is logged in)")
+    for note in report["notes"]:
+        typer.secho(f"  note: {note}", fg="yellow")
+    for skipped in report["skipped"]:
+        typer.echo(f"  {skipped.get('code') or skipped.get('file')}: {skipped['why']}")
 
 
 @app.command()
@@ -633,18 +670,65 @@ def review(
     open_browser: Annotated[bool, typer.Option("--open/--no-open")] = True,
 ):
     """Open the review editor: each floor over its drawing, click a space to correct it.
-    On this computer alone (127.0.0.1), without accounts."""
+    On this computer alone (127.0.0.1), without accounts. The project is reviewed in a
+    database of its own, made for the while on the PostgreSQL STOREYPATH_DATABASE_URL
+    names (and dropped after), and the workspace file is written again after every
+    change."""
+    import shutil
+    import tempfile
+    import uuid
+
+    import psycopg
+
+    from . import db as databases
+    from .db.importer import _project
+    from .db.store import ProjectStore, drawing_name
+
     ws = _load(workspace)
-    _serve(workspace.parent, "127.0.0.1", port, f"/review.html?p={ws.id}", open_browser,
-           f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them", accounts=None)
+    server = databases.default_url(workspace.parent)
+    name = f"storeypath_review_{uuid.uuid4().hex[:12]}"
+    try:
+        with psycopg.connect(server, autocommit=True) as conn:
+            conn.execute(f'CREATE DATABASE "{name}"')
+    except psycopg.Error as e:
+        _fail(f"cannot make a database to review in on {databases.shown(server)}: {e} (set {databases.URL_ENV})")
+    url = psycopg.conninfo.make_conninfo(server, dbname=name)
+    folder = Path(tempfile.mkdtemp(prefix="storeypath-review-"))  # its cache alone
+    try:
+        database = databases.connect(url)
+        store = ProjectStore(database)
+        report = {"projects": [], "skipped": [], "drawings": 0, "packages": 0, "notes": []}
+        _project(workspace, store, report, lambda line: None)
+        # each floor's drawing as the file names it, written back with the project
+        sources = {f_id: f.source.path for *_, f, f_id in ws.iter_floors() if f.source is not None}
+
+        def write_back(code: str) -> None:
+            mine = store.load(code)
+            for *_, f, f_id in mine.iter_floors():
+                if f.source is not None and f_id in sources and drawing_name(f.source.path) == \
+                        drawing_name(sources[f_id]):
+                    f.source.path = sources[f_id]
+            mine.save(workspace)
+
+        store.listeners.append(write_back)
+        _serve(folder, "127.0.0.1", port, f"/review.html?p={ws.id}", open_browser,
+               f"reviewing {ws.project.name} ({ws.id}); corrections are saved to {workspace} as you make them",
+               accounts=None, db=database, store=store)
+    finally:
+        databases.forget(url)
+        with psycopg.connect(server, autocommit=True) as conn:
+            conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
            allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False,
-           trusted_proxies=()) -> None:
+           trusted_proxies=(), db=None, store=None) -> None:
     from .server import Studio, make_server
 
-    studio = Studio(data)
+    studio = Studio(data, db=db)
+    if store is not None:
+        studio.store = store
     try:
         server = make_server(studio, host, port, allowed=allowed or [], accounts=accounts, tls=tls,
                              secure_cookies=secure_cookies, trusted_proxies=trusted_proxies)
@@ -655,7 +739,7 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     url = f"{scheme}://{shown}:{server.server_port}{page}"
     status = studio.status()
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
-    typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
+    typer.echo(f"data folder (certificate, cache) {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
                + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
                + (f"; vision: {status['vision']}" if status["vision"] else ""))
@@ -676,17 +760,20 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
 
 # ---- users, backups --------------------------------------------------------------
 
-users_app = typer.Typer(no_args_is_help=True, help="The accounts of a Studio data folder (safe while Studio runs).")
+users_app = typer.Typer(no_args_is_help=True, help="The accounts of a Studio (in its database, "
+                                                          "STOREYPATH_DATABASE_URL; safe while Studio runs).")
 app.add_typer(users_app, name="users")
 DataOption = Annotated[Path, typer.Option(help="Studio's data folder")]
 
 
 def _accounts(data: Path):
+    from . import db as databases
     from .accounts import Accounts
 
-    if not data.is_dir():
-        _fail(f"{data} is not a folder")
-    return Accounts(data)
+    try:
+        return Accounts(data)
+    except databases.DatabaseError as e:
+        _fail(f"{e} (set {databases.URL_ENV})")
 
 
 def _user_named(accounts, username: str):
@@ -805,54 +892,106 @@ def users_role(username: str, role: Annotated[str, typer.Argument(help="admin, e
 @app.command()
 def backup(
     data: DataOption = Path("."),
-    out: Annotated[Optional[Path], typer.Option(help="the file (default: storeypath-backup-<UTC time>.tar.gz here)")] = None,
+    out: Annotated[Optional[Path], typer.Option(help="the file (default: storeypath-backup-<UTC time>.sql.gz here)")] = None,
 ):
-    """Write the whole data folder (projects, item types, users with their passwords'
-    hashes, sharing, audit log; no session, no certificate) as one .tar.gz, as Studio's
-    Backup does. Waits for a job Studio is running to finish."""
+    """Write Studio's whole database (projects with their drawings and packages, item
+    types, users with their passwords' hashes, sharing, audit log, history; no session,
+    no certificate) as one .sql.gz, as Studio's Backup does: one moment's, while Studio
+    goes on working."""
     from .accounts import Accounts
-    from .backup import backup_name, jobs_paused, write_backup
+    from .backup import backup_name, write_backup
 
-    if not data.is_dir():
-        _fail(f"{data} is not a folder")
+    database = _database(data)
     out = out or Path(backup_name())
     if out.exists():
         _fail(f"{out} exists already")
-    if out.resolve().is_relative_to(data.resolve()):
+    if data.is_dir() and out.resolve().is_relative_to(data.resolve()):
         _fail("write the backup outside the data folder")
     part = out.with_name(out.name + ".part")
     try:
         # its owner's alone, whatever the umask: every password's hash is in it
         fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.fchmod(fd, 0o600)
-        with jobs_paused(data), os.fdopen(fd, "wb") as f:
-            counts = write_backup(data, f)
+        with os.fdopen(fd, "wb") as f:
+            counts = write_backup(database, f)
         part.replace(out)
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    Accounts(data).audit("backup", None, "command line", out.name)
-    typer.echo(f"{out}: {counts['files']} files, {counts['bytes'] / 1e6:.1f} MB before compression")
+    Accounts(data, db=database).audit("backup", None, "command line", out.name)
+    typer.echo(f"{out}: {counts['rows']} rows of {counts['tables']} tables, {counts['bytes'] / 1e6:.1f} MB "
+               "before compression")
 
 
 @app.command()
 def restore(
-    archive: Annotated[Path, typer.Argument(help="a backup (.tar.gz)")],
-    data: Annotated[Path, typer.Option(help="an empty folder to restore into (Studio not running on it)")],
+    archive: Annotated[Path, typer.Argument(help="a backup (.sql.gz; or an older Studio's .tar.gz)")],
+    data: Annotated[Path, typer.Option(help="the data folder of the Studio whose database it goes into "
+                                            "(STOREYPATH_DATABASE_URL): an empty database")] = Path("."),
 ):
-    """Put a backup into an empty data folder: its projects, item types, users and sharing.
-    Nobody is logged in to it, and Studio makes a new certificate when it starts on it."""
+    """Put a backup into an empty database: its projects, item types, users, sharing and
+    history. Nobody is logged in to it, and Studio makes a new certificate when it
+    starts. An older Studio's backup (its data folder) is brought in as the folder."""
+    from . import db as databases
     from .backup import restore as restore_backup
 
     if not archive.is_file():
         _fail(f"{archive} is not a file")
+    url = databases.default_url(data)
     try:
-        counts = restore_backup(archive, data)
-    except (ValueError, OSError) as e:
+        counts = restore_backup(archive, url)
+    except (ValueError, OSError, databases.DatabaseError) as e:
         _fail(str(e))
-    except Exception as e:  # tarfile's own: a damaged file
+    except Exception as e:  # a damaged file
         _fail(f"not a StoreyPath backup: {e}")
-    typer.echo(f"restored {counts['files']} files into {data}")
+    if "rows" in counts:
+        typer.echo(f"restored {counts['rows']} rows into {databases.shown(url)}")
+    else:
+        typer.echo(f"restored {counts['projects']} projects and {counts['users']} users ({counts['from']}) "
+                   f"into {databases.shown(url)}")
+
+
+db_app = typer.Typer(no_args_is_help=True, help="Studio's database (STOREYPATH_DATABASE_URL).")
+app.add_typer(db_app, name="db")
+
+
+@db_app.command("url")
+def db_url():
+    """Where Studio's database is (without its password)."""
+    from . import db as databases
+
+    typer.echo(databases.shown(databases.default_url()))
+
+
+@db_app.command("migrate")
+def db_migrate():
+    """Bring the database's schema up to date (Studio does at every start)."""
+    from . import db as databases
+
+    try:
+        done = databases.migrate(databases.default_url())
+    except databases.DatabaseError as e:
+        _fail(str(e))
+    except Exception as e:
+        _fail(f"cannot reach the database {databases.shown(databases.default_url())}: {e}")
+    typer.echo("applied: " + ", ".join(done) if done else "the schema is up to date")
+
+
+@db_app.command("import")
+def db_import(
+    data: Annotated[Path, typer.Option(help="an older Studio's data folder")],
+):
+    """Bring an older Studio's data folder into the database: every project (its
+    workspace, drawings and packages), the item types, and studio.db (users, owners,
+    sharing, audit log). A project the database has already is left as it is; nothing in
+    the folder is changed. Safe to run again."""
+    from .db.importer import import_folder
+
+    if not data.is_dir():
+        _fail(f"{data} is not a folder")
+    database = _database(data)
+    report = import_folder(data, database, say=typer.echo)
+    _say_imported(report)
 
 
 @app.command()

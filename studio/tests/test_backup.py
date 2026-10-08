@@ -1,86 +1,67 @@
-"""Backups (backup.py): the whole data folder as one .tar.gz, written as it is read, and
-put back only into an empty folder, refusing anything that would land outside it."""
+"""Backups (backup.py): Studio's whole database as one .sql.gz, one moment's, written as
+it is read; put back only into an empty database. An older Studio's backup (its data
+folder, a .tar.gz) is brought in as its folder, refusing anything that would land
+outside it."""
 
+import gzip
 import hashlib
 import io
-import os
-import sqlite3
 import tarfile
-import threading
-import time
 
 import pytest
 
+from old_studio import studio_db
 from storeypath import accounts as acc
+from storeypath import db as studio_db_module
 from storeypath.accounts import Accounts
-from storeypath.backup import ROOT, jobs_paused, restore, write_backup
+from storeypath.backup import FIRST_LINE, ROOT, restore, write_backup
+from storeypath.db.store import ProjectStore
+from storeypath.review import Review, StoredProject
+from storeypath.workspace import ExportRecord
+
+PASSWORD = "a long password"
 
 
 @pytest.fixture
-def data(tmp_path, monkeypatch):
+def data(converted, tmp_path, monkeypatch):
+    """A Studio's database: a project with a correction, a drawing, a package sent and a
+    drawing sent and not yet kept; an admin who owns it, logged in; the audit log."""
     monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
-    d = tmp_path / "data"
-    (d / "K7Q2XM" / "drawings").mkdir(parents=True)
-    (d / "K7Q2XM" / "K7Q2XM.spproj").write_text('{"project": {"code": "K7Q2XM"}}')
-    (d / "K7Q2XM" / "drawings" / "drawing-1.dxf").write_bytes(b"0\nSECTION\n" * 1000)
-    (d / "K7Q2XM" / "drawings" / ".incoming-abc.dxf").write_bytes(b"sent, not yet cleaned: private")
-    (d / "K7Q2XM" / ".storeypath-cache" / "prints").mkdir(parents=True)
-    (d / "K7Q2XM" / ".storeypath-cache" / "prints" / "x.png").write_bytes(b"png")
-    (d / "catalogue.json").write_text("{}")
-    (d / "half.json.tmp").write_text("half written")
-    a = Accounts(d)
-    a.add_user("boss", "a long password", role="admin", must_change_password=False)
-    a.set_owner("K7Q2XM", a.by_username("boss").id)
-    a.audit("login", a.by_username("boss"), "1.2.3.4")
-    os.symlink("/etc/passwd", d / "K7Q2XM" / "link.txt")
-    return d
+    ws, d, f_id, *_ = converted
+    ws.floor(f_id).source.path = "drawings/level-2.dxf"
+    ws.exports.append(ExportRecord(sequence=1, exported_at=ws.project.created_at, file="p-001.storeypath"))
+    folder = tmp_path / "data"
+    store = ProjectStore(studio_db_module.connect(data=folder))
+    store.create(ws, drawings={"level-2.dxf": ((d / "level-2.dxf").read_bytes(), "its words")},
+                 export_bytes={"p-001.storeypath": b"PK the package as sent"})
+    store.put_incoming(ws.id, ".incoming-abc.dxf", b"sent, not yet cleaned: private")
+    space = next(r.id for r in ws.floor_objects(f_id) if r.kind == "space")
+    Review(StoredProject(store, ws.id, folder / "cache")).correct(space, {"hidden": True})
+    a = Accounts(folder)
+    boss = a.add_user("boss", PASSWORD, role="admin", must_change_password=False)
+    a.set_owner(ws.id, boss.id)
+    a.audit("login", boss, "1.2.3.4")
+    token = a.start_session(boss)
+    return folder, store, ws, token
 
 
-def names(blob: bytes) -> set[str]:
-    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-        return {m.name for m in tar.getmembers()}
+def text(blob: bytes) -> str:
+    return gzip.decompress(blob).decode()
 
 
-def test_a_backup_holds_the_projects_users_sharing_and_audit_and_nothing_half_done(data):
+def test_a_backup_holds_everything_but_sessions_and_what_is_half_done(data):
+    folder, store, ws, token = data
     out = io.BytesIO()
-    counts = write_backup(data, out)
-    got = names(out.getvalue())
-    assert {f"{ROOT}/catalogue.json", f"{ROOT}/studio.db",
-            f"{ROOT}/K7Q2XM/K7Q2XM.spproj", f"{ROOT}/K7Q2XM/drawings/drawing-1.dxf"} <= got
-    assert not any(n.endswith((".tmp", ".lock")) or ".incoming-" in n or ".storeypath-cache" in n
-                   or n.endswith("link.txt") for n in got), got
-    assert counts["files"] == len([n for n in got if "." in n.rsplit("/", 1)[-1]])
-    with tarfile.open(fileobj=io.BytesIO(out.getvalue()), mode="r:gz") as tar:
-        assert all(m.isfile() or m.isdir() for m in tar.getmembers())
-        assert all(m.uid == 0 and m.uname == "" for m in tar.getmembers())  # nobody's names of this computer
-        assert not any(m.name.endswith(("-wal", "-shm", "-journal")) for m in tar.getmembers())
-        snapshot = tar.extractfile(f"{ROOT}/studio.db").read()
-    copy = data.parent / "snapshot.db"
-    copy.write_bytes(snapshot)
-    with sqlite3.connect(copy) as db:  # whole by itself: no -wal beside it
-        assert db.execute("SELECT username FROM users").fetchall() == [("boss",)]
-        assert db.execute("SELECT action FROM audit").fetchall() == [("login",)]
-
-
-def test_a_backup_holds_no_certificate_nor_any_session(data):
-    (data / "tls").mkdir()
-    (data / "tls" / "studio-key.pem").write_text("-----BEGIN PRIVATE KEY-----")
-    (data / "tls" / "studio-cert.pem").write_text("-----BEGIN CERTIFICATE-----")
-    a = Accounts(data)
-    token = a.start_session(a.by_username("boss"))
-    out = io.BytesIO()
-    write_backup(data, out)
-    got = names(out.getvalue())
-    assert not any(n == f"{ROOT}/tls" or n.startswith(f"{ROOT}/tls/") for n in got), got  # a restored Studio makes its own
-    with tarfile.open(fileobj=io.BytesIO(out.getvalue()), mode="r:gz") as tar:
-        snapshot = tar.extractfile(f"{ROOT}/studio.db").read()
-    assert hashlib.sha256(token.encode()).hexdigest().encode() not in snapshot  # not even in a free page
-    copy = data.parent / "snapshot.db"
-    copy.write_bytes(snapshot)
-    with sqlite3.connect(copy) as db:
-        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (0,)
-        assert db.execute("SELECT password FROM users").fetchone()[0].startswith("scrypt$")  # (restore needs them)
-    assert a.session(token) is not None  # the sessions of the Studio backed up are as they were
+    counts = write_backup(store.db, out)
+    dump = text(out.getvalue())
+    assert dump.startswith(FIRST_LINE + "\n-- {")
+    for table in ("users", "projects", "objects", "overrides", "drawings", "exports", "audit", "history", "catalogue"):
+        assert f"COPY storeypath.{table} (" in dump
+    assert "COPY storeypath.sessions" not in dump and hashlib.sha256(token.encode()).hexdigest() not in dump
+    assert "not yet cleaned" not in dump and ".incoming-abc.dxf" not in dump  # its private information is in it
+    assert "\\\\x" in dump  # (bytes, as COPY writes them)
+    assert counts["rows"] > 50 and counts["tables"] == 18
+    assert Accounts(folder).session(token) is not None  # the sessions of the Studio backed up are as they were
 
 
 class Pipe:
@@ -95,43 +76,59 @@ class Pipe:
 
 
 def test_a_backup_is_written_as_a_stream(data):
+    folder, store, *_ = data
     pipe = Pipe()
-    write_backup(data, pipe)
-    assert len(pipe.parts) > 1 and f"{ROOT}/studio.db" in names(b"".join(pipe.parts))
+    write_backup(store.db, pipe)
+    assert len(pipe.parts) > 1 and text(b"".join(pipe.parts)).startswith(FIRST_LINE)
 
 
-def test_no_job_starts_while_a_backup_is_written(data):
-    order = []
-    with jobs_paused(data):
-        t = threading.Thread(target=lambda: (jobs_paused(data).__enter__(), order.append("job")))
-        t.start()
-        time.sleep(0.3)
-        order.append("backup done")
-    t.join(5)
-    assert order == ["backup done", "job"]
-    with jobs_paused(data):  # held: another gives up after its timeout
-        with pytest.raises(TimeoutError):
-            with jobs_paused(data, timeout=0.3):
-                pass
-
-
-def test_restore_puts_it_all_back_into_an_empty_folder(data, tmp_path):
-    archive = tmp_path / "b.tar.gz"
+def test_restore_puts_it_all_back_into_an_empty_database(data, tmp_path, databases):
+    folder, store, ws, token = data
+    archive = tmp_path / "b.sql.gz"
     with open(archive, "wb") as f:
-        write_backup(data, f)
-    target = tmp_path / "restored"
+        write_backup(store.db, f)
+    target = databases.url(tmp_path / "restored")
     counts = restore(archive, target)
-    assert (target / "K7Q2XM" / "drawings" / "drawing-1.dxf").read_bytes() == \
-        (data / "K7Q2XM" / "drawings" / "drawing-1.dxf").read_bytes()
-    back = Accounts(target)
-    assert back.by_username("boss").role == "admin" and back.login("boss", "a long password")
-    assert back.project_access("K7Q2XM").owner == back.by_username("boss").id
-    assert oct(os.stat(target / "studio.db").st_mode & 0o777) == oct(0o600)
-    assert counts["files"] == 4  # the catalogue, the accounts, the project and its drawing
-    with pytest.raises(ValueError, match="not empty"):
+    assert counts["rows"] > 50
+    back = ProjectStore(studio_db_module.connect(target))
+    assert back.current(ws.id) == store.current(ws.id)
+    assert back.drawing_bytes(ws.id, "level-2.dxf") == store.drawing_bytes(ws.id, "level-2.dxf")
+    assert back.words(ws.id, "level-2.dxf") == "its words"
+    assert back.export_bytes(ws.id, "p-001.storeypath") == b"PK the package as sent"
+    assert back.drawings(ws.id, incoming=True) == []
+    assert [e["kind"] for e in back.history(ws.id)] == [e["kind"] for e in store.history(ws.id)]
+    accounts = Accounts(tmp_path / "restored")
+    boss = accounts.by_username("boss")
+    assert boss.role == "admin" and accounts.login("boss", PASSWORD)
+    assert accounts.project_access(ws.id).owner == boss.id
+    assert accounts.session(token) is None  # nobody is logged in to it
+    # every numbering goes on where it was: the next change and audit entry follow on
+    Review(StoredProject(back, ws.id, tmp_path / "cache")).add_item(f"{ws.id}-SITE-HQ-F02", {"type": "SOFA", "x": 1, "y": 1})
+    assert back.history(ws.id)[0]["seq"] > store.history(ws.id)[0]["seq"]
+    accounts.audit("backup", boss, "1.2.3.4")
+    with pytest.raises(ValueError, match="empty"):
         restore(archive, target)
-    with pytest.raises(ValueError, match="not empty"):
-        restore(archive, data)
+    with pytest.raises(ValueError, match="empty"):
+        restore(archive, store.db.url)
+
+
+def test_an_older_studios_backup_is_brought_in_as_its_folder(converted, tmp_path, databases, monkeypatch):
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    ws, d, f_id, *_ = converted
+    old = tmp_path / "old"
+    (old / ws.id / "drawings").mkdir(parents=True)
+    (old / ws.id / "drawings" / "level-2.dxf").write_bytes((d / "level-2.dxf").read_bytes())
+    ws.floor(f_id).source.path = "drawings/level-2.dxf"
+    ws.save(old / ws.id / f"{ws.id}.spproj")
+    studio_db(old, PASSWORD, owner_of=[ws.id])
+    archive = tmp_path / "old.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(old, arcname=ROOT)
+    counts = restore(archive, databases.url(tmp_path / "restored"))
+    assert counts["projects"] == 1 and counts["users"] == 3
+    back = ProjectStore(studio_db_module.connect(data=tmp_path / "restored"))
+    assert back.current(ws.id).model_dump(mode="json") == ws.model_dump(mode="json")
+    assert Accounts(tmp_path / "restored").login("boss", PASSWORD)
 
 
 def evil(tmp_path, *members):
@@ -163,9 +160,17 @@ def evil(tmp_path, *members):
     [("elsewhere/x.txt", "file")],
     [],
 ])
-def test_restore_refuses_what_would_land_outside_or_is_not_a_plain_file(tmp_path, members):
-    target = tmp_path / "restored"
+def test_restore_refuses_what_would_land_outside_or_is_not_a_plain_file(tmp_path, members, databases):
+    target = databases.url(tmp_path / "restored")
     with pytest.raises(ValueError):
         restore(evil(tmp_path, *members), target)
-    assert not target.exists() or not any(target.iterdir())
+    assert ProjectStore(studio_db_module.connect(target)).codes() == []
     assert not (tmp_path / "outside.txt").exists()
+
+
+def test_a_file_that_is_no_backup_is_refused(tmp_path, databases):
+    junk = tmp_path / "junk.sql.gz"
+    junk.write_bytes(gzip.compress(FIRST_LINE.encode() + b'\n-- {"format": "storeypath-backup", "migration": 1}\n'
+                                   b"DROP TABLE storeypath.users;\n"))
+    with pytest.raises(ValueError, match="not a StoreyPath backup"):
+        restore(junk, databases.url(tmp_path / "restored"))
