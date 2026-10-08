@@ -51,6 +51,9 @@ each call needs is checked first in route() (the table is in studio/README.md):
     PUT  /api/open[?replace=<name>]               a project from a file: a building's
                                                package, or a project file (bundle.py)
     GET  /api/jobs/<id>
+    GET  /api/projects/<code>/events[?floor=<id>]   what happens in it, as it happens (web/events.py)
+    GET  /api/projects/<code>/history[?floor=&n=]   who changed what, in words; what one would undo
+    POST /api/projects/<code>/undo {floor?}    one's own latest change undone; …/redo: redone
     GET  /api/users                            who to share with (id, username, name)
     GET  /api/admin/users                      POST /api/admin/users {username, name, role, capabilities}
     POST /api/admin/users/<id> {name?, role?, capabilities?, active?}
@@ -88,7 +91,7 @@ from .accounts import (LOCAL, Accounts, Forbidden, Scope, Sight, Unauthorized, U
 from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
-from .db.store import drawing_name
+from .db.store import Editor, StepLock, drawing_name
 from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
@@ -208,9 +211,10 @@ class Studio:
             threading.Thread(target=self.model.warm, daemon=True).start()
         self._reviews: dict[str, Review] = {}
         # One lock per project, held while a job changes it: converting one project
-        # (minutes, with vision) never holds up another, and pages only read.
+        # (minutes, with vision) never holds up another, and pages only read. It is the
+        # database's too (StepLock): another Studio on it waits as this one does.
         self._lock = threading.Lock()  # the tables below
-        self._project_locks: dict[str, threading.RLock] = {}
+        self._project_locks: dict[str, StepLock] = {}
         self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         self.store.drop_incoming()  # sent and never kept (Studio stopped meanwhile): not kept
@@ -264,10 +268,14 @@ class Studio:
             self.store.save_catalogue(new)
             return new.model_dump()
 
-    def _changing(self, code: str) -> threading.RLock:
-        """The lock held while a job changes this project."""
+    def _changing(self, code: str) -> StepLock:
+        """The lock held while a job changes this project (the database's advisory lock
+        on it, so that another Studio on the database waits too)."""
         with self._lock:
-            return self._project_locks.setdefault(code, threading.RLock())
+            lock = self._project_locks.get(code)
+            if lock is None:
+                lock = self._project_locks[code] = StepLock(self.db, code)
+            return lock
 
     def status(self, paths: bool = True) -> dict:
         """What Studio can do; ``paths``: and where its data folder and database are (for
@@ -798,13 +806,18 @@ class Studio:
             if moved:
                 self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=moved)
 
-    def convert(self, code: str, floor: str | None = None, force: bool = False, by=None) -> Job:
+    def convert(self, code: str, floor: str | None = None, force: bool = False, by=None,
+                editor: Editor | None = None) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
-        keeps its rooms (convert.py); ``force`` applies it all the same."""
+        keeps its rooms (convert.py); ``force`` applies it all the same. ``editor``: a
+        person reading one floor again from a page, who takes its lock first (Locked
+        while another person edits it)."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
         self._known(code)
+        if editor is not None and floor is not None:
+            self.store.take_lock(code, floor, by, editor)
 
         def run(job: Job):
             ws = self.workspace(code)
@@ -1091,6 +1104,65 @@ class Studio:
             raise NotFound(f"no export {name}")
         name = Path(name).name
         return Download(self.store.export_bytes(code, name), name)
+
+    # ---- many people at once: undo, history, who edits a floor -------------------------
+
+    def undo(self, code: str, floor: str | None = None, sight: Sight | None = None, by=None,
+             editor: Editor | None = None, redo: bool = False) -> dict:
+        """The person's latest change (on ``floor``) undone, or their latest undoing redone
+        (Review.step_back): it needs edit on each floor it changed (as it did). What was
+        drawn is read again (a job, as drawing does): ``job``."""
+        if floor is not None and not isinstance(floor, str):
+            raise ValueError("floor: a floor's ID")
+
+        def check(row: dict) -> None:
+            for f in row.get("floors") or []:
+                if sight is not None and rank(sight.floor(f)) < rank("edit"):
+                    raise Forbidden(f"undoing this needs edit access to {f}; you have {sight.floor(f) or 'none'}")
+
+        done = self.review(code).step_back(floor, by=by, editor=editor, redo=redo, check=check)
+        job = self.convert(code, done["floors"][0], by=_uid(by)) if done.pop("read") and done["floors"] else None
+        return {**done, "job": job}
+
+    def history(self, code: str, floor: str | None = None, n=None, sight: Sight | None = None, by=None) -> dict:
+        """The project's latest changes (on ``floor``), newest first, as the History panel
+        lists them: those the person may see, each with who, when and what in words, and
+        whether it was undone; and what they would undo and redo there now."""
+        from . import history
+        from .db.store import who_of
+
+        self._known(code)
+        try:
+            n = max(0, min(int(n if n is not None else history.SHOWN), history.SHOWN_MAX))
+        except (TypeError, ValueError):
+            raise ValueError("n: how many changes, a whole number") from None
+        visible = history.visible_to(sight)
+        rows, seen, before = [], 0, None
+        while len(rows) < n:  # those they may not see left out, until n are found (or many were looked at)
+            batch = self.store.history(code, floor, limit=max(n * 2, 50), before=before)
+            rows += [r for r in batch if visible(r)]
+            seen += len(batch)
+            if len(batch) < max(n * 2, 50) or seen > 20 * max(n, 1):
+                break
+            before = batch[-1]["seq"]
+        rows = rows[:n]
+        me = history.key(who_of(by))
+        undone = self.store.undone(code, [r["seq"] for r in rows]) if rows else set()
+        return {"entries": [history.shown(r, me, undone) for r in rows],
+                **self.review(code).steps(by, floor, visible)}
+
+    def lock_of(self, code: str, floor: str) -> dict | None:
+        """Who is editing a floor ({floor, who: {id, username, name}, since}), None: nobody."""
+        lock = self.store.locks(code, [floor]).get(floor)
+        return {k: v for k, v in lock.items() if k != "session"} if lock else None
+
+    def release(self, code: str, floor: str, by=None) -> dict:
+        """The person done editing a floor (or gone from it): its lock let go."""
+        return {"released": self.store.release_lock(code, floor, by)}
+
+    def take_over(self, code: str, floor: str, by=None, editor: Editor | None = None) -> dict:
+        """A floor's lock taken over (an admin): who held it, None when nobody did."""
+        return {"from": self.store.take_over(code, floor, by, editor)}
 
 
 def _uid(by) -> str | None:
@@ -1402,9 +1474,10 @@ class Gate:
     is LOCAL, who may do everything."""
 
     def __init__(self, studio: Studio, accounts: Accounts | None, user: User | None, address: str = "",
-                 token: str | None = None):
+                 token: str | None = None, page: str | None = None):
         self.studio, self.accounts, self.address, self.token = studio, accounts, address, token
         self.user = LOCAL if accounts is None else user
+        self.page = page  # the page asking (X-StoreyPath-Page), told back with what it changes
 
     # ---- who is asking ------------------------------------------------------------
 
@@ -1419,6 +1492,19 @@ class Gate:
     def uid(self) -> str | None:
         """The asking person's id (None without accounts)."""
         return None if self.user is None or self.user is LOCAL else self.user.id
+
+    @property
+    def session(self) -> str:
+        """The asking session, as floor locks keep it: part of the hash of its token
+        (never the token); "local" on this computer without accounts."""
+        import hashlib
+
+        return hashlib.sha256(self.token.encode()).hexdigest()[:16] if self.token else "local"
+
+    @property
+    def editor(self) -> Editor:
+        """Where a change of theirs comes from: their session, and the page that sent it."""
+        return Editor(self.session, self.page)
 
     def audit(self, action: str, target=None, outcome: str = "ok", **more) -> None:
         if self.accounts is not None:
@@ -1502,6 +1588,29 @@ class Gate:
         if not sight.floor(floor_id):
             raise NotFound(f"no floor {floor_id}")
         _need(sight.floor(floor_id), level, "this floor")
+        return sight
+
+    def undo(self, code: str, floor) -> Sight:
+        """Undoing (or redoing) one's own change: on a floor, edit on it; anywhere, any access
+        (the change undone needs edit on each floor it changed: Studio.undo checks)."""
+        if floor is None:
+            return self.see(code)
+        if not isinstance(floor, str):
+            raise ValueError("floor: a floor's ID")
+        return self.floor(code, floor, "edit")
+
+    def history(self, code: str, floor) -> Sight:
+        """The project's history: any access (each sees the changes of what they may see);
+        of a floor, view on it."""
+        if floor is None:
+            return self.see(code)
+        return self.floor(code, floor, "view")
+
+    def take_over(self, code: str, floor_id: str) -> Sight:
+        """Taking over a floor someone else is editing: an admin (who sees it)."""
+        sight = self.floor(code, floor_id, "view")
+        if self.user is not LOCAL and self.user.role != "admin":
+            raise Forbidden("only an admin may take over a floor someone is editing")
         return sight
 
     def convert(self, code: str, floor) -> Sight:

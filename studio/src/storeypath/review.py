@@ -20,9 +20,15 @@ and read again whenever it changes on disk. The web server is in server.py:
                                                   {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
                                                   what a person draws, kept through every conversion; then
                                                   the floor is read again (a job)
+    POST /api/projects/<code>/floors/<id>/release    one's lock of the floor let go (Done editing)
+    POST /api/projects/<code>/floors/<id>/take-over  an admin takes the floor from whoever edits it
+    POST /api/projects/<code>/undo {floor?}       one's own latest change undone (step_back); …/redo
 
 A change is refused (Busy, answered 409) while a job works on the project: the job
-would save over it.
+would save over it. A person's change takes the lock of each floor it touches, and is
+refused (Locked, 423) while another person holds one (db/store.py). Each change is
+recorded with what says it in words as it was then (history.py: label, what, was,
+now…), and each person undoes and redoes their own (step_back).
 
 Who may call these is checked before they are (server.Gate): the project's floors
 are those the person may see; a floor, its drawing and its print need view on that
@@ -46,14 +52,15 @@ from typing import NamedTuple
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from .cad import DrawingError, meters_per_unit, read_drawing
-from .db.store import Changes, _same, drawing_name, floor_of
-from .errors import Busy, NotFound
+from . import history
+from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
+from .errors import Busy, Conflict, NotFound
 from .export import _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .ids import make_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
-from .workspace import DrawnOpening, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
+from .workspace import DrawnOpening, FloorEdits, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
 
 __all__ = ["Busy", "NotFound", "Review", "ProjectFile", "StoredProject", "File"]
 
@@ -113,7 +120,7 @@ class ProjectFile:
                 self._ws, self._stamp = Workspace.load(self.path), stamp
             return self._ws
 
-    def change(self, fn, by=None):
+    def change(self, fn, by=None, editor=None):
         with self._lock:
             base = self.current()
             changes, result = fn(base)
@@ -160,8 +167,8 @@ class StoredProject:
     def current(self) -> Workspace:
         return self.store.current(self.code)
 
-    def change(self, fn, by=None):
-        return self.store.change(self.code, fn, by=by)
+    def change(self, fn, by=None, editor=None):
+        return self.store.change(self.code, fn, by=by, editor=editor)
 
     def drawing_key(self, src) -> tuple:
         name = drawing_name(src.path)
@@ -203,6 +210,97 @@ def _dump(model) -> dict | None:
     return None if model is None else model.model_dump(mode="json", exclude_none=True)
 
 
+# ---- what history keeps to say a change in words (history.describe) ------------------
+
+LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list")
+
+
+def _type_name(cat, code: str) -> str:
+    t = cat.get(code)
+    return t.name_en if t is not None else code
+
+
+def _as_shown(r: ObjectRecord, o: Override | None) -> dict:
+    """An object's type, name and number with the correction ``o`` (as Workspace.effective)."""
+    t = o.type if o is not None and o.type else r.type
+    return {"type": getattr(t, "value", t),
+            "name": (o.name or None) if o is not None and o.name is not None else r.name,
+            "number": (o.number or None) if o is not None and o.number is not None else r.number}
+
+
+def _object_lines(r: ObjectRecord, had: Override | None, new: Override | None, kind: str) -> dict:
+    """What a correction's row says of it: the object as it was shown (its label), what
+    it is (space, zone, door…), and for a correction, what it was and became."""
+    was = _as_shown(r, had)
+    what = r.type if r.kind == "opening" and r.type in history.OPENINGS else \
+        "opening" if r.kind == "opening" else r.kind
+    out = {"label": " ".join(x for x in (was["name"], was["number"]) if x) or None, "what": what}
+    if kind == "correct":
+        out["was"], out["now"] = was, _as_shown(r, new)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _drawn_what(name: str, shapes: list) -> str:
+    """What was drawn, from the list of the floor's edits it is in."""
+    if name == "openings":
+        return next((x.get("type") for x in shapes if isinstance(x, dict) and x.get("type")), "opening")
+    return {"walls": "wall", "dividers": "divider", "spaces": "space"}.get(name, "opening")
+
+
+def _inverse(ws: Workspace, entry: dict, ch: Changes, refused) -> None:
+    """Into ``ch``: what puts back what the history row ``entry`` changed, as it was before
+    it; refused() raised when it is not as the row left it (changed since)."""
+    part, target = entry["part"], (entry["targets"] or [None])[0]
+    if part == "object":
+        r = ws.objects.get(target)
+        if r is None or r.status != "active":
+            raise refused()
+        have = ws.overrides.get(target)
+        want = (entry["after"] or {}).get("override")
+        if not _same(Override.model_validate(want) if want is not None else None, have):
+            raise refused()
+        back = (entry["before"] or {}).get("override")
+        new = Override.model_validate(back) if back is not None else None
+        ch.before, ch.after = {"override": _dump(have)}, {"override": _dump(new)}
+        if not _same(have, new):
+            ch.overrides[target] = new
+    elif part == "item":
+        have = ws.items.get(target)
+        want = (entry["after"] or {}).get("item")
+        if have is None or want is None or not _same(Item.model_validate(want), have):
+            raise refused()
+        back = (entry["before"] or {}).get("item")
+        if back is None:  # it was added: retired, its ID never given again
+            new = have.model_copy(deep=True)
+            new.status, new.retired_at = "retired", utcnow()
+        else:
+            new = Item.model_validate(back)
+        if new.floor_id not in {f for *_, f in ws.iter_floors()}:
+            raise refused()
+        ch.floors = {f for f in (have.floor_id, new.floor_id) if f}
+        ch.before, ch.after = {"item": _dump(have)}, {"item": _dump(new)}
+        ch.items[target] = new
+    elif part == "edit":
+        try:
+            f = ws.floor(target)
+        except (KeyError, ValueError):
+            raise refused() from None
+        edits = f.edits.model_dump(mode="json")
+        shapes = edits.get(entry.get("list"))
+        if shapes is None:
+            raise refused()
+        for x in entry["after"] or []:
+            if x not in shapes:
+                raise refused()
+            shapes.remove(x)
+        shapes.extend(entry["before"] or [])
+        ch.edits[target] = FloorEdits.model_validate(edits)
+        ch.before, ch.after = entry["after"] or [], entry["before"] or []
+        ch.more["list"] = entry["list"]
+    else:
+        raise Conflict(f"{history.describe(entry)}: not undone here")
+
+
 class Review:
     """The editor's operations on one project: ``source`` is where it is kept (a
     ProjectFile or a StoredProject; a path is a workspace file)."""
@@ -227,15 +325,17 @@ class Review:
         never to change."""
         return self.source.current()
 
-    def _change(self, fn, by=None):
+    def _change(self, fn, by=None, editor: Editor | None = None):
         """A change (``fn``: the project as it is -> (Changes, answer)), made only while no
         job is changing the project (else Busy: a job saves the copy it loaded, which
-        would lose the change). One that fails part way changes nothing."""
+        would lose the change). One that fails part way changes nothing. ``editor``: a
+        person's change from a page, which takes the lock of each floor it touches
+        (Locked while another person holds one)."""
         lock = self._changing() if self._changing else None
         if lock is not None and not lock.acquire(timeout=BUSY_WAIT_S):
             raise Busy(BUSY_MESSAGE)
         try:
-            return self.source.change(fn, by=by)
+            return self.source.change(fn, by=by, editor=editor)
         finally:
             if lock is not None:
                 lock.release()
@@ -376,7 +476,7 @@ class Review:
             out[key] = value
         return out
 
-    def add_item(self, floor_id: str, body: dict, by=None) -> dict:
+    def add_item(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres),
         numbered after every item of the project."""
         cat = self.catalogue()
@@ -388,14 +488,15 @@ class Review:
             it = Item(id=make_item_id(ws.id, ws.next_item_seq), type=body["type"], floor_id=floor_id, x=x, y=y,
                       rotation=_number(body, "rotation", 0.0) % 360, values=values)
             ch = Changes(part="item", kind="add", targets=[it.id], floors={floor_id},
-                         before={"item": None}, after={"item": _dump(it)})
+                         before={"item": None}, after={"item": _dump(it)},
+                         more={"label": _type_name(cat, it.type), "changes": ["add"]})
             ch.items[it.id] = it
             ch.project = {"next_item_seq": ws.next_item_seq + 1}
             return ch, it
 
-        return self._item(self._change(fn, by), cat)
+        return self._item(self._change(fn, by, editor), cat)
 
-    def change_item(self, item_id: str, body: dict, by=None) -> dict:
+    def change_item(self, item_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """An item moved, turned, given another type or details, carried to another floor
         (``floor_id``), taken away (``{"retired": true}``) or brought back: all that is
         asked, or (when any of it cannot be) nothing."""
@@ -437,14 +538,19 @@ class Review:
             if "rotation" in body:
                 new.rotation = _number(body, "rotation") % 360
                 kinds.append("turn")
+            more = {"label": _type_name(cat, it.type), "changes": kinds}
+            if "carry" in kinds:
+                more["to_name"] = self._floor(ws, new.floor_id).name
+            if "retype" in kinds:
+                more["new_label"] = _type_name(cat, new.type)
             ch = Changes(part="item", kind=kinds[0] if kinds else "change", targets=[item_id],
                          floors={f for f in (it.floor_id, new.floor_id) if f},
-                         before={"item": _dump(it)}, after={"item": _dump(new)})
+                         before={"item": _dump(it)}, after={"item": _dump(new)}, more=more)
             if not _same(new, it):
                 ch.items[item_id] = new
             return ch, new
 
-        return self._item(self._change(fn, by), cat)
+        return self._item(self._change(fn, by, editor), cat)
 
     def _door(self, ws: Workspace, r: ObjectRecord, resized=()) -> dict:
         eff = ws.effective(r)
@@ -459,7 +565,7 @@ class Review:
                 "ignored": eff["ignored"],
                 "divider": self._divider_of(ws, r)}
 
-    def edit(self, floor_id: str, body: dict, by=None) -> None:
+    def edit(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> None:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
         takes the one of its kind drawn as the page shows it (_remove)."""
@@ -468,7 +574,7 @@ class Review:
             was = self._floor(ws, floor_id)
             f = was.model_copy(update={"edits": was.edits.model_copy(deep=True)})  # its edits changed alone
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
-            kind = "draw"
+            kind, what = "draw", None
             if "wall" in add or "divider" in add:
                 what = "wall" if "wall" in add else "divider"
                 line = _points(add[what], 2)
@@ -486,7 +592,7 @@ class Review:
             elif isinstance(body.get("add"), dict) and "space" in body["add"]:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
-                self._resize(ws, floor_id, f, body["resize"])
+                what = self._resize(ws, floor_id, f, body["resize"])
                 kind = "resize"
             elif isinstance(body.get("remove"), dict) and ("at" in body["remove"] or "shape" in body["remove"]):
                 _remove(f, body["remove"])
@@ -503,14 +609,17 @@ class Review:
                     ch.before = [x for x in old[name] if x not in new[name]]
                     ch.after = [x for x in new[name] if x not in old[name]]
                     ch.edits[floor_id] = f.edits
+            if ch.edits:
+                ch.more["what"] = what or _drawn_what(ch.more["list"], ch.before + ch.after)
             return ch, None
 
-        self._change(fn, by)
+        self._change(fn, by, editor)
 
-    def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
+    def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> str:
         """A door, window or opening given another width, sill or height (metres; null:
         as drawn). One drawn in review changes; one of the drawing keeps its new size
-        in the floor's edits, found again by its middle at every conversion."""
+        in the floor's edits, found again by its middle at every conversion. Which it was
+        (door, window, opening)."""
         at = Point(_points([body["at"]], 1)[0])
         sizes = {key: _size(body.get(key), key, band) for key, band in RESIZE_BANDS.items()}
         drawn = [(LineString(o.span).distance(at), i) for i, o in enumerate(f.edits.openings)]
@@ -520,15 +629,17 @@ class Review:
             if sizes["width"] is not None:
                 o.span = _resized_span(o.span, sizes["width"])
             o.sill, o.height = sizes["sill"], sizes["height"]
-            return
+            return o.type
         openings = [(_middle(r).distance(at), r) for r in ws.floor_objects(floor_id) if r.kind == "opening"]
         found = [o for o in openings if o[0] <= REMOVE_REACH_M]
         if not found:
             raise NotFound("no door, window or opening there")
-        middle = _middle(min(found, key=lambda o: o[0])[1])
+        nearest = min(found, key=lambda o: o[0])[1]
+        middle = _middle(nearest)
         f.edits.resized = [x for x in f.edits.resized if Point(x.at).distance(middle) > REMOVE_REACH_M]
         if any(v is not None for v in sizes.values()):
             f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **sizes))
+        return nearest.type if nearest.type in history.OPENINGS else "opening"
 
     def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None, cat=None) -> dict:
         eff = ws.effective(r)
@@ -556,7 +667,7 @@ class Review:
             "geometry": r.geometry,
         }
 
-    def correct(self, object_id: str, body: dict, by=None) -> dict:
+    def correct(self, object_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """Change a space's correction:
 
         ``{"correction": {type, name, number}}`` replaces type, name and number: fields
@@ -617,16 +728,71 @@ class Review:
                 ("delete" if body["ignored"] else "restore") if "ignored" in body else \
                 ("hide" if body["hidden"] else "show") if "hidden" in body else "capacity"
             ch = Changes(part="object", kind=kind, targets=[object_id], floors={floor_of(object_id)},
-                         before={"override": _dump(had)}, after={"override": _dump(new)})
+                         before={"override": _dump(had)}, after={"override": _dump(new)},
+                         more=_object_lines(r, had, new, kind))
             if not (had is None and new is None) and not _same(had, new):
                 ch.overrides[object_id] = new
             return ch, None
 
-        self._change(fn, by)
+        self._change(fn, by, editor)
         ws = self.workspace()
         r = ws.objects[object_id]
         return self._door(ws, r, self._floor(ws, floor_of(object_id)).edits.resized) if r.kind == "opening" \
             else self._space(ws, r)
+
+    # ---- undo and redo: each person their own changes ---------------------------------
+
+    def steps(self, by=None, floor_id: str | None = None, visible=None) -> dict:
+        """What the person would undo now (on ``floor_id``) and what they would redo:
+        {"undo": {seq, line, at} or None, "redo": …}."""
+        store = getattr(self.source, "store", None)
+        if store is None:
+            return {"undo": None, "redo": None}
+        who = who_of(by)
+        rows = store.own_rows(self.source.code, who, history.UNDOABLE, history.STACK_DEPTH)
+        return history.next_steps(rows, history.key(who), floor_id, visible)
+
+    def step_back(self, floor_id: str | None = None, by=None, editor: Editor | None = None, *, redo: bool = False,
+                  check=None) -> dict:
+        """The person's latest change (on ``floor_id``) undone by applying its inverse, as
+        any change is made (Busy while a job works on the project; Locked while another
+        person edits its floor) and recorded as an undo of it; with ``redo``, their latest
+        undoing redone. Refused (Conflict, naming who and when) when what it changed was
+        changed since. ``check(row)``: whether the person may (raises when not). An item
+        added is retired, never taken out (its ID is never given again); what was drawn
+        is taken away or put back, and the floor is to be read again (``read``). What was
+        done: {seq, line, part, floors, read}."""
+        store = getattr(self.source, "store", None)
+        if store is None:
+            raise ValueError("undo needs Studio's database: this project is a file here")
+        code, who = self.source.code, who_of(by)
+        me = history.key(who)
+        doing = "redone" if redo else "undone"
+        undo, redo_ = history.stacks(store.own_rows(code, who, history.UNDOABLE, history.STACK_DEPTH), me)
+        entry = history.latest(redo_ if redo else undo, floor_id)
+        if entry is None:
+            where = " on this floor" if floor_id else ""
+            raise Conflict(f"nothing of yours to {'redo' if redo else 'undo'}{where}", nothing=True)
+        if check is not None:
+            check(entry)
+        # someone else's change since, of what it changed (one's own later ones are undone
+        # first, or are this one's undoing and redoing; the state is checked below anyway)
+        later = [e for e in store.later_rows(code, entry["seq"], entry["targets"], entry["floors"])
+                 if history.touches(e, entry) and history.key(e.get("who")) != me]
+        if later:
+            raise history.refused(entry, later[0], me, doing)
+
+        def fn(ws: Workspace):
+            ch = Changes(part=entry["part"], kind=entry["kind"], targets=list(entry["targets"]),
+                         floors=set(entry["floors"]),
+                         more={k: entry[k] for k in LINE_KEYS if entry.get(k) is not None})
+            ch.more["redoes" if redo else "undoes"] = entry["seq"]
+            _inverse(ws, entry, ch, lambda: history.refused(entry, None, me, doing))
+            return ch, None
+
+        self._change(fn, by, editor)
+        return {"seq": entry["seq"], "line": history.describe(entry), "part": entry["part"],
+                "floors": entry["floors"], "read": entry["part"] == "edit"}
 
     def drawing(self, floor_id: str) -> dict:
         ws = self.workspace()

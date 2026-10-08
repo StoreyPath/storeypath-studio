@@ -25,6 +25,16 @@ the same changes, without reading it again.
   What is written is what differs, row by row.
 - ``create(ws)``: a new project; ``delete(code)``: a project and everything of it.
 
+One editor a floor at a time. A person's change from a page (``editor``: their
+session, the page) takes the lock of each floor it touches for that person, in its own
+transaction (``floor_locks``), or is refused (Locked, 423, naming who holds it) while
+another person holds one. A lock goes when its person leaves the floor
+(release_lock), when nothing (no change, no heartbeat of their page open on it,
+touch_locks) kept it for LOCK_IDLE_S, or when an admin takes it over (take_over,
+recorded in the history). Steps of Studio's own (a floor read again, an export) take no
+floor lock: they hold the project's step lock (StepLock) while they change it, which
+also keeps every other Studio on the database out of it.
+
 Times are UTC. Geometry is GeoJSON in each building's own frame (local metres), kept
 exactly; PostGIS geometries are made from it in the database (SRID 0).
 """
@@ -36,6 +46,7 @@ import json
 import shutil
 import tempfile
 import threading
+import time
 import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -45,7 +56,7 @@ from typing import Any, Callable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ..errors import NotFound
+from ..errors import Locked, NotFound
 from ..workspace import (ExportRecord, FloorEdits, Item, Location, ObjectRecord, Override, Project, Reading,
                          Workspace)
 from . import CHANNEL, Database
@@ -55,10 +66,99 @@ LOCAL = {"local": True}  # who a change is of on this computer without accounts
 OBJECT_MORE = ("connects", "parent", "zones", "span", "width", "swings", "sill", "height", "tag", "issues",
                "detected_ignored")
 DRAWINGS = "drawings"  # a floor's drawing is drawings/<name>: its name in the project's drawings
+LOCK_IDLE_S = 15 * 60  # a floor's lock nothing kept for this long (no change, no heartbeat) is free
+STEP_LOCK = 0x5370  # pg_advisory_lock(STEP_LOCK, hashtext(code)): a project-wide step works on the project
 
 
 class ProjectExists(Exception):
     """A project of that code is in the database already."""
+
+
+@dataclass(frozen=True)
+class Editor:
+    """Where a person's change comes from: their session (whose floor locks it takes)
+    and the page that sent it (told back with the change, so that page knows it has it)."""
+
+    session: str
+    page: str | None = None
+
+
+class StepLock:
+    """A project's lock, held while a step of Studio's changes the project as a whole
+    (adding floors, reading them, placing buildings, exporting, opening a file into it)
+    and, briefly, while Review saves a change: one thread of this Studio at a time
+    (re-entrant), and one Studio at a time on the database (a PostgreSQL advisory lock,
+    held on a connection of its own while the lock is held). Used as threading's locks
+    are (acquire, release, with)."""
+
+    def __init__(self, db: Database, code: str):
+        self.db, self.code = db, code
+        self._here = threading.RLock()
+        self._depth = 0  # times the thread holding it took it
+        self._conn = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if not self._here.acquire(blocking, timeout):
+            return False
+        if self._depth == 0:
+            try:
+                got = self._take(blocking, timeout)
+            except BaseException:
+                self._here.release()
+                raise
+            if not got:
+                self._here.release()
+                return False
+        self._depth += 1
+        return True
+
+    def _take(self, blocking: bool, timeout: float) -> bool:
+        conn = self.db.pool.getconn()
+        try:
+            conn.autocommit = True
+            if blocking and (timeout is None or timeout < 0):
+                conn.execute("SELECT pg_advisory_lock(%s, hashtext(%s))", (STEP_LOCK, self.code))
+                self._conn = conn
+                return True
+            deadline = time.monotonic() + (timeout if blocking else 0)
+            while True:
+                if conn.execute("SELECT pg_try_advisory_lock(%s, hashtext(%s))", (STEP_LOCK, self.code)).fetchone()[0]:
+                    self._conn = conn
+                    return True
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
+        except BaseException:
+            self._give_back(conn)
+            raise
+        self._give_back(conn)
+        return False
+
+    def _give_back(self, conn) -> None:
+        try:
+            conn.autocommit = False
+        except Exception:  # noqa: BLE001 (a broken connection: the pool drops it)
+            pass
+        self.db.pool.putconn(conn)
+
+    def release(self) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            conn, self._conn = self._conn, None
+            try:
+                conn.execute("SELECT pg_advisory_unlock(%s, hashtext(%s))", (STEP_LOCK, self.code))
+            except Exception:  # noqa: BLE001 (its connection is gone: so is the lock)
+                pass
+            finally:
+                self._give_back(conn)
+        self._here.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
 
 
 class _Nothing(Exception):
@@ -442,12 +542,13 @@ class ProjectStore:
     # ---- changing -----------------------------------------------------------------
 
     def change(self, code: str, fn: Callable[[Workspace], tuple[Changes, Any]], *, by=None,
-               create: Workspace | None = None) -> Any:
+               create: Workspace | None = None, editor: Editor | None = None) -> Any:
         """One change of a project, as one transaction: ``fn`` is given the project as it
         is then (never to be changed) and says what it changes (Changes) and what to
         answer; that is written, with its history row, and notified. A change of nothing
         is rolled back, and records nothing. ``create``: a new project (ProjectExists when
-        its code is taken)."""
+        its code is taken). ``editor``: a person's change from a page, which takes the
+        lock of each floor it touches (Locked when another person holds one)."""
         changed = None
         try:
             with self.db.transaction() as conn:
@@ -472,10 +573,15 @@ class ProjectStore:
                 changes, result = fn(base)
                 if changes.empty() and create is None:
                     raise _Nothing
+                taken = self._take_locks(conn, code, changes.floors, by, editor) if editor is not None else []
                 self._write(conn, code, changes, by)
                 seq = self._history(conn, code, version, changes, by)
-                conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({
-                    "project": code, "floors": sorted(changes.floors), "seq": seq, "version": version})))
+                said = {"project": code, "floors": sorted(changes.floors), "seq": seq, "version": version}
+                if editor is not None and editor.page:
+                    said["page"] = editor.page
+                if taken:
+                    said["locks"] = taken
+                conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps(said)))
                 changed = (version, changes.apply(base))
         except _Nothing:
             return result
@@ -689,17 +795,176 @@ class ProjectStore:
 
     # ---- history ------------------------------------------------------------------
 
-    def history(self, code: str, floor: str | None = None, limit: int = 50, after: int = 0) -> list[dict]:
-        """The latest changes of a project (on ``floor``), newest first."""
+    _ROW = "SELECT seq, version, at, who, part, kind, floors, targets, before, after, undoes, redoes, more FROM history "
+
+    def _rows(self, sql: str, args) -> list[dict]:
         with self.db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            rows = cur.execute(
-                "SELECT seq, version, at, who, part, kind, floors, targets, before, after, undoes, redoes, more "
-                "FROM history WHERE project = %s AND seq > %s AND (%s::text IS NULL OR %s = ANY(floors)) "
-                "ORDER BY seq DESC LIMIT %s", (code, after, floor, floor, limit)).fetchall()
+            rows = cur.execute(self._ROW + sql, args).fetchall()
         for r in rows:
             r["at"] = r["at"].isoformat()
-            r.update(r.pop("more") or {})
+            r.update({k: v for k, v in (r.pop("more") or {}).items() if k not in r})
         return rows
+
+    def history(self, code: str, floor: str | None = None, limit: int = 50, after: int = 0,
+                before: int | None = None) -> list[dict]:
+        """The latest changes of a project (on ``floor``; after ``after``, before
+        ``before``), newest first."""
+        return self._rows("WHERE project = %s AND seq > %s AND (%s::bigint IS NULL OR seq < %s) AND "
+                          "(%s::text IS NULL OR %s = ANY(floors)) ORDER BY seq DESC LIMIT %s",
+                          (code, after, before, before, floor, floor, limit))
+
+    def history_row(self, code: str, seq: int) -> dict | None:
+        rows = self._rows("WHERE project = %s AND seq = %s", (code, seq))
+        return rows[0] if rows else None
+
+    def own_rows(self, code: str, who, parts, depth: int) -> list[dict]:
+        """A person's latest ``depth`` changes of ``parts`` and every barrier among them (a
+        file opened in place of the project or a building), oldest first: what their undo
+        and redo are worked out from. ``who``: as history keeps them."""
+        if isinstance(who, dict) and who.get("local"):
+            mine, value = "who @> %s::jsonb", _dumps(LOCAL)
+        elif isinstance(who, dict) and who.get("id"):
+            mine, value = "who->>'id' = %s", who["id"]
+        else:
+            return []
+        rows = self._rows(f"WHERE project = %s AND ((part = ANY(%s) AND {mine}) OR more @> '{{\"barrier\": true}}') "
+                          "ORDER BY seq DESC LIMIT %s", (code, list(parts), value, depth))
+        return rows[::-1]
+
+    def later_rows(self, code: str, seq: int, targets, floors) -> list[dict]:
+        """The changes after ``seq`` of any of ``targets``, or drawn on ``floors``, newest first."""
+        return self._rows("WHERE project = %s AND seq > %s AND (targets && %s OR (part = 'edit' AND floors && %s)) "
+                          "ORDER BY seq DESC LIMIT 500", (code, seq, list(targets), list(floors)))
+
+    def undone(self, code: str, seqs) -> set[int]:
+        """Of the changes ``seqs``, those undone (and not redone since)."""
+        with self.db.connection() as conn:
+            return {s for (s,) in conn.execute(
+                "SELECT u.undoes FROM history u WHERE u.project = %s AND u.undoes = ANY(%s) AND NOT EXISTS "
+                "(SELECT 1 FROM history r WHERE r.project = u.project AND r.redoes = u.seq)", (code, list(seqs)))}
+
+    # ---- one editor a floor at a time -----------------------------------------------
+
+    def _holder(self, conn, who_id: str | None) -> dict:
+        """Who holds a lock, as the pages are told: {id, username, name}; this computer."""
+        if who_id is None:
+            return {"id": "local", "username": "local", "name": "This computer"}
+        row = conn.execute("SELECT username, name FROM users WHERE id = %s", (who_id,)).fetchone()
+        return {"id": who_id, "username": row[0] if row else "?", "name": (row[1] or row[0]) if row else "Someone"}
+
+    def _take_locks(self, conn, code: str, floors, by, editor: Editor) -> list[str]:
+        """The locks of ``floors`` taken (or kept) for the person ``by``, in the change's
+        transaction (the project's row is held by it: lock takers come one at a time);
+        Locked when another person holds one. The floors whose lock was not theirs before."""
+        who = _user_id(by)
+        taken = []
+        for f in sorted(floors):
+            row = conn.execute(
+                "SELECT who, since, last_seen < now() - make_interval(secs => %s) FROM floor_locks WHERE floor = %s "
+                "FOR UPDATE", (LOCK_IDLE_S, f)).fetchone()
+            if row is not None and not row[2] and row[0] != who:
+                holder = {"floor": f, "who": self._holder(conn, row[0]), "since": row[1].isoformat()}
+                raise Locked(f"{holder['who']['name']} is editing this floor (since {row[1]:%H:%M} UTC): you can "
+                             "look; you can edit when they are done", holder)
+            if row is None or row[2] or row[0] != who:
+                conn.execute("INSERT INTO floor_locks (floor, project, who, session) VALUES (%s, %s, %s, %s) "
+                             "ON CONFLICT (floor) DO UPDATE SET who = EXCLUDED.who, session = EXCLUDED.session, "
+                             "since = now(), last_seen = now()", (f, code, who, editor.session))
+                taken.append(f)
+            else:
+                conn.execute("UPDATE floor_locks SET session = %s, last_seen = now() WHERE floor = %s",
+                             (editor.session, f))
+        return taken
+
+    def _hold_project(self, conn, code: str) -> None:
+        if conn.execute("SELECT 1 FROM projects WHERE code = %s FOR UPDATE", (code,)).fetchone() is None:
+            raise NotFound(f"no project {code}")
+
+    def _notify_locks(self, conn, code: str, floors) -> None:
+        if floors:
+            conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({"project": code, "locks": sorted(floors)})))
+
+    def take_lock(self, code: str, floor: str, by, editor: Editor) -> None:
+        """A floor's lock taken (or kept) for a person before a step of theirs changes it
+        (reading it again): Locked when another person holds it."""
+        with self.db.transaction() as conn:
+            self._hold_project(conn, code)
+            self._notify_locks(conn, code, self._take_locks(conn, code, [floor], by, editor))
+
+    def release_lock(self, code: str, floor: str, by) -> bool:
+        """A person's lock of a floor let go (they left it, or are done editing it):
+        whether they held it."""
+        with self.db.transaction() as conn:
+            gone = conn.execute("DELETE FROM floor_locks WHERE floor = %s AND project = %s AND who IS NOT DISTINCT "
+                                "FROM %s RETURNING floor", (floor, code, _user_id(by))).fetchone()
+            if gone:
+                self._notify_locks(conn, code, [floor])
+        return gone is not None
+
+    def take_over(self, code: str, floor: str, by, editor: Editor) -> dict | None:
+        """A floor's lock taken from whoever holds it (by an admin), recorded in the history
+        as the floor taken over: who held it ({id, username, name}), None when nobody did
+        (then it is just taken)."""
+        who = _user_id(by)
+        with self.db.transaction() as conn:
+            self._hold_project(conn, code)
+            row = conn.execute("SELECT who, last_seen < now() - make_interval(secs => %s) FROM floor_locks "
+                               "WHERE floor = %s FOR UPDATE", (LOCK_IDLE_S, floor)).fetchone()
+            held = row is not None and not row[1] and row[0] != who
+            was = self._holder(conn, row[0]) if held else None
+            conn.execute("INSERT INTO floor_locks (floor, project, who, session) VALUES (%s, %s, %s, %s) "
+                         "ON CONFLICT (floor) DO UPDATE SET who = EXCLUDED.who, session = EXCLUDED.session, "
+                         "since = now(), last_seen = now()", (floor, code, who, editor.session))
+            if held:
+                version = conn.execute("SELECT version FROM projects WHERE code = %s", (code,)).fetchone()[0]
+                ch = Changes(part="floor", kind="take over", targets=[floor], floors={floor},
+                             before={"lock": was}, after={"lock": self._holder(conn, who)},
+                             more={"from_name": was["name"]})
+                seq = self._history(conn, code, version, ch, by)
+                conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({
+                    "project": code, "floors": [floor], "seq": seq, "version": version, "locks": [floor]})))
+            else:
+                self._notify_locks(conn, code, [floor])
+        return was
+
+    def locks(self, code: str, floors=None) -> dict[str, dict]:
+        """The floors of a project someone is editing (of ``floors``, when given): floor ->
+        {floor, who: {id, username, name}, since, session}."""
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT l.floor, l.who, u.username, u.name, l.since, l.session FROM floor_locks l "
+                "LEFT JOIN users u ON u.id = l.who WHERE l.project = %s AND l.last_seen >= now() - "
+                "make_interval(secs => %s) AND (%s::text[] IS NULL OR l.floor = ANY(%s))",
+                (code, LOCK_IDLE_S, None if floors is None else list(floors),
+                 None if floors is None else list(floors))).fetchall()
+        out = {}
+        for floor, who, username, name, since, session in rows:
+            person = {"id": "local", "username": "local", "name": "This computer"} if who is None \
+                else {"id": who, "username": username or "?", "name": name or username or "Someone"}
+            out[floor] = {"floor": floor, "who": person, "since": since.isoformat(), "session": session}
+        return out
+
+    def touch_locks(self, code: str, floors, by) -> int:
+        """A person's locks of ``floors`` kept (their page is open on them): how many."""
+        if not floors:
+            return 0
+        with self.db.transaction() as conn:
+            return conn.execute("UPDATE floor_locks SET last_seen = now() WHERE project = %s AND floor = ANY(%s) AND "
+                                "who IS NOT DISTINCT FROM %s AND last_seen >= now() - make_interval(secs => %s)",
+                                (code, list(floors), _user_id(by), LOCK_IDLE_S)).rowcount
+
+    def sweep_locks(self) -> dict[str, list[str]]:
+        """The locks nothing kept for LOCK_IDLE_S let go: project -> its floors let go
+        (each project's pages told)."""
+        with self.db.transaction() as conn:
+            rows = conn.execute("DELETE FROM floor_locks WHERE last_seen < now() - make_interval(secs => %s) "
+                                "RETURNING project, floor", (LOCK_IDLE_S,)).fetchall()
+            out: dict[str, list[str]] = {}
+            for project, floor in rows:
+                out.setdefault(project, []).append(floor)
+            for project, floors in out.items():
+                self._notify_locks(conn, project, floors)
+        return out
 
     # ---- drawings -----------------------------------------------------------------
 
