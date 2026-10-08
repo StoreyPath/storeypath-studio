@@ -400,12 +400,11 @@ def test_the_first_admin_is_set_up_once_with_the_printed_link(tmp_path):
         status, said, _ = call(port, "GET", "/api/me")
         assert status == 401 and said["setup"] is True
         token = accounts.setup_token()
-        assert call(port, "POST", "/api/setup", {"token": "guess", "username": "boss", "password": PASSWORD})[0] == 403
-        status, me, res = call(port, "POST", "/api/setup", {"token": token, "username": "Boss", "name": "The Boss",
-                                                            "password": PASSWORD})
-        assert status == 200 and me["user"]["username"] == "boss"
+        assert call(port, "POST", "/api/setup", {"token": "guess", "password": PASSWORD})[0] == 403
+        status, me, res = call(port, "POST", "/api/setup", {"token": token, "username": "boss", "password": PASSWORD})
+        assert status == 200 and me["user"]["username"] == "admin"  # always admin: no name is taken from the page
         assert res.getheader("Set-Cookie").startswith(f"sp_session_{port}=")  # named by its port
-        assert call(port, "POST", "/api/setup", {"token": token, "username": "two", "password": PASSWORD})[0] == 404
+        assert call(port, "POST", "/api/setup", {"token": token, "password": PASSWORD})[0] == 404
         assert call(port, "GET", "/api/me")[1]["setup"] is False
     finally:
         srv.shutdown()

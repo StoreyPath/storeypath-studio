@@ -16,16 +16,10 @@
   <main class="page auth-page">
     <section class="card auth-card" id="setup-card" hidden>
       <h1>Set up Studio</h1>
-      <p class="lead">Studio has no users yet. Make the first admin: they add everyone else, and choose who sees which
-        projects.</p>
+      <p class="lead">Studio has no users yet. Choose the password of its admin, <strong>admin</strong>: they add
+        everyone else, and choose who sees which projects.</p>
       <form id="setup" class="auth-form">
-        <label class="field"><span>Username <span class="muted">(letters, digits, . - _)</span></span>
-          <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"
-                 pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" required>
-        </label>
-        <label class="field"><span>Your name <span class="muted">(as others see it)</span></span>
-          <input id="name" type="text" autocomplete="name">
-        </label>
+        <input id="username" type="text" autocomplete="username" value="admin" hidden readonly>
         <label class="field"><span>Password <span class="muted">(at least 10 characters)</span></span>
           <input id="password" type="password" autocomplete="new-password" minlength="10" required>
         </label>

@@ -1668,8 +1668,7 @@ class Gate:
     def setup(self, body: dict) -> LoggedIn:
         if self.accounts is None:
             raise NotFound("Studio runs without accounts here")
-        token, user = self.accounts.setup(body.get("token"), body.get("username"), body.get("name"),
-                                          body.get("password"), self.address)
+        token, user = self.accounts.setup(body.get("token"), body.get("password"), self.address)
         return LoggedIn(token, {"user": self._me(user), "must_change_password": False})
 
     def _me(self, user: User) -> dict:

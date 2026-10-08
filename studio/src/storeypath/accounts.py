@@ -77,7 +77,7 @@ PASSWORD_WAIT_S = 5.0  # …one waits this long for its turn, then is answered 5
 BUSY_TIMEOUT_MS = 5000  # a writer waits this long for another (Studio, the command line)
 COOKIE = "sp_session"
 ADMIN_PASSWORD_ENV = "STOREYPATH_ADMIN_PASSWORD"  # unattended first start: the first admin
-ADMIN_USER_ENV = "STOREYPATH_ADMIN_USER"
+FIRST_ADMIN = "admin"  # the first admin's username: set up, or made from STOREYPATH_ADMIN_PASSWORD
 TEMPORARY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/o, 1/l/i: read out, typed in
 
 
@@ -674,8 +674,10 @@ class Accounts:
                 self._setup = secrets.token_urlsafe(24)
             return self._setup
 
-    def setup(self, token, username, name, password, address: str = "") -> tuple[str, User]:
-        """The first admin, made with the setup link's token; then the setup is gone for good."""
+    def setup(self, token, password, address: str = "") -> tuple[str, User]:
+        """The first admin, ``admin`` (FIRST_ADMIN: nothing to choose), made with the setup
+        link's token; then the setup is gone for good. Its name is changed on the Users
+        page, like anyone's."""
         expected = self._setup
         if self.has_users() or expected is None:
             raise Gone("Studio is set up already: log in")
@@ -684,20 +686,19 @@ class Accounts:
                 raise Forbidden("this setup link is not the one Studio printed when it started")
             attempt.ok()
             with self._checking():
-                user = self.add_user(username, password, name=name or "", role="admin", must_change_password=False)
+                user = self.add_user(FIRST_ADMIN, password, name="Admin", role="admin", must_change_password=False)
         with self._lock:
             self._setup = None
         self.audit("setup", user, address, target=user.username)
         return self.start_session(user, address), user
 
     def bootstrap(self, environ=os.environ) -> User | None:
-        """Unattended start (Docker): with STOREYPATH_ADMIN_PASSWORD set (and
-        STOREYPATH_ADMIN_USER, else "admin") and no users yet, that admin is made."""
+        """Unattended start (Docker): with STOREYPATH_ADMIN_PASSWORD set and no users yet,
+        the first admin (``admin``) is made with it."""
         password = environ.get(ADMIN_PASSWORD_ENV)
         if not password or self.has_users():
             return None
-        username = environ.get(ADMIN_USER_ENV) or "admin"
-        user = self.add_user(username, password, name=username, role="admin", must_change_password=False)
+        user = self.add_user(FIRST_ADMIN, password, name="Admin", role="admin", must_change_password=False)
         self.audit("setup", user, None, target=user.username, how=ADMIN_PASSWORD_ENV)
         return user
 

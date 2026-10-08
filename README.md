@@ -390,7 +390,7 @@ upgrades:
 |---|---|
 | Stop, start again | `docker stop storeypath` · `docker start storeypath` |
 | Upgrade | `docker pull ghcr.io/storeypath/studio && docker rm -f storeypath`, then the `run` line again |
-| The first admin without the link | `-e STOREYPATH_ADMIN_PASSWORD=…` (and `-e STOREYPATH_ADMIN_USER=…`, default `admin`): made at the first start, when there are no users |
+| The first admin without the link | `-e STOREYPATH_ADMIN_PASSWORD=…`: `admin` is made with it at the first start, when there are no users |
 | Let others on your network use it | publish the port on all interfaces: `-p 8080:8080`, and add them on the Users page. They reach it by the machine's address or name: give it with `-e STOREYPATH_ALLOWED_HOSTS=studio.example,192.168.1.20` so it is on the certificate (Studio also refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
 | Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
 | Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without |
@@ -421,8 +421,8 @@ sessions and an audit log. Everyone logs in.
   project page, in Review (read only with *view*: no tools, a *View only* badge), in
   3D, and in the drawing (only their floor's part of a sheet).
 - **First start.** With no users, Studio prints a one-time setup link to make the
-  first admin (`docker logs` in a container), or makes it from
-  `STOREYPATH_ADMIN_PASSWORD` (and `STOREYPATH_ADMIN_USER`) when that is set.
+  first admin, `admin` (only its password is chosen; `docker logs` in a container),
+  or makes it with `STOREYPATH_ADMIN_PASSWORD` when that is set.
 - **HTTPS.** `storeypath serve` speaks HTTPS: with a certificate it makes itself in
   `<data>/tls/` for the names it is reached by (browsers warn once; it prints the
   fingerprint), or the organization's (`--cert`, `--key`); `--http --secure-cookies

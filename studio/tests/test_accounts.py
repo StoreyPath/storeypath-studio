@@ -238,12 +238,13 @@ def test_the_setup_token_makes_the_first_admin_once(tmp_path):
     token = a.setup_token()
     assert token and a.setup_token() == token  # once per start
     with pytest.raises(Forbidden):
-        a.setup("not it", "boss", "Boss", PASSWORD)
-    session, user = a.setup(token, "Boss", "The Boss", PASSWORD)
-    assert user.role == "admin" and not user.must_change_password and a.session(session).id == user.id
+        a.setup("not it", PASSWORD)
+    session, user = a.setup(token, PASSWORD)
+    assert (user.username, user.role, user.must_change_password) == ("admin", "admin", False)
+    assert a.session(session).id == user.id
     assert a.setup_token() is None
     with pytest.raises(Gone):
-        a.setup(token, "again", "Again", PASSWORD)
+        a.setup(token, PASSWORD)
 
 
 def test_an_admin_from_the_environment_when_there_are_no_users(tmp_path):
@@ -251,8 +252,8 @@ def test_an_admin_from_the_environment_when_there_are_no_users(tmp_path):
     assert a.bootstrap({}) is None
     with pytest.raises(ValueError):
         a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": "short"})
-    user = a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": PASSWORD, "STOREYPATH_ADMIN_USER": "Root"})
-    assert (user.username, user.role, user.must_change_password) == ("root", "admin", False)
+    user = a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": PASSWORD, "STOREYPATH_ADMIN_USER": "Root"})  # no other name
+    assert (user.username, user.role, user.must_change_password) == ("admin", "admin", False)
     assert a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": "another password"}) is None  # only the first time
     assert a.setup_token() is None
 

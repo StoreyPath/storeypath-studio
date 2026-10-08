@@ -1,5 +1,6 @@
-// The first admin, made with the link Studio printed when it started (its one-time
-// token after the #): it works once, until Studio has a user.
+// The first admin, admin, made with the link Studio printed when it started (its
+// one-time token after the #): its password is all there is to choose. It works once,
+// until Studio has a user.
 
 const $ = (id) => document.getElementById(id);
 const token = location.hash.slice(1);
@@ -24,7 +25,7 @@ $("setup").addEventListener("submit", async (e) => {
   const res = await fetch("/api/setup", {
     method: "POST",
     headers: { "X-StoreyPath": "1", "Content-Type": "application/json" },
-    body: JSON.stringify({ token, username: $("username").value, name: $("name").value, password: $("password").value }),
+    body: JSON.stringify({ token, password: $("password").value }),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 404) return done(data.error);
@@ -43,7 +44,7 @@ async function start() {
     return say("This page needs the whole setup link Studio printed when it started (with what follows the #).");
   }
   $("setup-card").hidden = false;
-  $("username").focus();
+  $("password").focus();
 }
 
 start();
