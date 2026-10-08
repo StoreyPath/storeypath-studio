@@ -281,15 +281,17 @@ export declare class StoreyPathWorld extends EventTarget {
 	plan(floorId: string): WorldPlan | null;
 	/** The way shown (showRoute), or null. */
 	readonly route: Route | null;
-	/** Draw a way (as `route()` finds it, format 0.8): a ribbon just over each floor it walks on, arrows the way
-	 * it goes, joined through the lift or stairs between floors, its start and end marked; seen through the floors
-	 * above it, which the dollhouse view of the whole building then leaves out. Null: none. With `fly`, the camera
-	 * goes along it; resolves when it is there. */
-	showRoute(route: Route | null, options?: { fly?: boolean }): Promise<void>;
+	/** Draw a way (as `route()` finds it, format 0.8): an edged ribbon just over each floor it walks on, arrows the
+	 * way it goes, joined through the lift or stairs between floors, its start and end marked; seen through the
+	 * floors above it, which the dollhouse view of the whole building then leaves out. Null: none. With `fly`, the
+	 * camera goes along it; resolves when it is there. Its colours (CSS colours, as a page has them light or dark;
+	 * by default the plan viewer's): `color`, `casing` (its edge), `arrow`, `start`, `end`. */
+	showRoute(route: Route | null, options?: { fly?: boolean; color?: string; casing?: string; arrow?: string;
+		start?: string; end?: string }): Promise<void>;
 	/** Take the way away. */
 	clearRoute(): void;
-	/** Take the camera along the way shown, over `seconds` (default 14), in the dollhouse view; resolves when it
-	 * is there, or when the way is taken away. */
+	/** Take the camera along the way shown, over `seconds` (default 14), in the dollhouse view, the floors it is
+	 * not on faded meanwhile; resolves when it is there, or when the way is taken away. */
 	flyRoute(options?: { seconds?: number }): Promise<void>;
 	/** Stop drawing and free the GPU; the container is emptied. */
 	destroy(): void;

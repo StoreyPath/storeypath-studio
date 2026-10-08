@@ -57,8 +57,9 @@ const TAKES = new Set([...CASTS, "floor", "glass"]);
 const ORDER = { volume: 2, glass: 4 };
 // a way through the building: its ribbon this high over the floor and this wide, seen
 // through what is in front of it, and arrows on it this far apart
-const ROUTE = { lift: 0.14, width: 0.55, arrows: 3, colour: 0x1a73e8, arrow: 0xffffff, start: 0x0f9d58, end: 0xd62d50,
-  order: 20 };
+const ROUTE = { lift: 0.14, width: 0.55, casing: 0.16, arrows: 3, order: 20, faded: 0.18,
+  // its colours by default: the plan viewer's (viewer/svg/src/plan.css, --sp-route…)
+  colours: { color: "#1a73e8", casing: "#ffffff", arrow: "#ffffff", start: "#0f9d58", end: "#d62d50" } };
 
 export class StoreyPathWorld extends EventTarget {
   #o;
@@ -367,11 +368,13 @@ export class StoreyPathWorld extends EventTarget {
   get route() { return this.#route?.route ?? null; }
 
   /** Draw a way (as route() in navigation.js finds it, format 0.8): a ribbon just over
-   * each floor it walks on, arrows the way it goes, joined through the lift or stairs
-   * between floors, its start and end marked; seen through the floors above it, which
-   * the dollhouse view of the whole building leaves out. Null: none. With `fly`, the
-   * camera goes along it (flyRoute). */
-  showRoute(route, { fly = false } = {}) {
+   * each floor it walks on, edged, arrows the way it goes, joined through the lift or
+   * stairs between floors, its start and end marked; seen through what is in front of
+   * it, and through the floors above it, which the dollhouse view of the whole building
+   * leaves out. Null: none. With `fly`, the camera goes along it (flyRoute). Its
+   * colours (CSS colours: a page gives its own, light or dark): `color`, `casing` (its
+   * edge), `arrow`, `start`, `end`; by default the plan viewer's. */
+  showRoute(route, { fly = false, ...colours } = {}) {
     this.clearRoute();
     const placement = this.#pkg?.manifest.placements?.[this.#building];
     if (!route || !placement || !route.legs?.some((leg) => this.#floors.has(leg.floor_id))) return Promise.resolve();
@@ -380,12 +383,22 @@ export class StoreyPathWorld extends EventTarget {
       const [wx, n] = localOf(this.#origin, toLonLat(placement, [x, y]));
       return [wx, -n];
     };
-    const ribbon = new THREE.MeshBasicMaterial({ color: ROUTE.colour, side: THREE.DoubleSide, depthTest: false,
-      transparent: true, opacity: 0.95 });
-    const arrow = new THREE.MeshBasicMaterial({ color: ROUTE.arrow, side: THREE.DoubleSide, depthTest: false, transparent: true });
-    const start = new THREE.MeshBasicMaterial({ color: ROUTE.start, depthTest: false, transparent: true });
-    const end = new THREE.MeshBasicMaterial({ color: ROUTE.end, depthTest: false, transparent: true });
-    const shown = { route, legs: [], links: [], marks: [], materials: [ribbon, arrow, start, end] };
+    const colour = (key) => {
+      const c = new THREE.Color(ROUTE.colours[key]);
+      try {
+        if (colours[key] !== undefined && colours[key] !== null) c.set(colours[key]);
+      } catch {
+        // not a colour: the default
+      }
+      return c;
+    };
+    const shown = { route, legs: [], links: [], marks: [], materials: [] };
+    const material = (key, more = {}) => {
+      const m = new THREE.MeshBasicMaterial({ color: colour(key), side: THREE.DoubleSide, depthTest: false, transparent: true,
+        ...more });
+      shown.materials.push(m);
+      return m;
+    };
     const add = (mesh, name, parent, order = ROUTE.order) => {
       mesh.name = name;
       mesh.renderOrder = order;
@@ -397,18 +410,30 @@ export class StoreyPathWorld extends EventTarget {
       if (!f) return;
       const points = leg.points.map(at);
       const y = f.elevation + ROUTE.lift;
+      // each leg its own materials: the legs not on the floor the camera is going along fade
+      const entry = { floor: f, points, y, mesh: null, materials: [] };
       if (points.length > 1) {
-        shown.legs.push({ floor: f, points, y, mesh: add(new THREE.Mesh(ribbonOf(points, y, ROUTE.width), ribbon), `route:leg:${i}`, f.group) });
+        const casing = material("casing", { opacity: 0.95 }), ribbon = material("color", { opacity: 0.95 });
+        entry.materials.push(casing, ribbon);
+        shown.marks.push(add(new THREE.Mesh(ribbonOf(points, y - 0.004, ROUTE.width + 2 * ROUTE.casing), casing),
+          `route:casing:${i}`, f.group, ROUTE.order - 1));
+        entry.mesh = add(new THREE.Mesh(ribbonOf(points, y, ROUTE.width), ribbon), `route:leg:${i}`, f.group);
         const marks = arrowsOf(points, y + 0.01, ROUTE.width, ROUTE.arrows);
-        if (marks) shown.marks.push(add(new THREE.Mesh(marks, arrow), `route:arrows:${i}`, f.group, ROUTE.order + 1));
-      } else shown.legs.push({ floor: f, points, y, mesh: null });
+        if (marks) {
+          const arrow = material("arrow");
+          entry.materials.push(arrow);
+          shown.marks.push(add(new THREE.Mesh(marks, arrow), `route:arrows:${i}`, f.group, ROUTE.order + 1));
+        }
+      }
+      shown.legs.push(entry);
       if (i === 0) {
-        const dot = add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.12, 24), start), "route:start", f.group, ROUTE.order + 2);
+        const dot = add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.12, 24), material("start")), "route:start", f.group,
+          ROUTE.order + 2);
         dot.position.set(points[0][0], y + 0.06, points[0][1]);
         shown.marks.push(dot);
       }
       if (i === route.legs.length - 1) {
-        const pin = add(new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.3, 20), end), "route:end", f.group, ROUTE.order + 2);
+        const pin = add(new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.3, 20), material("end")), "route:end", f.group, ROUTE.order + 2);
         const last = points[points.length - 1];
         pin.rotation.x = Math.PI; // its point down, on the destination
         pin.position.set(last[0], y + 0.65, last[1]);
@@ -418,13 +443,28 @@ export class StoreyPathWorld extends EventTarget {
     // between floors: through the lift or stairs, from where one leg ends to where the next starts
     for (let i = 0; i + 1 < shown.legs.length; i++) {
       const a = shown.legs[i], b = shown.legs[i + 1];
+      const ribbon = material("color", { opacity: 0.95 });
       const mesh = add(new THREE.Mesh(new THREE.CylinderGeometry(ROUTE.width / 2.5, ROUTE.width / 2.5, 1, 12, 1, true), ribbon),
         `route:link:${i}`, this.#buildingGroup);
-      shown.links.push({ a, b, from: a.points[a.points.length - 1], to: b.points[0], mesh });
+      shown.links.push({ a, b, from: a.points[a.points.length - 1], to: b.points[0], mesh, materials: [ribbon] });
     }
     this.#route = shown;
     this.#applyVisibility();
     return fly ? this.flyRoute() : Promise.resolve();
+  }
+
+  /** The way's legs as the camera goes along it: the one it is on (and the rides to and
+   * from it) clear, the others faded; all clear with null. */
+  #fadeRoute(leg) {
+    const shown = this.#route;
+    if (!shown) return;
+    const clear = (i) => leg === null || i === leg;
+    shown.legs.forEach((l, i) => {
+      for (const m of l.materials) m.opacity = clear(i) ? 0.95 : ROUTE.faded;
+    });
+    shown.links.forEach((l, i) => {
+      for (const m of l.materials) m.opacity = leg === null || i === leg || i + 1 === leg ? 0.95 : ROUTE.faded;
+    });
   }
 
   /** Take the way away (and stop going along it). */
@@ -448,27 +488,31 @@ export class StoreyPathWorld extends EventTarget {
     if (!this.#route) return Promise.resolve();
     if (this.#mode === "walk") this.setMode("dollhouse");
     this.#endTour();
-    const points = [];
-    for (const leg of this.#route.legs) {
+    const points = [], legOf = [];
+    this.#route.legs.forEach((leg, i) => {
       const dy = leg.floor.group.position.y;
-      for (const [x, z] of leg.points) points.push(new THREE.Vector3(x, leg.y + dy, z));
-    }
+      for (const [x, z] of leg.points) {
+        points.push(new THREE.Vector3(x, leg.y + dy, z));
+        legOf.push(i);
+      }
+    });
     if (points.length < 2) return Promise.resolve();
     const along = [0];
     for (let i = 1; i < points.length; i++) along.push(along[i - 1] + points[i].distanceTo(points[i - 1]));
     this.#flight = null;
     return new Promise((resolve) => {
-      this.#tour = { points, along, t: 0, seconds: Math.max(0.1, seconds), resolve };
+      this.#tour = { points, along, legOf, leg: -1, t: 0, seconds: Math.max(0.1, seconds), resolve };
     });
   }
 
   #endTour() {
     const tour = this.#tour;
     this.#tour = null;
+    if (tour) this.#fadeRoute(null);
     tour?.resolve();
   }
 
-  /** The point `s` metres along the tour's line. */
+  /** The point `s` metres along the tour's line, and the leg it is on. */
   #tourAt(tour, s) {
     const { points, along } = tour;
     const total = along[along.length - 1];
@@ -476,7 +520,9 @@ export class StoreyPathWorld extends EventTarget {
     let i = 1;
     while (i < along.length - 1 && along[i] < s) i++;
     const span = along[i] - along[i - 1] || 1;
-    return points[i - 1].clone().lerp(points[i], (s - along[i - 1]) / span);
+    const point = points[i - 1].clone().lerp(points[i], (s - along[i - 1]) / span);
+    point.leg = tour.legOf[i - 1] === tour.legOf[i] ? tour.legOf[i] : tour.legOf[s - along[i - 1] < span / 2 ? i - 1 : i];
+    return point;
   }
 
   /** The way's links between floors where the floors are now (one apart from the
@@ -924,6 +970,10 @@ export class StoreyPathWorld extends EventTarget {
       const total = tour.along[tour.along.length - 1];
       const s = (tour.t / tour.seconds) * total;
       const here = this.#tourAt(tour, s), ahead = this.#tourAt(tour, s + 4);
+      if (here.leg !== tour.leg) {
+        tour.leg = here.leg;
+        this.#fadeRoute(here.leg);
+      }
       const back = here.clone().sub(ahead).setY(0);
       if (back.lengthSq() < 1e-6) back.copy(this.#camera.position).sub(here).setY(0);
       back.normalize().multiplyScalar(9);

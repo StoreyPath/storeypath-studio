@@ -798,7 +798,13 @@ test("a way is drawn over each floor it walks on, through the lift between them,
     world.setFloor(way.legs[0].floor_id);
     const one = seen();
     world.setFloor(null);
-    // the camera along the way
+    // the camera along the way: the floor it is not on faded meanwhile, clear again after
+    const opacity = () => named("route:leg:").map((m) => m.material.opacity);
+    const flying = world.flyRoute({ seconds: 3 });
+    await window.frames(6);
+    const during = opacity();
+    await flying;
+    const after = opacity();
     const before = world.camera.position.clone();
     await world.flyRoute({ seconds: 0.4 });
     const moved = world.camera.position.distanceTo(before);
@@ -806,10 +812,14 @@ test("a way is drawn over each floor it walks on, through the lift between them,
     world.clearRoute();
     await window.frames();
     const left = named("route:").length;
+    // the page's colours
+    await world.showRoute(way, { color: "#ff0000", casing: "rgb(0, 0, 255)", end: "nonsense" });
+    const colours = ["route:leg:0", "route:casing:0", "route:end"].map((n) => named(n)[0].material.color.getHexString());
+    world.clearRoute();
     const shown = floors.map((f) => world.scene.getObjectByName(f.id).visible);
     world.destroy();
     return { legs: legOn, links: links.length, start: [start.position.x - firstAt.x, start.position.z - firstAt.z],
-      startFloor, endFloor, wayFloors: way.legs.map((l) => l.floor_id), all, one, moved, left,
+      startFloor, endFloor, wayFloors: way.legs.map((l) => l.floor_id), all, one, moved, left, during, after, colours,
       shown, linkSpan, rise: elevation(way.legs[1].floor_id) - elevation(way.legs[0].floor_id), target };
   }, lifted);
   truly(JSON.stringify(r.legs) === JSON.stringify(r.wayFloors.map((f) => [f, 0.14])), `a ribbon over each floor: ${JSON.stringify(r.legs)}`);
@@ -821,6 +831,9 @@ test("a way is drawn over each floor it walks on, through the lift between them,
   truly(JSON.stringify(r.one) === JSON.stringify({ legs: [true, false], link: false, top: [true, false, false] }),
     `one floor shown: its leg alone: ${JSON.stringify(r.one)}`);
   truly(r.moved > 1, `the camera went along it: ${r.moved}`);
+  truly(r.during.length === 2 && Math.min(...r.during) < 0.5 && Math.max(...r.during) > 0.9
+    && r.after.every((o) => o > 0.9), `the floor it is not on faded as it goes: ${r.during} then ${r.after}`);
+  truly(JSON.stringify(r.colours) === JSON.stringify(["ff0000", "0000ff", "d62d50"]), `the page's colours: ${r.colours}`);
   truly(r.left === 0 && JSON.stringify(r.shown) === "[true,true,true]", `taken away, every floor shown again: ${r.left}, ${r.shown}`);
 });
 
