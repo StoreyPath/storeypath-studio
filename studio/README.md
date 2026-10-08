@@ -388,7 +388,7 @@ storeypath words house-private.dxf               # what is left, to look through
 
 Room names the rules don't know — abbreviations, misspellings, other languages —
 are read by a small language model running locally with llama.cpp's
-`llama-server`, on the CPU (on the GPU with a CUDA build, as in the GPU image); so
+`llama-server`, on the CPU (on the GPU with a CUDA build of it); so
 are sheet titles when finding plans, notes that state the units, level labels on
 sections, rows of door and window schedules, and private texts in drawings. Its
 answers are limited to StoreyPath's types by a JSON schema and are stored in the
@@ -403,7 +403,7 @@ the model.
 | `STOREYPATH_MODEL_URL` | use an already running `llama-server` instead |
 | `STOREYPATH_THREADS` | CPU threads for the model (default: all) |
 | `STOREYPATH_PARALLEL` | questions answered at once (default 1; more needs more memory) |
-| `STOREYPATH_GPU_LAYERS` | layers on the GPU, with a CUDA build of `llama-server` (e.g. `99`: all; the GPU image sets it) |
+| `STOREYPATH_GPU_LAYERS` | layers on the GPU, with a CUDA build of `llama-server` (e.g. `99`: all) |
 
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
@@ -444,23 +444,43 @@ the project converts the same way without the model. Where a vision model runs, 
 also reads, in words, the rows of door and window schedules and the private texts in
 drawings, in place of the language model.
 
-The model is any OpenAI-compatible endpoint that takes images: `llama-server` (with
-the model's `--mmproj`) or vLLM on a GPU, or a hosted service. Studio sends it views
-of the plan and texts from the drawings, so a hosted service sees them.
+The model is any OpenAI-compatible endpoint that takes images: the GPU helper
+([docker/gpu-helper](../docker/gpu-helper/Dockerfile): `llama-server` with Gemma 4
+31B, 4-bit, and its `--mmproj`), vLLM, or a hosted service; or several helpers
+serving the same model. Studio sends it views of the plan and texts from the
+drawings, so a hosted service sees them.
+
+With several helpers, each one's list of models is read before it is asked (one that
+lists another model is left out: answers are filed by the model's name); each
+question goes to the least busy helper that answers, each taking
+`STOREYPATH_VISION_PARALLEL` at once, so a floor's rooms spread over them. A helper
+that fails (unreachable, too slow, loading, refusing the key) is left out for 5
+seconds, twice as long each time it fails again up to a minute, and its questions go
+to the others; it is tried again after that, and one that was not answering when
+Studio started joins once it answers. `serve` prints each helper as it starts, and
+whether it answers.
 
 | Environment | |
 |---|---|
-| `STOREYPATH_VISION_URL` | the endpoint, e.g. `http://127.0.0.1:8105/v1` (none: no vision) |
-| `STOREYPATH_VISION_MODEL` | the model name, when the server serves several |
-| `STOREYPATH_VISION_KEY` | a bearer token, for hosted services |
-| `STOREYPATH_VISION_PARALLEL` | questions in flight at once (default 2) |
+| `STOREYPATH_VISION_URL` | the endpoint, e.g. `https://gpu1:8105/v1` (none: no vision); several, separated by commas or spaces |
+| `STOREYPATH_VISION_MODEL` | the model name, when the server serves several (else the first one listed) |
+| `STOREYPATH_VISION_KEY` | the key sent to each helper (`Authorization: Bearer`): the helpers' `STOREYPATH_HELPER_KEY`, or a hosted service's |
+| `STOREYPATH_VISION_PARALLEL` | questions in flight at once, per helper (default 2): the helper's slots |
+| `STOREYPATH_VISION_INSECURE` | `1`: a helper's HTTPS certificate is not checked (a self-signed one on a trusted network) |
+| `STOREYPATH_VISION_CA` | a certificate (PEM) helpers' certificates are checked against, in place of the system's authorities |
 
-The GPU image ([docker/Dockerfile.gpu](../docker/Dockerfile.gpu)) holds Gemma 4 31B
-(4-bit) and starts it with `llama-server` on the GPU at `127.0.0.1:8105`
-([docker/start-gpu.sh](../docker/start-gpu.sh)), with `STOREYPATH_VISION_PARALLEL`
-slots of `STOREYPATH_VISION_CONTEXT` tokens each (2 and 8192 by default);
-`STOREYPATH_VISION=off` starts it without, and a `STOREYPATH_VISION_URL` given uses
-that model instead.
+The GPU helper serves on port 8105 and is set by its own environment
+([docker/gpu-helper/start.sh](../docker/gpu-helper/start.sh)):
+
+| Environment | |
+|---|---|
+| `STOREYPATH_HELPER_KEY` | the key every call but `/health` must carry; without one it does not start |
+| `STOREYPATH_HELPER_OPEN` | `1`: serve without a key (a network nothing else can reach) |
+| `STOREYPATH_HELPER_SLOTS` | questions answered at once (default 2) |
+| `STOREYPATH_HELPER_CONTEXT` | tokens of context per question (default 8192) |
+| `STOREYPATH_HELPER_CERT`, `STOREYPATH_HELPER_CERT_KEY` | HTTPS with this certificate and key (PEM files mounted in); without, plain HTTP |
+| `STOREYPATH_HELPER_NAME` | the name the model is served under (default `gemma-4-31B-it-Q4_K_M`): answers are filed by it |
+| `STOREYPATH_HELPER_ENGINE` | `llama.cpp` (default); `vllm` is the place for vLLM, in an image of its own |
 
 Outside Docker, `uv sync --extra vision` adds what rendering needs (matplotlib,
 Pillow). Measured on 119 rooms of two houses and an interior designer's furniture
@@ -492,7 +512,7 @@ or outside Docker, `uv sync --extra symbols` and `STOREYPATH_SYMBOLS=../docker/s
 It runs on the CPU in a process of its own (a plan takes a few seconds);
 `convert --no-symbols` skips it. Images are built without it unless it was fetched,
 and release images only when the repository variable `STOREYPATH_SYMBOLS` is
-`research`; the GPU image never holds it. Images built with it must not be published
+`research`; the GPU helper never holds it. Images built with it must not be published
 or sold. On plans it was not trained on it mistakes things (wall-mounted air
 conditioners for windows, grid lines for walls), so it is used only to type rooms, and
 only from fixtures inside them.
@@ -562,6 +582,7 @@ items standing in it; its grade is the highest grade among its desks.
 
 | Environment | |
 |---|---|
+| `STOREYPATH_DATABASE_URL` | Studio's database: a PostgreSQL 17 with PostGIS 3 (`postgresql://user:password@host/db`, or `postgresql:///db?host=/run/postgresql` over a socket). The image sets it to its own database, which its start script makes in `/data/pg` and runs, reached over a Unix socket only; set it to another PostgreSQL and the image's does not start |
 | `STOREYPATH_ALLOWED_HOSTS` | more names Studio may be reached by, separated by commas or spaces (`*`: any); as `serve --allowed-host` (each goes on Studio's certificate) |
 | `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin, `admin`, is made at start with this password, not `admin` |
 | `STOREYPATH_NODE` | Node.js for building the floors' 3D at export (default: `node` on the `PATH`; empty: never) |
