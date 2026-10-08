@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.7
+# StoreyPath package format — version 0.8
 
 A StoreyPath package (`*.storeypath`) describes one building of a project: the
 building, its location, its floors, the spaces on each floor (offices, corridors,
@@ -24,13 +24,14 @@ A copy of this document is included in every package.
 | `changes.json` | IDs added, changed and retired since the previous export |
 | `items.geojson` | Furniture and equipment on the floors: desks, photocopiers, access points, sofas, TVs, … (format 0.6) |
 | `catalogue.json` | The types of items: their codes, names, sizes, how they are mounted, and the details each carries (format 0.6) |
+| `navigation.json` | The walking network of the building: where a person can walk, and how long it takes, for finding the way (format 0.8) |
 | `schema/*.schema.json` | JSON Schema for every JSON file |
 | `world/<floor-id>.glb` | Optional: each floor already built in 3D, as binary glTF (Pre-built 3D) |
 | `FORMAT.md` | This document |
 
 Readers locate each file through `manifest.json → files`, by its role (`location`,
 `buildings`, `floors`, `spaces`, `zones`, `openings`, `objects`, `changes`, `items`,
-`catalogue`); the names in the table are the defaults.
+`catalogue`, `navigation`); the names in the table are the defaults.
 
 **JSON.** Keys are case-sensitive: a key that differs from the format's only in case is
 not that key, and a reader may refuse the file. Every number is finite (NaN and
@@ -57,7 +58,9 @@ PROJECT-LOCATION-BUILDING-FLOOR-OBJECT        K7Q2XM-RUH-HQ-F02-0142
   still there. An object that disappears is *retired*, and its ID is never issued again.
 - The object's type is **not** part of its ID: correcting a type does not change the ID.
 - Elevators, stairs and escalators keep the same object code on every floor they serve
-  (`…-F01-0023`, `…-F02-0023`), which links them vertically.
+  (`…-F01-0023`, `…-F02-0023`) when Studio finds them there itself. What links them
+  across floors is their `stack` (0.8, Stacks): one drawn on a floor by hand has a code
+  of its own, and the same stack.
 - An ID is ASCII and at most 84 characters long (five segments of at most 16); an
   item's ID is the project's code, `-I` and six digits (Items).
 
@@ -111,7 +114,7 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 **space** — `type`, `name`, `number`, `drawing_label`, `floor_id`, `area_m2`,
 `display_point` (a good spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
 windows of its own; a glazed veranda is not), `capacity`, `capacity_from`, `grade`
-(Capacity), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
+(Capacity), `stack` (Stacks), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
 A space is what walls, doors and windows enclose: walls stand on its edges.
 
 **zone** — `type`, `name`, `number`, `drawing_label`, `space_id`, `floor_id`, `area_m2`,
@@ -303,6 +306,167 @@ to another building since this building was last exported is listed in `moved_aw
 with the building it went to: it is not retired, and that building's package holds it
 (as `changed`, with its new floor and position) when that building is next exported.
 
+## Stacks (0.8)
+
+A lift, a staircase or an escalator is one thing through the floors it serves; on
+each floor it is a space of type `elevator`, `stairs` or `escalator`. Their `stack`
+says which are the same one: a key the spaces of one lift share on every floor it
+serves, and no other space of the building has. A ramp between floors (one ramp's
+spaces on two or more floors) has one too; any other space has `stack: null`.
+
+```json
+"properties": { "kind": "space", "type": "elevator", "floor_id": "K7Q2XM-RUH-HQ-F02",
+                "stack": "K7Q2XM-RUH-HQ-F00-0023", … }
+```
+
+Studio links them so: spaces of these types on different floors of a building are one
+stack when they have the same object code, or when they are of the same type and their
+outlines, in the building's own frame, overlap by at least 30% of the smaller one; and
+through any number of floors (what is linked to what is linked is one stack). A
+person may set it in review, and wins: a space linked by hand to another floor's is
+linked to it alone (others may still be linked to it); one set as not linked stands
+alone. The key is the ID of the stack's space on the lowest floor it serves (the
+lowest ID there): it stays while that space does, and may change when the stack does. A system keys its own
+lifts and stairs to the spaces' IDs; `stack` tells it which of them are one.
+
+A stack may have more than one space on a floor (a staircase drawn as two spaces), and
+none on a floor it passes without a door.
+
+## Navigation (0.8)
+
+`navigation.json` is the walking network of the building: the points a person is at or
+passes (nodes), and the ways between them (edges), with how far each is and how long it
+takes. Studio makes it from the package's spaces, zones, openings, stacks and kiosks,
+so that every reader finds the same way between two places without working out any
+geometry: Studio, the Go module and the viewers route on it the same way (Routing). A
+package of format 0.8 may lack it (a reader then has no network to route on); one of
+an earlier format has none.
+
+```json
+{
+  "speed_m_s": 1.3,
+  "buildings": ["K7Q2XM-RUH-HQ"],
+  "floors": [ { "id": "K7Q2XM-RUH-HQ-F00", "building_id": "K7Q2XM-RUH-HQ", "name": "Ground floor",
+                "ordinal": 0, "elevation": 0.0 } ],                       // lowest first
+  "places": [ { "id": "K7Q2XM-RUH-HQ-F01-0069", "kind": "space", "space_id": null,
+                "floor_id": "K7Q2XM-RUH-HQ-F01", "type": "office", "label": "OFFICE 112" } ],
+  "nodes": [ { "id": "door:K7Q2XM-RUH-HQ-F00-0048", "kind": "door", "floor_id": "K7Q2XM-RUH-HQ-F00",
+               "space_id": null, "zone_id": null, "local": { "x_m": 167.0, "y_m": 59.5 },
+               "lonlat": [46.6772311, 24.7131542], "opening_id": "K7Q2XM-RUH-HQ-F00-0048",
+               "spaces": ["K7Q2XM-RUH-HQ-F00-0001", "K7Q2XM-RUH-HQ-F00-0002"] } ],
+  "edges": [ { "from": "approach:K7Q2XM-RUH-HQ-F00-0048@K7Q2XM-RUH-HQ-F00-0001",
+               "to": "door:K7Q2XM-RUH-HQ-F00-0048", "kind": "door", "length_m": 1.5, "seconds": 1.2,
+               "cost": 1.2, "accessible": true, "space_id": "K7Q2XM-RUH-HQ-F00-0001", "zone_id": null,
+               "path": [[167.0, 58.0], [167.0, 59.5]] } ]
+}
+```
+
+Positions are in the building's own frame (Coordinates), in metres, as items' `local`;
+a node's `lonlat` is the same point on the map. Lengths are in metres, times in
+seconds.
+
+**Nodes.** Each has an `id` made from what it is, so it is the same from one export to
+the next while that is:
+
+| `kind` | `id` | Where |
+|---|---|---|
+| `door` | `door:<opening ID>` | each door and opening (`type` `door` or `opening`, never a window) between two spaces a person walks in, at the middle of its span; `spaces` lists them. A lift or stairs with no way in drawn (one drawn in review) joins a space it shares an edge with: `door:<space ID>+<space ID>` (the two in order), `opening_id` null |
+| `entrance` | `door:<opening ID>` | a door or opening to the outside (`exterior`), on any floor: where a campus's ways would join the building's |
+| `approach` | `approach:<opening ID>@<space ID>` | in front of a door in each space it opens into: half the space's depth there, at most 2 m (so the approaches along a corridor are on its middle line) |
+| `room` | `room:<space or zone ID>` | where a person arrives in each space (in each zone of a space divided into zones): its label point, clear of the walls |
+| `lift`, `stairs`, `escalator`, `ramp` | `lift:<object code>@<floor ID>`, … | each lift, stairs, escalator and ramp space, on its floor, in place of a `room` node; `stack` is its stack |
+| `kiosk` | `kiosk:<item ID>` | each wayfinding kiosk (Items, Kiosks): where people stand before its screen, 0.6 m in front of it, in the space it stands in; `item_id` is the item |
+
+`space_id` and `zone_id` are the space, and the zone of a divided space, a node is in
+(a door's are null: `spaces` says what it joins). Readers ignore kinds of nodes and
+edges they do not know: a later version may add some.
+
+**What is walked.** A person walks in the spaces and zones of these types, unless
+hidden or ignored in review: `corridor`, `lobby`, `open_area`, `elevator`, `stairs`,
+`escalator`, `ramp`, `parking`, `terrace`, `balcony`, `living_room`, `dining_room`
+(spaces to pass through), and `office`, `room`, `meeting_room`, `restroom`,
+`kitchen`, `storage`, `bedroom`, `bathroom`, `dressing_room`, `laundry`,
+`prayer_room`, `unspecified` (spaces a person goes to). Not `utility` (plant and
+electrical rooms), `shaft` or `open_to_below`. A door into what is not walked is not
+a node. The zones of a divided space are one room to walk across, as no wall parts
+them (a zone not walked, a void, is left out of it).
+
+**Edges.** Every edge joins two nodes, both ways; at most one joins any two. `path` is
+its line from `from` to `to`, at least two points; a reader going from `to` to `from`
+follows it backwards.
+
+| `kind` | Joins | `seconds` |
+|---|---|---|
+| `door` | a door to each of its approaches: through the door | `length_m` / `speed_m_s` |
+| `walk` | two nodes of one room (its approaches, room nodes, kiosks, lift or stairs), along the shortest way across it that keeps 0.35 m from its walls where it is wide enough (round its corners), and up to them in a passage narrower than that. A walk is left out where the room's other walks already join its ends within 2% and 5 cm: a corridor's approaches are joined each to the next | `length_m` / `speed_m_s` |
+| `lift` | each floor a lift's stack serves to each other one | 30 (waiting) + 4 a floor |
+| `stairs`, `escalator`, `ramp` | each floor its stack serves to the next one up it serves | 12 a floor |
+
+`length_m` is the length of `path` (for a lift, stairs, escalator or ramp: the height
+between the floors); "a floor" is each of the building's floors passed, by their
+order. `space_id` is the space a `walk` or `door` edge is in (for a `door`, the space
+of its approach), and `zone_id`, in a divided space, the zone most of its line is in.
+`accessible` is false for `stairs` and `escalator`. `cost` is what routing takes the
+fewest of: `seconds`, and 30 more for a `door` edge into a space a person goes to (an
+office, a meeting room): a way through someone's office costs a minute more than it
+takes, so the way round by the corridor is taken unless it is that much longer. A
+way to or from such a room pays half of that, whichever way it takes. `seconds` and
+`cost` have one decimal.
+
+**Places.** `places` lists the spaces and zones the network goes through, with their
+`type` and `label`: what a step calls them. The label is the name and the number
+("OFFICE 112"; the name alone when it holds the number), the name, the type and the
+number ("Room 114"), or "the" and the type ("the corridor"); a type in words, with
+spaces for underscores, `elevator` as "lift" and `unspecified` as "room".
+
+### Routing
+
+A way is asked for from a place to a place, each one of: a node's ID; a space's ID
+(its `lift`, `stairs`, `escalator`, `ramp` or `room` node; for a space divided into
+zones, its zones' `room` nodes); a zone's ID (its `room` node); an item's ID (a
+kiosk's node, else the zone or space it stands in). A place of several nodes is any of
+them. With `accessible`, no edge whose `accessible` is false is taken.
+
+Every reader takes the same way: each edge costs round(`cost` × 10), a whole number;
+the nodes are taken in order of their distance from the start and, at one distance,
+of their IDs (compared as strings of bytes), all the start's nodes at 0; a node keeps
+the way it was first reached by at its least distance; the way ends at the first of
+the destination's nodes taken. (Dijkstra's algorithm, its queue ordered by distance,
+then ID.)
+
+A way is given as:
+
+- `nodes`: its nodes' IDs, in order; `metres` and `seconds`: the sums of its edges'
+  `length_m` and `seconds`, added in that order, then rounded to two decimals as
+  floor(x × 100 + 0.5) / 100.
+- `legs`: the walking on one floor between rides from floor to floor (one more than
+  the rides; one may have no edges): `floor_id`, `points` (the line to draw: its first
+  node's point, then each edge's `path` in the way's direction, without a point the
+  same as the one before it) and `metres` (rounded so).
+- `changes`: each ride between floors (one `lift` edge, or `stairs`, `escalator` or
+  `ramp` edges one after another): `by` (its kind), `from_floor_id`, `to_floor_id`,
+  `from_node`, `to_node`, `floors` (how many of the building's floors apart) and
+  `direction` (`up` or `down`).
+- `steps`: what to tell a person, each a `kind`, values and `text` in English; a
+  system words them in its own language from the kind and values.
+
+| `kind` | Values | `text` |
+|---|---|---|
+| `start` | `node`, `node_kind`, `place`, `floor_id` | "Start at the kiosk in RECEPTION 017", "Start at the entrance into the corridor", "Start in OFFICE 001", "Start at the lift", "Start at the door of …" |
+| `walk` | `floor_id`, `metres`, `along`, `to`, `place` | "Walk 24 m along CORRIDOR to the lift": for each leg at least half a metre long, in whole metres (floor(x + 0.5)); `along` is the place most of it is in (of those as long, the first by ID): "along" a corridor or ramp, "through" anything else; `to` is the next ride's kind ("the stairs"), or `destination` (then `place` is it, by its label). Walking mostly in the destination itself: "Walk 6 m to OPEN OFFICE 117" |
+| `take` | `by`, `from_floor_id`, `to_floor_id`, `floors`, `direction` | "Take the lift up to Floor 1" (the floor by its name) |
+| `arrive` | `place`, `floor_id`, `side` | "OFFICE 112 is on your left": `side` is `left` or `right` when the way's last door is the destination's own (from another place into it), else `ahead`; `here` when the start is the destination ("You are at …"). The label begins with a capital ("The meeting room is ahead") |
+
+The side is where the destination's door is as a person walks to it: *w* is the way
+they walk, from the point 2 m back along the way's line (or its start) to the approach
+in front of the door; *r* the way into the room, from the door to the approach inside.
+With *d* = *w*·*r* and *c* = *w*ₓ*r*ᵧ − *w*ᵧ*r*ₓ: `ahead` when *d* > 0 and
+|*c*| ≤ 0.5 *d*, else `left` when *c* > 0, `right` when *c* < 0 (a building's frame has
+*y* to the left of *x*, as drawings do).
+
+A way that cannot be found (none, or none without stairs) is said to be none; an ID
+the network does not have is an error.
+
 ## One building per package
 
 From 0.7 a package holds exactly one building: `manifest.json → scope` names it.
@@ -425,6 +589,15 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
   read a 0.5 package as it is, ignoring the folder (readers of 0.7 and later refuse a
   newer minor version instead: Versioning).
 
+## Changes from 0.7
+
+- `navigation.json` and `manifest.json → files.navigation`: the building's walking
+  network (Navigation), and the rule by which every reader finds the same way on it.
+- Spaces' `stack` (Stacks): which lifts, stairs and escalators on different floors are
+  one, worked out from their codes and outlines, or set by a person.
+- A reader of 0.7 refuses a 0.8 package (Versioning); a reader of 0.8 reads 0.7 and
+  earlier ones as before (no stacks, no network).
+
 ## Changes from 0.6
 
 - One building per package (One building per package): `scope` always names the one
@@ -463,11 +636,14 @@ this format, exported a building at a time: its first two exports, then the
 Headquarters' after it was moved on the map, a desk carried to the Annex and a TV
 taken away (the building changed, and the office the desk left, which seats one fewer;
 nothing else; the desk moved away; the TV retired; every item's `local` as it was),
-then the Annex's, the desk in it. They have items:
-desks of several grades (one in a zone, one in a building turned on the map), a
-photocopier, two access points, a sofa, a TV, a bed and a wayfinding kiosk. The others are packages of
-earlier formats, which readers still read: `campus` (0.6, the whole campus, with
-items), `campus-world` and `simple-office-world` (pre-built in 3D: a reader reads
+then the Annex's, the desk in it. They have items: desks of several grades (one in a
+zone, one in a building turned on the map), a photocopier, two access points, a sofa,
+a TV, a bed and a wayfinding kiosk; lifts and stairs through the Headquarters' three
+floors (their stacks), and a corridor divided into two zones. `routes.json` holds ways
+on the first two that every reader must find the same (Navigation, Routing): the same
+nodes, changes of floor, legs and steps, and the same lengths and times to a
+centimetre and a tenth of a second. The others are packages of earlier formats, which
+readers still read: `campus` (0.6, the whole campus, with items), `campus-world` and `simple-office-world` (pre-built in 3D: a reader reads
 them as it reads `campus` and `simple-office`, and the viewer shows them as it shows
 those), `campus-whole-1`, `campus-part`, `campus-whole-3` (0.4), `simple-office`,
 `simple-office-2` and `unplaced`.
@@ -485,7 +661,7 @@ newer than it, and ignores unknown files, properties, and `objects.csv` rows of 
 does not know (as 0.6 added items), with the IDs of those rows where `changes.json` lists
 them. Before 1.0 a minor version may change what a package means (0.4's `scope`, 0.7's
 one building per package), so a reader refuses a package of a newer minor version
-(0.8 for a reader of 0.7), saying it must be updated; a newer patch version (0.7.1)
+(0.9 for a reader of 0.8), saying it must be updated; a newer patch version (0.8.1)
 only adds properties and is read. From 1.0, a reader reads any package of its major
 version. A format version is ASCII `major.minor`, an optional `.patch`, and an optional
 `-` or `+` suffix (`^[0-9]+\.[0-9]+(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?$`); a reader refuses

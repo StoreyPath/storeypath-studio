@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.7.0"
+FORMAT_VERSION = "0.8.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -32,6 +32,7 @@ FILES = {
     "changes": "changes.json",
     "items": "items.geojson",
     "catalogue": "catalogue.json",
+    "navigation": "navigation.json",
 }
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
@@ -133,6 +134,9 @@ class SpaceProps(_Props):
     capacity: int | None = Field(None, ge=0, description=CAPACITY)
     capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
     grade: Grade | None = Field(None, description=GRADE)
+    stack: str | None = Field(None, description=(
+        "a lift's, stairs', escalator's (or a ramp's between floors) stack (format 0.8): the same key on every "
+        "floor the same one serves (the ID of its space on the lowest of them), no other's; null for any other space"))
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 
@@ -344,6 +348,77 @@ class Changes(_Model):
         "project (format 0.7): not retired, they keep their IDs"))
 
 
+NodeKind = Literal["door", "entrance", "approach", "room", "kiosk", "lift", "stairs", "escalator", "ramp"]
+EdgeKind = Literal["walk", "door", "lift", "stairs", "escalator", "ramp"]
+
+
+class NavFloor(_Model):
+    id: str
+    building_id: str
+    name: str
+    ordinal: int
+    elevation: float
+
+
+class NavPlace(_Model):
+    """A space or zone a way goes through or to, and what a step calls it."""
+
+    id: str
+    kind: Literal["space", "zone"]
+    space_id: str | None = Field(None, description="a zone's space")
+    floor_id: str
+    type: str
+    label: str = Field(description='what a step calls it: "OFFICE 112", "Room 114", "the corridor"')
+
+
+class NavLocal(_Model):
+    x_m: float
+    y_m: float
+
+
+class NavNode(_Model):
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
+
+    id: str = Field(description="stable: what it is (door:<opening>, room:<space or zone>, kiosk:<item>, "
+                                "lift:<code>@<floor>, …)")
+    kind: NodeKind
+    floor_id: str
+    space_id: str | None = Field(None, description="the space it is in (null for a door: see spaces)")
+    zone_id: str | None = Field(None, description="the zone it is in, in a space divided into zones")
+    local: NavLocal = Field(description="where it is in its building's own frame, metres")
+    lonlat: LonLat
+    opening_id: str | None = Field(None, description="a door's, entrance's or approach's opening (null for the way "
+                                                     "into a lift or stairs no opening is drawn for)")
+    spaces: list[str] | None = Field(None, description="a door's: the spaces it joins (one, for an entrance)")
+    item_id: str | None = Field(None, description="a kiosk's item")
+    stack: str | None = Field(None, description="a lift's, stairs', escalator's or ramp's stack")
+
+
+class NavEdge(_Model):
+    from_: str = Field(alias="from")
+    to: str
+    kind: EdgeKind
+    length_m: float = Field(ge=0)
+    seconds: float = Field(ge=0, description="walking at speed_m_s; lifts and stairs as FORMAT.md says")
+    cost: float = Field(ge=0, description="what routing takes the fewest of: seconds, and more for a way into a room "
+                                          "not for passing through")
+    accessible: bool = Field(description="false for stairs and escalators")
+    space_id: str | None = None
+    zone_id: str | None = None
+    path: list[tuple[float, float]] = Field(description="its line, from `from` to `to`, in the building's frame")
+
+
+class Navigation(_Model):
+    """navigation.json (format 0.8): the walking network of the package's building."""
+
+    speed_m_s: float
+    buildings: list[str]
+    floors: list[NavFloor]
+    places: list[NavPlace]
+    nodes: list[NavNode]
+    edges: list[NavEdge]
+
+
 def version_problem(version: str) -> str | None:
     """Why this Studio does not read packages of a format version, or None: one that
     is not a version, one of another major version, or (before 1.0, where a minor
@@ -394,4 +469,5 @@ def json_schemas() -> dict[str, dict]:
         out[f"{role}.schema.json"] = FeatureCollection[feature].model_json_schema()
     out["items.schema.json"] = FeatureCollection[ItemFeature].model_json_schema()
     out["catalogue.schema.json"] = Catalogue.model_json_schema()
+    out["navigation.schema.json"] = Navigation.model_json_schema(by_alias=True)
     return out
