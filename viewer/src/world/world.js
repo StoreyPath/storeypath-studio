@@ -51,6 +51,7 @@ const LABEL_STYLE = {
   font: '600 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif', boxShadow: "0 1px 4px rgba(0, 0, 0, 0.18)",
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
+const LABEL_ROOM = 56; // px: a room this wide on the screen (its longer side) has its label shown
 // what casts and takes shadows, by material; the order drawn in, after the rest
 const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door", "item"]);
 const TAKES = new Set([...CASTS, "floor", "glass"]);
@@ -95,6 +96,8 @@ export class StoreyPathWorld extends EventTarget {
   #ghostLook = null; // its materials
   #orbitView = null; // the dollhouse view before walking: { position, target }
   #caster = new THREE.Raycaster();
+  #labelView = null; // the camera the labels were last placed for
+  #labelsMoved = true; // what is shown changed: the labels placed again
   #route = null; // the way shown: { route, legs, links, marks, materials }
   #tour = null; // the camera going along it
 
@@ -1239,7 +1242,8 @@ export class StoreyPathWorld extends EventTarget {
       for (const m of f.pieces) m.visible = seen(m.userData);
       for (const s of f.spaces) {
         const visible = this.#o.showHidden || !s.tucked;
-        s.label.visible = visible && this.#o.labels && !walking && (!this.#floor ? f === this.#topShown() : true);
+        s.labelOn = visible && this.#o.labels && !walking && (!this.#floor ? f === this.#topShown() : true);
+        s.label.visible = s.labelOn; // (and, each frame, only where there is room for it: #placeLabels)
       }
       const furnished = items && shown && (!walking || f === wf) && f.items.length > 0;
       f.furnished = furnished;
@@ -1250,6 +1254,7 @@ export class StoreyPathWorld extends EventTarget {
       if (f === wf) this.#walker.obstacles = this.#obstaclesOf(f, furnished);
     }
     if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space?.tucked;
+    this.#labelsMoved = true;
     this.#placeRoute();
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
@@ -1446,7 +1451,32 @@ export class StoreyPathWorld extends EventTarget {
       this.#orbit.update();
     }
     this.#renderer.render(this.#scene, this.#camera);
-    this.#labelRenderer.render(this.#scene, this.#camera);
+    this.#placeLabels();
+  }
+
+  /** The rooms' labels, placed again when the view moved (or what is shown changed): only
+   * those of rooms on the screen and large enough on it to hold one (as the plan does),
+   * so a floor of a thousand rooms moves as smoothly as one of ten. */
+  #placeLabels() {
+    const cam = this.#camera, view = cam.matrixWorld.elements, was = this.#labelView;
+    const moved = !was || this.#labelsMoved || view.some((v, i) => v !== was[i]);
+    if (!moved) return;
+    this.#labelView = view.slice();
+    this.#labelsMoved = false;
+    const focal = (this.#renderer.domElement.clientHeight || 1) / (2 * Math.tan((cam.fov * Math.PI) / 360));
+    const v = new THREE.Vector3();
+    for (const f of this.#floors.values()) {
+      if (!f.group.visible) continue;
+      for (const s of f.spaces) {
+        if (!s.labelOn) continue;
+        v.copy(s.label.position);
+        v.y += f.group.position.y;
+        const far = Math.max(v.distanceTo(cam.position), 1e-3);
+        v.project(cam);
+        s.label.visible = v.z > -1 && v.z < 1 && Math.abs(v.x) < 1.15 && Math.abs(v.y) < 1.15 && (s.size * focal) / far >= LABEL_ROOM;
+      }
+    }
+    this.#labelRenderer.render(this.#scene, cam);
   }
 
   #resize() {
@@ -1457,6 +1487,7 @@ export class StoreyPathWorld extends EventTarget {
     this.#labelRenderer.setSize(w, h);
     this.#camera.aspect = w / h;
     this.#camera.updateProjectionMatrix();
+    this.#labelsMoved = true;
   }
 
   /** A click (a press that does not move) on the dollhouse view, or walking with the mouse
