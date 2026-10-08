@@ -172,13 +172,15 @@ exports, backups and the setup: when, who, from what address.
 What each call of the API needs (`route()` in `server.py` asks first, in every case;
 a test fails for a call without a rule). Logged out, every call but logging in, out
 and the setup is answered 401; a project, building or floor someone may not see at
-all, 404, as one that is not there; one they see but may not do this to, 403.
+all, 404, as one that is not there; one they see but may not do this to, 403. A
+request Studio cannot make sense of is answered 400 saying why; one that fails in
+Studio itself, 500 with nothing of what went wrong (that goes to its log).
 
 | Call | Needs |
 |---|---|
 | `POST login`, `logout`, `setup` (no users yet) | nobody |
 | `GET me`, `POST me/password` | logged in (with a temporary password: nothing else) |
-| `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can` |
+| `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder in `status`, a project's `exports_folder`) is told to admins alone |
 | `POST catalogue` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |

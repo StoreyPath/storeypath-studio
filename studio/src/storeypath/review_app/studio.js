@@ -978,7 +978,8 @@ function exportCard(code, p) {
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
       buildings.length > 1 ? what : null, buildings.length ? button : null),
     el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
-    p.exports.length ? el("p", { class: "muted small" }, "Saved in ", el("code", {}, p.exports_folder), ", newest first:") : null,
+    p.exports.length ? el("p", { class: "muted small" }, ...(p.exports_folder // (where the server keeps them: told to admins)
+      ? ["Saved in ", el("code", {}, p.exports_folder), ", newest first:"] : ["Newest first:"])) : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),

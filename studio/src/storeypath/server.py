@@ -265,7 +265,8 @@ class Studio:
         with self._lock:
             return self._project_locks.setdefault(ws_path, threading.RLock())
 
-    def status(self) -> dict:
+    def status(self, paths: bool = True) -> dict:
+        """What Studio can do; ``paths``: and where its data folder is (for an admin)."""
         from shutil import which
 
         from .cad import odafc
@@ -277,7 +278,7 @@ class Studio:
             "symbols": self.symbols.name if self.symbols.available() else None,
             "vision": self.vision.name if self.vision.available() else None,
             "dwg": bool(which("dwg2dxf")) or odafc.is_installed(),
-            "data": str(self.data),
+            **({"data": str(self.data)} if paths else {}),
             # the 2D plan page: the plan engine compiled (npm run build in viewer/svg)
             "plan": (asset_dir("viewer") / "svg" / "dist" / "index.js").is_file(),
         }
@@ -305,6 +306,8 @@ class Studio:
     def create(self, name: str, kept=()) -> dict:
         """A new project, its code one no project here has, nor one ``kept`` (codes
         whose sharing is kept, accounts.py)."""
+        if name is not None and not isinstance(name, str):
+            raise ValueError("a project's name is text")
         name = (name or "").strip()
         if not name:
             raise ValueError("a project needs a name")
@@ -325,7 +328,8 @@ class Studio:
         With ``sight``, only what that person may see of it: the floors (a building's
         footprint and middle drawn from those alone, where it stands on its site as it
         does for everyone), the drawings of those floors (all of them with a level on
-        the whole project), and the packages of the buildings they see whole."""
+        the whole project), and the packages of the buildings they see whole; where the
+        packages are kept on the server, to an admin alone."""
         path = self.path(code)
         full = Workspace.load(path)
         ws = sight.seen(full) if sight is not None else full
@@ -372,7 +376,8 @@ class Studio:
                        and all(rank(sight.building(b)) >= rank("view") for b in held)]
         return {**info, "locations": tree, "drawings": drawings, "exports": exports,
                 "exported": len(full.exports) if sight is None or sight.whole else len(exports),
-                "exports_folder": str(path.parent / "exports"),
+                # where the server keeps them: for an admin alone
+                **({"exports_folder": str(path.parent / "exports")} if sight is None or sight.admin else {}),
                 **({"can": sight.can()} if sight is not None else {})}
 
     def review_project(self, code: str, sight: Sight | None = None) -> dict:
@@ -437,12 +442,15 @@ class Studio:
     def keep_private(self, code: str, token: str, body: dict, by: str | None = None) -> Job:
         """A drawing sent, kept without the private information found in it, all but
         what a person chose to keep (``keep``: ids of found things)."""
+        keep = body.get("keep") or []
+        if not isinstance(keep, list) or not all(isinstance(k, str) for k in keep):
+            raise ValueError("keep: the ids of what was found to keep")
+        keep = set(keep)
         with self._lock:
             p = self._pending.get(token)
             if p is None or p["code"] != code:
                 raise NotFound("no drawing waiting to be added: send it again")
             del self._pending[token]
-        keep = set(body.get("keep") or [])
 
         def run(job: Job):
             from .cad import read_drawing_to_change
@@ -503,7 +511,8 @@ class Studio:
 
         path = self.path(code)
         ws = Workspace.load(path)
-        if (body.get("confirm") or "").strip() != ws.project.name.strip():
+        confirm = body.get("confirm")
+        if not isinstance(confirm, str) or confirm.strip() != ws.project.name.strip():
             raise ValueError("type the project's name to delete it")
         folder = path.parent
         if folder.resolve().parent != self.data.resolve() or folder.name != ws.id:
@@ -521,6 +530,8 @@ class Studio:
         return {"deleted": code, "name": ws.project.name}
 
     def _drawing(self, code: str, name: str) -> Path:
+        if not isinstance(name, str):
+            raise ValueError("drawing: a drawing's name")
         path = self.path(code).parent / "drawings" / Path(name).name
         if not path.is_file():
             raise NotFound(f"no drawing {name}")
@@ -529,6 +540,8 @@ class Studio:
     def plans(self, code: str, name: str, units: str | None = None, by: str | None = None) -> Job:
         """The plans in a drawing, read in ``units``, or in the units it shows."""
         path = self._drawing(code, name)
+        if units is not None and not isinstance(units, str):
+            raise ValueError(f"units: one of {', '.join(UNIT_NAMES)}")
         if units and units not in UNIT_NAMES:
             raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
 
@@ -599,7 +612,7 @@ class Studio:
         ws_path = self.path(code)
         drawing = self._drawing(code, body.get("drawing", ""))
         units = body.get("units") or None  # the units the plans were found in: kept with each floor
-        if units and units not in UNIT_NAMES:
+        if units is not None and not isinstance(units, str) or units and units not in UNIT_NAMES:
             raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
         plans = body.get("plans") or []
         if not plans:
@@ -1167,6 +1180,9 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
     for p in plans:
         if not isinstance(p, dict):
             raise ValueError("each plan is an object")
+        for key in ("title", "name", "location", "location_id", "building", "building_id", "building_code"):
+            if p.get(key) is not None and not isinstance(p[key], str):
+                raise ValueError(f"a plan's {key} is text")
         title = p.get("title") or f"plan {p.get('index')}"
         _plan_numbers(p, title)
         # the location
@@ -2272,9 +2288,9 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(409, {"error": str(e), "busy": True})
             except (DrawingError, ValueError, KeyError, ModelUnavailable) as e:
                 return self._json(400, {"error": str(e).strip("'\"")})
-            except Exception as e:
-                traceback.print_exc()
-                return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            except Exception:
+                traceback.print_exc()  # what went wrong, in the server's log: never in the answer
+                return self._json(500, {"error": "something went wrong in Studio: its log says what"})
             if isinstance(data, LoggedIn):
                 return self._send(200, json.dumps(data.data, ensure_ascii=False).encode(), "application/json",
                                   {"Set-Cookie": cookie(data.token)})
@@ -2338,8 +2354,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 may.me()
                 return may.change_password(body)
             case "GET", ["status"]:
-                may.logged_in()
-                return studio.status()
+                user = may.logged_in()
+                return studio.status(paths=user.role == "admin")
             case "GET", ["catalogue"]:
                 may.logged_in()
                 return studio.catalogue().model_dump()

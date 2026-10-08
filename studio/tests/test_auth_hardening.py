@@ -253,6 +253,44 @@ def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):
     assert accounts.login("ali", PASSWORD, "192.0.2.1")[1].username == "ali"  # unchanged, and not locked elsewhere
 
 
+# ---- what is told ------------------------------------------------------------------------
+
+def test_the_servers_folders_are_told_to_admins_alone(campus):
+    port, studio, accounts, users, tokens, ids = campus
+    status, said, _ = call(port, "GET", "/api/status", token=tokens["eng"])
+    assert status == 200 and "data" not in said
+    assert call(port, "GET", "/api/status", token=tokens["boss"])[1]["data"] == str(studio.data)
+    status, project, _ = call(port, "GET", f"/api/projects/{ids['demo']}", token=tokens["eng"])  # its owner
+    assert status == 200 and "exports_folder" not in project and project["exports"]
+    assert call(port, "GET", f"/api/projects/{ids['demo']}", token=tokens["boss"])[1]["exports_folder"]
+
+
+def test_a_bad_body_is_answered_400_and_a_failure_500_without_what_went_wrong(campus, monkeypatch):
+    port, studio, accounts, users, tokens, ids = campus
+    code, boss = ids["demo"], tokens["boss"]
+    plan = {"ordinal": 9, "building": "New", "region": [0, 0, 1, 1]}
+    for path, body in (("/api/projects", {"name": 5}),
+                       ("/api/projects", {"name": ["a name"]}),
+                       (f"/api/projects/{code}/delete", {"confirm": 5}),
+                       (f"/api/projects/{code}/drawings/hq-level-0.dxf/plans", {"units": ["m"]}),
+                       (f"/api/projects/{code}/floors", {"drawing": 5, "plans": [plan]}),
+                       (f"/api/projects/{code}/floors", {"drawing": "hq-level-0.dxf", "plans": [{**plan, "building": 5}]}),
+                       (f"/api/projects/{code}/floors", {"drawing": "hq-level-0.dxf",
+                                                         "plans": [{**plan, "building_id": 5}]}),
+                       (f"/api/projects/{code}/floors", {"drawing": "hq-level-0.dxf",
+                                                         "plans": [{**plan, "location": 5}]}),
+                       (f"/api/admin/users/{users['bob'].id}", {"capabilities": 5})):
+        status, said, _ = call(port, "POST", path, body, token=boss)
+        assert status == 400, (path, body, status, said)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError(f"{studio.data}/very/secret went wrong")
+
+    monkeypatch.setattr(studio, "status", broken)
+    status, said, _ = call(port, "GET", "/api/status", token=boss)
+    assert status == 500 and "secret" not in json.dumps(said) and "RuntimeError" not in json.dumps(said), said
+
+
 # ---- connections -------------------------------------------------------------------------
 
 def closed_soon(sock, within: float) -> bool:

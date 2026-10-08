@@ -803,7 +803,8 @@ def _role(role) -> str:
 
 
 def _capabilities(capabilities) -> list[str]:
-    if isinstance(capabilities, str) or not all(c in CAPABILITIES for c in capabilities or []):
+    if not isinstance(capabilities, (list, tuple, set, type(None))) \
+            or not all(isinstance(c, str) and c in CAPABILITIES for c in capabilities or []):
         raise ValueError(f"capabilities are any of {', '.join(CAPABILITIES)}")
     return sorted(set(capabilities or []))
 
