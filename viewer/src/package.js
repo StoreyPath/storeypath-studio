@@ -56,12 +56,15 @@ export async function loadPackage(source) {
     collections[role] = manifest.files[role] ? (await read(manifest.files[role])).features : [];
   }
   collections.catalogue = manifest.files.catalogue ? await read(manifest.files.catalogue) : null;
+  // the walking network (format 0.8), for finding the way: navigation.js
+  collections.navigation = manifest.files.navigation ? await read(manifest.files.navigation) : null;
   return new StoreyPathPackage(manifest, collections, zip);
 }
 
 export class StoreyPathPackage {
   /** ``zip``: the archive, for the files read only when needed (the pre-built 3D). */
-  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [], items = [], catalogue = null }, zip = null) {
+  constructor(manifest, { location, buildings, floors, spaces, openings, zones = [], items = [], catalogue = null,
+    navigation = null }, zip = null) {
     this.manifest = manifest;
     this._zip = zip;
     this.locations = location;
@@ -72,6 +75,9 @@ export class StoreyPathPackage {
     this.openings = openings;
     this.items = items; // furniture and equipment: desks, photocopiers, access points, …
     this.catalogue = catalogue; // the types of items (catalogue.json), or null
+    // the building's walking network (navigation.json, format 0.8), or null: route()
+    // in navigation.js finds the way on it
+    this.navigation = navigation;
 
     this.byId = new Map();
     for (const list of [location, buildings, floors, spaces, zones, openings, items]) {

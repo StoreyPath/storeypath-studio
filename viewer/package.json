@@ -7,6 +7,10 @@
   "exports": {
     ".": "./src/index.js",
     "./world": "./src/world/world.js",
+    "./navigation": {
+      "types": "./src/navigation.d.ts",
+      "default": "./src/navigation.js"
+    },
     "./viewer.css": "./src/viewer.css"
   },
   "files": [
