@@ -26,9 +26,10 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { loadPackage } from "../package.js";
 import { TYPE_COLORS } from "../theme.js";
 import {
-  BUILDER, GEOMETRY, buildItems, buildPieces, cutPieces, flat, inside, itemBox, itemPoint, originOf, planFloor,
-  toLocal as localOf,
+  BUILDER, GEOMETRY, buildItems, buildPieces, cutPieces, flat, inside, itemBox, itemExtent, itemPoint, occluders,
+  originOf, planFloor, planItem, setItems, toLocal as localOf,
 } from "./build.js";
+import { toLonLat } from "./frame.js";
 import { Materials } from "./materials.js";
 import { Obstacles, Walker } from "./walk.js";
 
@@ -79,6 +80,12 @@ export class StoreyPathWorld extends EventTarget {
   #room = null; // the space the walker is in
   #timer = new THREE.Timer();
   #flight = null;
+  #paused = false;
+  #draggable = false; // items carried across their floor by a drag (setDraggable)
+  #ghost = null; // an item's ghost (ghost)
+  #ghostLook = null; // its materials
+  #orbitView = null; // the dollhouse view before walking: { position, target }
+  #caster = new THREE.Raycaster();
 
   constructor(container, options = {}) {
     super();
@@ -122,6 +129,12 @@ export class StoreyPathWorld extends EventTarget {
     this.#scene = scene;
     this.#materials = new Materials(renderer);
     scene.background = this.#materials.sky();
+    const look = (color) => ({
+      solid: new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthWrite: false }),
+      line: new THREE.LineBasicMaterial({ color, transparent: true, depthTest: false }),
+    });
+    this.#ghostLook = { ok: look(0x0ca678), refused: look(0xe03131),
+      guide: new THREE.LineBasicMaterial({ color: 0xff8a00, transparent: true, depthTest: false }) };
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 3000);
     camera.position.set(30, 30, 30);
@@ -142,6 +155,26 @@ export class StoreyPathWorld extends EventTarget {
     this.#timer.connect(document);
     renderer.setAnimationLoop(() => this.#frame());
   }
+
+  /** Stop drawing (the world kept as it is: shown again at once by resume), for a page
+   * that hides it for a while. */
+  pause() {
+    if (this.#paused) return;
+    this.#paused = true;
+    this.#walker.unlock();
+    this.#renderer.setAnimationLoop(null);
+  }
+
+  /** Draw again after pause. */
+  resume() {
+    if (!this.#paused) return;
+    this.#paused = false;
+    this.#timer.reset();
+    this.#resize();
+    this.#renderer.setAnimationLoop(() => this.#frame());
+  }
+
+  get paused() { return this.#paused; }
 
   // ---- public API ---------------------------------------------------------------
 
@@ -184,7 +217,10 @@ export class StoreyPathWorld extends EventTarget {
     });
   }
 
-  #show(id) {
+  /** Build and show a building; with ``keep`` (the same building, read again), where it
+   * was: the view, the floor shown, what is selected and the walker kept, and its frame. */
+  #show(id, { keep = false } = {}) {
+    const was = keep ? { floor: this.#floor, selected: this.#selected } : null;
     if (this.#buildingGroup) {
       this.#scene.remove(this.#buildingGroup);
       this.#dispose(this.#buildingGroup);
@@ -194,11 +230,82 @@ export class StoreyPathWorld extends EventTarget {
     this.#floor = null;
     this.#selected = null;
     this.#lit = null;
-    this.#buildingGroup = this.#buildBuilding(id);
+    this.#ghost = null;
+    this.#buildingGroup = this.#buildBuilding(id, { keepOrigin: keep });
     this.#scene.add(this.#buildingGroup);
+    if (keep) {
+      if (was.floor && this.#floors.has(was.floor)) this.#floor = was.floor;
+      if (this.#mode === "walk" && !this.#floors.has(this.#walkFloor)) {
+        const p = this.#camera.position;
+        this.#walkTo(this.#floor || this.#floorList()[0]?.id, p.x, p.z);
+      }
+      this.#applyVisibility();
+      const found = was.selected ? this.#findSpace(was.selected) ?? this.#findItem(was.selected) : null;
+      if (found) {
+        this.#highlight(found);
+        this.#selected = was.selected;
+      }
+      return;
+    }
     this.#applyVisibility();
     this.#frameBuilding(false);
     this.#emit("buildingchange", { id });
+  }
+
+  /** Read the package again (a URL, Blob, File or ArrayBuffer: the same project, changed)
+   * and build again only ``floors`` (default: every floor of the building shown), where
+   * they stand: the view, the mode, the floor shown, what is selected and where the
+   * walker stands are kept, and the other floors as they are. A building whose floors
+   * are not the same any more is built again whole, still where it was; one the package
+   * no longer has is replaced by its first, as `open` does. Floors read again are built
+   * here (not from a pre-built world/). Resolves with the package. */
+  async reload(source, { floors } = {}) {
+    const pkg = await loadPackage(source);
+    const id = this.#building;
+    if (!id || !pkg.floorsOf(id).length) {
+      this.#pkg = pkg;
+      this.#baked = new Map();
+      await this.setBuilding(pkg.buildings[0]?.id);
+      if (this.#pkg === pkg) this.#emit("load", { package: pkg });
+      return pkg;
+    }
+    const ids = (list) => list.map((f) => f.id ?? f).sort().join();
+    const same = ids([...this.#floors.keys()]) === ids(pkg.floorsOf(id));
+    this.#pkg = pkg;
+    this.#baked = new Map();
+    if (!same) this.#show(id, { keep: true });
+    else for (const f of floors ?? [...this.#floors.keys()]) if (this.#floors.has(f)) this.#rebuildFloor(f, { given: false });
+    this.#emit("reload", { floors: same ? (floors ?? [...this.#floors.keys()]).filter((f) => this.#floors.has(f)) : [...this.#floors.keys()] });
+    return pkg;
+  }
+
+  /** One floor built again from the package, in place of the one built (its items as
+   * given by setFloorItems kept, unless ``given`` is false). */
+  #rebuildFloor(id, { given = true } = {}) {
+    const old = this.#floors.get(id), floor = this.#pkg?.get(id);
+    if (!old || !floor) return;
+    if (this.#ghost?.parent === old.group) this.#ghost = null; // goes with it
+    if (this.#lit?.parent === old.group) this.#lit = null;
+    const built = this.#buildFloor(floor);
+    if (given && old.given) {
+      built.given = old.given;
+      this.#furnish(built);
+    }
+    this.#buildingGroup.remove(old.group);
+    this.#dispose(old.group);
+    this.#floors.set(id, built);
+    this.#buildingGroup.add(built.group);
+    this.#applyVisibility();
+    this.#relight();
+  }
+
+  /** The highlight made again where what is selected is now (it may have moved), or
+   * taken away when it is gone. */
+  #relight() {
+    if (!this.#selected) return;
+    const found = this.#findSpace(this.#selected) ?? this.#findItem(this.#selected);
+    this.#highlight(found);
+    if (!found) this.#selected = null;
   }
 
   /** Show one floor (or all, with null). In the walk view, go to that floor. */
@@ -213,23 +320,37 @@ export class StoreyPathWorld extends EventTarget {
     this.#emit("floorchange", { id });
   }
 
-  /** "dollhouse": orbit around the building; "walk": walk through it in the first person. */
-  setMode(mode) {
+  /** "dollhouse": orbit around the building; "walk": walk through it in the first person.
+   * Walking starts outside the front door, looking in; or ``at`` ({ x, z }, local metres:
+   * where the dollhouse view looks is `target`), on ``floor``, facing ``heading`` (radians,
+   * as `player` turns; default: the way the view faces); at the middle of the nearest
+   * room when ``at`` is in none. Back to the dollhouse, the view goes round the whole
+   * building, or with ``back``, back to where it was before walking. */
+  setMode(mode, { at, floor, heading, back = false } = {}) {
     if (mode === this.#mode) return;
     this.#mode = mode;
     if (mode === "walk") {
-      const floorId = this.#floor || this.#floorList()[0]?.id;
-      const start = this.#startPoint(floorId);
+      // the orbit's last turn settled now, so that back from walking the view is where it was
+      this.#orbit.enableDamping = false;
+      this.#orbit.update();
+      this.#orbit.enableDamping = true;
+      this.#orbitView = { position: this.#camera.position.clone(), target: this.#orbit.target.clone() };
+      this.#flight = null;
+      const floorId = floor && this.#floors.has(floor) ? floor : this.#floor || this.#floorList()[0]?.id;
+      const start = at ? this.#standAt(floorId, at) : this.#startPoint(floorId);
       this.#orbit.enabled = false;
       this.#walker.enabled = true;
       const dir = this.#camera.getWorldDirection(new THREE.Vector3());
-      this.#walkTo(floorId, start.x, start.z, start.heading ?? Math.atan2(-dir.x, -dir.z));
+      this.#walkTo(floorId, start.x, start.z, heading ?? start.heading ?? Math.atan2(-dir.x, -dir.z));
     } else {
       this.#walker.enabled = false;
       this.#walker.unlock();
       this.#orbit.enabled = true;
       this.#room = null;
-      this.#frameBuilding(true);
+      if (back && this.#orbitView) {
+        const { position, target } = this.#orbitView;
+        this.#flight = { from: this.#camera.position.clone(), to: position, fromT: this.#orbit.target.clone(), toT: target, t: 0 };
+      } else this.#frameBuilding(true);
     }
     this.#applyVisibility();
     this.#emit("modechange", { mode });
@@ -239,6 +360,317 @@ export class StoreyPathWorld extends EventTarget {
   startWalking() {
     if (this.#mode !== "walk") this.setMode("walk");
     this.#walker.lock();
+  }
+
+  /** Give the mouse back (as Esc does), still in the walk view. */
+  stopWalking() {
+    this.#walker.unlock();
+  }
+
+  /** Where the dollhouse view looks: the point it turns around, { x, z } in local metres. */
+  get target() {
+    return { x: this.#orbit.target.x, z: this.#orbit.target.z };
+  }
+
+  /** Where to stand on a floor, near ``at``: there, in a room; else the middle of the
+   * room nearest it. */
+  #standAt(floorId, { x, z }) {
+    const f = this.#floors.get(floorId);
+    if (!f || this.#spaceAt(f, x, z)) return { x, z };
+    let best = null;
+    for (const s of f.spaces) {
+      if (s.tucked && !this.#o.showHidden) continue;
+      const d = Math.hypot(s.centre.x - x, s.centre.z - z);
+      if (!best || d < best.d) best = { s, d };
+    }
+    return best ? { x: best.s.centre.x, z: best.s.centre.z } : { x, z };
+  }
+
+  // ---- the building's own frame ---------------------------------------------------------
+
+  /** The building's placement on the map (format 0.7), or null. */
+  #placement() {
+    return this.#pkg?.manifest?.placements?.[this.#building] ?? null;
+  }
+
+  /** A point of the building's own frame — [x, y], metres of its drawings, as Studio and
+   * an item's `local` have them — in the world: { x, z } (local metres). Null when the
+   * package does not place the building (no `placements`: before format 0.7). */
+  worldPoint([x, y]) {
+    const placement = this.#placement();
+    if (!placement || !this.#origin) return null;
+    const [wx, n] = localOf(this.#origin, toLonLat(placement, [x, y]));
+    return { x: wx, z: -n };
+  }
+
+  /** A point of the world ({ x, z }, local metres) in the building's own frame: [x, y],
+   * the point its placement puts there (to a micrometre); null as for worldPoint. */
+  buildingPoint({ x, z }) {
+    const placement = this.#placement();
+    if (!placement || !this.#origin) return null;
+    const world = (p) => localOf(this.#origin, toLonLat(placement, p));
+    // Newton's method: over a building the placement is a turn and a shift, all but exactly
+    let p = [placement.x, placement.y];
+    for (let i = 0; i < 8; i++) {
+      const f = world(p), ax = world([p[0] + 1, p[1]]), ay = world([p[0], p[1] + 1]);
+      const a = ax[0] - f[0], c = ax[1] - f[1], b = ay[0] - f[0], d = ay[1] - f[1], det = a * d - b * c;
+      const ex = x - f[0], en = -z - f[1];
+      if (Math.hypot(ex, en) < 1e-7 || !det) break;
+      p = [p[0] + (d * ex - b * en) / det, p[1] + (a * en - c * ex) / det];
+    }
+    return p;
+  }
+
+  // ---- aiming: what is under the pointer, or the crosshair ------------------------------------
+
+  /** What is under a point of the screen (client pixels) — walking with the mouse taken,
+   * or given no point, under the middle of the view (the crosshair): the floor, the point
+   * on it ({ x, z }, local metres, and ``local``, [x, y] in the building's own frame), the
+   * space or zone it is in, and the item there, if one is in the way. The first thing in
+   * the way counts: aimed at a wall, the point is on the floor just before it; at an item,
+   * the point under where it was met. Null when nothing is in the way and no floor is
+   * there. Quick whatever the floor (no triangles: the plan's walls and the items' boxes),
+   * so it can follow the pointer, or the crosshair every frame. */
+  pointAt(clientX, clientY) {
+    if (!this.#pkg) return null;
+    this.#camera.updateMatrixWorld(); // (moved since the last frame, maybe)
+    this.#caster.setFromCamera(this.#ndc(clientX, clientY), this.#camera);
+    const ray = this.#caster.ray;
+    const walking = this.#mode === "walk";
+    const floors = walking ? [this.#floors.get(this.#walkFloor)].filter(Boolean)
+      : [...this.#floors.values()].filter((f) => f.group.visible).sort((a, b) => b.ordinal - a.ordinal);
+    let best = null, plane = null;
+    for (const f of floors) {
+      const got = this.#aimOn(f, ray);
+      if (!got) continue;
+      // a floor met where it has no slab is passed by (outside it), unless it is the walker's
+      const on = got.item || got.wall || walking || this.#onSlab(f, got.x, got.z);
+      if (!on) {
+        plane ??= { f, ...got };
+        continue;
+      }
+      if (!best || got.t < best.t) best = { f, ...got };
+    }
+    best ??= plane;
+    if (!best) return null;
+    const { f, x, z, item = null } = best;
+    return { floor: f.id, x, z, local: this.buildingPoint({ x, z }), space: this.#spaceAt(f, x, z)?.id ?? null, item };
+  }
+
+  /** The point of the view under a point of the screen, as three.js has it (-1 to 1); the
+   * middle when walking with the mouse taken, or given none. */
+  #ndc(clientX, clientY) {
+    if (clientX === undefined || clientY === undefined || (this.#mode === "walk" && this.#walker.locked)) return new THREE.Vector2(0, 0);
+    const r = this.#renderer.domElement.getBoundingClientRect();
+    return new THREE.Vector2(((clientX - r.left) / (r.width || 1)) * 2 - 1, -((clientY - r.top) / (r.height || 1)) * 2 + 1);
+  }
+
+  /** What a ray meets first on a floor: { t, x, z } and ``item`` (its ID), ``wall`` (the
+   * point pulled back off it, onto the floor before it) or neither (the floor); or null. */
+  #aimOn(f, ray) {
+    const o = ray.origin, d = ray.direction;
+    const y0 = f.elevation + this.#offset(f);
+    let best = null;
+    if (d.y < -1e-9) {
+      const t = (y0 - o.y) / d.y;
+      if (t > 0) best = { t, x: o.x + d.x * t, z: o.z + d.z * t };
+    }
+    const far = best ? best.t : 500;
+    // walls, parapets, windows and heads: where the ray's way across the plan crosses each,
+    // at a height it stands
+    const cut = this.#mode === "dollhouse" && this.#cutaway;
+    f.occluders ??= occluders(f.plan, this.#o);
+    for (const [x1, z1, x2, z2, from, to, toCut] of f.occluders) {
+      const top = cut ? Math.min(to, toCut) : to;
+      if (top <= from) continue;
+      const ex = x2 - x1, ez = z2 - z1, den = d.x * ez - d.z * ex;
+      if (Math.abs(den) < 1e-12) continue;
+      const qx = x1 - o.x, qz = z1 - o.z;
+      const t = (qx * ez - qz * ex) / den, s = (qx * d.z - qz * d.x) / den;
+      if (t <= 0 || t >= (best?.t ?? far) || s < 0 || s > 1) continue;
+      const y = o.y + d.y * t - y0;
+      if (y < from || y > top) continue;
+      best = { t, x: o.x + d.x * t, z: o.z + d.z * t, wall: true };
+    }
+    if (best?.wall) { // onto the floor just before it
+      const h = Math.hypot(d.x, d.z);
+      if (h > 1e-6) {
+        best.x -= (d.x / h) * 0.05;
+        best.z -= (d.z / h) * 0.05;
+      }
+    }
+    // the items shown: each the box it takes
+    if (f.furnished) {
+      for (const it of f.items) {
+        const t = this.#hitItem(it, y0, o, d);
+        if (t !== null && t < (best?.t ?? Infinity)) best = { t, x: o.x + d.x * t, z: o.z + d.z * t, item: it.id };
+      }
+    }
+    return best;
+  }
+
+  /** Where a ray (origin o, direction d) meets an item's box, standing on a floor at y0: the
+   * ray's t, or null. */
+  #hitItem(it, y0, o, d) {
+    const [u0, v0, u1, v1, top] = itemExtent(it);
+    // its own frame: across (-fn, -fx) and ahead (fx, -fn) in x and z, up from its bottom
+    const rx = o.x - it.x, rz = o.z + it.n;
+    const ou = -rx * it.fn - rz * it.fx, ov = rx * it.fx - rz * it.fn, ow = o.y - (y0 + it.y);
+    const du = -d.x * it.fn - d.z * it.fx, dv = d.x * it.fx - d.z * it.fn, dw = d.y;
+    let near = 0, far = Infinity;
+    for (const [p, q, lo, hi] of [[ou, du, u0, u1], [ov, dv, v0, v1], [ow, dw, 0, top]]) {
+      if (Math.abs(q) < 1e-12) {
+        if (p < lo || p > hi) return null;
+        continue;
+      }
+      let t0 = (lo - p) / q, t1 = (hi - p) / q;
+      if (t0 > t1) [t0, t1] = [t1, t0];
+      near = Math.max(near, t0);
+      far = Math.min(far, t1);
+      if (near > far) return null;
+    }
+    return near > 0 ? near : null;
+  }
+
+  /** Whether a point of a floor is on its slab (in its outline, or in a room). */
+  #onSlab(f, x, z) {
+    const n = -z;
+    return f.plan.outline.some((rings) => inside(rings[0], x, n)) || Boolean(this.#spaceAt(f, x, z, true));
+  }
+
+  /** The point of a floor's level under a point of the screen (where an item carried
+   * across it is), or null. */
+  #onLevel(f, clientX, clientY) {
+    this.#caster.setFromCamera(this.#ndc(clientX, clientY), this.#camera);
+    const { origin: o, direction: d } = this.#caster.ray;
+    const t = (f.elevation + this.#offset(f) - o.y) / d.y;
+    return d.y < -1e-9 && t > 0 ? { x: o.x + d.x * t, z: o.z + d.z * t } : null;
+  }
+
+  // ---- editing: items given, a ghost, items carried ---------------------------------------
+
+  /** Replace one floor's furniture and equipment, building nothing else again: ``items``,
+   * each { id, type, x, y, rotation } in the building's own frame (metres of its drawings;
+   * rotation: degrees counter-clockwise, its front its own -y, as Studio keeps them), with
+   * ``width``, ``depth``, ``height`` (m), ``mount``, ``elevation``, ``color`` and ``grade``
+   * where they are not its type's in the package's catalogue. They are drawn again the next
+   * frame (in milliseconds, for thousands); the walker bumps into them at once. Needs the
+   * building's placement (format 0.7). Whether the floor is built. */
+  setFloorItems(floorId, items) {
+    const f = this.#floors.get(floorId);
+    if (!f || !this.#placement()) return false;
+    f.given = items.map((g) => ({ ...g }));
+    this.#furnish(f);
+    this.#applyVisibility();
+    this.#relight();
+    return true;
+  }
+
+  /** A floor's items made again from those given (setFloorItems). */
+  #furnish(f) {
+    for (const meshes of Object.values(f.itemMeshes)) {
+      for (const m of meshes) {
+        m.removeFromParent();
+        m.geometry.dispose();
+      }
+    }
+    f.itemMeshes = {};
+    f.bakedItems = null;
+    f.itemObstacles = null;
+    setItems(f.plan, f.given.map((g) => this.#itemOf(f, g)));
+    f.items = f.plan.items;
+    f.itemIds = f.items.map((i) => i.id);
+  }
+
+  /** An item given in the building's own frame, as the floor plans its items. */
+  #itemOf(f, g) {
+    const t = this.#pkg?.itemType?.(g.type) ?? null;
+    const p = { type: g.type, mount: g.mount ?? t?.mount ?? "floor",
+      local: { x_m: g.x, y_m: g.y, rotation_deg: g.rotation ?? 0 },
+      width_m: g.width ?? t?.width, depth_m: g.depth ?? t?.depth, height_m: g.height ?? t?.height,
+      elevation_m: g.elevation !== undefined ? g.elevation : t?.elevation ?? null };
+    return planItem(g.id, p, { origin: this.#origin, placement: this.#placement(), wallHeight: f.plan.wallHeight,
+      type: { color: g.color ?? t?.color, grade: g.grade ?? t?.grade } });
+  }
+
+  /** Show where an item would go (placed, or carried): see-through over its floor, green,
+   * or red when it may not go there (``ok: false``), its footprint outlined, with the
+   * lines it is drawn to (``guides``: [[x, y], [x, y]] each). ``spec``: an item as
+   * setFloorItems takes one (no ID needed), on ``floor`` (default: the floor shown, or
+   * walked on). Null takes it away. */
+  ghost(spec) {
+    if (this.#ghost) {
+      this.#ghost.removeFromParent();
+      this.#ghost.traverse((o) => o.geometry?.dispose());
+      this.#ghost = null;
+    }
+    if (!spec) return;
+    const f = this.#floors.get(spec.floor ?? (this.#mode === "walk" ? this.#walkFloor : this.#floor ?? this.#topShown()?.id));
+    const it = f && this.#placement() ? this.#itemOf(f, { id: "ghost", ...spec }) : null;
+    if (!it) return;
+    const look = spec.ok === false ? this.#ghostLook.refused : this.#ghostLook.ok;
+    const group = new THREE.Group();
+    group.name = "ghost";
+    for (const p of buildItems({ elevation: f.elevation, items: [it] }, "detailed", this.#o)) {
+      const mesh = new THREE.Mesh(p.geometry, look.solid);
+      mesh.renderOrder = 6;
+      group.add(mesh);
+    }
+    const y = f.elevation + 0.02;
+    const v = ([x, z]) => new THREE.Vector3(x, y, z);
+    const ring = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => v(itemPoint(it, (a * it.width) / 2, (b * it.depth) / 2)));
+    const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ring), look.line);
+    outline.renderOrder = 7;
+    group.add(outline);
+    const guides = (spec.guides ?? []).map(([a, b]) => [this.worldPoint(a), this.worldPoint(b)]).filter(([p, q]) => p && q);
+    if (guides.length) {
+      const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(
+        guides.flatMap(([p, q]) => [v([p.x, p.z]), v([q.x, q.z])])), this.#ghostLook.guide);
+      lines.renderOrder = 7;
+      group.add(lines);
+    }
+    f.group.add(group);
+    this.#ghost = group;
+  }
+
+  /** Let items be carried across their floor by a drag in the dollhouse view (not by
+   * default): the world says where they are dragged (itemdragstart, itemdrag, itemdragend,
+   * each { id, floor, x, z, local, altKey, shiftKey }) and the page moves them
+   * (setFloorItems, ghost) as it decides. A press that does not move stays a click. */
+  setDraggable(on) {
+    this.#draggable = Boolean(on);
+    if (!on) this.#renderer.domElement.style.cursor = "";
+  }
+
+  get draggable() { return this.#draggable; }
+
+  /** A space or zone corrected (any of ``name``, ``number``, ``type``, ``hidden``,
+   * ``ignored``, as the package's properties): its label changed at once; its floor built
+   * again when its type (its floor's finish) or whether it is shown changed. Whether it is
+   * in the world. */
+  updateSpace(id, props) {
+    const feature = this.#pkg?.get(id);
+    const f = feature ? this.#floors.get(feature.properties.floor_id) : null;
+    if (!f) return false;
+    const p = feature.properties;
+    const tucked = () => Boolean(p.hidden || p.ignored);
+    const was = { type: p.type, tucked: tucked() };
+    for (const k of ["name", "number", "type", "hidden", "ignored"]) if (k in props) p[k] = props[k];
+    if (p.type !== was.type || tucked() !== was.tucked) {
+      this.#rebuildFloor(f.id);
+      return true;
+    }
+    const s = f.spaces.find((u) => u.id === id);
+    if (s) {
+      Object.assign(s, { name: p.name, number: p.number });
+      const label = this.#label(s);
+      label.position.copy(s.label.position);
+      s.label.removeFromParent(); // (its element with it)
+      s.label = label;
+      if (label.element.textContent) f.group.add(label);
+      this.#applyVisibility();
+    }
+    return true;
   }
 
   /** See-through walls and rooms coloured by type. */
@@ -374,10 +806,10 @@ export class StoreyPathWorld extends EventTarget {
     return this.#pkg ? this.#pkg.floorsOf(this.#building).filter((f) => this.#floors.has(f.id)) : [];
   }
 
-  #buildBuilding(buildingId) {
+  #buildBuilding(buildingId, { keepOrigin = false } = {}) {
     const pkg = this.#pkg;
     const floors = pkg.floorsOf(buildingId);
-    this.#origin = originOf(pkg, buildingId);
+    if (!keepOrigin || !this.#origin) this.#origin = originOf(pkg, buildingId); // kept: the view stays where it was
     const group = new THREE.Group();
     group.name = buildingId;
     for (const floor of floors) {
@@ -611,6 +1043,7 @@ export class StoreyPathWorld extends EventTarget {
         s.label.visible = visible && this.#o.labels && !walking && (!this.#floor ? f === this.#topShown() : true);
       }
       const furnished = items && shown && (!walking || f === wf) && f.items.length > 0;
+      f.furnished = furnished;
       if (furnished) this.#itemsIn(f, form);
       for (const [name, meshes] of Object.entries(f.itemMeshes)) {
         for (const m of meshes) m.visible = furnished && name === form && seen(m.userData);
@@ -806,30 +1239,87 @@ export class StoreyPathWorld extends EventTarget {
     this.#camera.updateProjectionMatrix();
   }
 
+  /** A click (a press that does not move) on the dollhouse view, or walking with the mouse
+   * taken (at the crosshair): ``pick``, which a page may cancel (preventDefault: it does
+   * something else with the click, as placing an item there), else what was clicked is
+   * selected. A press on an item that moves, where items may be carried (setDraggable):
+   * the item dragged. */
   #pointerPicking() {
     const canvas = this.#renderer.domElement;
-    const ray = new THREE.Raycaster();
-    let down = null;
+    let down = null, drag = null, hover = 0;
+    // An item taken up: before the orbit sees the press (this listens on the way down to it).
+    this.#element.addEventListener("pointerdown", (e) => {
+      if (!this.#draggable || this.#mode !== "dollhouse" || e.button !== 0 || e.target !== canvas) return;
+      const p = this.pointAt(e.clientX, e.clientY);
+      if (!p?.item) return;
+      this.#orbit.enabled = false;
+      drag = { id: p.item, floor: this.#floors.get(p.floor), at: [e.clientX, e.clientY], moved: false };
+      canvas.setPointerCapture?.(e.pointerId);
+    }, true);
+    const where = (e, [cx, cy] = [e.clientX, e.clientY]) => {
+      const at = this.#onLevel(drag.floor, cx, cy);
+      return { id: drag.id, floor: drag.floor.id, x: at?.x ?? null, z: at?.z ?? null, local: at ? this.buildingPoint(at) : null,
+        altKey: e.altKey, shiftKey: e.shiftKey };
+    };
+    canvas.addEventListener("pointermove", (e) => {
+      if (drag) {
+        if (!drag.moved && Math.hypot(e.clientX - drag.at[0], e.clientY - drag.at[1]) <= 4) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          this.#emit("itemdragstart", where(e, drag.at));
+        }
+        this.#emit("itemdrag", where(e));
+        return;
+      }
+      // over an item that may be carried: the hand
+      if (!this.#draggable || this.#mode !== "dollhouse" || e.buttons || hover) return;
+      hover = requestAnimationFrame(() => {
+        hover = 0;
+        if (!this.#draggable) return;
+        canvas.style.cursor = this.pointAt(e.clientX, e.clientY)?.item ? "grab" : "";
+      });
+    });
+    const putDown = (e, cancelled = false) => {
+      if (!drag) return;
+      const { moved } = drag;
+      if (moved) this.#emit("itemdragend", { ...where(e), cancelled });
+      drag = null;
+      this.#orbit.enabled = this.#mode === "dollhouse";
+      if (moved) down = null; // not a click
+    };
+    canvas.addEventListener("pointerup", (e) => putDown(e));
+    canvas.addEventListener("pointercancel", (e) => putDown(e, true));
     canvas.addEventListener("pointerdown", (e) => (down = [e.clientX, e.clientY]));
     canvas.addEventListener("pointerup", (e) => {
-      if (this.#mode !== "dollhouse" || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
-      const r = canvas.getBoundingClientRect();
-      ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.#camera);
-      // the floor finishes and the items shown, merged: the room or item is the one
-      // the triangle hit is of
-      const targets = [];
-      for (const f of this.#floors.values()) {
-        if (!f.group.visible) continue;
-        for (const m of f.pieces) if (m.visible && m.userData.material === "floor") targets.push(m);
-        for (const meshes of Object.values(f.itemMeshes)) for (const m of meshes) if (m.visible) targets.push(m);
-      }
-      const hit = ray.intersectObjects(targets, false)[0];
-      const floor = hit && [...this.#floors.values()].find((f) => f.group === hit.object.parent);
-      const g = hit?.object.geometry;
-      const id = !floor ? null : hit.object.userData.material === "item" ? floor.itemIds[g.getAttribute("_item").getX(hit.face.a)]
-        : floor.rooms[g.getAttribute("_room")?.getX(hit.face.a)];
-      this.select(id ?? null, { go: false });
+      const walking = this.#mode === "walk" && this.#walker.locked;
+      if (e.button !== 0) return;
+      if (!walking && (this.#mode !== "dollhouse" || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4)) return;
+      const p = this.pointAt(e.clientX, e.clientY); // walking: at the crosshair
+      const pick = new CustomEvent("pick", { cancelable: true, detail: {
+        ...(p ?? { floor: null, x: null, z: null, local: null, space: null, item: null }),
+        button: e.button, altKey: e.altKey, shiftKey: e.shiftKey } });
+      this.dispatchEvent(pick);
+      if (pick.defaultPrevented) return;
+      this.select(walking ? p?.item ?? p?.space ?? null : this.#clicked(e.clientX, e.clientY), { go: false });
     });
+  }
+
+  /** The room or item clicked in the dollhouse view: of the floor finishes and the items
+   * shown (merged), the one the triangle hit is of. */
+  #clicked(clientX, clientY) {
+    this.#caster.setFromCamera(this.#ndc(clientX, clientY), this.#camera);
+    const targets = [];
+    for (const f of this.#floors.values()) {
+      if (!f.group.visible) continue;
+      for (const m of f.pieces) if (m.visible && m.userData.material === "floor") targets.push(m);
+      for (const meshes of Object.values(f.itemMeshes)) for (const m of meshes) if (m.visible) targets.push(m);
+    }
+    const hit = this.#caster.intersectObjects(targets, false)[0];
+    const floor = hit && [...this.#floors.values()].find((f) => f.group === hit.object.parent);
+    const g = hit?.object.geometry;
+    const id = !floor ? null : hit.object.userData.material === "item" ? floor.itemIds[g.getAttribute("_item").getX(hit.face.a)]
+      : floor.rooms[g.getAttribute("_room")?.getX(hit.face.a)];
+    return id ?? null;
   }
 
   #emit(type, detail) {

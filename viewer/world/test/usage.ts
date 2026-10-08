@@ -1,6 +1,6 @@
 // Type-checked by `npm run check`: the declarations describe the module as a
 // strict TypeScript application uses it.
-import { StoreyPathWorld, loadPackage, webglSupport, type Feature, type WorldEvents } from '@storeypath/viewer-world';
+import { StoreyPathWorld, loadPackage, webglSupport, type Feature, type GivenItem, type WorldEvents, type WorldPoint } from '@storeypath/viewer-world';
 import { webglSupport as check } from '@storeypath/viewer-world/support';
 
 export async function show(element: HTMLElement, data: ArrayBuffer): Promise<string | null> {
@@ -21,6 +21,30 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 	console.log(prebuilt, walls);
 	world.setFloor(floor);
 	world.select(office?.id ?? null, { go: true });
+	// editing on top of it: what is under the pointer, a ghost, a floor's items replaced
+	world.addEventListener('pick', (e) => {
+		const p: WorldPoint = e.detail;
+		if (p.local && floor) {
+			e.preventDefault();
+			const desk: GivenItem = { id: 'P-I000001', type: 'DESK-JUNIOR', x: p.local[0], y: p.local[1], rotation: 90 };
+			world.setFloorItems(floor, [desk]);
+		}
+	});
+	world.addEventListener('itemdrag', (e) => {
+		const at: [number, number] | null = e.detail.local;
+		if (at) world.ghost({ type: 'DESK-JUNIOR', x: at[0], y: at[1], ok: e.detail.altKey, guides: [[at, [at[0] + 1, at[1]]]] });
+	});
+	world.setDraggable(true);
+	const under: WorldPoint | null = world.pointAt(10, 10);
+	const back: [number, number] | null = under?.x != null && under.z != null ? world.buildingPoint({ x: under.x, z: under.z }) : null;
+	console.log(back, world.worldPoint([0, 0])?.x, world.target.x, world.paused, world.draggable);
+	world.updateSpace(office?.id ?? '', { name: 'Board room', type: 'meeting_room' });
+	world.setMode('walk', { at: world.target, heading: 0 });
+	world.stopWalking();
+	world.setMode('dollhouse', { back: true });
+	world.pause();
+	world.resume();
+	await world.reload(data, { floors: floor ? [floor] : [] });
 	const again = await loadPackage(new Blob([data]));
 	world.destroy();
 	return again.project.id;

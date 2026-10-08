@@ -269,34 +269,11 @@ export function planFloor(pkg, floor, origin, options = {}) {
   plan.parapets = polygons(props.parapets);
   plan.wallRings = plan.walls.flat(1).concat(plan.parapets.flat(1));
 
-  // the furniture and equipment (format 0.6): where each stands, the way its front
-  // faces (x east, n north), its size, how high its bottom is and its colour; and
-  // the edges of those on the floor, which the walker bumps into. Where it stands in
-  // its building (format 0.7: `local`, its middle and its turn counter-clockwise
-  // from the drawing's -y) is put on the map by the building's placement, as Studio
-  // put its walls there; older packages give its point and heading on the map.
-  plan.items = [];
-  plan.itemObstacles = [];
+  // the furniture and equipment (format 0.6, planItem), and the edges of those on the
+  // floor, which the walker bumps into
   const placement = pkg.manifest?.placements?.[props.building_id];
-  for (const item of pkg.itemsOn?.(floor.id) ?? []) {
-    const p = item.properties;
-    const own = p.local && placement ? p.local : null;
-    if (!own && !p.display_point) continue;
-    const [x, n] = local(own ? toLonLat(placement, [own.x_m, own.y_m]) : p.display_point);
-    // the drawing's +y faces the placement's bearing, so its -y the opposite way
-    const heading = own ? (placement.bearing || 0) + 180 - (own.rotation_deg || 0) : p.heading ?? 0;
-    const h = (heading * Math.PI) / 180;
-    const { color, grade } = pkg.itemType?.(p.type) ?? {};
-    const it = { id: item.id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
-      width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
-      color: typeof color === "string" && COLOR.test(color) ? color : ITEM_COLOR,
-      grade: typeof grade === "string" && grade in DESK_SETS ? grade : null };
-    it.y = it.mount === "ceiling" ? wallHeight - it.height - 0.01 : p.elevation_m ?? (it.mount === "wall" ? WALL_ITEM : 0);
-    plan.items.push(it);
-    if (it.mount !== "floor") continue;
-    const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => itemPoint(it, (a * it.width) / 2, (b * it.depth) / 2));
-    c.forEach((q, i) => plan.itemObstacles.push([q[0], q[1], c[(i + 1) % 4][0], c[(i + 1) % 4][1]]));
-  }
+  setItems(plan, (pkg.itemsOn?.(floor.id) ?? []).map((item) => planItem(item.id, item.properties,
+    { origin, placement, wallHeight, type: pkg.itemType?.(item.properties.type) })));
 
   const b = plan.bounds;
   for (const rings of [...plan.outline, ...plan.walls, ...plan.units.flatMap((u) => u.rings)]) {
@@ -505,6 +482,31 @@ export function buildPieces(plan, options = {}) {
   return { pieces, rooms, obstacles };
 }
 
+/** What a look across a floor stops at, as its plan has it, for aiming without its
+ * triangles (a floor of a thousand rooms is aimed at in well under a millisecond):
+ * the edges of its walls and parapets, its windows, and the heads over its doors and
+ * doorways, each [x1, z1, x2, z2, from, to, toCut] (local metres; from and to: how high
+ * it stands above the floor; toCut: how high in the cutaway view). */
+export function occluders(plan, options = {}) {
+  const o = { ...GEOMETRY, ...options };
+  const out = [];
+  const edges = (polys, to, toCut) => {
+    for (const ring of polys.flat(1)) {
+      for (let i = 0; i + 1 < ring.length; i++) out.push([ring[i][0], -ring[i][1], ring[i + 1][0], -ring[i + 1][1], 0, to, toCut]);
+    }
+  };
+  edges(plan.walls, plan.wallHeight, Math.min(o.cutHeight, plan.wallHeight));
+  edges(plan.parapets, plan.parapetHeight, Math.min(o.cutHeight, plan.parapetHeight));
+  for (const { a, b, type, height } of plan.ways) {
+    const span = [a[0], -a[1], b[0], -b[1]];
+    if (type === "window") out.push([...span, 0, plan.wallHeight, Math.min(o.cutHeight, plan.wallHeight)]);
+    else if (type === "door" || Math.hypot(b[0] - a[0], b[1] - a[1]) <= OPEN_SPAN) { // the head over it, not cut
+      out.push([...span, Math.min(type === "door" ? height ?? o.doorHead : o.doorHead, plan.wallHeight - 0.02), plan.wallHeight, 0]);
+    }
+  }
+  return out;
+}
+
 /** The walls and parapets cut low, for the cutaway view, from the full ones: each
  * vertex above ``cutHeight`` comes down to it, which is the extrusion that high
  * (an extrusion's sides have v = 1 − height), without building it again. */
@@ -542,6 +544,42 @@ function upright(geometry) {
  * from its middle), in local [x, z]. */
 export function itemPoint(it, across, ahead) {
   return [it.x - across * it.fn + ahead * it.fx, -(it.n + across * it.fx + ahead * it.fn)];
+}
+
+/** An item as the world plans it, from its properties as a package gives them (or
+ * null when they do not say where it is): where it stands ([x, n], local metres), the
+ * way its front faces (fx, fn), its size, how high its bottom is, its colour and the
+ * grade of a desk. Where it stands in its building (format 0.7: ``local``, its middle
+ * and its turn counter-clockwise from the drawing's -y) is put on the map by the
+ * building's ``placement``, as Studio put its walls there; older packages give its
+ * point and heading on the map. ``type``: its catalogue entry (colour, grade). */
+export function planItem(id, p, { origin, placement, wallHeight, type }) {
+  const own = p.local && placement ? p.local : null;
+  if (!own && !p.display_point) return null;
+  const [x, n] = toLocal(origin, own ? toLonLat(placement, [own.x_m, own.y_m]) : p.display_point);
+  // the drawing's +y faces the placement's bearing, so its -y the opposite way
+  const heading = own ? (placement.bearing || 0) + 180 - (own.rotation_deg || 0) : p.heading ?? 0;
+  const h = (heading * Math.PI) / 180;
+  const { color, grade } = type ?? {};
+  const it = { id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
+    width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
+    color: typeof color === "string" && COLOR.test(color) ? color : ITEM_COLOR,
+    grade: typeof grade === "string" && grade in DESK_SETS ? grade : null };
+  it.y = it.mount === "ceiling" ? wallHeight - it.height - 0.01 : p.elevation_m ?? (it.mount === "wall" ? WALL_ITEM : 0);
+  return it;
+}
+
+/** A floor's plan given its items (planItem's; null ones left out): ``items``, and the
+ * edges of those on the floor, which the walker bumps into (``itemObstacles``). */
+export function setItems(plan, items) {
+  plan.items = items.filter(Boolean);
+  plan.itemObstacles = [];
+  for (const it of plan.items) {
+    if (it.mount !== "floor") continue;
+    const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => itemPoint(it, (a * it.width) / 2, (b * it.depth) / 2));
+    c.forEach((q, i) => plan.itemObstacles.push([q[0], q[1], c[(i + 1) % 4][0], c[(i + 1) % 4][1]]));
+  }
+  return plan;
 }
 
 /** Boxes and discs written straight into arrays, each with its corners shared by its
@@ -755,6 +793,19 @@ export function buildItems(plan, form = "detailed", options = {}) {
     pieces.push({ name, ...PIECES[name], geometry: shapes.geometry(Index) });
   }
   return pieces;
+}
+
+/** What an item takes in its own frame, as DRAW draws it: [across0, ahead0, across1,
+ * ahead1, top] (metres from its middle and its bottom): its footprint and height, and
+ * for a desk its chair and what goes with its grade. */
+export function itemExtent(it) {
+  const w = it.width, d = it.depth;
+  if (it.type.split("-")[0] !== "DESK") return [-w / 2, -d / 2, w / 2, d / 2, it.height];
+  const set = DESK_SETS[it.grade] ?? DESK_SETS.junior;
+  const vw = set.armchairs ? 0.7 : 0.46, vd = set.armchairs ? 0.62 : 0.46;
+  const side = set.visitors === 2 ? Math.max(w / 2, Math.max(vw / 2 + 0.06, Math.min(w / 4, 0.6)) + vw / 2) : w / 2;
+  const behind = Math.max(set.executive ? 0.7 : 0.62, set.return ? 0.8 : 0, set.cabinet ? 1.4 : 0);
+  return [-side, -d / 2 - (set.visitors ? 0.15 + vd : 0), side, d / 2 + behind, Math.max(it.height, set.executive ? 1.25 : 0.95)];
 }
 
 /** A box round an item (``it``, of plan.items), ``pad`` metres wider each way: its

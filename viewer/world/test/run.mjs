@@ -745,6 +745,291 @@ test("pre-built floors are used only as they were built: this export, this build
   truly(r.sized === 0 && r.stale === 0 && r.same >= 2 && r.old === 0 && r.furnished && r.floors, JSON.stringify(r));
 });
 
+// ---- editing on top of the world: what is aimed at, items given, a ghost, items carried ----
+
+/** Open a package as the world of the page (#w), its lowest floor shown on its own; with
+ * ``over``, the view gone over that room (its number), looking down into it. */
+const openFloor = (pkg, over = null) => page.run(async (pkg, over) => {
+  const world = window.world;
+  world.setMode("dollhouse");
+  world.setDraggable(false);
+  await world.open(pkg);
+  const floor = world.package.floorsOf(world.building)[0].id;
+  world.setFloor(floor);
+  if (over) {
+    world.select(world.package.unitsOn(floor).find((u) => u.properties.number === over).id);
+    await new Promise((r) => setTimeout(r, 1200));
+    world.select(null, { go: false });
+  }
+  await window.frames(3);
+  return floor;
+}, pkg, over);
+
+test("a point of the building's own frame goes into the world and back, as its items stand", async () => {
+  const r = await page.run(async () => {
+    const world = window.world;
+    await world.open("/campus-hq.storeypath");
+    let off = 0, back = 0;
+    for (const it of world.package.items) {
+      const { x_m, y_m } = it.properties.local;
+      const p = world.worldPoint([x_m, y_m]), q = world.toLocal(it.properties.display_point);
+      off = Math.max(off, Math.hypot(p.x - q.x, p.z - q.z)); // display points are rounded to 1e-7°
+      const b = world.buildingPoint(p);
+      back = Math.max(back, Math.hypot(b[0] - x_m, b[1] - y_m));
+    }
+    const old = await window.sp.loadPackage("/simple-office.storeypath");
+    await world.open("/simple-office.storeypath");
+    return { off, back, items: world.package.items.length, old: [world.worldPoint([0, 0]), world.buildingPoint({ x: 0, z: 0 })], placements: old.manifest.placements ?? null };
+  });
+  truly(r.off < 0.02 && r.back < 1e-6, JSON.stringify(r));
+  truly(r.placements !== null || (r.old[0] === null && r.old[1] === null), `no placement, no frame: ${JSON.stringify(r.old)}`);
+});
+
+test("pointAt: the room, the item and the wall in the way, in the building's own frame; walking, at the crosshair", async () => {
+  const floor = await openFloor("/campus-hq.storeypath", "005");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const screen = (x, y, z) => {
+      const p = world.camera.position.clone().set(x, y, z).project(world.camera);
+      const box = world.renderer.domElement.getBoundingClientRect();
+      return [box.left + ((p.x + 1) / 2) * box.width, box.top + ((1 - p.y) / 2) * box.height];
+    };
+    const elevation = world.package.get(floor).properties.elevation;
+    const office = world.package.unitsOn(floor).find((u) => u.properties.number === "005");
+    const o = world.toLocal(office.properties.display_point);
+    const atOffice = world.pointAt(...screen(o.x, elevation, o.z));
+    // seen from over it, the oblique view of a whole floor: the near wall in the way
+    const desk = world.package.itemsOn(floor).find((i) => i.properties.type === "DESK-MANAGER");
+    world.select(desk.id);
+    await new Promise((r) => setTimeout(r, 1200));
+    world.select(null, { go: false });
+    const d = world.worldPoint([desk.properties.local.x_m, desk.properties.local.y_m]);
+    const atDesk = world.pointAt(...screen(d.x, elevation + desk.properties.height_m, d.z));
+    // walking in the office, looking level: the wall ahead; looking down: the floor 1.6 m below the eye
+    world.setMode("walk", { at: o, heading: 0 });
+    await window.frames();
+    const level = world.pointAt();
+    world.camera.rotation.set(-0.6, 0, 0, "YXZ");
+    const down = world.pointAt();
+    const eye = world.player;
+    world.setMode("dollhouse");
+    return { office: office.id, atOffice, desk: desk.id, atDesk, level, down, eye, want: [o.x, o.z],
+      local: world.buildingPoint({ x: o.x, z: o.z }) };
+  }, floor);
+  const near = (a, b, tol) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= tol;
+  truly(r.atOffice?.space === r.office && r.atOffice.floor === floor && near([r.atOffice.x, r.atOffice.z], r.want, 0.05)
+    && near(r.atOffice.local, r.local, 0.05), `the office: ${JSON.stringify(r.atOffice)} want ${r.want}`);
+  truly(r.atDesk?.item === r.desk, `the desk: ${JSON.stringify(r.atDesk)}`);
+  truly(r.level && r.level.space === r.office && !r.level.item, `walking, level: the office's wall ahead ${JSON.stringify(r.level)}`);
+  const ahead = Math.hypot(r.down.x - r.eye.x, r.down.z - r.eye.z);
+  truly(r.down.space === r.office && Math.abs(ahead - 1.6 / Math.tan(0.6)) < 0.05, `looking down: ${ahead.toFixed(2)} m ahead ${JSON.stringify(r.down)}`);
+});
+
+test("pick says what a click is on; cancelled, nothing is chosen", async () => {
+  const floor = await openFloor("/campus-hq.storeypath", "006");
+  const at = await page.run(async (floor) => {
+    const world = window.world;
+    world.select(null, { go: false });
+    const office = world.package.unitsOn(floor).find((u) => u.properties.number === "006");
+    const o = world.toLocal(office.properties.display_point);
+    const p = world.camera.position.clone().set(o.x, world.package.get(floor).properties.elevation, o.z).project(world.camera);
+    const box = world.renderer.domElement.getBoundingClientRect();
+    window.picks = [];
+    window.cancel = (e) => { window.picks.push(e.detail); e.preventDefault(); };
+    world.addEventListener("pick", window.cancel);
+    return { id: office.id, x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
+  }, floor);
+  await page.click(at.x, at.y);
+  const cancelled = await page.run(() => {
+    window.world.removeEventListener("pick", window.cancel);
+    return { picks: window.picks, selected: window.world.selected };
+  });
+  await page.click(at.x, at.y);
+  const chosen = await page.run(() => window.world.selected);
+  truly(cancelled.picks.length === 1 && cancelled.picks[0].space === at.id && cancelled.picks[0].local && cancelled.selected === null,
+    `cancelled: ${JSON.stringify(cancelled)}`);
+  truly(chosen === at.id, `then chosen: ${chosen}, want ${at.id}`);
+});
+
+test("setFloorItems replaces one floor's items and builds nothing else again; select finds them where they are", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const wall = () => world.scene.getObjectByName(floor).getObjectByName("wall");
+    const before = wall(), upper = world.scene.getObjectByName(world.package.floorsOf(world.building)[1].id).children.slice();
+    const given = world.package.itemsOn(floor).slice(0, 3).map((i) => ({ id: i.id, type: i.properties.type,
+      x: i.properties.local.x_m, y: i.properties.local.y_m, rotation: i.properties.local.rotation_deg }));
+    given[0].x += 1.5; // moved
+    given.push({ id: "P-I999999", type: "SOFA", x: 160, y: 60, rotation: 90 }); // a new one
+    const t0 = performance.now();
+    world.setFloorItems(floor, given);
+    await window.frames();
+    const took = performance.now() - t0;
+    const plan = world.plan(floor);
+    world.select(given[0].id, { go: false });
+    const lit = world.scene.getObjectByName("highlight");
+    lit.geometry.computeBoundingBox();
+    const at = world.worldPoint([given[0].x, given[0].y]);
+    const inside = lit.geometry.boundingBox.containsPoint({ x: at.x, y: lit.geometry.boundingBox.min.y + 0.1, z: at.z });
+    world.select("P-I999999", { go: false });
+    return { items: plan.items.map((i) => i.id), same: wall() === before,
+      others: world.scene.getObjectByName(world.package.floorsOf(world.building)[1].id).children.every((c, k) => c === upper[k]),
+      inside, sofa: world.selected, took, meshes: world.scene.getObjectByName(floor).children.filter((m) => m.name.startsWith("items")).length };
+  }, floor);
+  truly(r.items.length === 4 && r.items.includes("P-I999999") && r.same && r.others && r.meshes >= 1, JSON.stringify(r));
+  truly(r.inside && r.sofa === "P-I999999", `found where they are: ${JSON.stringify(r)}`);
+});
+
+test("a ghost shows where an item would go: green, red when refused, with its guides; null takes it away", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const seen = () => {
+      const g = world.scene.getObjectByName("ghost");
+      return g ? { parent: g.parent.name, meshes: g.children.filter((c) => c.isMesh).length,
+        lines: g.children.filter((c) => c.isLine).map((c) => c.type), color: g.children[0].material.color.getHexString() } : null;
+    };
+    world.ghost({ type: "DESK-MANAGER", x: 150, y: 52, rotation: 90, guides: [[[149, 50], [151, 50]]] });
+    const ok = seen();
+    world.ghost({ type: "DESK-MANAGER", x: 150, y: 52, rotation: 90, ok: false });
+    const refused = seen();
+    world.ghost(null);
+    return { ok, refused, gone: seen(), floor };
+  }, floor);
+  truly(r.ok?.parent === floor && r.ok.meshes >= 1 && r.ok.lines.includes("LineLoop") && r.ok.lines.includes("LineSegments")
+    && r.ok.color === "0ca678", `green: ${JSON.stringify(r.ok)}`);
+  truly(r.refused?.color === "e03131" && !r.refused.lines.includes("LineSegments") && r.gone === null, JSON.stringify(r));
+});
+
+test("items are carried by a drag where they may be (itemdrag…), and the view does not turn; else it does", async () => {
+  const floor = await openFloor("/campus-hq.storeypath", "001");
+  const at = await page.run(async (floor) => {
+    const world = window.world;
+    const desk = world.package.itemsOn(floor).find((i) => i.properties.type === "DESK-DIRECTOR");
+    const d = world.worldPoint([desk.properties.local.x_m, desk.properties.local.y_m]);
+    const p = world.camera.position.clone().set(d.x, world.package.get(floor).properties.elevation + desk.properties.height_m, d.z)
+      .project(world.camera);
+    const box = world.renderer.domElement.getBoundingClientRect();
+    window.dragged = [];
+    for (const type of ["itemdragstart", "itemdrag", "itemdragend"]) {
+      world.addEventListener(type, (e) => window.dragged.push({ type, ...e.detail }));
+    }
+    window.camera0 = world.camera.position.toArray();
+    world.setDraggable(true);
+    return { id: desk.id, x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
+  }, floor);
+  await page.drag([at.x, at.y], [at.x + 90, at.y + 30]);
+  const carried = await page.run(async () => {
+    await window.frames();
+    const moved = Math.hypot(...window.world.camera.position.toArray().map((v, i) => v - window.camera0[i]));
+    const r = { events: window.dragged.map((e) => e.type), first: window.dragged[0], last: window.dragged.at(-1), moved };
+    window.dragged = [];
+    window.world.setDraggable(false);
+    return r;
+  });
+  await page.drag([at.x, at.y], [at.x + 90, at.y + 30]);
+  const turned = await page.run(async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    return { events: window.dragged.length, moved: Math.hypot(...window.world.camera.position.toArray().map((v, i) => v - window.camera0[i])) };
+  });
+  const e = carried.events;
+  truly(e[0] === "itemdragstart" && e.at(-1) === "itemdragend" && e.filter((t) => t === "itemdrag").length >= 4
+    && carried.first.id === at.id && carried.last.id === at.id && carried.moved < 1e-6, JSON.stringify(carried));
+  const step = Math.hypot(carried.last.local[0] - carried.first.local[0], carried.last.local[1] - carried.first.local[1]);
+  truly(step > 1 && step < 30, `carried ${step.toFixed(2)} m`);
+  truly(turned.events === 0 && turned.moved > 0.1, `not draggable: the view turns ${JSON.stringify(turned)}`);
+});
+
+test("updateSpace: a new name at once, a new type builds that floor again (and no other)", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const office = world.package.unitsOn(floor).find((u) => u.properties.number === "007");
+    const wall = () => world.scene.getObjectByName(floor).getObjectByName("wall");
+    const upper = world.scene.getObjectByName(world.package.floorsOf(world.building)[1].id);
+    const before = wall();
+    world.updateSpace(office.id, { name: "Board room" });
+    await window.frames();
+    const labels = [...document.querySelectorAll("#w .sp3d-label")].map((l) => l.textContent);
+    const named = wall() === before;
+    world.select(office.id, { go: false });
+    world.updateSpace(office.id, { type: "meeting_room" });
+    await window.frames();
+    const finish = world.scene.getObjectByName(floor).getObjectByName("floor:meeting_room");
+    const rooms = [];
+    const g = finish.geometry, ids = g.getAttribute("_room");
+    const floorOf = world.scene.getObjectByName(floor);
+    return { named, labels: labels.filter((l) => l.includes("Board room")), rebuilt: wall() !== before,
+      upper: world.scene.getObjectByName(world.package.floorsOf(world.building)[1].id) === upper,
+      selected: world.selected, lit: Boolean(world.scene.getObjectByName("highlight")),
+      inFinish: ids ? new Set(Array.from(ids.array)).size : 0, id: office.id, type: world.package.get(office.id).properties.type };
+  }, floor);
+  truly(r.named && r.labels.length === 1, `named at once: ${JSON.stringify(r)}`);
+  truly(r.rebuilt && r.upper && r.selected === r.id && r.lit && r.type === "meeting_room" && r.inFinish >= 2, JSON.stringify(r));
+});
+
+test("reload builds again the floors asked for, where they are: the view, the floor shown and the choice kept", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const floors = world.package.floorsOf(world.building).map((f) => f.id);
+    const group = (id) => world.scene.getObjectByName(id);
+    const kept = group(floors[0]), redone = group(floors[1]);
+    const office = world.package.unitsOn(floor).find((u) => u.properties.number === "005");
+    world.select(office.id, { go: false });
+    const camera = world.camera.position.toArray();
+    const said = new Promise((res) => world.addEventListener("reload", (e) => res(e.detail.floors), { once: true }));
+    await world.reload("/campus-hq-2.storeypath", { floors: [floors[1]] });
+    return { kept: group(floors[0]) === kept, redone: group(floors[1]) !== redone, said: await said, floor: world.floor,
+      selected: world.selected === office.id, camera: world.camera.position.toArray().every((v, i) => Math.abs(v - camera[i]) < 1e-9),
+      want: floors[1] };
+  }, floor);
+  truly(r.kept && r.redone && JSON.stringify(r.said) === JSON.stringify([r.want]) && r.floor === floor && r.selected && r.camera,
+    JSON.stringify(r));
+});
+
+test("walking from a point of a floor, then back to the dollhouse view as it was; pause stops drawing", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const office = world.package.unitsOn(floor).find((u) => u.properties.number === "005");
+    const o = world.toLocal(office.properties.display_point);
+    // the view still, as an orbit dragged before leaves it turning a little while
+    let camera = null;
+    for (let i = 0; i < 100; i++) {
+      const now = world.camera.position.toArray();
+      if (camera && now.every((v, k) => Math.abs(v - camera[k]) < 1e-4)) break;
+      camera = now;
+      await window.frames(2);
+    }
+    const rooms = [];
+    world.addEventListener("roomchange", (e) => rooms.push(e.detail.id));
+    world.setMode("walk", { at: o, heading: 1 });
+    await window.frames(3);
+    const p = world.player;
+    world.setMode("dollhouse", { back: true });
+    const there = () => world.camera.position.toArray().every((v, i) => Math.abs(v - camera[i]) < 1e-2);
+    for (let i = 0; i < 40 && !there(); i++) await new Promise((r) => setTimeout(r, 100));
+    const back = there();
+    // where no room is (far outside): in the nearest room
+    world.setMode("walk", { at: { x: o.x + 500, z: o.z } });
+    await window.frames(3);
+    const outside = world.room?.id ?? null;
+    world.setMode("dollhouse");
+    const frames = () => world.renderer.info.render.frame;
+    world.pause();
+    const f0 = frames();
+    await new Promise((r) => setTimeout(r, 200));
+    const paused = frames() - f0;
+    world.resume();
+    await window.frames(3);
+    return { id: office.id, at: [p.x, p.z], want: [o.x, o.z], rooms, outside, back, paused, drawn: frames() - f0 };
+  }, floor);
+  truly(Math.hypot(r.at[0] - r.want[0], r.at[1] - r.want[1]) < 1e-6 && r.rooms.includes(r.id), JSON.stringify(r));
+  truly(r.outside !== null && r.back, `outside: in a room ${r.outside}; back: ${r.back}`);
+  truly(r.paused === 0 && r.drawn >= 2, `paused: ${r.paused} frames; resumed: ${r.drawn}`);
+});
+
 test("destroy empties the container", async () => {
   const left = await page.run(() => {
     window.world.destroy();

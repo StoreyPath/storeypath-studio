@@ -211,6 +211,58 @@ export interface WorldEvents {
 	/** The walker went into another space. */
 	roomchange: { id: string | null; type: string | null; name: string | null; number: string | null; stairs: boolean };
 	walklock: { locked: boolean };
+	/** A click on the dollhouse view, or walking with the mouse taken (at the crosshair): what is
+	 * there. Cancelable: unless a listener calls preventDefault, what was clicked is selected. */
+	pick: WorldPoint & { button: number; altKey: boolean; shiftKey: boolean };
+	/** An item carried across its floor (setDraggable): where it is dragged, on its floor's level. */
+	itemdragstart: ItemDrag;
+	itemdrag: ItemDrag;
+	itemdragend: ItemDrag & { cancelled: boolean };
+	/** Floors built again by `reload`. */
+	reload: { floors: string[] };
+}
+
+/** A point of the world, as `pointAt` finds it. */
+export interface WorldPoint {
+	floor: string | null;
+	/** Local metres: x east, z south. */
+	x: number | null;
+	z: number | null;
+	/** The same point in the building's own frame: [x, y], metres of its drawings (null without a placement). */
+	local: [number, number] | null;
+	/** The space or zone it is in. */
+	space: string | null;
+	/** The item in the way, if any. */
+	item: string | null;
+}
+
+export interface ItemDrag {
+	id: string;
+	floor: string;
+	x: number | null;
+	z: number | null;
+	local: [number, number] | null;
+	altKey: boolean;
+	shiftKey: boolean;
+}
+
+/** An item as `setFloorItems` and `ghost` take it: where it stands in the building's own frame
+ * (metres of its drawings; rotation: degrees counter-clockwise, its front its own -y), and what
+ * is not its type's in the package's catalogue. */
+export interface GivenItem {
+	id?: string;
+	type: string;
+	x: number;
+	y: number;
+	rotation?: number;
+	width?: number;
+	depth?: number;
+	height?: number;
+	mount?: 'floor' | 'wall' | 'ceiling';
+	elevation?: number | null;
+	/** #rrggbb */
+	color?: string;
+	grade?: string | null;
 }
 
 /** A floor's plan in local metres (x east, z south), for a minimap. */
@@ -252,9 +304,41 @@ export declare class StoreyPathWorld extends EventTarget {
 	setBuilding(id: string): Promise<void>;
 	/** Show one floor, or all with null. */
 	setFloor(id: string | null): void;
-	setMode(mode: WorldMode): void;
+	/** Walking starts at the front door, or `at` (local metres; the nearest room's middle when in
+	 * none), on `floor`, facing `heading`; back to the dollhouse, round the whole building, or with
+	 * `back`, where the view was before walking. */
+	setMode(mode: WorldMode, options?: { at?: { x: number; z: number }; floor?: string; heading?: number; back?: boolean }): void;
 	/** In the walk view, take the mouse to look around (call from a click). */
 	startWalking(): void;
+	/** Give the mouse back, still walking. */
+	stopWalking(): void;
+	/** Where the dollhouse view looks (the point it turns around), local metres. */
+	readonly target: { x: number; z: number };
+	/** Stop drawing for a while (the world kept); `resume` draws again at once. */
+	pause(): void;
+	resume(): void;
+	readonly paused: boolean;
+	/** Read the package again and build only these floors again (default: all of the building
+	 * shown), keeping the view, mode, floor shown, selection and walker. */
+	reload(source: string | URL | Blob | ArrayBuffer | Uint8Array, options?: { floors?: string[] }): Promise<StoreyPathPackage>;
+	/** A point of the building's own frame ([x, y], metres of its drawings) in the world, and back
+	 * (null when the package does not place the building: before format 0.7). */
+	worldPoint(point: [number, number]): { x: number; z: number } | null;
+	buildingPoint(point: { x: number; z: number }): [number, number] | null;
+	/** What is under a point of the screen (client pixels), or the crosshair when walking with the
+	 * mouse taken (or given none): quick enough to follow the pointer. */
+	pointAt(clientX?: number, clientY?: number): WorldPoint | null;
+	/** Replace one floor's furniture and equipment without building anything else again. */
+	setFloorItems(floorId: string, items: GivenItem[]): boolean;
+	/** Where an item would go, see-through (red when `ok` is false), with the magnet's guides
+	 * ([[x, y], [x, y]] each, building frame); null takes it away. */
+	ghost(spec: (GivenItem & { floor?: string; ok?: boolean; guides?: [[number, number], [number, number]][] }) | null): void;
+	/** Items carried across their floor by a drag in the dollhouse view (itemdrag… events). */
+	setDraggable(on: boolean): void;
+	readonly draggable: boolean;
+	/** A space or zone corrected: its label at once, its floor built again when its type or
+	 * whether it is shown changed. */
+	updateSpace(id: string, props: { name?: string | null; number?: string | null; type?: string; hidden?: boolean; ignored?: boolean }): boolean;
 	setXray(on: boolean): void;
 	setCutaway(on: boolean): void;
 	setLabels(on: boolean): void;
