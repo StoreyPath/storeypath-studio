@@ -2,12 +2,15 @@
 // Part of StoreyPath Studio (see server.py); the project is ?p=<code>. Every
 // correction is saved to the workspace file at once. A floor the person may only view
 // (its ``can``) is shown with nothing to change it: no drawing tools, no menu, items
-// not dragged, a "View only" badge (the server refuses changes anyway).
+// not dragged, a "View only" badge (the server refuses changes anyway). Others' changes
+// appear as they are saved, one person edits a floor at a time, and each undoes their
+// own (together.js: hooked in at the end of this file, and in request() and openFloor()).
 
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { TYPE_COLORS, typeLabel } from "./theme.js";
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
+import { PAGE, followJob as followOnStream, heardLocked, lockedByOther, onFloor, setupTogether } from "./together.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DRAWING_ORDER = ["other", "outlines", "doors", "walls"]; // bottom to top
@@ -70,15 +73,16 @@ function savedMode() {
 }
 
 async function request(path, body) {
-  const init = body === undefined ? {} : {
+  const init = body === undefined ? { headers: { "X-StoreyPath-Page": PAGE } } : {
     method: "POST",
     // the header a page of another site cannot send (server.py refuses changes without it)
-    headers: { "X-StoreyPath": "1", "Content-Type": "application/json" },
+    headers: { "X-StoreyPath": "1", "Content-Type": "application/json", "X-StoreyPath-Page": PAGE },
     body: JSON.stringify(body),
   };
   const res = await fetch(`/api/${path}`, init);
   const data = await res.json().catch(() => ({}));
   if (sentAway(res, data)) throw new Error("log in again");
+  if (res.status === 423) heardLocked(data.locked); // someone else is editing the floor: shown so
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
   if (body !== undefined) changed3d(); // saved: the 3D view no longer shows it all
   return data;
@@ -86,28 +90,37 @@ async function request(path, body) {
 
 // ---- view only ------------------------------------------------------------------
 
-/** Whether the person may change the floor shown (else they may only look at it). */
-function editable(floorId = state.floor?.id) {
+/** Whether the person's access lets them change a floor (else they may only look at it). */
+function editableByAccess(floorId = state.floor?.id) {
   const f = state.project?.floors.find((x) => x.id === floorId);
   return !f || f.can === undefined || f.can === "edit" || f.can === "share";
+}
+
+/** Whether the person may change the floor (the one shown: and nobody else is editing it). */
+function editable(floorId = state.floor?.id) {
+  return editableByAccess(floorId) && !(floorId === state.floor?.id && lockedByOther());
 }
 
 /** True (and says so) when the floor shown may only be looked at. */
 function viewOnly() {
   if (editable()) return false;
-  toast("View only: you may look at this floor, not change it", true);
+  toast(editableByAccess() ? "Someone else is editing this floor: you can edit when they are done"
+    : "View only: you may look at this floor, not change it", true);
   return true;
 }
 
 /** The page as the person may use it on this floor: with a floor they may only view,
- * nothing that changes it is offered, and every field is read only. */
+ * nothing that changes it is offered, and every field is read only; while someone else
+ * edits it, what changes it is there but not to be used. */
 function showViewOnly() {
-  const only = !editable();
+  const only = !editableByAccess();
+  const locked = !only && !editable();
   document.body.classList.toggle("view-only", only);
+  document.body.classList.toggle("locked", locked);
   $("view-only").hidden = !only;
-  if (only && state.tool) setTool(null);
+  if ((only || locked) && state.tool) setTool(null);
   for (const e of document.querySelectorAll("#ed-form input, #ed-form select, #asset-editor input, #asset-editor select, #it-size input")) {
-    e.disabled = only;
+    e.disabled = only || locked;
   }
 }
 
@@ -185,13 +198,15 @@ async function start() {
     return;
   }
   $("back").href = `/#/p/${encodeURIComponent(CODE)}`;
-  $("account").replaceChildren(accountMenu(await whoami()));
+  const me = await whoami();
+  $("account").replaceChildren(accountMenu(me));
   try {
     state.project = await request(`${BASE}/review`);
   } catch (e) {
     toast(`Cannot load the project: ${e.message}`, true);
     return;
   }
+  setupTogether({ code: CODE, base: BASE, me, hooks: togetherHooks() });
   const { project, file, floors, types } = state.project;
   document.title = `${project.name} · StoreyPath Review`;
   $("project-name").textContent = project.name;
@@ -249,6 +264,7 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
     state.underlay = { lines: null, print: null };
   }
   $("floor").value = id;
+  onFloor(id, floor.lock); // (together.js: this floor's stream, who is on it)
   renderFloorMeta();
   showViewOnly();
   renderPlan();
@@ -1064,16 +1080,10 @@ async function reconvert() {
   }
 }
 
-/** Wait for a server job, saying what it is doing; resolves with the job when done. */
-async function followJob(job, saying) {
-  while (job.state === "waiting" || job.state === "running") {
-    $("status").textContent = job.log.at(-1) || saying;
-    await new Promise((r) => setTimeout(r, 700));
-    job = await request(`jobs/${job.id}`);
-  }
-  $("status").textContent = "";
-  if (job.state === "failed") throw new Error(job.error);
-  return job;
+/** Wait for a server job, saying what it is doing; resolves with the job when done (its
+ * progress comes on the floor's stream: together.js). */
+function followJob(job, saying) {
+  return followOnStream(job, (line) => { $("status").textContent = line === null ? "" : line || saying; });
 }
 
 // ---- drawing what the drawing leaves out ---------------------------------
@@ -2061,6 +2071,104 @@ async function build3d() {
     toast(`The 3D view could not be shown: ${e.message}`, true);
     show3d(false);
     return false;
+  }
+}
+
+// ---- many people at once: what others change, refreshed in place (together.js) ------------
+// A change someone else saved on the floor shown is read again and drawn where the person
+// is: the same view, what they chose still chosen (if it is still there), an editor they
+// have open left as they are typing in it, unless what it shows is what was changed.
+
+// what is to be read again: everything, or what these IDs are of; and whether a read is under way
+const live = { busy: false, waiting: null, retry: 0 };
+
+/** What a change changed (null: anything; undefined: nothing more, a read put off). */
+function whatChanged(change) {
+  if (change === undefined) return { all: false, targets: new Set() };
+  return change && change.part !== "floor" ? { all: false, targets: new Set(change.targets || []) } : { all: true, targets: new Set() };
+}
+
+function together(a, b) {
+  return a ? { all: a.all || b.all, targets: new Set([...a.targets, ...b.targets]) } : b;
+}
+
+function togetherHooks() {
+  return {
+    request,
+    toast,
+    editableByAccess: () => editableByAccess(),
+    floorName: () => {
+      const f = state.project?.floors.find((x) => x.id === state.floor?.id);
+      return f ? `${f.name} · ${f.building}` : "";
+    },
+    status: (text) => { $("status").textContent = text; },
+    changed: (change, said) => {
+      if (said) toast(said);
+      refreshFloor(change);
+    },
+    reload: () => refreshFloor(null),
+    showLock: () => {
+      showViewOnly();
+      renderAssetEditor();
+    },
+  };
+}
+
+/** The floor shown read again after a change (null: whatever changed), drawn in place.
+ * One at a time; one asked for while the person drags an item or a change of theirs is
+ * being saved waits for it. */
+async function refreshFloor(change) {
+  const want = together(live.waiting, whatChanged(change));
+  if (live.busy || state.busy || document.querySelector(".pane.dragging")) {
+    live.waiting = want;
+    clearTimeout(live.retry);
+    live.retry = setTimeout(() => refreshFloor(undefined), 400);
+    return;
+  }
+  live.waiting = null;
+  const id = state.floor?.id;
+  if (!id) return;
+  live.busy = true;
+  try {
+    const floor = await request(`${BASE}/floors/${encodeURIComponent(id)}`);
+    if (state.floor?.id !== id) return;
+    const changedHere = (thing) => want.all || want.targets.has(thing);
+    state.floor = floor;
+    state.byId = new Map(floor.spaces.map((s) => [s.id, s]));
+    state.segments = null;
+    const entry = state.project.floors.find((f) => f.id === id);
+    if (entry) {
+      entry.review = reviewSpaces().length;
+      fillFloorSelect();
+    }
+    renderFloorMeta();
+    renderPlan(); // (the chosen door or drawn line stays chosen: state.item)
+    renderLists();
+    renderLegend();
+    // the space chosen: kept while it is there; its editor shown again only when it changed
+    if (state.selected && !state.byId.has(state.selected)) select(null);
+    else if (state.selected) {
+      const s = state.byId.get(state.selected);
+      styleSpace(s);
+      $("spaces").append(state.paths.get(s.id));
+      $("print-selected").setAttribute("d", pathData(s.geometry));
+      if (changedHere(s.id)) renderEditor();
+      else updateEditorState();
+    }
+    if (state.asset && !(floor.items || []).some((a) => a.id === state.asset)) selectAsset(null);
+    else {
+      renderAssets();
+      if (state.asset && changedHere(state.asset)) renderAssetEditor();
+    }
+    if (state.item?.kind === "door" && !floor.doors.some((d) => d.id === state.item.id)) selectItem(null);
+    else if (state.item && changedHere(state.item.id)) renderItemEditor();
+    if (state.selected) renderCapacity(state.byId.get(state.selected));
+    showViewOnly();
+    changed3d();
+  } catch (e) {
+    toast(`Could not show the change: ${e.message}`, true);
+  } finally {
+    live.busy = false;
   }
 }
 

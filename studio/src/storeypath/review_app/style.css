@@ -329,3 +329,56 @@ body.view-only .edit-only { display: none !important; }
 #panel header .account { margin-bottom: 8px; }
 #panel header .account-menu { left: 0; right: auto; }
 
+/* Many people at once (together.js): who is on the floor, who is editing it, undo and
+   redo, the History panel */
+.avatar {
+  --hue: 210;
+  width: 22px; height: 22px; border-radius: 50%; flex: none; display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: hsl(var(--hue) 55% 28%); background: hsl(var(--hue) 70% 86%);
+  border: 2px solid var(--panel); box-sizing: border-box;
+}
+.avatar.editing { box-shadow: 0 0 0 2px var(--select); }
+@media (prefers-color-scheme: dark) {
+  .avatar { color: hsl(var(--hue) 70% 88%); background: hsl(var(--hue) 35% 30%); }
+}
+.presence { display: flex; align-items: center; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.presence .avatar + .avatar { margin-left: -6px; }
+.presence .more { margin-left: 4px; }
+.presence .who { margin-left: 8px; }
+
+.lock-banner {
+  position: absolute; left: 12px; top: var(--below-toolbar, 64px); z-index: 5; max-width: min(560px, calc(100% - 24px));
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 8px; border-radius: 10px; font-size: 13px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
+}
+.lock-banner.other { border-color: color-mix(in srgb, var(--select) 60%, var(--line)); background: color-mix(in srgb, var(--select) 10%, var(--panel)); }
+.lock-banner.mine { padding: 4px 4px 4px 12px; }
+.lock-banner .dot { width: 8px; height: 8px; border-radius: 50%; background: #2f9e44; flex: none; }
+.lock-banner button { padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+body.locked .edit-only { opacity: .45; pointer-events: none; }
+body.locked #ed-form .edit-only button, body.locked button.edit-only { cursor: default; }
+
+#toolbar button.step { padding: 4px 7px; }
+#toolbar button.step svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+#toolbar #history-open.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+/* the toolbar takes a second row rather than squeezing what is in it */
+#toolbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 24px); }
+#toolbar > * { flex: none; }
+
+.history {
+  position: absolute; right: 12px; top: var(--below-toolbar, 64px); bottom: 12px; z-index: 6; width: min(340px, calc(100% - 24px));
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
+}
+.history-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 12px 8px 14px; border-bottom: 1px solid var(--line); }
+.history-head h2 { margin-bottom: 2px; }
+.history-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+.history-list li { display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; border-radius: 8px; font-size: 13px; }
+.history-list li .avatar { margin-top: 1px; }
+.history-list li .what { min-width: 0; overflow-wrap: anywhere; }
+.history-list li.mine { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.history-list li.undone .what > div:first-child { text-decoration: line-through; color: var(--muted); }
+.history-list .tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.history-list .tag.next { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+

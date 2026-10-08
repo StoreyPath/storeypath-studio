@@ -29,6 +29,7 @@ from ..server import Download, Gate, Job, LoggedIn, LoggedOut, Stream, Studio
 from .guard import Said, client_address
 
 PARSE_IN_THREAD = 256 * 1024  # a JSON body this large is read in a worker thread, not the event loop
+PAGE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # X-StoreyPath-Page: the page a change comes from
 
 
 @dataclass
@@ -109,7 +110,8 @@ def gate(request: Request) -> Gate:
                           "set X-Real-IP there (nginx: proxy_set_header X-Real-IP $remote_addr;)")
     token = session_token(request)
     user = web.accounts.session(token) if web.accounts is not None else LOCAL
-    return Gate(web.studio, web.accounts, user, address, token)
+    page = request.headers.get("x-storeypath-page") or ""
+    return Gate(web.studio, web.accounts, user, address, token, page=page if PAGE_ID.fullmatch(page) else None)
 
 
 async def the_studio(request: Request) -> Studio:

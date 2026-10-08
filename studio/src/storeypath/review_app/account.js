@@ -71,7 +71,7 @@ export async function logout() {
   location.assign("/login.html");
 }
 
-/** The person's name, and their menu: change password, users (admins), backup
+/** The person's name, and their menu: change password, users and GPU helpers (admins), backup
  * (admins, and whoever an admin let), log out. Studio without accounts (storeypath
  * review, on this computer alone) has none of it. */
 export function accountMenu(me) {
@@ -80,6 +80,8 @@ export function accountMenu(me) {
   const items = [
     node("a", { role: "menuitem", href: `/login.html?change=1&next=${encodeURIComponent(here())}` }, "Change password"),
     me.role === "admin" ? node("a", { role: "menuitem", href: "/#/users" }, "Users") : null,
+    me.role === "admin" ? node("a", { role: "menuitem", href: "/#/helpers",
+      title: "The GPU helpers that serve the vision model: their addresses, keys, and how each is" }, "GPU helpers") : null,
     can("backup") ? node("a", { role: "menuitem", href: "/api/backup", download: "",
       title: "Everything in Studio's data folder as one .tar.gz: projects, item types, users (with their passwords' hashes), sharing and the audit log; keep it safe" }, "Download a backup") : null,
     node("button", { type: "button", role: "menuitem", onclick: logout }, "Log out"),

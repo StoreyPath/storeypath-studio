@@ -56,7 +56,7 @@ it), and a PostGIS geometry is made from it beside it (generated, GiST-indexed).
 | `catalogue`, `settings` | the organization's item types; what else is the whole Studio's |
 | `users`, `project_access`, `grants`, `sessions`, `audit` | accounts, as studio.db had them (a project's owner stays in `project_access`: who a code is shared with is kept before a project is opened and after it is gone) |
 | `history` | every change: seq, project, version, at, who, part, kind, floor(s), targets, before, after, undoes/redoes |
-| `floor_locks` | floor (PK), who, session, since, last seen |
+| `floor_locks` | floor (PK), who, session, since, last seen: who is editing each floor (§3) |
 
 `storeypath.db`: a connection pool (psycopg 3), numbered SQL migrations applied in
 order at start under an advisory lock (as Studio's own role, which owns its database
@@ -88,23 +88,67 @@ backup (a .tar.gz of its data folder) is restored by bringing that folder in.
 
 ## 3. Many people at once
 
-- **One editor per floor.** The first change to a floor takes its lock for that person
-  (that session); others see it live and read-only ("Khalid is editing this floor,
-  since 10:20"). The lock goes when they leave the floor or after 15 minutes without
-  a change or a heartbeat; an admin can take it over. A change without the lock is
-  refused (423, who holds it).
-- Project-wide steps (export, reading every floor, placing buildings, opening files
-  into a project) take the project's advisory lock; Review on that project waits or
-  is told it is busy, as now.
-- Row `version`s check every write as a safety net.
-- **Live updates:** the server LISTENs once and pushes each change, presence (who is
-  viewing, who is editing) and job progress to browsers over Server-Sent Events
-  (`GET /api/projects/<code>/events`), filtered by what each person may see. The page
-  refreshes what changed and says who changed it.
-- **History and undo:** every change recorded with who, before and after; each person
-  undoes and redoes their own changes (refused, naming who, when someone changed the
-  same thing since); a History panel per floor. (Rules: the stopped JSONL work,
-  `history.py`, commit 57c2457.)
+As built (Phase D):
+
+- **One editor per floor.** A person's change from a page (Review's corrections,
+  items, drawn edits, a floor read again, an undo) takes the lock of each floor it
+  touches, in the change's own transaction (`floor_locks`: floor, who, session, since,
+  last seen; the project's row, held by every change, makes lock takers come one at a
+  time). The lock is the person's, whichever of their sessions (the last one is kept):
+  their other page is not "someone else". Another person's change is refused, nothing
+  saved: 423 with who holds it and since when. It goes when they leave the floor (the
+  page tells the server: *Done editing*, another floor, the page closed, with a
+  keepalive request), after 15 minutes without a change or a heartbeat (a page's
+  stream on the floor, `events?floor=`, keeps it at every heartbeat; the listening
+  thread lets stale ones go every 30 s and tells the pages), or by an admin's *Take
+  over* (a history row, part `floor`, kind `take over`, with whom it was taken from,
+  and an audit entry). Others see it live: a banner on the floor and what changes it
+  held (dimmed), a mark when you hold it.
+- **Project-wide steps** (adding floors, reading every floor, placing buildings,
+  exporting, opening a file into a project, deleting it) hold the project's step lock
+  (`store.StepLock`): this Studio's thread lock, as before, and a PostgreSQL advisory
+  lock on the project (`pg_advisory_lock(0x5370, hashtext(code))`, on a connection of
+  its own while held), so another Studio on the same database waits too. Review's
+  changes take it for a moment, as they took the thread lock (1 s, then Busy, 409).
+  Steps of Studio's own take no floor lock: they are one at a time with Review's
+  changes through the step lock.
+- Rows keep their `version`s, raised at every write; changes to one project are made
+  one after another (each holds the project's row), and an undo checks that what it
+  undoes is as the change left it, so no write is refused on a version.
+- **Live updates:** each process LISTENs once (`web/live.py`, from the first stream
+  on, again after a pause when the connection is lost) and turns each NOTIFY into
+  events on the streams of who may see it: `change` (the history row: who, what in
+  words, its page, so the page that made it does not redraw it) once per floor it
+  touched, to who sees that floor (a building's or the project's change, to who sees
+  it whole); `presence` per floor (who has a page open on it, from the streams; who
+  holds its lock), at once when a stream opens and whenever it changes; `deleted`.
+  Job progress came that way already; Review and the project page follow jobs on
+  their stream (asking `GET /api/jobs/<id>` only when the stream says nothing).
+  Review refreshes the floor in place (view, selection, an editor being typed in
+  kept; an editor whose object changed shown again) and toasts who did what; its
+  header shows who is viewing and who is editing; a project's page, who is on which
+  floor.
+- **History and undo** (`history.py`, the stopped JSONL work's rules on the
+  database's rows): every change recorded with who, before and after, and what says
+  it in words as it was then (`label`, `what`, `was`, `now`…). `POST …/undo {floor?}`
+  applies the inverse of the person's latest object, item or edit change (on that
+  floor) through the same store change (the floor's lock, Busy as any change), as a
+  row that `undoes` it; `…/redo` applies an undoing's inverse (`redoes`); a new
+  change clears the person's redo; a file opened in place of the project or a
+  building is a barrier. Refused (409) when someone else changed the same object, item
+  or drawn shape since (naming who, when, what), or when the state is no longer as
+  the change left it (read again from its drawing). An item added and undone is
+  retired; a drawn edit undone is taken away and the floor read again (a job, as
+  drawing does). `GET …/history?floor=&n=` lists rows newest first with who, when,
+  the line, whether undone, of the floors the person may see, and what they would
+  undo and redo; the History panel shows it and follows changes live.
+- **GPU helpers** (admins): the helpers are kept in `settings` (`vision_helpers`:
+  url, key, enabled, places at once each), edited on the GPU helpers page with each
+  one's state, the models it lists (one serving another model is left out and shown
+  so) and a Test that sends a sample room; `vision.VisionModel.configure` replaces
+  its helpers without a restart (each Studio reads the setting again before a
+  conversion). `STOREYPATH_VISION_URL`/`_KEY`/`_PARALLEL` are where it starts from
+  while the database has none.
 
 ## 4. Server
 
@@ -121,7 +165,7 @@ today. Long steps run in a worker pool and report through the events stream.
 | A | database: schema, migrations, `ProjectStore`, accounts moved from SQLite, `db import`, Studio and Review on the database; the test suite green on it | in parallel with B and C |
 | B | FastAPI server for every route, on Studio/Review/Accounts as they are (their methods are the contract with A) | in parallel |
 | C | `gpu-helper` image, API key, several helpers in `STOREYPATH_VISION_URL`, the studio image without the GPU parts and with its own PostgreSQL | in parallel |
-| D | floor locks, live updates (LISTEN/NOTIFY → SSE), history and undo/redo with the History panel | after A and B |
+| D | floor locks, live updates (LISTEN/NOTIFY → SSE), history and undo/redo with the History panel, the GPU helpers page | done |
 | E | performance (profiling; vision engine from the Dell measurements), the demo | last |
 
 Targets: a floor of 900 spaces opens in Review in under 300 ms; a change saves in

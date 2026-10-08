@@ -23,6 +23,7 @@ from ..accounts import Accounts, Refused
 from ..assets import asset_dir
 from ..bundle import ProjectExists
 from ..cad import DrawingError
+from ..errors import Conflict, Locked
 from ..llm import ModelUnavailable
 from ..review import Busy, NotFound
 from ..server import Studio
@@ -61,6 +62,7 @@ def create_app(studio: Studio, *, accounts: Accounts | None, allowed_hosts=None,
                         secure=secure_cookies or https,
                         pages=Path(str(resources.files("storeypath") / "review_app")).resolve(),
                         viewer=asset_dir("viewer").resolve(), events=events.Events())
+    app.state.web.events.attach(studio)  # the database's changes, to the streams (live.py)
     for part in (account, projects, floors, navigation, events, pages):  # the pages last: any other GET goes there
         part.calls.add_to(app)
     for kind, answer in ANSWERS.items():
@@ -89,6 +91,14 @@ async def _busy(request: Request, e: Busy):  # a job is changing the project: no
     return as_json({"error": str(e), "busy": True}, 409)
 
 
+async def _locked(request: Request, e: Locked):  # another person is editing the floor: nothing changed
+    return as_json({"error": str(e), "locked": e.holder}, 423)
+
+
+async def _conflict(request: Request, e: Conflict):  # nothing to undo, or changed since by someone
+    return as_json({"error": str(e), **e.more}, 409)
+
+
 async def _bad(request: Request, e: Exception):
     return as_json({"error": str(e).strip("'\"")}, 400)
 
@@ -115,7 +125,7 @@ async def _failed(request: Request, e: Exception):
 
 
 ANSWERS = {
-    Refused: _refused, NotFound: _not_found, ProjectExists: _exists, Busy: _busy,
+    Refused: _refused, NotFound: _not_found, ProjectExists: _exists, Busy: _busy, Locked: _locked, Conflict: _conflict,
     DrawingError: _bad, ValueError: _bad, KeyError: _bad, ModelUnavailable: _bad,
     RequestValidationError: _invalid, StarletteHTTPException: _no_call, ClientDisconnect: _cut_short,
     Exception: _failed,

@@ -6,7 +6,8 @@ complete the result (walls, doors, furniture and equipment), and exports package
 that keep the same object IDs every time.
 
 - [Install](#install) · [In the browser](#in-the-browser) ·
-  [Users, sharing and backups](#users-sharing-and-backups) · [Commands](#commands)
+  [Users, sharing and backups](#users-sharing-and-backups) ·
+  [Many people at once](#many-people-at-once) · [Commands](#commands)
 - [Workflow](#workflow) · [Several floors in one drawing](#several-floors-in-one-drawing)
 - [Reading a drawing without being told its layers](#reading-a-drawing-without-being-told-its-layers)
 - [Private information](#private-information) · [The language model](#the-language-model) ·
@@ -186,8 +187,11 @@ first; a test fails for a call without a rule, and for a route outside `/api/` t
 not a page). Logged out, every call but logging in, out
 and the setup is answered 401; a project, building or floor someone may not see at
 all, 404, as one that is not there; one they see but may not do this to, 403. A
-request Studio cannot make sense of is answered 400 saying why; one that fails in
-Studio itself, 500 with nothing of what went wrong (that goes to its log).
+change to a floor someone else is editing is answered 423, naming them and since when
+([Many people at once](#many-people-at-once)); one while a step works on the whole
+project, 409 (busy). A request Studio cannot make sense of is answered 400 saying why;
+one that fails in Studio itself, 500 with nothing of what went wrong (that goes to its
+log).
 
 | Call | Needs |
 |---|---|
@@ -198,7 +202,9 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
-| `GET projects/<code>/events` | any access: a stream (Server-Sent Events) of what happens in the project that they may see: jobs' progress (as `GET jobs/<id>`), a heartbeat; it ends when they may no longer see the project |
+| `GET projects/<code>/events[?floor=<id>]` | any access (on a floor: view on it): a stream (Server-Sent Events) of what happens in the project that they may see: each change of a floor they see (who made it, what it was in words), who is viewing and who is editing each floor they see, jobs' progress (as `GET jobs/<id>`), a heartbeat; it ends when they may no longer see the project. A stream on a floor keeps its person's lock of it |
+| `GET …/history[?floor=<id>&n=]` | any access (of a floor: view on it): the latest changes, newest first, of the floors they may see (a building's, view on it whole; the project's, view on the project): who, when, what in words, whether undone; and what they would undo and redo there |
+| `POST …/undo`, `POST …/redo {floor?}` | on a floor, edit on it (without: any access); the change undone needs edit on each floor it changed, and their lock of it. Their own latest (on that floor), refused (409, naming who and when) when someone changed the same thing since |
 | `POST …/delete` | its owner or an admin |
 | `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |
 | `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
@@ -213,10 +219,53 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
 | `GET …/project.storeypath-project` | view on the project |
 | `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
-| `POST …/floors/<id>/edits`, `…/items`, `…/convert`, `POST …/objects/<id>` | edit on the floor |
-| `POST …/items/<id>` | edit on its floor, and on the floor it is carried to |
+| `POST …/floors/<id>/edits`, `…/items`, `…/convert`, `POST …/objects/<id>` | edit on the floor, and its lock (the first change takes it) |
+| `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and their locks) |
+| `POST …/floors/<id>/release` | view on the floor: their own lock of it let go (Done editing; leaving the floor) |
+| `POST …/floors/<id>/take-over` | an admin who sees the floor: its lock taken from whoever holds it, recorded in the history and the audit log |
 | `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
 | `GET backup` | admin, or `backup` |
+| `GET admin/helpers`, `POST admin/helpers {helpers}`, `POST admin/helpers/test {url, key?}` | admin: the GPU helpers ([Looking at the plans](#looking-at-the-plans-vision)) |
+
+## Many people at once
+
+**One editor a floor at a time.** The first change a person makes to a floor in Review
+(a correction, an item, a wall drawn, the floor read again) takes the floor for them,
+in the change's own transaction; anyone else's change to it is refused (423) and
+nothing is saved. Their pages show it as it happens: *Khalid is editing this floor
+since 10:20 — you can look; you can edit when they are done*, with what changes the floor
+there but held (an admin may *Take over*: recorded in the history and the audit log).
+The one editing it sees *You are editing this floor* and *Done editing*, which lets it
+go; so does leaving the floor (another floor, the page closed), or leaving it alone for
+15 minutes: a page open on the floor keeps it (its stream's heartbeat), and a page gone
+without saying so lets it go 15 minutes later. A person holds the floor whichever of
+their pages they use. Steps that work on the whole project (adding floors, reading
+every floor again, placing buildings, exporting, opening a file into it) hold the
+project in the database for as long as they run (an advisory lock): Review's changes
+meanwhile are answered *busy* (409), from this Studio or another on the same database.
+
+**Live.** Studio listens to its database's changes (one connection, from the first
+page on) and sends each to the pages of those who may see it: Review redraws what
+changed where you are (the view, what you chose and what you are typing are kept;
+an editor whose space someone else changed shows the change) and says who did what
+(*Khalid Engineer deleted OFFICE 012*); its header shows who else is on the floor and
+who is editing it, small marks with their initials; a project's page shows who is on
+which floor. Jobs report their progress the same way.
+
+**Undo and redo, each person their own.** *Undo* and *Redo* in Review's toolbar (⌘Z
+and ⇧⌘Z, Ctrl+Z and Ctrl+Y) undo your latest change on the floor shown, and redo what
+you undid until you make another change. An undo is a change like any other: recorded
+as an undo of yours, it needs the floor (and edit on it), and it is refused, naming who
+and when, when someone else changed the same space, item or drawn line since. An item
+placed and undone is retired, its ID never given again; a wall, line, door or space
+drawn and undone is taken away and the floor read again (its rooms' IDs as reading
+again gives them). A file opened in place of the project, or of a building, is a line
+no undo goes back over.
+
+**History.** *History* in Review lists who changed what on the floor, newest first, in
+words (*moved Manager's desk …-I000004*, *drew a wall*), what was undone marked, and
+what ⌘Z would undo; it follows changes as they come. Each person sees the history of
+what they may see.
 
 ## Commands
 
@@ -290,7 +339,10 @@ windows, openings and spaces the drawing leaves out, to resize a door, window or
 opening, or to place furniture and equipment; the keys are on the page (W wall, V
 divide, S space, D door, O opening, Del delete, N next to review, F fit). Every change
 is saved to the workspace file immediately, and *Re-read drawing* converts a revised
-drawing without leaving the page. The editor also shows the floor in 3D.
+drawing without leaving the page. The editor also shows the floor in 3D. *Undo* and
+*Redo* (⌘Z, ⇧⌘Z) take back your own changes, and *History* lists who changed what on
+the floor; in Studio, others' changes appear as they are saved, and one person edits
+a floor at a time ([Many people at once](#many-people-at-once)).
 
 The same corrections are possible from the command line:
 
@@ -470,6 +522,15 @@ seconds, twice as long each time it fails again up to a minute, and its question
 to the others; it is tried again after that, and one that was not answering when
 Studio started joins once it answers. `serve` prints each helper as it starts, and
 whether it answers.
+
+**The GPU helpers page** (*GPU helpers* in an admin's person menu) sets them while
+Studio runs: each helper's address, its own key (never shown again once saved), whether
+it is used and how many rooms it is asked about at once; how each one is (answers, not
+answering and why, left out because it serves another model) and the models it lists;
+*Test* sends one a sample room, as a conversion asks, and shows its answer and how long
+it took. What is saved there is kept in the database and used at once (by every Studio
+on that database, from its next conversion): the environment below is only where
+Studio starts from while the database has none.
 
 | Environment | |
 |---|---|

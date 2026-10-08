@@ -51,11 +51,16 @@ each call needs is checked first in route() (the table is in studio/README.md):
     PUT  /api/open[?replace=<name>]               a project from a file: a building's
                                                package, or a project file (bundle.py)
     GET  /api/jobs/<id>
+    GET  /api/projects/<code>/events[?floor=<id>]   what happens in it, as it happens (web/events.py)
+    GET  /api/projects/<code>/history[?floor=&n=]   who changed what, in words; what one would undo
+    POST /api/projects/<code>/undo {floor?}    one's own latest change undone; …/redo: redone
     GET  /api/users                            who to share with (id, username, name)
     GET  /api/admin/users                      POST /api/admin/users {username, name, role, capabilities}
     POST /api/admin/users/<id> {name?, role?, capabilities?, active?}
     POST /api/admin/users/<id>/password        a temporary password, shown once
     GET  /api/admin/audit                      GET /api/backup (the database, .sql.gz)
+    GET  /api/admin/helpers                    POST /api/admin/helpers {helpers}: the GPU helpers
+    POST /api/admin/helpers/test {url, key?}   a sample room sent to one
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 
 What changes something (POST, a JSON object; PUT, a file) is sent with the header
@@ -88,7 +93,7 @@ from .accounts import (LOCAL, Accounts, Forbidden, Scope, Sight, Unauthorized, U
 from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
-from .db.store import drawing_name
+from .db.store import Editor, StepLock, drawing_name
 from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
@@ -209,9 +214,12 @@ class Studio:
         self._reviews: dict[str, Review] = {}
         self._networks: dict[tuple, tuple] = {}  # (code, building, version) -> its walking network, worked out
         # One lock per project, held while a job changes it: converting one project
-        # (minutes, with vision) never holds up another, and pages only read.
+        # (minutes, with vision) never holds up another, and pages only read. It is the
+        # database's too (StepLock): another Studio on it waits as this one does.
         self._lock = threading.Lock()  # the tables below
-        self._project_locks: dict[str, threading.RLock] = {}
+        self._project_locks: dict[str, StepLock] = {}
+        self._helpers_said = None  # the GPU helpers as the database last said (vision_helpers)
+        self._helpers_from_env = [dict(h) for h in getattr(self.vision, "helpers_said", list)()]
         self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         self.store.drop_incoming()  # sent and never kept (Studio stopped meanwhile): not kept
@@ -223,6 +231,7 @@ class Studio:
             from .db.importer import first_start as bring_in
 
             self.imported = bring_in(self.data, self.db, self.store)
+        self.reload_helpers()
 
     # ---- projects ---------------------------------------------------------------
 
@@ -265,10 +274,14 @@ class Studio:
             self.store.save_catalogue(new)
             return new.model_dump()
 
-    def _changing(self, code: str) -> threading.RLock:
-        """The lock held while a job changes this project."""
+    def _changing(self, code: str) -> StepLock:
+        """The lock held while a job changes this project (the database's advisory lock
+        on it, so that another Studio on the database waits too)."""
         with self._lock:
-            return self._project_locks.setdefault(code, threading.RLock())
+            lock = self._project_locks.get(code)
+            if lock is None:
+                lock = self._project_locks[code] = StepLock(self.db, code)
+            return lock
 
     def status(self, paths: bool = True) -> dict:
         """What Studio can do; ``paths``: and where its data folder and database are (for
@@ -434,6 +447,7 @@ class Studio:
                 with self._files(code, [incoming], incoming=True) as folder:
                     doc = read_drawing_to_change(folder / "drawings" / incoming)
                 job.say("looking for title blocks, names, contacts and hidden file data")
+                self.reload_helpers()
                 reader = InWords(self.vision) if self.vision.available() else \
                     self.model if self.model.available() else None
                 choices = Choices()
@@ -799,13 +813,18 @@ class Studio:
             if moved:
                 self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=moved)
 
-    def convert(self, code: str, floor: str | None = None, force: bool = False, by=None) -> Job:
+    def convert(self, code: str, floor: str | None = None, force: bool = False, by=None,
+                editor: Editor | None = None) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
-        keeps its rooms (convert.py); ``force`` applies it all the same."""
+        keeps its rooms (convert.py); ``force`` applies it all the same. ``editor``: a
+        person reading one floor again from a page, who takes its lock first (Locked
+        while another person edits it)."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
         self._known(code)
+        if editor is not None and floor is not None:
+            self.store.take_lock(code, floor, by, editor)
 
         def run(job: Job):
             ws = self.workspace(code)
@@ -825,6 +844,7 @@ class Studio:
     def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None) -> dict:
         from .convert import convert_floor
 
+        self.reload_helpers()  # the GPU helpers as an admin last set them
         if self.model.available():
             job.say(f"reading texts with {self.model.name}")
         if self.symbols.available():
@@ -1132,6 +1152,173 @@ class Studio:
             raise NotFound(f"no export {name}")
         name = Path(name).name
         return Download(self.store.export_bytes(code, name), name)
+
+    # ---- many people at once: undo, history, who edits a floor -------------------------
+
+    def undo(self, code: str, floor: str | None = None, sight: Sight | None = None, by=None,
+             editor: Editor | None = None, redo: bool = False) -> dict:
+        """The person's latest change (on ``floor``) undone, or their latest undoing redone
+        (Review.step_back): it needs edit on each floor it changed (as it did). What was
+        drawn is read again (a job, as drawing does): ``job``."""
+        if floor is not None and not isinstance(floor, str):
+            raise ValueError("floor: a floor's ID")
+
+        def check(row: dict) -> None:
+            for f in row.get("floors") or []:
+                if sight is not None and rank(sight.floor(f)) < rank("edit"):
+                    raise Forbidden(f"undoing this needs edit access to {f}; you have {sight.floor(f) or 'none'}")
+
+        done = self.review(code).step_back(floor, by=by, editor=editor, redo=redo, check=check)
+        job = self.convert(code, done["floors"][0], by=_uid(by)) if done.pop("read") and done["floors"] else None
+        return {**done, "job": job}
+
+    def history(self, code: str, floor: str | None = None, n=None, sight: Sight | None = None, by=None) -> dict:
+        """The project's latest changes (on ``floor``), newest first, as the History panel
+        lists them: those the person may see, each with who, when and what in words, and
+        whether it was undone; and what they would undo and redo there now."""
+        from . import history
+        from .db.store import who_of
+
+        self._known(code)
+        try:
+            n = max(0, min(int(n if n is not None else history.SHOWN), history.SHOWN_MAX))
+        except (TypeError, ValueError):
+            raise ValueError("n: how many changes, a whole number") from None
+        visible = history.visible_to(sight)
+        rows, seen, before = [], 0, None
+        while len(rows) < n:  # those they may not see left out, until n are found (or many were looked at)
+            batch = self.store.history(code, floor, limit=max(n * 2, 50), before=before)
+            rows += [r for r in batch if visible(r)]
+            seen += len(batch)
+            if len(batch) < max(n * 2, 50) or seen > 20 * max(n, 1):
+                break
+            before = batch[-1]["seq"]
+        rows = rows[:n]
+        me = history.key(who_of(by))
+        undone = self.store.undone(code, [r["seq"] for r in rows]) if rows else set()
+        return {"entries": [history.shown(r, me, undone) for r in rows],
+                **self.review(code).steps(by, floor, visible)}
+
+    def lock_of(self, code: str, floor: str) -> dict | None:
+        """Who is editing a floor ({floor, who: {id, username, name}, since}), None: nobody."""
+        lock = self.store.locks(code, [floor]).get(floor)
+        return {k: v for k, v in lock.items() if k != "session"} if lock else None
+
+    def release(self, code: str, floor: str, by=None) -> dict:
+        """The person done editing a floor (or gone from it): its lock let go."""
+        return {"released": self.store.release_lock(code, floor, by)}
+
+    def take_over(self, code: str, floor: str, by=None, editor: Editor | None = None) -> dict:
+        """A floor's lock taken over (an admin): who held it, None when nobody did."""
+        return {"from": self.store.take_over(code, floor, by, editor)}
+
+    # ---- the GPU helpers (vision.py), kept in the database ------------------------------
+
+    HELPERS = "vision_helpers"  # settings key: {"helpers": [{url, key, enabled, parallel}]}
+
+    def _stored_helpers(self) -> list[dict] | None:
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = %s", (self.HELPERS,)).fetchone()
+        return list(row[0].get("helpers") or []) if row and isinstance(row[0], dict) else None
+
+    def reload_helpers(self) -> bool:
+        """The vision model's helpers as the database says (when it says: else as
+        STOREYPATH_VISION_URL said at the start), read again when they changed there:
+        whether they did."""
+        try:
+            said = self._stored_helpers()
+        except Exception:  # noqa: BLE001 (no database to ask: as they are)
+            return False
+        configure = getattr(self.vision, "configure", None)
+        if said is None or said == self._helpers_said or configure is None:
+            return False
+        self._helpers_said = said
+        configure(said)
+        return True
+
+    def helpers(self) -> dict:
+        """The GPU helpers, as the admin page shows them: each one's address, whether it
+        has a key (never the key), whether it is used, the questions it takes at once, how
+        it is (answers, left out, not answering) and the model it serves."""
+        self.reload_helpers()
+        stored = self._stored_helpers()
+        said = stored if stored is not None else self._helpers_from_env
+        if any(h.get("enabled", True) for h in said):
+            self.vision.available()  # their lists of models read (again, for those due)
+        state = {h["url"]: h for h in self.vision.helper_states()}
+        out = []
+        for h in said:
+            s = state.get(h["url"], {})
+            out.append({"url": h["url"], "key": bool(h.get("key")), "enabled": h.get("enabled", True),
+                        "parallel": h.get("parallel") or 2, "state": s.get("state", "off" if not h.get("enabled", True)
+                                                                         else "not asked yet"),
+                        "error": s.get("error"), "models": s.get("models"), "busy": s.get("busy", 0)})
+        return {"helpers": out, "model": self.vision.model or None, "from": "database" if stored is not None
+                else "environment" if said else "none"}
+
+    def save_helpers(self, body: dict) -> dict:
+        """The GPU helpers replaced: ``helpers``, each {url, key?, enabled, parallel}; a key
+        left out keeps the one that helper (by its address) has. Used at once."""
+        from .vision import MAX_PARALLEL, helper_urls
+
+        helpers = body.get("helpers")
+        if not isinstance(helpers, list) or len(helpers) > 32:
+            raise ValueError("helpers: a list of {url, key, enabled, parallel} (32 at most)")
+        before = {h["url"]: h for h in (self._stored_helpers() or self._helpers_from_env)}
+        out, seen = [], set()
+        for h in helpers:
+            if not isinstance(h, dict) or not isinstance(h.get("url"), str):
+                raise ValueError("each helper is {url, key, enabled, parallel}")
+            urls = helper_urls(h["url"])
+            if len(urls) != 1 or not urls[0].lower().startswith(("http://", "https://")):
+                raise ValueError(f"a helper's address is one http:// or https:// address: {h['url']!r}")
+            url = urls[0]
+            if url in seen:
+                raise ValueError(f"{url} is listed twice")
+            seen.add(url)
+            key = h.get("key")
+            if key is None:
+                key = before.get(url, {}).get("key") or ""
+            if not isinstance(key, str) or len(key) > 512:
+                raise ValueError("a helper's key is text")
+            parallel = h.get("parallel", 2)
+            if isinstance(parallel, bool) or not isinstance(parallel, int) or not 1 <= parallel <= MAX_PARALLEL:
+                raise ValueError(f"places at once: a whole number from 1 to {MAX_PARALLEL}")
+            enabled = h.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled is true or false")
+            out.append({"url": url, "key": key.strip(), "enabled": enabled, "parallel": parallel})
+        from psycopg.types.json import Jsonb
+
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET "
+                         "value = EXCLUDED.value", (self.HELPERS, Jsonb({"helpers": out})))
+        self.reload_helpers()
+        return self.helpers()
+
+    def test_helper(self, body: dict) -> dict:
+        """A sample room sent to one helper (``url``; its key as kept, or ``key``), as a
+        conversion would ask it: what it answered, its model, how long it took."""
+        from .vision import VisionModel, sample_question
+
+        url = body.get("url")
+        if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+            raise ValueError("url: the helper's http:// or https:// address")
+        kept = {h["url"]: h for h in (self._stored_helpers() or self._helpers_from_env)}.get(url.rstrip("/"), {})
+        key = body.get("key") if isinstance(body.get("key"), str) else kept.get("key") or ""
+        one = VisionModel(url=url, parallel=1, timeout=120.0)
+        one.key = key  # this helper's own, as kept (not the environment's)
+        for h in one.helpers:
+            h.key = key
+        started = datetime.now(timezone.utc)
+        if not one.available():
+            return {"ok": False, "error": one.failed, "model": None}
+        try:
+            answer = sample_question(one)
+        except Exception as e:  # noqa: BLE001 (said on the page)
+            return {"ok": False, "error": str(e), "model": one.model}
+        took = (datetime.now(timezone.utc) - started).total_seconds()
+        return {"ok": True, "model": one.model, "answer": answer, "seconds": round(took, 2)}
 
 
 def _uid(by) -> str | None:
@@ -1453,9 +1640,10 @@ class Gate:
     is LOCAL, who may do everything."""
 
     def __init__(self, studio: Studio, accounts: Accounts | None, user: User | None, address: str = "",
-                 token: str | None = None):
+                 token: str | None = None, page: str | None = None):
         self.studio, self.accounts, self.address, self.token = studio, accounts, address, token
         self.user = LOCAL if accounts is None else user
+        self.page = page  # the page asking (X-StoreyPath-Page), told back with what it changes
 
     # ---- who is asking ------------------------------------------------------------
 
@@ -1470,6 +1658,19 @@ class Gate:
     def uid(self) -> str | None:
         """The asking person's id (None without accounts)."""
         return None if self.user is None or self.user is LOCAL else self.user.id
+
+    @property
+    def session(self) -> str:
+        """The asking session, as floor locks keep it: part of the hash of its token
+        (never the token); "local" on this computer without accounts."""
+        import hashlib
+
+        return hashlib.sha256(self.token.encode()).hexdigest()[:16] if self.token else "local"
+
+    @property
+    def editor(self) -> Editor:
+        """Where a change of theirs comes from: their session, and the page that sent it."""
+        return Editor(self.session, self.page)
 
     def audit(self, action: str, target=None, outcome: str = "ok", **more) -> None:
         if self.accounts is not None:
@@ -1553,6 +1754,29 @@ class Gate:
         if not sight.floor(floor_id):
             raise NotFound(f"no floor {floor_id}")
         _need(sight.floor(floor_id), level, "this floor")
+        return sight
+
+    def undo(self, code: str, floor) -> Sight:
+        """Undoing (or redoing) one's own change: on a floor, edit on it; anywhere, any access
+        (the change undone needs edit on each floor it changed: Studio.undo checks)."""
+        if floor is None:
+            return self.see(code)
+        if not isinstance(floor, str):
+            raise ValueError("floor: a floor's ID")
+        return self.floor(code, floor, "edit")
+
+    def history(self, code: str, floor) -> Sight:
+        """The project's history: any access (each sees the changes of what they may see);
+        of a floor, view on it."""
+        if floor is None:
+            return self.see(code)
+        return self.floor(code, floor, "view")
+
+    def take_over(self, code: str, floor_id: str) -> Sight:
+        """Taking over a floor someone else is editing: an admin (who sees it)."""
+        sight = self.floor(code, floor_id, "view")
+        if self.user is not LOCAL and self.user.role != "admin":
+            raise Forbidden("only an admin may take over a floor someone is editing")
         return sight
 
     def convert(self, code: str, floor) -> Sight:
