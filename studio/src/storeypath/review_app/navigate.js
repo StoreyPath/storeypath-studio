@@ -494,6 +494,7 @@ async function drawWorld() {
       await state.world.open(new Blob([state.bytes]));
       state.worldShows = state.building;
       state.world.setFloor(null);
+      state.world.setCutaway?.(true); // walls cut low, as on a plan: the way shows on every floor
     }
     note.hidden = true;
     drawWorldRoute();
