@@ -1,5 +1,7 @@
-# StoreyPath Studio: the whole tool in one container. CPU only; no network needed
-# at run time.
+# StoreyPath Studio: the whole tool in one container, for any machine. No GPU needed:
+# the language model runs on the CPU. No network needed at run time: the model is
+# fetched before the build and baked in. (On a machine with an NVIDIA GPU,
+# docker/Dockerfile.gpu adds a vision model that looks at the plans.)
 #
 #   docker/fetch-models.sh                                  # once, before building
 #   docker build -f docker/Dockerfile -t storeypath/studio .
@@ -8,13 +10,21 @@
 # then open http://localhost:8080 (or the machine's address). To reach it by a host
 # name other than localhost, allow that name: -e STOREYPATH_ALLOWED_HOSTS=gpu-server,studio.example
 # (Studio refuses requests addressed to other names, against DNS rebinding). Air-gapped: build (or `docker save`) on a
-# connected machine, `docker load` on the isolated one; run with --network none
-# if you like — nothing in it reaches out.
+# connected machine, `docker load` on the isolated one:
+#
+#   docker save storeypath/studio | gzip > storeypath-studio.tar.gz
+#   docker load -i storeypath-studio.tar.gz
+#
+# Nothing in it reaches out; its command-line tool runs with --network none. A vision
+# model served elsewhere (a GPU machine, a hosted service) can be used with
+# -e STOREYPATH_VISION_URL=http://host:8105/v1 (and STOREYPATH_VISION_MODEL,
+# STOREYPATH_VISION_KEY): views of the plans and texts of the drawings are then sent to it.
 #
 # Optional, for research only: docker/fetch-symbols.sh before building bakes in
 # SymPoint-V2, which types unnamed rooms by the fixtures drawn in them. It is not
 # StoreyPath's and its terms do not allow publishing it (see docker/symbols/README.md);
-# without it the image is built as before.
+# without it the image is built as before. The release workflow fetches it only when
+# the repository variable STOREYPATH_SYMBOLS is "research".
 #
 # Inside: StoreyPath Studio (Apache-2.0); LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in

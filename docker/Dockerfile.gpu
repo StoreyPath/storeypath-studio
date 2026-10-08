@@ -15,7 +15,12 @@
 # and localhost always work)
 # then open http://localhost:8080 once `docker logs storeypath` says Studio is
 # serving (loading the vision model takes a minute or two). One GPU with 32 GB free is
-# enough; pick one with --gpus '"device=1"'. NVIDIA driver 525 or newer (CUDA 12).
+# enough: the vision model, two rooms looked at at once, and the language model, all on
+# the GPU; pick one with --gpus '"device=1"'. NVIDIA driver 525 or newer (CUDA 12).
+# docker/start-gpu.sh starts the vision model, then Studio; its settings:
+# STOREYPATH_VISION_PARALLEL (rooms looked at at once, default 2; more needs more GPU
+# memory), STOREYPATH_VISION=off (no vision), STOREYPATH_VISION_URL (a vision model
+# served elsewhere instead). For the command-line tool: --entrypoint storeypath.
 #
 # Inside: StoreyPath Studio (Apache-2.0); LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in

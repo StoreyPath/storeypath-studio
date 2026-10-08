@@ -5,8 +5,13 @@
 #
 #   STOREYPATH_VISION=off        no vision model (rules and the language model only)
 #   STOREYPATH_VISION_URL=...    use a vision model served elsewhere instead
-#   STOREYPATH_VISION_PARALLEL   rooms looked at at once (default 2)
+#   STOREYPATH_VISION_PARALLEL   rooms looked at at once (default 2): the model server's
+#                                slots, each of STOREYPATH_VISION_CONTEXT tokens
 #   STOREYPATH_VISION_CONTEXT    tokens of context per question (default 8192)
+#
+# The model is STOREYPATH_VISION_GGUF with its image encoder STOREYPATH_VISION_MMPROJ
+# (Dockerfile.gpu sets both), served on 127.0.0.1:8105 inside the container only. If
+# it stops while loading (no GPU given: run with --gpus all), Studio runs without it.
 #
 # The model server's log: /tmp/vision.log (docker exec storeypath cat /tmp/vision.log).
 set -eu
