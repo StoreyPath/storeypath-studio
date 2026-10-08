@@ -197,6 +197,9 @@ ROWS = [
         passes={"admin", "owner", "building_editor"}, hidden=OUTSIDE | {"floor_viewer"}),
     Row("POST", C + "/buildings/{annex}/placement", {}, ok=(400, "is a number"),
         passes={"admin", "owner", "building_editor"}, hidden=OUTSIDE | {"floor_viewer"}),
+    # the way in a building: view on the whole of it
+    Row("GET", C + "/buildings/{annex}/navigation", ok=200, passes={"admin", "owner", "building_editor"},
+        hidden=OUTSIDE | {"floor_viewer"}),
     Row("POST", C + "/locations/{loc}/arrange", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/locations/{loc}/placement", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/export", {"building": "{annex}"}, ok=200, passes={"admin", "owner", "building_editor"},

@@ -26,7 +26,7 @@ from ..cad import DrawingError
 from ..llm import ModelUnavailable
 from ..review import Busy, NotFound
 from ..server import Studio
-from . import account, events, floors, pages, projects
+from . import account, events, floors, navigation, pages, projects
 from .calls import Web, as_json
 from .guard import Guard, allowed_hosts as studio_names, trusted_networks
 
@@ -61,7 +61,7 @@ def create_app(studio: Studio, *, accounts: Accounts | None, allowed_hosts=None,
                         secure=secure_cookies or https,
                         pages=Path(str(resources.files("storeypath") / "review_app")).resolve(),
                         viewer=asset_dir("viewer").resolve(), events=events.Events())
-    for part in (account, projects, floors, events, pages):  # the pages last: any other GET goes there
+    for part in (account, projects, floors, navigation, events, pages):  # the pages last: any other GET goes there
         part.calls.add_to(app)
     for kind, answer in ANSWERS.items():
         app.add_exception_handler(kind, answer)
