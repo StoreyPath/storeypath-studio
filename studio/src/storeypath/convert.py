@@ -381,6 +381,7 @@ DRAWN_NOTE = "drawn in review: where the drawing encloses no space"
 
 
 CARVE_SHARE = 0.5  # a space drawn this much inside the rooms found is cut out of them
+WAY_ROOM_M = 1.5  # its way through is on the edge with the most room in front of it, this deep
 CARVED_NOTE = "drawn in review: cut out of the room it was drawn in"
 
 
@@ -453,7 +454,10 @@ def _carve(ex: FloorExtraction, area, min_area: float) -> list:
             edges = [e for e in edges if e.length >= 0.3]
             if not edges:
                 continue
-            span = max(edges, key=lambda e: e.length)
+            # the edge that opens onto most of the room (not onto a strip left by a wall)
+            host = ex.spaces[i].polygon
+            span = max(edges, key=lambda e: (round(e.buffer(WAY_ROOM_M, cap_style="flat").difference(part)
+                                                   .intersection(host).area, 2), e.length))
             ex.doors.append(ExtractedDoor(footprint=span.buffer(0.15, cap_style="flat"),
                                           point=span.interpolate(0.5, normalized=True), connects=[i, new],
                                           source="split", span=span, width=round(span.length, 3)))

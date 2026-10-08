@@ -167,3 +167,20 @@ def test_the_way_between_floors_takes_a_lift_drawn_by_hand(campus):
     assert change["to_floor_id"] == f2 and way["steps"][2]["text"] == "Take the lift up to Floor 2"
     # the demo's lifts are at the other end: the one drawn by hand is the way
     assert way["metres"] < 70  # (by its own lifts, over 90 m)
+
+
+def test_a_lift_drawn_short_of_a_wall_opens_onto_the_room_not_onto_the_strip_left():
+    # drawn 0.4 m short of the room's north wall: its way through faces the room, not
+    # the strip left against the wall (its north edge, as long as the others)
+    from shapely.geometry import box
+
+    from storeypath.convert import _drawn_spaces
+    from storeypath.extract import ExtractedSpace, FloorExtraction
+
+    ex = FloorExtraction(spaces=[ExtractedSpace(polygon=box(0, 0, 12, 8.3), layer="rooms")], doors=[], outline=None,
+                         scale=1.0)
+    _drawn_spaces(ex, [[[5, 5.4], [7.5, 5.4], [7.5, 7.9], [5, 7.9]]], 1.0)
+    (way,) = [d for d in ex.doors if d.source == "split"]
+    assert way.connects == [0, 1]
+    (x0, y0), (x1, y1) = way.span.coords
+    assert not (y0 == y1 == pytest.approx(7.9)) and way.span.length == pytest.approx(2.5)
