@@ -267,3 +267,13 @@ def test_a_lift_drawn_is_undone_by_who_drew_it_its_type_then_its_shape(team):
     assert {r.id for r in team.spaces(team.hq0)} == before
     # sara has nothing of hers to undo there
     assert team("sara", "POST", "undo", {"floor": team.hq0})[0] == 409
+
+
+def test_the_history_says_what_a_link_did():
+    from storeypath.history import describe
+
+    row = {"part": "object", "targets": ["P-L-B-F01-0183"], "label": "Lift 0183"}
+    assert describe({**row, "kind": "link", "after": {"override": {"stack": "P-L-B-F00-0181"}}}) == \
+        "linked Lift 0183 with …-0181 on another floor"
+    assert describe({**row, "kind": "unlink"}) == "unlinked Lift 0183 from other floors"
+    assert describe({**row, "kind": "as found"}) == "linked Lift 0183 through the floors as found"
