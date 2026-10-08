@@ -5,6 +5,7 @@
 // each building and each floor); the server checks everything anyway.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { helpersPage } from "./helpers.js";
 import { openShare } from "./share.js";
 import { usersPage } from "./users.js";
 
@@ -132,6 +133,9 @@ async function route() {
     else if (parts[0] === "users" && me?.role === "admin") {
       document.title = "Users · StoreyPath Studio";
       await usersPage($("page"), me, toast);
+    } else if (parts[0] === "helpers" && me?.role === "admin") {
+      document.title = "GPU helpers · StoreyPath Studio";
+      await helpersPage($("page"), toast);
     } else await projectsPage();
   } catch (e) {
     $("page").replaceChildren(el("div", { class: "card" }, el("p", {}, e.message), el("a", { href: "#/" }, "All projects")));

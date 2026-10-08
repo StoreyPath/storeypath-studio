@@ -1,6 +1,6 @@
 """The calls of the person's own account, the item types, the users (admins), the
-audit log and backups. (Every POST takes a JSON object, used or not, as it always has:
-anything else is answered 400.)"""
+audit log, backups and the GPU helpers (admins). (Every POST takes a JSON object, used
+or not, as it always has: anything else is answered 400.)"""
 
 from __future__ import annotations
 
@@ -97,3 +97,25 @@ def audit(request: Request, may: May, query: Query):
 def backup(request: Request, may: May):
     may.capability("backup")
     return answer(request, may.backup())
+
+
+# ---- the GPU helpers (admins): the vision model's servers ---------------------------------
+
+@calls.get("/api/admin/helpers")
+def helpers(request: Request, may: May, studio: TheStudio):
+    may.admin()
+    return answer(request, studio.helpers())
+
+
+@calls.post("/api/admin/helpers")
+def save_helpers(request: Request, may: May, studio: TheStudio, body: Body):
+    may.admin()
+    saved = studio.save_helpers(body)
+    may.audit("gpu helpers changed", None, helpers=[h["url"] for h in saved["helpers"]])
+    return answer(request, saved)
+
+
+@calls.post("/api/admin/helpers/test")
+def test_helper(request: Request, may: May, studio: TheStudio, body: Body):
+    may.admin()
+    return answer(request, studio.test_helper(body))

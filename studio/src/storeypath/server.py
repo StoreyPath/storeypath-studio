@@ -59,6 +59,8 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/admin/users/<id> {name?, role?, capabilities?, active?}
     POST /api/admin/users/<id>/password        a temporary password, shown once
     GET  /api/admin/audit                      GET /api/backup (the database, .sql.gz)
+    GET  /api/admin/helpers                    POST /api/admin/helpers {helpers}: the GPU helpers
+    POST /api/admin/helpers/test {url, key?}   a sample room sent to one
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 
 What changes something (POST, a JSON object; PUT, a file) is sent with the header
@@ -215,6 +217,8 @@ class Studio:
         # database's too (StepLock): another Studio on it waits as this one does.
         self._lock = threading.Lock()  # the tables below
         self._project_locks: dict[str, StepLock] = {}
+        self._helpers_said = None  # the GPU helpers as the database last said (vision_helpers)
+        self._helpers_from_env = [dict(h) for h in getattr(self.vision, "helpers_said", list)()]
         self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         self.store.drop_incoming()  # sent and never kept (Studio stopped meanwhile): not kept
@@ -226,6 +230,7 @@ class Studio:
             from .db.importer import first_start as bring_in
 
             self.imported = bring_in(self.data, self.db, self.store)
+        self.reload_helpers()
 
     # ---- projects ---------------------------------------------------------------
 
@@ -441,6 +446,7 @@ class Studio:
                 with self._files(code, [incoming], incoming=True) as folder:
                     doc = read_drawing_to_change(folder / "drawings" / incoming)
                 job.say("looking for title blocks, names, contacts and hidden file data")
+                self.reload_helpers()
                 reader = InWords(self.vision) if self.vision.available() else \
                     self.model if self.model.available() else None
                 choices = Choices()
@@ -837,6 +843,7 @@ class Studio:
     def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None) -> dict:
         from .convert import convert_floor
 
+        self.reload_helpers()  # the GPU helpers as an admin last set them
         if self.model.available():
             job.say(f"reading texts with {self.model.name}")
         if self.symbols.available():
@@ -1163,6 +1170,114 @@ class Studio:
     def take_over(self, code: str, floor: str, by=None, editor: Editor | None = None) -> dict:
         """A floor's lock taken over (an admin): who held it, None when nobody did."""
         return {"from": self.store.take_over(code, floor, by, editor)}
+
+    # ---- the GPU helpers (vision.py), kept in the database ------------------------------
+
+    HELPERS = "vision_helpers"  # settings key: {"helpers": [{url, key, enabled, parallel}]}
+
+    def _stored_helpers(self) -> list[dict] | None:
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = %s", (self.HELPERS,)).fetchone()
+        return list(row[0].get("helpers") or []) if row and isinstance(row[0], dict) else None
+
+    def reload_helpers(self) -> bool:
+        """The vision model's helpers as the database says (when it says: else as
+        STOREYPATH_VISION_URL said at the start), read again when they changed there:
+        whether they did."""
+        try:
+            said = self._stored_helpers()
+        except Exception:  # noqa: BLE001 (no database to ask: as they are)
+            return False
+        configure = getattr(self.vision, "configure", None)
+        if said is None or said == self._helpers_said or configure is None:
+            return False
+        self._helpers_said = said
+        configure(said)
+        return True
+
+    def helpers(self) -> dict:
+        """The GPU helpers, as the admin page shows them: each one's address, whether it
+        has a key (never the key), whether it is used, the questions it takes at once, how
+        it is (answers, left out, not answering) and the model it serves."""
+        self.reload_helpers()
+        stored = self._stored_helpers()
+        said = stored if stored is not None else self._helpers_from_env
+        if any(h.get("enabled", True) for h in said):
+            self.vision.available()  # their lists of models read (again, for those due)
+        state = {h["url"]: h for h in self.vision.helper_states()}
+        out = []
+        for h in said:
+            s = state.get(h["url"], {})
+            out.append({"url": h["url"], "key": bool(h.get("key")), "enabled": h.get("enabled", True),
+                        "parallel": h.get("parallel") or 2, "state": s.get("state", "off" if not h.get("enabled", True)
+                                                                         else "not asked yet"),
+                        "error": s.get("error"), "models": s.get("models"), "busy": s.get("busy", 0)})
+        return {"helpers": out, "model": self.vision.model or None, "from": "database" if stored is not None
+                else "environment" if said else "none"}
+
+    def save_helpers(self, body: dict) -> dict:
+        """The GPU helpers replaced: ``helpers``, each {url, key?, enabled, parallel}; a key
+        left out keeps the one that helper (by its address) has. Used at once."""
+        from .vision import MAX_PARALLEL, helper_urls
+
+        helpers = body.get("helpers")
+        if not isinstance(helpers, list) or len(helpers) > 32:
+            raise ValueError("helpers: a list of {url, key, enabled, parallel} (32 at most)")
+        before = {h["url"]: h for h in (self._stored_helpers() or self._helpers_from_env)}
+        out, seen = [], set()
+        for h in helpers:
+            if not isinstance(h, dict) or not isinstance(h.get("url"), str):
+                raise ValueError("each helper is {url, key, enabled, parallel}")
+            urls = helper_urls(h["url"])
+            if len(urls) != 1 or not urls[0].lower().startswith(("http://", "https://")):
+                raise ValueError(f"a helper's address is one http:// or https:// address: {h['url']!r}")
+            url = urls[0]
+            if url in seen:
+                raise ValueError(f"{url} is listed twice")
+            seen.add(url)
+            key = h.get("key")
+            if key is None:
+                key = before.get(url, {}).get("key") or ""
+            if not isinstance(key, str) or len(key) > 512:
+                raise ValueError("a helper's key is text")
+            parallel = h.get("parallel", 2)
+            if isinstance(parallel, bool) or not isinstance(parallel, int) or not 1 <= parallel <= MAX_PARALLEL:
+                raise ValueError(f"places at once: a whole number from 1 to {MAX_PARALLEL}")
+            enabled = h.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled is true or false")
+            out.append({"url": url, "key": key.strip(), "enabled": enabled, "parallel": parallel})
+        from psycopg.types.json import Jsonb
+
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET "
+                         "value = EXCLUDED.value", (self.HELPERS, Jsonb({"helpers": out})))
+        self.reload_helpers()
+        return self.helpers()
+
+    def test_helper(self, body: dict) -> dict:
+        """A sample room sent to one helper (``url``; its key as kept, or ``key``), as a
+        conversion would ask it: what it answered, its model, how long it took."""
+        from .vision import VisionModel, sample_question
+
+        url = body.get("url")
+        if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+            raise ValueError("url: the helper's http:// or https:// address")
+        kept = {h["url"]: h for h in (self._stored_helpers() or self._helpers_from_env)}.get(url.rstrip("/"), {})
+        key = body.get("key") if isinstance(body.get("key"), str) else kept.get("key") or ""
+        one = VisionModel(url=url, parallel=1, timeout=120.0)
+        one.key = key  # this helper's own, as kept (not the environment's)
+        for h in one.helpers:
+            h.key = key
+        started = datetime.now(timezone.utc)
+        if not one.available():
+            return {"ok": False, "error": one.failed, "model": None}
+        try:
+            answer = sample_question(one)
+        except Exception as e:  # noqa: BLE001 (said on the page)
+            return {"ok": False, "error": str(e), "model": one.model}
+        took = (datetime.now(timezone.utc) - started).total_seconds()
+        return {"ok": True, "model": one.model, "answer": answer, "seconds": round(took, 2)}
 
 
 def _uid(by) -> str | None:

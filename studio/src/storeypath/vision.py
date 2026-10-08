@@ -16,6 +16,11 @@ service; or several helpers serving the same model, the questions spread over th
     STOREYPATH_VISION_CA     the certificate (PEM) to check helpers' against, in
                              place of the system's authorities
 
+The helpers are set on Studio's GPU helpers page (an admin's) once Studio runs: each
+one's address, key, whether it is used and how many questions it takes at once, kept
+in the database and used from then on (configure) in place of the first three above,
+which are only where Studio starts from while the database has none.
+
 Rendering needs matplotlib and Pillow (`uv sync --extra vision`). Answers are kept in
 the workspace (``vision``), keyed by the room's shape, so converting again asks only
 about rooms that changed, and a project converts the same way without the model.
@@ -96,6 +101,7 @@ CROP_MIN_M = 6.0  # a crop shows at least this much of the plan around a room
 BACKOFF_S = 5.0  # a helper that fails is left out this long, twice as long each time it fails again,
 RECHECK_S = 60.0  # up to this long, and then tried again
 LIST_TIMEOUT_S = 5.0  # for a helper's list of models
+MAX_PARALLEL = 32  # questions one helper may be given at once, at most
 
 
 class VisionUnavailable(Exception):
@@ -130,9 +136,10 @@ class _Helper:
     """One model server: the questions it has in flight, and whether (and until when)
     it is left out."""
 
-    def __init__(self, url: str, parallel: int):
-        self.url, self.parallel = url, max(1, parallel)
+    def __init__(self, url: str, parallel: int, key: str = ""):
+        self.url, self.parallel, self.key = url, max(1, parallel), key
         self.busy = 0
+        self.models: list[str] | None = None  # what its list of models said, when read
         self.serves: bool | None = None  # its list of models read, with the model on it (None: not read yet)
         self.failures = 0  # in a row
         self.out_until = 0.0  # left out until then (time.monotonic())
@@ -161,10 +168,11 @@ class VisionModel:
         urls = helper_urls(url if url is not None else os.environ.get("STOREYPATH_VISION_URL", ""))
         web = ("http://", "https://")
         self.url = ", ".join(urls)
-        self.model = model or os.environ.get("STOREYPATH_VISION_MODEL") or ""
+        self._given_model = model or os.environ.get("STOREYPATH_VISION_MODEL") or ""
+        self.model = self._given_model
         self.key = key or os.environ.get("STOREYPATH_VISION_KEY") or ""
         each = parallel or int(os.environ.get("STOREYPATH_VISION_PARALLEL", "2"))
-        self.helpers = [_Helper(u, each) for u in urls if u.lower().startswith(web)]
+        self.helpers = [_Helper(u, each, self.key) for u in urls if u.lower().startswith(web)]
         self.ignored = [u for u in urls if not u.lower().startswith(web)]
         self.timeout = timeout
         # TLS to a helper is verified (against STOREYPATH_VISION_CA, when given, else the
@@ -182,6 +190,60 @@ class VisionModel:
     @property
     def name(self) -> str:
         return self.model or self.url
+
+    def helpers_said(self) -> list[dict]:
+        """The helpers as they were given (STOREYPATH_VISION_URL…): {url, key, enabled,
+        parallel} each."""
+        return [{"url": h.url, "key": h.key, "enabled": True, "parallel": h.parallel} for h in self.helpers]
+
+    def configure(self, helpers: list[dict]) -> None:
+        """The helpers replaced (an admin set them: Studio's database keeps them): each
+        {url, key, enabled, parallel}; those not enabled are not asked. One whose address,
+        key and number at once are as they were keeps how it was (left out, its model).
+        The model, unless it was given, is learned again from them."""
+        with self._lock:
+            old = {(h.url, h.key, h.parallel): h for h in self.helpers}
+            new = []
+            for said in helpers:
+                if not said.get("enabled", True):
+                    continue
+                url = str(said.get("url") or "").rstrip("/")
+                if not url.lower().startswith(("http://", "https://")):
+                    continue
+                parallel = max(1, min(int(said.get("parallel") or 2), MAX_PARALLEL))
+                k = (url, said.get("key") or "", parallel)
+                new.append(old.get(k) or _Helper(url, parallel, said.get("key") or ""))
+            changed = [h.url for h in new] != [h.url for h in self.helpers] or any(a is not b for a, b in
+                                                                                 zip(new, self.helpers))
+            self.helpers = new
+            self.ignored = []
+            self.url = ", ".join(h.url for h in new)
+            self._strict = len(new) > 1
+            if changed and not self._given_model:
+                self.model = ""
+                for h in new:  # the model is the first one's again: each is read again
+                    h.serves = None if not h.checking else h.serves
+            self.failed = None if new else "no GPU helper is set"
+            self._lock.notify_all()
+
+    def helper_states(self) -> list[dict]:
+        """How each helper is, as the GPU helpers page shows it: {url, state, error,
+        models, busy}; state "answers", "other model" (left out: it serves another),
+        "not answering" or "not asked yet"."""
+        now = time.monotonic()
+        out = []
+        with self._lock:
+            for h in self.helpers:
+                if h.serves and h.out_until <= now:
+                    state = "answers"
+                elif h.serves is False:
+                    state = "other model"
+                elif h.error:
+                    state = "not answering"
+                else:
+                    state = "not asked yet"
+                out.append({"url": h.url, "state": state, "error": h.error, "models": h.models, "busy": h.busy})
+        return out
 
     @property
     def parallel(self) -> int:
@@ -240,6 +302,8 @@ class VisionModel:
         with self._lock:
             for h, (ids, e) in zip(helpers, results):  # in the order given: the first decides the model
                 h.checking = False
+                if ids is not None:
+                    h.models = ids
                 if e is not None:
                     h.down(_why(e), now)
                 elif self._strict and ids and self.model and self.model not in ids:
@@ -263,8 +327,8 @@ class VisionModel:
 
     def _open(self, h: _Helper, path: str, body: dict | None, timeout: float):
         headers = {"Content-Type": "application/json"}
-        if self.key:
-            headers["Authorization"] = f"Bearer {self.key}"
+        if h.key:
+            headers["Authorization"] = f"Bearer {h.key}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(h.url + path, data=data, headers=headers)
         if h.url.lower().startswith("https://"):
@@ -413,6 +477,48 @@ class InWords:
             return reply_answer(out)
         except BadAnswer as e:
             raise BadAnswer(f"{self.name}: {e}") from e
+
+
+def sample_room_png(px: int = 192) -> bytes:
+    """A sample room as a plan prints it, outlined in red: four walls with a door gap,
+    a desk and a chair. A PNG drawn here (no drawing, no rendering libraries), to try a
+    helper with (sample_question)."""
+    import struct
+    import zlib
+
+    white, black, red, grey = (255, 255, 255), (30, 30, 30), (220, 30, 30), (150, 150, 150)
+    pixels = [[white] * px for _ in range(px)]
+
+    def rect(x0, y0, x1, y1, colour):
+        for y in range(max(0, y0), min(px, y1)):
+            for x in range(max(0, x0), min(px, x1)):
+                pixels[y][x] = colour
+
+    m, t = px // 8, max(3, px // 40)  # the walls: a margin in, this thick
+    rect(m, m, px - m, m + t, black)
+    rect(m, px - m - t, px - m, px - m, black)
+    rect(m, m, m + t, px - m, black)
+    rect(px - m - t, m, px - m, px // 2 - px // 10, black)  # a door's gap in the right-hand wall
+    rect(px - m - t, px // 2 + px // 10, px - m, px - m, black)
+    rect(px // 2 - px // 6, px // 3, px // 2 + px // 6, px // 3 + px // 10, grey)  # a desk
+    rect(px // 2 - px // 20, px // 3 + px // 8, px // 2 + px // 20, px // 3 + px // 8 + px // 12, grey)  # its chair
+    r = m + t + 2  # the room, outlined in red inside its walls
+    for y0, y1, x0, x1 in ((r, r + 2, r, px - r), (px - r - 2, px - r, r, px - r), (r, px - r, r, r + 2),
+                           (r, px - r, px - r - 2, px - r)):
+        rect(x0, y0, x1, y1, red)
+    raw = b"".join(b"\x00" + bytes(v for p in row for v in p) for row in pixels)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", px, px, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def sample_question(model: "VisionModel") -> dict[str, str]:
+    """The question a conversion asks of each room, asked of the sample room: the answer
+    (VisionUnavailable when it gives none)."""
+    return model.ask(sample_room_png(), ROOM_QUESTION, {"outline": OUTLINES, "type": list(ROOM_TYPES)})
 
 
 @dataclass

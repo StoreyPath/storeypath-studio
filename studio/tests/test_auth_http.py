@@ -240,6 +240,9 @@ ROWS = [
         hidden=OUTSIDE | {"building_editor"}),
     Row("GET", C + "/history?floor={hq0}", ok=200, passes={"admin", "owner", "floor_viewer"},
         hidden=OUTSIDE | {"building_editor"}),
+    Row("GET", "/api/admin/helpers", ok=200, passes={"admin"}),
+    Row("POST", "/api/admin/helpers", {"helpers": "nope"}, ok=(400, "helpers"), passes={"admin"}),
+    Row("POST", "/api/admin/helpers/test", {}, ok=(400, "url"), passes={"admin"}),
 ]
 
 
