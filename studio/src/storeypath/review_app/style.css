@@ -274,6 +274,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #world3d { position: absolute; inset: 0; }
 #map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
 #map.in3d .only2d { display: none !important; }
+#map:not(.in3d) .only3d { display: none !important; }
 #view-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 #view-mode button { border: 0; border-radius: 0; }
 #view-mode button + button { border-left: 1px solid var(--line); }

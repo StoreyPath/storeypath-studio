@@ -86,7 +86,8 @@ select { padding-right: 8px; max-width: 260px; }
 .segmented { display: inline-flex; border: 1px solid var(--glass-line); border-radius: 10px; padding: 2px; }
 .segmented button { border: 0; border-radius: 8px; padding: 5px 12px; }
 .segmented button.active { background: var(--accent); color: var(--accent-text); }
-body.walking #controls .explode, body.walking #controls label:has(#cutaway) { display: none; }
+#controls .hint { color: var(--muted); font-size: 12px; white-space: nowrap; }
+body.walking #controls .explode, body.walking #controls label:has(#cutaway), body.walking #controls .hint { display: none; }
 
 /* selection details */
 #details {
