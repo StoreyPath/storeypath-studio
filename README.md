@@ -228,6 +228,15 @@ building.
 
 Every change is saved to the project at once.
 
+**Many people at once.** One person edits a floor at a time: the first change takes
+it, and everyone else on it sees *Khalid is editing this floor since 10:20 — you can
+look* with his changes appearing as he saves them (and who made each), until he is
+*Done editing*, leaves the floor, or leaves it alone for 15 minutes (an admin may take
+it over). Review's header shows who else is on the floor; a project's page, who is on
+which. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own changes — refused, naming who,
+when someone else changed the same thing since — and *History* lists who changed what
+on the floor, in words ([more](studio/README.md#many-people-at-once)).
+
 ### Furniture and equipment
 
 Desks, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
@@ -534,7 +543,11 @@ docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data \
     ghcr.io/storeypath/studio
 ```
 
-Studio prints each helper as it starts, and whether it answers.
+Studio prints each helper as it starts, and whether it answers. Once Studio runs, an
+admin sets the helpers on its *GPU helpers* page instead (in the person menu): each
+one's address, key, whether it is used and how many rooms it takes at once, kept in
+Studio's database and used at once, with how each is, the model it serves (all must
+serve the same one) and a *Test* that sends it a sample room.
 
 | | |
 |---|---|
