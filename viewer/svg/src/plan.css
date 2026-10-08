@@ -124,6 +124,10 @@
 .sp-route-start-dot { fill: var(--sp-route-marker-ring); }
 .sp-route-end-pin { fill: var(--sp-route-end); stroke: var(--sp-route-marker-ring); stroke-width: 1.5; }
 .sp-route-end-dot { fill: var(--sp-route-marker-ring); }
+.sp-route-end-at { fill: var(--sp-route-end); stroke: var(--sp-route-marker-ring); stroke-width: 1.5; }
+.sp-route-leader { stroke: var(--sp-route-marker-ring); stroke-width: 3.5; stroke-linecap: round; }
+.sp-route-change .sp-route-leader { stroke: var(--sp-route-change); stroke-width: 2; }
+.sp-route-end .sp-route-leader { stroke: var(--sp-route-end); stroke-width: 2; }
 .sp-route-change-dot { fill: var(--sp-route-change); stroke: var(--sp-route-marker-ring); stroke-width: 2; }
 .sp-route-change-tag { fill: var(--sp-route-change); stroke: var(--sp-route-marker-ring); stroke-width: 1.5; }
 .sp-route-change-text {

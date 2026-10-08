@@ -21,6 +21,8 @@ import type { Camera, FloorPlan, PlanItem, PlanOpening, PlanRoute, PlanSpace, Sp
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ARROW_PX = 64; // a route's arrows this far apart on the screen
 const RIDES: Record<string, string> = { lift: "Lift", stairs: "Stairs", escalator: "Escalator", ramp: "Ramp" };
+const AROUND: readonly (readonly [number, number])[] = [[1, 0], [-1, 0], [0.7071, -0.7071], [-0.7071, -0.7071], [0.7071, 0.7071],
+  [-0.7071, 0.7071], [0, -1], [0, 1]]; // where a route's marker may be set off its point, in order
 const DRAG_PX = 4; // a press that moves less than this is a click
 const ANIMATION_MS = 260;
 
@@ -616,7 +618,7 @@ export class FloorPlanEngine extends EventTarget {
       el.prepend(t);
       return el;
     };
-    for (const { index, points } of this.routeLegs) {
+    for (const { points } of this.routeLegs) {
       // arrows the way it goes, evenly along it on the screen, clear of its ends
       const screen = points.map((p) => this.toScreen(p));
       const length = screen.slice(1).reduce((sum, q, i) => sum + Math.hypot(q[0] - screen[i]![0], q[1] - screen[i]![1]), 0);
@@ -636,45 +638,93 @@ export class FloorPlanEngine extends EventTarget {
         }
         walked += seg;
       }
+    }
+    // the markers, beside the labels rather than over them: the start on its point; the
+    // end and each change of floor where they cover the fewest labels, nearest first,
+    // with a short leader from their point when they are set off it
+    const labels: Box[] = [];
+    for (const [id, label] of this.labels) {
+      const m = this.markers.get(id);
+      if (!m || label.text.getAttribute("visibility") !== "visible") continue;
+      const [sx, sy] = this.toScreen(m);
+      labels.push([sx - label.width / 2, sy - label.height / 2, sx + label.width / 2, sy + label.height / 2]);
+    }
+    const taken: Box[] = [];
+    const covered = (b: Box): number => [...labels, ...taken].reduce((sum, o) =>
+      sum + Math.max(0, Math.min(b[2], o[2]) - Math.max(b[0], o[0])) * Math.max(0, Math.min(b[3], o[3]) - Math.max(b[1], o[1])), 0);
+    /** Where a marker goes beside its point s (screen): ``boxOf(anchor, rightward)`` is
+     * the box it takes there. */
+    const spot = (s: XY, radii: number[], boxOf: (a: XY, right: boolean) => Box): { at: XY; right: boolean } => {
+      let best: { at: XY; right: boolean; box: Box; score: number } | null = null;
+      for (const r of radii) {
+        for (const [dx, dy] of r === 0 ? [[0, 0] as const] : AROUND) {
+          const at: XY = [s[0] + dx * r, s[1] + dy * r];
+          const right = dx >= 0;
+          const box = boxOf(at, right);
+          const score = covered(box) + r * 4; // a pixel further costs as much as 4 square pixels of a label covered
+          if (!best || score < best.score - 1e-9) best = { at, right, box, score };
+        }
+      }
+      taken.push(best!.box);
+      return best!;
+    };
+    const leader = (m: SVGElement, to: XY): void => {
+      if (Math.hypot(to[0], to[1]) > 7) m.append(svg("line", { class: "sp-route-leader", x1: 0, y1: 0, x2: round(to[0]), y2: round(to[1]) }));
+    };
+    const starts: XY[] = [], ends_: XY[] = [], rides: { side: "to" | "from"; c: PlanRoute["changes"][number]; at: XY }[] = [];
+    for (const { index, points } of this.routeLegs) {
       const first = points[0]!, last = points[points.length - 1]!;
-      // where it changes floor: arriving on this one, and leaving it
-      const change = (side: "to" | "from", c: PlanRoute["changes"][number] | undefined, at: XY): void => {
-        if (!c) return;
-        const floor = side === "to" ? c.to_floor_id : c.from_floor_id;
-        const text = `${RIDES[c.by] ?? c.by} ${side} ${routed.floorName(floor)}`;
-        const m = svg("g", { class: "sp-route-change", "data-sp-route-change": side, "data-floor": floor });
-        const label = svg("text", { class: "sp-route-change-text", x: 22, y: -16, "dominant-baseline": "central" });
-        label.textContent = text;
-        m.append(svg("circle", { class: "sp-route-change-dot", r: 6 }),
-          svg("rect", { class: "sp-route-change-tag", x: 12, y: -27, width: round(text.length * 6.4 + 20), height: 22, rx: 11 }),
-          label);
-        marks.push(titled(place(m, at), text));
-      };
-      if (index > 0) change("from", changes[index - 1], first);
-      if (index < legs.length - 1) change("to", changes[index], last);
-      if (index === 0) {
-        const m = svg("g", { class: "sp-route-start", "data-sp-route-start": "" });
-        m.append(svg("circle", { class: "sp-route-start-ring", r: 8.5 }), svg("circle", { class: "sp-route-start-dot", r: 3.5 }));
-        ends.push(titled(place(m, first), "Start"));
+      if (index === 0) starts.push(first);
+      if (index === legs.length - 1) ends_.push(last);
+      if (index > 0 && changes[index - 1]) rides.push({ side: "from", c: changes[index - 1]!, at: first });
+      if (index < legs.length - 1 && changes[index]) rides.push({ side: "to", c: changes[index]!, at: last });
+    }
+    for (const p of starts) {
+      const m = svg("g", { class: "sp-route-start", "data-sp-route-start": "" });
+      m.append(svg("circle", { class: "sp-route-start-ring", r: 8.5 }), svg("circle", { class: "sp-route-start-dot", r: 3.5 }));
+      ends.push(titled(place(m, p), "Start"));
+      const [sx, sy] = this.toScreen(p);
+      taken.push([sx - 9, sy - 9, sx + 9, sy + 9]);
+    }
+    for (const p of ends_) {
+      const s = this.toScreen(p);
+      const { at } = spot(s, [0, 26, 44, 64], (a) => [a[0] - 11, a[1] - 31, a[0] + 11, a[1]]);
+      const to: XY = [at[0] - s[0], at[1] - s[1]];
+      const m = svg("g", { class: "sp-route-end", "data-sp-route-end": "" });
+      leader(m, to);
+      if (to[0] || to[1]) m.append(svg("circle", { class: "sp-route-end-at", r: 4 }));
+      const pin = svg("g", { transform: `translate(${round(to[0])},${round(to[1])})` });
+      pin.append(svg("path", { class: "sp-route-end-pin", d: "M0,0C-3,-7 -11,-12 -11,-20A11,11 0 1 1 11,-20C11,-12 3,-7 0,0Z" }),
+        svg("circle", { class: "sp-route-end-dot", cx: 0, cy: -20, r: 4.2 }));
+      m.append(pin);
+      ends.push(titled(place(m, p), "Destination"));
+    }
+    for (const { side, c, at: p } of rides) {
+      const floor = side === "to" ? c.to_floor_id : c.from_floor_id;
+      const text = `${RIDES[c.by] ?? c.by} ${side} ${routed.floorName(floor)}`;
+      const m = svg("g", { class: "sp-route-change", "data-sp-route-change": side, "data-floor": floor });
+      const label = svg("text", { class: "sp-route-change-text", "dominant-baseline": "central" });
+      label.textContent = text;
+      g.append(label); // laid out, to be measured
+      let width = text.length * 6.4 + 20;
+      try {
+        const w = label.getComputedTextLength();
+        if (w > 0) width = w + 20;
+      } catch {
+        // not laid out (the plan is not shown): the guess
       }
-      if (index === legs.length - 1) {
-        const m = svg("g", { class: "sp-route-end", "data-sp-route-end": "" });
-        m.append(svg("path", { class: "sp-route-end-pin", d: "M0,0C-3,-7 -11,-12 -11,-20A11,11 0 1 1 11,-20C11,-12 3,-7 0,0Z" }),
-          svg("circle", { class: "sp-route-end-dot", cx: 0, cy: -20, r: 4.2 }));
-        ends.push(titled(place(m, last), "Destination"));
-      }
+      const s = this.toScreen(p);
+      const { at, right } = spot(s, [16, 30, 48], (a, r) => (r ? [a[0], a[1] - 11, a[0] + width, a[1] + 11]
+        : [a[0] - width, a[1] - 11, a[0], a[1] + 11]));
+      const x = at[0] - s[0] - (right ? 0 : width), y = at[1] - s[1];
+      leader(m, [at[0] - s[0], y]);
+      label.setAttribute("x", String(round(x + 10)));
+      label.setAttribute("y", String(round(y)));
+      m.append(svg("circle", { class: "sp-route-change-dot", r: 6 }),
+        svg("rect", { class: "sp-route-change-tag", x: round(x), y: round(y - 11), width: round(width), height: 22, rx: 11 }), label);
+      marks.push(titled(place(m, p), text));
     }
     g.append(...arrows, ...marks, ...ends);
-    // each change's tag as wide as its words, once they are laid out
-    for (const m of marks) {
-      const text = m.querySelector("text"), tag = m.querySelector("rect");
-      try {
-        const w = text?.getComputedTextLength() ?? 0;
-        if (w > 0 && tag) tag.setAttribute("width", String(round(w + 20)));
-      } catch {
-        // not laid out (the plan is not shown): keep the guess
-      }
-    }
   }
 
   private drawPin(): void {
