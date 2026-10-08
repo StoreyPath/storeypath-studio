@@ -10,8 +10,12 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
+    "anyio>=4",
     "cryptography>=43",
     "ezdxf>=1.4.4",
+    # Studio on the web (storeypath.web): FastAPI on uvicorn, its HTTP parser httptools
+    "fastapi>=0.143",
+    "httptools>=0.6.4",
     # Studio's own database: PostgreSQL with PostGIS (db/)
     "psycopg[binary]>=3.3",
     "psycopg-pool>=3.3",
@@ -20,6 +24,8 @@ dependencies = [
     "pyyaml>=6.0.3",
     "shapely>=2.1.2",
     "typer>=0.27.2",
+    "uvicorn>=0.54",
+    "uvloop>=0.21; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +66,7 @@ path = "hatch_build.py"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28",
     "pytest>=9.1.1",
 ]
 

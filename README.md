@@ -7,20 +7,21 @@ finds the plans, the floors, the rooms, the doors and what every room is, gives
 every object an ID that never changes, lets you check and complete it all (walls,
 doors, furniture and equipment), and opens it as a 3D world.
 
-One container, with or without a GPU. Works with no network at all.
+One container, its database inside, with or without a GPU. Works with no network
+at all.
 
 ```sh
 docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.io/storeypath/studio
 ```
 
-Then open the setup link `docker logs storeypath` prints, to make the first admin,
-and afterwards **https://localhost:8080**. Studio serves HTTPS with a certificate it
-makes itself, so the browser warns once (the log shows the certificate's
-fingerprint to compare); everyone logs in and sees what is shared with them
-([Users, sharing and backups](#users-sharing-and-backups)). This image needs no GPU
-and runs on amd64 and arm64: Linux, macOS and Windows with Docker. On a machine with
-an NVIDIA GPU, a second image adds a vision model that looks at the plans:
-[Offline images, CPU and GPU](#offline-images-cpu-and-gpu).
+Then open **https://localhost:8080** and log in as `admin`, password `admin`. Studio
+serves HTTPS with a certificate it makes itself, so the browser warns once (the log
+shows the certificate's fingerprint to compare); everyone logs in and sees what is
+shared with them ([Users, sharing and backups](#users-sharing-and-backups)). This
+image needs no GPU and runs on amd64 and arm64: Linux, macOS and Windows with
+Docker. On a machine with an NVIDIA GPU, an optional second image, the GPU helper,
+serves a vision model that looks at the plans:
+[Offline images: Studio and the GPU helper](#offline-images-studio-and-the-gpu-helper).
 
 ![Walking through a converted floor: down the corridor, into an office](docs/images/walk.gif)
 
@@ -41,7 +42,7 @@ an NVIDIA GPU, a second image adds a vision model that looks at the plans:
 - [Walk through it](#walk-through-it)
 - [With a GPU or without](#with-a-gpu-or-without)
 - [Run it](#run-it) · [Users, sharing and backups](#users-sharing-and-backups) ·
-  [Offline images, CPU and GPU](#offline-images-cpu-and-gpu) ·
+  [Offline images: Studio and the GPU helper](#offline-images-studio-and-the-gpu-helper) ·
   [Without Docker](#without-docker) · [Requirements](#requirements)
 - [The language model](#the-language-model) · [The vision model](#the-vision-model)
 - [The command line](#the-command-line)
@@ -295,7 +296,7 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
 - Items carry where they stand in their building (`local`): moving a building on the
   map changes nothing in it, and the change list says only that the building moved.
 - Each floor is also built in 3D ahead of time, so a slow machine shows it without
-  building it (this takes Node.js, which both images hold).
+  building it (this takes Node.js, which the Studio image holds).
 
 ### Sending a project to another Studio
 
@@ -355,14 +356,17 @@ otherwise do:
 
 | | Without a GPU | With a GPU |
 |---|---|---|
-| Image | `ghcr.io/storeypath/studio` ([docker/Dockerfile](docker/Dockerfile)) | built from [docker/Dockerfile.gpu](docker/Dockerfile.gpu) |
+| Images | `ghcr.io/storeypath/studio` ([docker/Dockerfile](docker/Dockerfile)) | the same Studio, and the GPU helper ([docker/gpu-helper](docker/gpu-helper/Dockerfile)) on the machine with the GPU |
 | Reads the drawing | rules | rules |
-| Reads the texts (room names, titles, notes, levels) | the language model, Qwen3.5-4B, on the CPU | the same model, on the GPU |
-| Looks at the plan (is it a room? merged rooms; a type from what is drawn) | no: those are left to a person in review | the vision model, Gemma 4 31B, on the GPU |
-| Needs | 2 CPU cores, 4 GB of memory | an NVIDIA GPU with 32 GB free |
+| Reads the texts (room names, titles, notes, levels) | the language model, Qwen3.5-4B, on the CPU | the same |
+| Looks at the plan (is it a room? merged rooms; a type from what is drawn) | no: those are left to a person in review | the vision model, Gemma 4 31B, on the GPU helper |
+| Needs | 2 CPU cores, 4 GB of memory | and for the helper, an NVIDIA GPU with 32 GB free |
 
-Without a GPU, the CPU image can still use a vision model **served elsewhere** (a GPU
-machine on your network, or a hosted service): set `STOREYPATH_VISION_URL` (and
+The GPU helper is optional and separate: Studio is told where it is
+(`STOREYPATH_VISION_URL`, with the key it asks for) and uses it once it answers. One
+Studio can use several helpers, on several GPUs or machines, and spreads each floor's
+rooms over them. Any vision model **served elsewhere** works the same way (your own
+OpenAI-compatible server, or a hosted service: `STOREYPATH_VISION_URL`, and
 `STOREYPATH_VISION_MODEL`, `STOREYPATH_VISION_KEY` as it needs). Views of the plan
 around each room, the drawings' texts when they are checked for private
 information, and the rows of their door and window schedules are then sent to it.
@@ -381,9 +385,12 @@ docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.
 Then open https://localhost:8080 and log in as `admin`, password `admin` (change it
 in the person menu, top right, when you like), create a project and drop in a
 drawing. The browser warns once about Studio's own certificate: the log prints its
-SHA-256 fingerprint, to compare with the one the browser shows. Projects, accounts
-and the certificate live in the `storeypath` volume, so they survive restarts and
-upgrades:
+SHA-256 fingerprint, to compare with the one the browser shows. Everything Studio
+keeps lives in the `storeypath` volume, so it survives restarts and upgrades: its
+database (the projects with their drawings and exports, the accounts and who sees
+what), its certificate and its caches. The database is PostgreSQL with PostGIS,
+inside the container: it starts with Studio, and stops cleanly after it on `docker
+stop`.
 
 | | |
 |---|---|
@@ -393,8 +400,11 @@ upgrades:
 | Let others on your network use it | publish the port on all interfaces: `-p 8080:8080`, and add them on the Users page. They reach it by the machine's address or name: give it with `-e STOREYPATH_ALLOWED_HOSTS=studio.example,192.168.1.20` so it is on the certificate (Studio also refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
 | Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
 | Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without |
-| Users, backups | the person menu (top right): *Users* for admins, *Download a backup*; or `docker exec storeypath storeypath users list`, `docker exec storeypath storeypath backup --out /tmp/b.tar.gz` |
-| Use a vision model served elsewhere | `-e STOREYPATH_VISION_URL=http://gpu-server:8105/v1` (any OpenAI-compatible endpoint that takes images) |
+| Users, backups | the person menu (top right): *Users* for admins, *Download a backup*; or `docker exec storeypath storeypath users list`, `docker exec storeypath storeypath backup --out /tmp/studio.backup` |
+| Look at the plans with GPU helpers | `-e STOREYPATH_VISION_URL=http://gpu1:8105/v1,http://gpu2:8105/v1 -e STOREYPATH_VISION_KEY=…` (the helpers' key): [Run the GPU helper](#run-the-gpu-helper). Any OpenAI-compatible endpoint that takes images works too |
+| Its database | inside, reached over a socket only (no port): `docker exec -it storeypath psql`. Its log: `/data/pg/log` |
+| Another database | `-e STOREYPATH_DATABASE_URL=postgresql://user:password@host/storeypath`: your own PostgreSQL 17 with PostGIS 3, in place of the one inside (which then does not start). Optional: Studio needs none |
+| Docker Compose | `docker compose -f docker/compose.yml up -d`, the same Studio and volume; `--profile gpu` adds the GPU helper beside it ([docker/compose.yml](docker/compose.yml)) |
 | Logs | `docker logs -f storeypath` |
 
 The same image is the command-line tool: `docker run --rm -v "$PWD:/data"
@@ -403,9 +413,8 @@ lists the commands.
 
 ## Users, sharing and backups
 
-Studio keeps who may use it in one SQLite file of its data folder, `studio.db`, beside
-the projects (which stay files): the accounts, who each project is shared with, the
-sessions and an audit log. Everyone logs in.
+Studio keeps who may use it in its database, with the projects: the accounts, who
+each project is shared with, the sessions and an audit log. Everyone logs in.
 
 - **Roles.** An *admin* adds users, sets their role, disables them or gives a new
   temporary password, sees and does everything, and may give a project another owner.
@@ -433,31 +442,33 @@ sessions and an audit log. Everyone logs in.
   twice; `--password-stdin` for scripts), `users list`, `users passwd`, `users disable`
   / `enable`, `users role`.
 - **Backups.** *Download a backup* (admins, and whoever may) or `storeypath backup`
-  gives the whole data folder as one `.tar.gz`: projects, item types, and a snapshot
-  of `studio.db` (the accounts with their passwords' hashes, sharing and the audit log;
-  no session), so the `backup` capability hands those over too. Studio's certificate
-  is not in it: a restored Studio makes a new one (browsers warn once).
-  `storeypath restore FILE --data DIR` puts it back into an empty folder.
+  gives Studio's whole database as one file (a PostgreSQL dump, in its custom
+  format): the projects with their drawings and exports, item types, the accounts with
+  their passwords' hashes, sharing and the audit log (no session), so the `backup`
+  capability hands those over too. Studio's certificate is not in it: a restored
+  Studio makes a new one (browsers warn once). `storeypath restore` loads a backup
+  into an empty Studio. The image holds `pg_dump`, `pg_restore` and `psql` (17) for
+  doing it by hand.
 
 Every setting, the audit log, and what each call of Studio's API needs:
 [studio/README.md](studio/README.md#users-sharing-and-backups).
 
-## Offline images, CPU and GPU
+## Offline images: Studio and the GPU helper
 
 Both images hold everything they need. Nothing is downloaded when they run: no
 models, no telemetry, no map tiles, and the 3D view's libraries are served by Studio
 itself. The models are fetched once, **before** the build, by scripts that check
 their checksums, and baked in.
 
-| | CPU image | GPU image |
+| | Studio | GPU helper (optional) |
 |---|---|---|
-| Built from | [docker/Dockerfile](docker/Dockerfile) | [docker/Dockerfile.gpu](docker/Dockerfile.gpu) |
+| Built from | [docker/Dockerfile](docker/Dockerfile) | [docker/gpu-helper/Dockerfile](docker/gpu-helper/Dockerfile) |
 | Published | `ghcr.io/storeypath/studio`, amd64 and arm64, by [the release workflow](.github/workflows/release.yml) for each version tag | not published: build it yourself (amd64) |
-| Models fetched first | `docker/fetch-models.sh`: Qwen3.5-4B (2.7 GB) | `docker/fetch-models.sh` and `docker/fetch-vision.sh`: Gemma 4 31B, 4-bit (about 18 GB) and its image encoder (about 1 GB) |
-| Inside | Studio; LibreDWG's `dwg2dxf` for DWG; llama.cpp's `llama-server` for the CPU (it picks the fastest CPU code at start); the language model; Node.js for pre-built 3D; the viewers | the same, with `llama-server` built for CUDA (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) and NVIDIA's CUDA runtime, and the vision model |
-| Starts | Studio; the language model loads in the background | the vision model on the GPU (a minute or two), then Studio |
+| Models fetched first | `docker/fetch-models.sh`: Qwen3.5-4B (2.7 GB) | `docker/fetch-vision.sh`: Gemma 4 31B, 4-bit (about 18 GB) and its image encoder (about 1 GB) |
+| Inside | Studio; its database, PostgreSQL 17 with PostGIS 3; LibreDWG's `dwg2dxf` for DWG; llama.cpp's `llama-server` for the CPU (it picks the fastest CPU code at start); the language model; Node.js for pre-built 3D; the viewers | llama.cpp's `llama-server` built for CUDA (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) with NVIDIA's CUDA runtime, and the vision model: nothing else |
+| Starts | its database, then Studio; the language model loads in the background | the vision model on the GPU (a minute or two); Studio uses it once it answers |
 
-### Build the CPU image
+### Build the Studio image
 
 ```sh
 docker/fetch-models.sh                                   # once: the language model (2.7 GB, checksum-verified)
@@ -467,14 +478,14 @@ docker build -f docker/Dockerfile -t storeypath/studio .
 `docker/fetch-models.sh 2B` and `--build-arg MODEL=Qwen3.5-2B-Q4_K_M.gguf` build a
 smaller image with a smaller model ([The language model](#the-language-model)).
 
-### Build the GPU image
+### Build the GPU helper
 
 On any machine with internet (an Apple Silicon Mac builds it too, through Docker
 Desktop's x86 emulation, in an hour or two):
 
 ```sh
-docker/fetch-models.sh && docker/fetch-vision.sh          # once: 2.7 GB + 19 GB, checksum-verified
-docker build --platform linux/amd64 -f docker/Dockerfile.gpu -t storeypath/studio:gpu .
+docker/fetch-vision.sh                                    # once: 19 GB, checksum-verified
+docker build --platform linux/amd64 -f docker/gpu-helper/Dockerfile -t storeypath/gpu-helper .
 ```
 
 llama.cpp is compiled for every GPU generation from A100 on by default;
@@ -483,13 +494,13 @@ which is quicker, and `--build-arg JOBS=4` limits how many compile at once.
 
 ### Carry it to an air-gapped machine
 
-On the machine with internet, save the image to a file (the published CPU image, or
+On the machine with internet, save the image to a file (the published Studio image, or
 one you built):
 
 ```sh
 docker pull ghcr.io/storeypath/studio
 docker save ghcr.io/storeypath/studio | gzip > storeypath-studio.tar.gz
-docker save storeypath/studio:gpu | gzip -1 > storeypath-studio-gpu.tar.gz   # the GPU image
+docker save storeypath/gpu-helper | gzip -1 > storeypath-gpu-helper.tar.gz   # the GPU helper
 ```
 
 Carry the file over, then on the isolated machine:
@@ -503,32 +514,42 @@ docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.
 of the other kind.) The command-line tool runs with `--network none`; the web app
 needs nothing but its published port.
 
-### Run the GPU image
+### Run the GPU helper
 
 On the GPU machine (Linux, Docker, the NVIDIA Container Toolkit, NVIDIA driver 525 or
-newer):
+newer), with a key of your own that Studio will send:
 
 ```sh
-docker load -i storeypath-studio-gpu.tar.gz
-docker run -d --name storeypath --gpus all -p 8080:8080 -v storeypath:/data storeypath/studio:gpu
-docker logs -f storeypath        # "vision model ready", then Studio's address (and the first time, the setup link)
+docker load -i storeypath-gpu-helper.tar.gz
+docker run -d --name storeypath-gpu --gpus all -p 8105:8105 \
+    -e STOREYPATH_HELPER_KEY=<a long random key, e.g. from openssl rand -hex 32> storeypath/gpu-helper
+docker logs -f storeypath-gpu    # the model loads in a minute or two
 ```
+
+Then tell Studio where it is, with the same key:
+
+```sh
+docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data \
+    -e STOREYPATH_VISION_URL=http://gpu-machine:8105/v1 -e STOREYPATH_VISION_KEY=<the same key> \
+    ghcr.io/storeypath/studio
+```
+
+Studio prints each helper as it starts, and whether it answers.
 
 | | |
 |---|---|
-| GPU memory | one NVIDIA card with 32 GB free: the vision model, two rooms looked at at once, and the language model, all on the GPU |
+| GPU memory | one NVIDIA card with 32 GB free: the vision model, and two rooms looked at at once |
 | Choose a card | `--gpus '"device=1"'` |
-| Rooms looked at at once | `-e STOREYPATH_VISION_PARALLEL=2` (the default); each more needs more GPU memory. `STOREYPATH_VISION_CONTEXT` (default 8192) is the context each one gets |
-| Without vision | `-e STOREYPATH_VISION=off`: rules and the language model only |
-| A vision model served elsewhere | `-e STOREYPATH_VISION_URL=…`: the image's own is then not started |
-| Reach it by a host name | `-e STOREYPATH_ALLOWED_HOSTS=<that name>` (addresses and localhost always work); the name goes on Studio's certificate too |
-| The first admin | `admin` / `admin`, or `-e STOREYPATH_ADMIN_PASSWORD=…` |
-| The model server's log | `docker exec storeypath cat /tmp/vision.log` |
+| Rooms looked at at once | `-e STOREYPATH_HELPER_SLOTS=2` (the default; each more needs more GPU memory), and as many on Studio's side: `STOREYPATH_VISION_PARALLEL`. `STOREYPATH_HELPER_CONTEXT` (default 8192) is the context each gets |
+| Several helpers | one on each GPU or machine (`--gpus '"device=0"' -p 8105:8105`, `--gpus '"device=1"' -p 8106:8105`, …), all with the same key, and Studio given them all: `STOREYPATH_VISION_URL=http://gpu1:8105/v1,http://gpu1:8106/v1,http://gpu2:8105/v1`. It spreads each floor's rooms over the helpers that answer, leaves out one that fails, and tries it again a while later |
+| The key | every call but `/health` needs it; the helper does not start without one (`-e STOREYPATH_HELPER_OPEN=1` serves without, on a network nothing else can reach) |
+| HTTPS | mount a certificate and its key: `-v /etc/helper-tls:/tls:ro -e STOREYPATH_HELPER_CERT=/tls/cert.pem -e STOREYPATH_HELPER_CERT_KEY=/tls/key.pem`, and give Studio `https://…`. Studio checks the certificate: `STOREYPATH_VISION_CA` (a file mounted into Studio) for one your organization made, `STOREYPATH_VISION_INSECURE=1` not to check a self-signed one on a trusted network. Without, the helper speaks plain HTTP: keep it on a trusted network, or behind a proxy that speaks HTTPS |
+| Beside Studio, on one machine | `docker compose -f docker/compose.yml --profile gpu up -d`, the key in `docker/.env` ([docker/compose.yml](docker/compose.yml)) |
+| Its log | `docker logs storeypath-gpu` |
 
-Loading the vision model takes a minute or two after each start; if it does not
-start (no GPU given to the container), Studio says so and runs without it. The GPU
-image always starts Studio; for its command-line tool, give
-`--entrypoint storeypath`.
+Studio works the same without a helper, and a project read with one reads the same
+again without (the answers are kept with it). The helper's engine is llama.cpp; vLLM
+may replace it, as measurements decide ([docker/gpu-helper/Dockerfile](docker/gpu-helper/Dockerfile)).
 
 ### Symbol spotting: research use only
 
@@ -537,7 +558,7 @@ a bathroom). It is **not StoreyPath's**: its repository states no licence and it
 weights were trained on non-commercial data (FloorPlanCAD, CC BY-NC), so it is **for
 research only**, and images built with it **must not be published or sold**.
 
-It is never in an image unless you fetch it before building the CPU image:
+It is never in an image unless you fetch it before building the Studio image:
 
 ```sh
 docker/fetch-symbols.sh                                 # its code (pinned) and weights (checksum-verified)
@@ -545,7 +566,7 @@ docker build -f docker/Dockerfile -t storeypath/studio . # baked in, with PyTorc
 ```
 
 The release workflow leaves it out unless the repository variable
-`STOREYPATH_SYMBOLS` is set to `research`; the GPU image never has it. See
+`STOREYPATH_SYMBOLS` is set to `research`; the GPU helper never has it. See
 [studio/README.md](studio/README.md#symbols-drawn-in-a-plan-optional-research-use-only).
 
 ## Without Docker
@@ -561,7 +582,9 @@ uv sync
 uv run storeypath serve --data ~/storeypath --open
 ```
 
-That is the whole web app, with projects kept in `~/storeypath`. On its own it reads
+That is the whole web app. Its data goes into a PostgreSQL database, as in the
+container: any PostgreSQL 17 with PostGIS 3, named with `export
+STOREYPATH_DATABASE_URL=postgresql://user:password@localhost/storeypath`. On its own it reads
 DXF, and room names by the rules alone: the container also holds
 [LibreDWG](https://www.gnu.org/software/libredwg/)'s `dwg2dxf` for DWG drawings and
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the language
@@ -611,7 +634,8 @@ setting. Also, as you need them:
 - **Vision**: `uv sync --extra vision`, and `STOREYPATH_VISION_URL` set to a vision
   model's endpoint. To serve Gemma 4 yourself on an NVIDIA GPU, fetch it with
   `docker/fetch-vision.sh` and run a CUDA build of `llama-server` with it and its
-  `--mmproj`, as [docker/start-gpu.sh](docker/start-gpu.sh) does.
+  `--mmproj`, as [docker/gpu-helper/start.sh](docker/gpu-helper/start.sh) does (or
+  run the GPU helper's image).
 - **The 2D plan page**: `npm ci && npm run build` in `viewer/svg` (Studio offers
   *2D plan* once it is built).
 - **Pre-built 3D in packages**: Node.js 20.6 or newer on the `PATH`.
@@ -625,8 +649,8 @@ size:
 |---|---|---|
 | CPU | 2 cores, 64-bit: x86-64 (Intel/AMD) or ARM64 (Apple Silicon, Graviton, Ampere) | 4 or more cores |
 | Memory | 4 GB for the container | 8 GB on the machine |
-| Disk | 7 GB: the image is about 3 GB to download, 6 GB unpacked | plus your drawings |
-| GPU | none for the CPU image: the language model runs on the CPU | for the GPU image: see below |
+| Disk | 8 GB: the image is about 3 GB to download, 7 GB unpacked | plus your drawings |
+| GPU | none for Studio: the language model runs on the CPU | for the GPU helper: see below |
 | Software | Linux with Docker 20.10 or newer; macOS or Windows with Docker Desktop (give it at least 4 GB of memory in its settings) | |
 | Browser | a current Chrome, Edge, Firefox or Safari (WebGL 2) — built-in laptop graphics are plenty for the 3D view | |
 | Network | to pull the image, once | none to run |
@@ -642,7 +666,7 @@ The language model's weights are mapped from the image rather than loaded, which
 why the container needs so little memory of its own; more memory just keeps them
 cached.
 
-**The GPU image** needs an amd64 Linux machine with an NVIDIA GPU of a generation it
+**The GPU helper** needs an amd64 Linux machine with an NVIDIA GPU of a generation it
 is built for (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) with 32
 GB free on one card, NVIDIA driver 525 or newer, Docker and the NVIDIA Container
 Toolkit, and disk for an image of over 20 GB (the vision model alone is 19 GB).
@@ -669,7 +693,7 @@ window schedules, and the private texts in a drawing.
 
 ## The vision model
 
-The GPU image runs Gemma 4 31B (4-bit) with llama.cpp on the GPU; any
+The GPU helper runs Gemma 4 31B (4-bit) with llama.cpp on the GPU; any
 OpenAI-compatible endpoint that takes images works instead (`llama-server` with
 the model's `--mmproj`, vLLM, or a hosted service). Measured on 119 rooms of two
 houses and an interior designer's furniture plan, each checked by hand, Gemma 4 31B
@@ -756,17 +780,19 @@ not change when they move.
 | 6 | DWG and real-world samples | done for a first real sheet set; a wider sample collection next |
 | 7 | Hardening: change reports, docs, releases | done: change lists; releases with a multi-arch image on ghcr.io |
 | 8 | Reading drawings like a person: layers, plans, units, room names | done |
-| 9 | Looking at the plans with a vision model, on a GPU | done: the GPU image |
+| 9 | Looking at the plans with a vision model, on a GPU | done: the GPU helper |
 | 10 | Completing a floor in review: walls, dividers, doors, windows, openings, spaces | done |
 | 11 | Furniture and equipment with IDs of their own; capacity and grade | done (format 0.7) |
 
 ## Licence
 
 StoreyPath is [Apache License 2.0](LICENSE). The images also hold, each under its own
-licence (all in `/usr/share/storeypath/licenses`): LibreDWG's `dwg2dxf`
-(GPL-3.0-or-later, run as a separate program; its exact source is in the image),
-llama.cpp (MIT), the Qwen3.5 model weights (Apache-2.0), three.js (MIT), MapLibre GL
-JS (BSD-3-Clause), JSZip (MIT) and Node.js (MIT). The GPU image adds the Gemma 4
-model weights (Apache-2.0) and NVIDIA's CUDA runtime and cuBLAS (CUDA Toolkit EULA,
+licence (all in `/usr/share/storeypath/licenses`): PostgreSQL (PostgreSQL Licence)
+and PostGIS (GPL-2.0-or-later), as Debian packages, run as separate programs;
+LibreDWG's `dwg2dxf` (GPL-3.0-or-later, run as a separate program; its exact source
+is in the image), llama.cpp (MIT), the Qwen3.5 model weights (Apache-2.0), three.js
+(MIT), MapLibre GL JS (BSD-3-Clause), JSZip (MIT) and Node.js (MIT). The GPU helper
+holds llama.cpp (MIT) with OpenSSL (Apache-2.0), the Gemma 4 model weights
+(Apache-2.0) and NVIDIA's CUDA runtime and cuBLAS (CUDA Toolkit EULA,
 redistributable). SymPoint-V2 is never in an image unless you fetch it yourself
 before building, for research use only.

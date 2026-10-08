@@ -4,12 +4,17 @@ room and what kind. Code keeps the exact geometry and IDs; the model answers the
 judgement calls (a garden or a sheet frame is not a room; a bed makes a bedroom).
 
 The model is any OpenAI-compatible chat endpoint that takes images: llama.cpp's
-llama-server or vLLM on a GPU, or a hosted service.
+llama-server or vLLM on a GPU (the GPU helper, docker/gpu-helper), or a hosted
+service; or several helpers serving the same model, the questions spread over them.
 
-    STOREYPATH_VISION_URL    e.g. http://127.0.0.1:8105/v1 (none: no vision)
+    STOREYPATH_VISION_URL    e.g. https://gpu1:8105/v1 (none: no vision); several,
+                             separated by commas or spaces
     STOREYPATH_VISION_MODEL  model name, when the server serves several
-    STOREYPATH_VISION_KEY    bearer token, for hosted services
-    STOREYPATH_VISION_PARALLEL  questions in flight at once (default 2)
+    STOREYPATH_VISION_KEY    bearer token: the helpers' key, or a hosted service's
+    STOREYPATH_VISION_PARALLEL  questions in flight at once, per helper (default 2)
+    STOREYPATH_VISION_INSECURE  1: a helper's HTTPS certificate is not checked
+    STOREYPATH_VISION_CA     the certificate (PEM) to check helpers' against, in
+                             place of the system's authorities
 
 Rendering needs matplotlib and Pillow (`uv sync --extra vision`). Answers are kept in
 the workspace (``vision``), keyed by the room's shape, so converting again asks only
@@ -20,10 +25,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import io
 import json
 import math
 import os
+import re
+import ssl
 import threading
 import time
 import urllib.error
@@ -85,56 +93,268 @@ CROP_PX = 768
 CROP_MIN_M = 6.0  # a crop shows at least this much of the plan around a room
 
 
-RECHECK_S = 60.0  # an endpoint that did not answer is tried again after this long
+BACKOFF_S = 5.0  # a helper that fails is left out this long, twice as long each time it fails again,
+RECHECK_S = 60.0  # up to this long, and then tried again
+LIST_TIMEOUT_S = 5.0  # for a helper's list of models
 
 
 class VisionUnavailable(Exception):
     pass
 
 
+class NoHelper(OSError):
+    """No helper may be asked: none answers."""
+
+
+def helper_urls(text: str | None) -> list[str]:
+    """The model servers STOREYPATH_VISION_URL names, separated by commas or spaces."""
+    return [u.rstrip("/") for u in re.split(r"[\s,]+", text or "") if u]
+
+
+def _helper_down(e: Exception) -> bool:
+    """Whether a request that failed says its helper is not answering (unreachable,
+    too slow, loading, overloaded, refusing the key), not that this one question
+    could not be answered (too large, malformed)."""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code >= 500 or e.code in (401, 403, 404, 408, 429)
+    return True
+
+
+def _why(e: Exception) -> str:
+    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+        return f"{e} (is STOREYPATH_VISION_KEY the helper's key?)"
+    return str(e) or type(e).__name__
+
+
+class _Helper:
+    """One model server: the questions it has in flight, and whether (and until when)
+    it is left out."""
+
+    def __init__(self, url: str, parallel: int):
+        self.url, self.parallel = url, max(1, parallel)
+        self.busy = 0
+        self.serves: bool | None = None  # its list of models read, with the model on it (None: not read yet)
+        self.failures = 0  # in a row
+        self.out_until = 0.0  # left out until then (time.monotonic())
+        self.error: str | None = None
+        self.checking = False  # its list of models is being read
+
+    def down(self, error: str, now: float) -> None:
+        self.failures += 1
+        self.error = error
+        self.out_until = now + min(RECHECK_S, BACKOFF_S * 2 ** min(self.failures - 1, 10))
+
+    def up(self) -> None:
+        self.failures, self.error, self.out_until = 0, None, 0.0
+
+
 class VisionModel:
-    """An OpenAI-compatible chat endpoint that takes images."""
+    """OpenAI-compatible chat endpoints that take images: one model server, or several
+    (GPU helpers) serving the same model. Questions are spread over the helpers that
+    answer, each taking ``parallel`` at once; one that fails is left out for a while
+    (BACKOFF_S, twice as long each time it fails again, up to RECHECK_S) and then
+    tried again, its questions going to the others meanwhile. Whichever helper
+    answers, the answer is filed by the model's name."""
 
     def __init__(self, url: str | None = None, model: str | None = None, key: str | None = None,
-                 parallel: int | None = None, timeout: float = 300.0):
-        self.url = (url if url is not None else os.environ.get("STOREYPATH_VISION_URL", "")).rstrip("/")
+                 parallel: int | None = None, timeout: float = 300.0, insecure: bool | None = None):
+        urls = helper_urls(url if url is not None else os.environ.get("STOREYPATH_VISION_URL", ""))
+        web = ("http://", "https://")
+        self.url = ", ".join(urls)
         self.model = model or os.environ.get("STOREYPATH_VISION_MODEL") or ""
         self.key = key or os.environ.get("STOREYPATH_VISION_KEY") or ""
-        self.parallel = parallel or int(os.environ.get("STOREYPATH_VISION_PARALLEL", "2"))
+        each = parallel or int(os.environ.get("STOREYPATH_VISION_PARALLEL", "2"))
+        self.helpers = [_Helper(u, each) for u in urls if u.lower().startswith(web)]
+        self.ignored = [u for u in urls if not u.lower().startswith(web)]
         self.timeout = timeout
-        self._slots = threading.BoundedSemaphore(max(1, self.parallel))  # questions in flight at once
-        self._checked: bool | None = None
-        self._checked_at = 0.0
-        self.failed: str | None = None
+        # TLS to a helper is verified (against STOREYPATH_VISION_CA, when given, else the
+        # system's authorities), unless it is insecure: a self-signed one on a trusted network
+        self.insecure = os.environ.get("STOREYPATH_VISION_INSECURE", "") == "1" if insecure is None else insecure
+        self.ca = os.environ.get("STOREYPATH_VISION_CA") or None
+        self._tls: ssl.SSLContext | None = None
+        self._strict = len(self.helpers) > 1  # several: each one must serve the same model
+        self._listed = False  # their lists of models are read before they are asked
+        self._turn = 0  # the helper next in turn, of those equally busy
+        self._lock = threading.Condition()
+        self.failed: str | None = \
+            f"not a helper's address (http:// or https://): {', '.join(self.ignored)}" if self.ignored else None
 
     @property
     def name(self) -> str:
         return self.model or self.url
 
-    def available(self) -> bool:
-        """Whether the endpoint answers (asked once; again a while after it did not)."""
-        if not self.url:
-            return False
-        if self._checked is None or (not self._checked and time.monotonic() - self._checked_at > RECHECK_S):
-            self._checked_at = time.monotonic()
-            try:
-                with urllib.request.urlopen(self._request("/models"), timeout=5) as r:
-                    listed = json.load(r)
-                models = listed.get("data") if isinstance(listed, dict) else None
-                if not self.model and isinstance(models, list) and models and isinstance(models[0], dict):
-                    self.model = str(models[0].get("id") or "")
-                self._checked = True
-            except (OSError, ValueError, urllib.error.URLError) as e:
-                self.failed = f"no vision model at {self.url}: {e}"
-                self._checked = False
-        return self._checked
+    @property
+    def parallel(self) -> int:
+        """Questions in flight at once, over every helper that may be asked."""
+        return sum(h.parallel for h in self.helpers if h.serves is not False) or 1
 
-    def _request(self, path: str, body: dict | None = None) -> urllib.request.Request:
+    def available(self) -> bool:
+        """Whether a helper answers. Each one's list of models is read once (the model's
+        name learned from the first that lists one, when it is not given), and again
+        a while after it did not answer; while one answers, the others are read in the
+        background."""
+        if not self.helpers:
+            return False
+        with self._lock:
+            self._listed = True
+            due = self._due()
+            ready = any(h.serves for h in self.helpers)
+        if due and ready:
+            threading.Thread(target=self._read_lists, args=(due,), daemon=True).start()
+        elif due:
+            self._read_lists(due)
+        with self._lock:
+            while not any(h.serves for h in self.helpers) and any(h.checking for h in self.helpers):
+                self._lock.wait(1.0)  # being read for someone else
+            if any(h.serves for h in self.helpers):
+                return True
+            self.failed = self._why_none()
+            return False
+
+    def _due(self) -> list[_Helper]:
+        """The helpers whose list of models is to be read now, marked as being read
+        (with the lock held)."""
+        now = time.monotonic()
+        due = [h for h in self.helpers if not h.checking and h.serves is not True and h.out_until <= now]
+        for h in due:
+            h.checking = True
+        return due
+
+    def _read_lists(self, helpers: list[_Helper]) -> None:
+        def read(h: _Helper):
+            try:
+                with self._open(h, "/models", None, LIST_TIMEOUT_S) as r:
+                    listed = json.load(r)
+            except (OSError, ValueError, http.client.HTTPException) as e:
+                return None, e
+            models = listed.get("data") if isinstance(listed, dict) else None
+            ids = [str(m["id"]) for m in models if isinstance(m, dict) and m.get("id")] if isinstance(models, list) else []
+            return ids, None
+
+        if len(helpers) == 1:
+            results = [read(helpers[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=len(helpers)) as pool:
+                results = list(pool.map(read, helpers))
+        now = time.monotonic()
+        with self._lock:
+            for h, (ids, e) in zip(helpers, results):  # in the order given: the first decides the model
+                h.checking = False
+                if e is not None:
+                    h.down(_why(e), now)
+                elif self._strict and ids and self.model and self.model not in ids:
+                    h.serves, h.error, h.out_until = False, f"serves {', '.join(ids[:3])}, not {self.model}", now + RECHECK_S
+                else:
+                    if not self.model and ids:
+                        self.model = ids[0]
+                    h.serves = True
+                    h.up()
+            self._lock.notify_all()
+
+    def _why_none(self) -> str:
+        if len(self.helpers) == 1:
+            return f"no vision model at {self.helpers[0].url}: {self.helpers[0].error or 'no answer'}"
+        return "no vision model answers: " + "; ".join(f"{h.url}: {h.error or 'no answer'}" for h in self.helpers)
+
+    def _tls_context(self) -> ssl.SSLContext:
+        if self._tls is None:
+            self._tls = ssl._create_unverified_context() if self.insecure else ssl.create_default_context(cafile=self.ca)
+        return self._tls
+
+    def _open(self, h: _Helper, path: str, body: dict | None, timeout: float):
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         data = json.dumps(body).encode() if body is not None else None
-        return urllib.request.Request(self.url + path, data=data, headers=headers)
+        req = urllib.request.Request(h.url + path, data=data, headers=headers)
+        if h.url.lower().startswith("https://"):
+            return urllib.request.urlopen(req, timeout=timeout, context=self._tls_context())
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    def _may_ask(self, h: _Helper) -> bool:
+        # once lists are read (available()), only a helper whose list has the model
+        return h.serves is True or (h.serves is None and not self._listed)
+
+    def _take(self, tried: set) -> _Helper | None:
+        """A helper for a question, one of its places taken: of those not yet tried for
+        it, the least busy that answers, in turn (waiting for a place when all are busy). When
+        none answers, a question's first try goes to the one back soonest. None when
+        none is left to try."""
+        with self._lock:
+            while True:
+                if self._listed and (due := self._due()):  # back from being left out: read meanwhile
+                    threading.Thread(target=self._read_lists, args=(due,), daemon=True).start()
+                now = time.monotonic()
+                may = [h for h in self.helpers if h not in tried and self._may_ask(h)]
+                pool = [h for h in may if h.out_until <= now]
+                if not pool and not tried and may:
+                    pool = [min(may, key=lambda h: h.out_until)]
+                if not pool:
+                    return None
+                free = [h for h in pool if h.busy < h.parallel]
+                if free:
+                    n = len(self.helpers)  # of equals, the next in turn
+                    h = min(free, key=lambda h: (h.busy / h.parallel, (self.helpers.index(h) - self._turn) % n))
+                    self._turn = self.helpers.index(h) + 1
+                    h.busy += 1
+                    return h
+                self._lock.wait(1.0)
+
+    def _give(self, h: _Helper, down: str | None = None) -> None:
+        """A helper's place back, with how it went: it answered, or ``down`` says why not."""
+        with self._lock:
+            h.busy -= 1
+            if down is None:
+                h.up()
+            else:
+                h.down(down, time.monotonic())
+            self._lock.notify_all()
+
+    def _chat(self, body: dict):
+        """A chat question to a helper, and the JSON of its reply. A helper that does not
+        answer is left out and the question goes to another that answers (each tried
+        once): OSError when none answered it, ValueError when the reply is not JSON."""
+        tried: set = set()
+        failed: OSError | None = None
+        while (h := self._take(tried)) is not None:
+            tried.add(h)
+            try:
+                with self._open(h, "/chat/completions", body, self.timeout) as r:
+                    reply = r.read()
+            except (OSError, http.client.HTTPException) as e:
+                if not _helper_down(e):  # this question only: the helper answered
+                    self._give(h)
+                    raise
+                self._give(h, _why(e))
+                failed = OSError(f"{h.url}: {_why(e)}")
+                continue
+            self._give(h)
+            return json.loads(reply)
+        raise failed or NoHelper(self._why_none())
+
+    def describe(self) -> list[str]:
+        """The helpers and how each is, as `serve` prints them."""
+        if not self.helpers and not self.ignored:
+            return []
+        now = time.monotonic()
+        lines = [f"vision: {len(self.helpers)} helper{'s' if len(self.helpers) != 1 else ''}, "
+                 f"{self.helpers[0].parallel if self.helpers else 0} question(s) at once each, "
+                 + ("with a key" if self.key else "no key (STOREYPATH_VISION_KEY)")]
+        with self._lock:
+            for h in self.helpers:
+                if h.serves and h.out_until <= now:
+                    state = f"answers ({self.model or 'its model'})"
+                elif h.serves is False:
+                    state = f"left out: {h.error}"
+                elif h.error:
+                    state = f"not answering ({h.error}); tried again in {max(0, round(h.out_until - now))} s"
+                else:
+                    state = "not asked yet"
+                tls = (" (its certificate not checked: STOREYPATH_VISION_INSECURE)" if self.insecure else "") \
+                    if h.url.lower().startswith("https://") else " (plain HTTP: for a trusted network)"
+                lines.append(f"  {h.url}{tls}: {state}")
+        lines += [f"  {u}: not used: not an http:// or https:// address" for u in self.ignored]
+        return lines
 
     def ask(self, image: bytes, question: str, fields: dict[str, list[str]]) -> dict[str, str]:
         """One answer per field, each one of its choices."""
@@ -154,10 +374,8 @@ class VisionModel:
         from .llm import BadAnswer, reply_answer
 
         try:
-            with self._slots, urllib.request.urlopen(self._request("/chat/completions", body), timeout=self.timeout) as r:
-                out = json.load(r)
-            answer = reply_answer(out)
-        except (OSError, ValueError, BadAnswer, urllib.error.URLError) as e:
+            answer = reply_answer(self._chat(body))
+        except (OSError, ValueError, BadAnswer) as e:
             raise VisionUnavailable(f"{self.name}: {e}") from e
         return {f: answer[f] for f in fields if isinstance(answer.get(f), str) and answer[f] in fields[f]}
 
@@ -186,9 +404,8 @@ class InWords:
             "chat_template_kwargs": {"enable_thinking": False},
         }
         try:
-            with urllib.request.urlopen(self.vision._request("/chat/completions", body), timeout=self.vision.timeout) as r:
-                out = json.load(r)
-        except (OSError, urllib.error.URLError) as e:
+            out = self.vision._chat(body)
+        except OSError as e:
             raise ModelUnavailable(f"{self.name}: {e}") from e
         except ValueError as e:
             raise BadAnswer(f"{self.name}: the reply is not JSON: {e}") from e

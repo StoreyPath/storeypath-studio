@@ -73,11 +73,14 @@ give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 | Behind a proxy that speaks HTTPS | `--http --secure-cookies --trusted-proxy <the proxy's address>`: plain HTTP from the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host`. The proxy must say who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`; else `X-Forwarded-For`, its nearest address not the proxy's; when both come they must agree, or the call is refused: a proxy that sets one passes the other on as the client sent it): the limits on failed logins and the audit go by it, and a call through the proxy without it is refused (400), so a proxy left unset shows at once rather than putting everyone behind one address. From any other address those headers are not heard |
 | On this computer, for development | `--http` |
 
-Plain `http://` sent to the HTTPS port is redirected to the same address over
-HTTPS. A connection that sends nothing for 60 seconds is closed (a large drawing on a
-slow link uploads for as long as it keeps sending), and Studio serves 128 connections
-at once: one more is closed as it comes. The review editor alone (`storeypath review`) and `storeypath view` serve
-plain HTTP on 127.0.0.1, for this computer only.
+Studio is a FastAPI app served by uvicorn (`storeypath.web`), in one process, its
+calls run in a pool of 64 threads. Plain `http://` sent to the HTTPS port is redirected
+to the same address over HTTPS. A connection that sends nothing for 60 seconds is
+closed (a large drawing on a slow link uploads for as long as it keeps sending), as is
+one that takes more than 30 seconds to send a request's headers; headers are at most
+64 KB. Studio serves 128 connections at once: one more is closed as it comes. The
+review editor alone (`storeypath review`) and `storeypath view` serve plain HTTP on
+127.0.0.1, for this computer only.
 
 ## Users, sharing and backups
 
@@ -173,8 +176,9 @@ logouts, passwords changed and reset, users created, changed and disabled, grant
 added, changed and removed, owners changed, projects created, opened and deleted,
 exports, backups and the setup: when, who, from what address.
 
-What each call of the API needs (`route()` in `server.py` asks first, in every case;
-a test fails for a call without a rule). Logged out, every call but logging in, out
+What each call of the API needs (each call in `storeypath/web/` asks `server.Gate`
+first; a test fails for a call without a rule, and for a route outside `/api/` that is
+not a page). Logged out, every call but logging in, out
 and the setup is answered 401; a project, building or floor someone may not see at
 all, 404, as one that is not there; one they see but may not do this to, 403. A
 request Studio cannot make sense of is answered 400 saying why; one that fails in
@@ -189,6 +193,7 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
+| `GET projects/<code>/events` | any access: a stream (Server-Sent Events) of what happens in the project that they may see: jobs' progress (as `GET jobs/<id>`), a heartbeat; it ends when they may no longer see the project |
 | `POST …/delete` | its owner or an admin |
 | `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |
 | `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
@@ -388,7 +393,7 @@ storeypath words house-private.dxf               # what is left, to look through
 
 Room names the rules don't know — abbreviations, misspellings, other languages —
 are read by a small language model running locally with llama.cpp's
-`llama-server`, on the CPU (on the GPU with a CUDA build, as in the GPU image); so
+`llama-server`, on the CPU (on the GPU with a CUDA build of it); so
 are sheet titles when finding plans, notes that state the units, level labels on
 sections, rows of door and window schedules, and private texts in drawings. Its
 answers are limited to StoreyPath's types by a JSON schema and are stored in the
@@ -403,7 +408,7 @@ the model.
 | `STOREYPATH_MODEL_URL` | use an already running `llama-server` instead |
 | `STOREYPATH_THREADS` | CPU threads for the model (default: all) |
 | `STOREYPATH_PARALLEL` | questions answered at once (default 1; more needs more memory) |
-| `STOREYPATH_GPU_LAYERS` | layers on the GPU, with a CUDA build of `llama-server` (e.g. `99`: all; the GPU image sets it) |
+| `STOREYPATH_GPU_LAYERS` | layers on the GPU, with a CUDA build of `llama-server` (e.g. `99`: all) |
 
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
@@ -444,23 +449,43 @@ the project converts the same way without the model. Where a vision model runs, 
 also reads, in words, the rows of door and window schedules and the private texts in
 drawings, in place of the language model.
 
-The model is any OpenAI-compatible endpoint that takes images: `llama-server` (with
-the model's `--mmproj`) or vLLM on a GPU, or a hosted service. Studio sends it views
-of the plan and texts from the drawings, so a hosted service sees them.
+The model is any OpenAI-compatible endpoint that takes images: the GPU helper
+([docker/gpu-helper](../docker/gpu-helper/Dockerfile): `llama-server` with Gemma 4
+31B, 4-bit, and its `--mmproj`), vLLM, or a hosted service; or several helpers
+serving the same model. Studio sends it views of the plan and texts from the
+drawings, so a hosted service sees them.
+
+With several helpers, each one's list of models is read before it is asked (one that
+lists another model is left out: answers are filed by the model's name); each
+question goes to the least busy helper that answers, each taking
+`STOREYPATH_VISION_PARALLEL` at once, so a floor's rooms spread over them. A helper
+that fails (unreachable, too slow, loading, refusing the key) is left out for 5
+seconds, twice as long each time it fails again up to a minute, and its questions go
+to the others; it is tried again after that, and one that was not answering when
+Studio started joins once it answers. `serve` prints each helper as it starts, and
+whether it answers.
 
 | Environment | |
 |---|---|
-| `STOREYPATH_VISION_URL` | the endpoint, e.g. `http://127.0.0.1:8105/v1` (none: no vision) |
-| `STOREYPATH_VISION_MODEL` | the model name, when the server serves several |
-| `STOREYPATH_VISION_KEY` | a bearer token, for hosted services |
-| `STOREYPATH_VISION_PARALLEL` | questions in flight at once (default 2) |
+| `STOREYPATH_VISION_URL` | the endpoint, e.g. `https://gpu1:8105/v1` (none: no vision); several, separated by commas or spaces |
+| `STOREYPATH_VISION_MODEL` | the model name, when the server serves several (else the first one listed) |
+| `STOREYPATH_VISION_KEY` | the key sent to each helper (`Authorization: Bearer`): the helpers' `STOREYPATH_HELPER_KEY`, or a hosted service's |
+| `STOREYPATH_VISION_PARALLEL` | questions in flight at once, per helper (default 2): the helper's slots |
+| `STOREYPATH_VISION_INSECURE` | `1`: a helper's HTTPS certificate is not checked (a self-signed one on a trusted network) |
+| `STOREYPATH_VISION_CA` | a certificate (PEM) helpers' certificates are checked against, in place of the system's authorities |
 
-The GPU image ([docker/Dockerfile.gpu](../docker/Dockerfile.gpu)) holds Gemma 4 31B
-(4-bit) and starts it with `llama-server` on the GPU at `127.0.0.1:8105`
-([docker/start-gpu.sh](../docker/start-gpu.sh)), with `STOREYPATH_VISION_PARALLEL`
-slots of `STOREYPATH_VISION_CONTEXT` tokens each (2 and 8192 by default);
-`STOREYPATH_VISION=off` starts it without, and a `STOREYPATH_VISION_URL` given uses
-that model instead.
+The GPU helper serves on port 8105 and is set by its own environment
+([docker/gpu-helper/start.sh](../docker/gpu-helper/start.sh)):
+
+| Environment | |
+|---|---|
+| `STOREYPATH_HELPER_KEY` | the key every call but `/health` must carry; without one it does not start |
+| `STOREYPATH_HELPER_OPEN` | `1`: serve without a key (a network nothing else can reach) |
+| `STOREYPATH_HELPER_SLOTS` | questions answered at once (default 2) |
+| `STOREYPATH_HELPER_CONTEXT` | tokens of context per question (default 8192) |
+| `STOREYPATH_HELPER_CERT`, `STOREYPATH_HELPER_CERT_KEY` | HTTPS with this certificate and key (PEM files mounted in); without, plain HTTP |
+| `STOREYPATH_HELPER_NAME` | the name the model is served under (default `gemma-4-31B-it-Q4_K_M`): answers are filed by it |
+| `STOREYPATH_HELPER_ENGINE` | `llama.cpp` (default); `vllm` is the place for vLLM, in an image of its own |
 
 Outside Docker, `uv sync --extra vision` adds what rendering needs (matplotlib,
 Pillow). Measured on 119 rooms of two houses and an interior designer's furniture
@@ -492,7 +517,7 @@ or outside Docker, `uv sync --extra symbols` and `STOREYPATH_SYMBOLS=../docker/s
 It runs on the CPU in a process of its own (a plan takes a few seconds);
 `convert --no-symbols` skips it. Images are built without it unless it was fetched,
 and release images only when the repository variable `STOREYPATH_SYMBOLS` is
-`research`; the GPU image never holds it. Images built with it must not be published
+`research`; the GPU helper never holds it. Images built with it must not be published
 or sold. On plans it was not trained on it mistakes things (wall-mounted air
 conditioners for windows, grid lines for walls), so it is used only to type rooms, and
 only from fixtures inside them.
@@ -562,6 +587,7 @@ items standing in it; its grade is the highest grade among its desks.
 
 | Environment | |
 |---|---|
+| `STOREYPATH_DATABASE_URL` | Studio's database: a PostgreSQL 17 with PostGIS 3 (`postgresql://user:password@host/db`, or `postgresql:///db?host=/run/postgresql` over a socket). The image sets it to its own database, which its start script makes in `/data/pg` and runs, reached over a Unix socket only; set it to another PostgreSQL and the image's does not start |
 | `STOREYPATH_ALLOWED_HOSTS` | more names Studio may be reached by, separated by commas or spaces (`*`: any); as `serve --allowed-host` (each goes on Studio's certificate) |
 | `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin, `admin`, is made at start with this password, not `admin` |
 | `STOREYPATH_NODE` | Node.js for building the floors' 3D at export (default: `node` on the `PATH`; empty: never) |

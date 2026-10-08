@@ -27,11 +27,11 @@ Three kinds of reader take part:
 - **Rules**: code that measures what is drawn (lines, arcs, texts, their sizes and
   where they stand). They always run and give the same answer every time.
 - **The language model** (Qwen3.5-4B, run by llama.cpp inside the container, on the
-  CPU; on the GPU in the GPU image): reads texts the rules do not know. It is asked
+  CPU): reads texts the rules do not know. It is asked
   short, closed questions (which of StoreyPath's room types does this label name?
   which floor does this title show?) and its answer is held to a JSON schema of
   fixed choices, so it can suggest but never invent.
-- **The vision model** (only when one is set: Gemma 4 31B in the GPU image, or any
+- **The vision model** (only when one is set: Gemma 4 31B on the GPU helper, or any
   OpenAI-compatible model that takes images, served elsewhere): looks at the plan
   as printed, one room at a time, and makes the calls a person makes at a glance.
 
@@ -78,7 +78,7 @@ floor is read again (*Re-read drawing*, or after an edit in review). On the comm
 ## 1. Opening the file (`cad.py`)
 
 - **DXF** is read with [ezdxf](https://ezdxf.mozman.at/). **DWG** is first converted
-  to DXF by LibreDWG's `dwg2dxf` (in both images; outside them, `dwg2dxf` or the ODA
+  to DXF by LibreDWG's `dwg2dxf` (in the Studio image; outside it, `dwg2dxf` or the ODA
   File Converter if installed). A conversion still running after 10 minutes is
   stopped, with a note to save the drawing as DXF.
 - **A damaged file is read as far as it can be.** ezdxf's auditor fixes or takes out
@@ -423,15 +423,15 @@ their IDs, and its location ([spec/FORMAT.md](../spec/FORMAT.md), format 0.7).
 - `changes.json` lists what was added, changed and retired in that building since
   the last package that held it, compared in the building's own frame: moving a
   building on the map lists the building as changed, nothing in it.
-- With Node.js at hand (it is in both images), each floor is also built in 3D ahead
+- With Node.js at hand (it is in the Studio image), each floor is also built in 3D ahead
   of time (`world/<floor-id>.glb`), so a slow machine shows it without building it.
 
 ## With a GPU and without
 
-| | Without a GPU (CPU image, or no vision model set) | With a GPU (GPU image), or a vision model served elsewhere |
+| | Without a GPU (no vision model set) | With a GPU (the GPU helper), or a vision model served elsewhere |
 |---|---|---|
 | Opening, units, plans, lining up, walls, spaces, doors, IDs | rules | rules |
-| Room names, sheet titles, unit notes, level labels | rules, then the language model on the CPU | the same; in the GPU image the language model runs on the GPU |
+| Room names, sheet titles, unit notes, level labels | rules, then the language model on the CPU | the same |
 | Private texts in a drawing, schedule rows | rules and the language model | rules and the vision model, asked in words |
 | Is it a room? Merged rooms divided into zones; corridors kept as ways through | not done: a person checks the review list | the vision model, each decision marked for a person to check |
 | A type for a room with no name | stays without one (stairs excepted, by their treads), listed for review; or symbols, research only | the type the vision model sees |

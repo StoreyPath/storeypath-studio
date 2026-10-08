@@ -608,7 +608,7 @@ def serve(
                    f"{', '.join(made.names)}\n  SHA-256 {made.fingerprint}\n"
                    "  browsers warn once about it: check the fingerprint they show is this one; to be reached "
                    "by another name or address, give it with --allowed-host")
-    from .server import trusted_networks
+    from .web.guard import trusted_networks
 
     try:
         proxies = trusted_networks(trusted_proxy or [])
@@ -724,7 +724,8 @@ def review(
 def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
            allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False,
            trusted_proxies=(), db=None, store=None) -> None:
-    from .server import Studio, make_server
+    from .server import Studio
+    from .web import make_server
 
     studio = Studio(data, db=db)
     if store is not None:
@@ -743,11 +744,15 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
                + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
                + (f"; vision: {status['vision']}" if status["vision"] else ""))
+    for line in studio.vision.describe():  # the GPU helpers, and how each is
+        typer.echo(line)
     if note:
         typer.echo(note)
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     # `kill` and `docker stop` send SIGTERM: stop as for Ctrl+C, so llama-server stops too.
+    # (uvicorn stops on either, letting the requests being answered finish, then gives
+    # the signal back: KeyboardInterrupt here.)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         server.serve_forever()

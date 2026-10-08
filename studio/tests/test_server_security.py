@@ -12,7 +12,8 @@ import urllib.request
 import pytest
 
 from sessions import admin_server, cookie
-from storeypath.server import Studio, allowed_hosts
+from storeypath.server import Studio
+from storeypath.web.guard import allowed_hosts
 
 
 class NoModel:

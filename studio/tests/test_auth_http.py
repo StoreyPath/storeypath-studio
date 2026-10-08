@@ -1,25 +1,29 @@
-"""Who may call what (server.Gate, asked first in every case of route()): every route
-tried as an admin, the project's owner, an engineer it is not shared with, a user who
-may view one floor, a user who may edit one building, a user with no access, and
-nobody logged in. A route added without a rule fails here: every case of route()
-must ask the gate first, and must have a row below."""
+"""Who may call what (server.Gate, asked first in every call of the web app): every
+route tried as an admin, the project's owner, an engineer it is not shared with, a user
+who may view one floor, a user who may edit one building, a user with no access, and
+nobody logged in. A route added without a rule fails here: every route of the app
+under /api/ must ask the gate first, and must have a row below; any other is one of
+the pages, which need no session."""
 
 import ast
 import http.client
 import inspect
 import json
+import re
 import shutil
 import textwrap
 import threading
 import time
 
 import pytest
+from fastapi.routing import APIRoute
 
 from storeypath import accounts as acc
-from storeypath import server as server_module
 from storeypath.accounts import Accounts, Scope, cookie_name
 from storeypath.samples import build_demo
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from storeypath.web import create_app, make_server
+from storeypath.web.pages import PAGES
 from storeypath.workspace import Workspace
 
 ROLES = ("admin", "owner", "engineer", "floor_viewer", "building_editor", "nobody", "anon")
@@ -40,11 +44,11 @@ class NoModel:
 class Site:
     """The server and who is who on it."""
 
-    def __init__(self, port, studio, accounts, ids, tokens, users, job):
+    def __init__(self, port, studio, accounts, ids, tokens, users, job, app):
         self.port, self.studio, self.accounts, self.ids = port, studio, accounts, ids
-        self.tokens, self.users, self.job = tokens, users, job
+        self.tokens, self.users, self.job, self.app = tokens, users, job, app
 
-    def send(self, method, path, body=None, token=None, raw=None, headers=None):
+    def send(self, method, path, body=None, token=None, raw=None, headers=None, stream=False):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=60)
         head = {"Cookie": f"{cookie_name(self.port)}={token}" if token else "none=1", **(headers or {})}
         data = None
@@ -56,7 +60,10 @@ class Site:
             head.update({"X-StoreyPath": "1", "Content-Type": "application/json"})
         conn.request(method, path, body=data, headers=head)
         res = conn.getresponse()
-        blob = res.read()
+        if stream and res.status == 200:  # a stream of events: its first line, then gone
+            blob = res.readline()
+        else:
+            blob = res.read()
         conn.close()
         try:
             payload = json.loads(blob) if res.getheader("Content-Type", "").startswith("application/json") else blob
@@ -64,10 +71,10 @@ class Site:
             payload = blob
         return res.status, payload, res
 
-    def as_(self, role, method, path, body=None, raw=None, fresh=False):
+    def as_(self, role, method, path, body=None, raw=None, fresh=False, stream=False):
         token = None if role == "anon" else self.accounts.start_session(self.users[role]) if fresh \
             else self.tokens[role]
-        return self.send(method, path, body, token, raw)
+        return self.send(method, path, body, token, raw, stream=stream)
 
     def wait_jobs(self):
         for _ in range(600):
@@ -110,7 +117,7 @@ def site(tmp_path_factory):
                "space": space, "loc": f"{code}-NOPE", "spare": users["spare"].id,
                "resettable": users["resettable"].id, "hq_pkg": packages[0].name, "annex_pkg": packages[1].name,
                "drawing": "hq-level-0.dxf", "token": "abc", "notes": "notes.txt", "missing": "missing.dxf"}
-        s = Site(srv.server_port, studio, accounts, ids, tokens, users, None)
+        s = Site(srv.server_port, studio, accounts, ids, tokens, users, None, srv.app)
         status, job, _ = s.send("POST", f"/api/projects/{code}/export", {"building": annex}, tokens["admin"])
         assert status == 200, job
         s.job = job["id"]
@@ -130,16 +137,20 @@ OUTSIDE = {"engineer", "nobody"}  # no access to it at all
 
 class Row:
     def __init__(self, method, path, body=None, *, ok, passes, hidden=frozenset(), raw=None, anyone=False,
-                 fresh=False, settle=False):
+                 fresh=False, settle=False, stream=False):
         self.method, self.path, self.body, self.ok, self.passes = method, path, body, ok, set(passes)
         self.hidden, self.raw, self.anyone, self.fresh, self.settle = set(hidden), raw, anyone, fresh, settle
+        self.stream = stream  # answered with a stream that does not end: its first line read
 
     @property
     def case(self) -> tuple[str, str]:
-        """The case of route() it is for: the method and the path with each {…} a capture."""
-        import re
+        """The route it is for: the method and the path with each {…} a capture."""
+        return self.method, as_case(self.path.split("?")[0])
 
-        return self.method, re.sub(r"\{[a-z_0-9]+\}", "*", self.path.split("?")[0].removeprefix("/api/"))
+
+def as_case(path: str) -> str:
+    """A path under /api/, each {…} (a capture) as *: "projects/*/floors/*"."""
+    return re.sub(r"\{[a-z_0-9]+\}", "*", path.removeprefix("/api/"))
 
 
 C = "/api/projects/{code}"
@@ -218,6 +229,7 @@ ROWS = [
     Row("POST", "/api/admin/users/{resettable}/password", {}, ok=200, passes={"admin"}),
     Row("GET", "/api/admin/audit", ok=200, passes={"admin"}),
     Row("GET", "/api/backup", ok=200, passes={"admin"}),
+    Row("GET", C + "/events", ok=200, passes=PROJECT, hidden=OUTSIDE, stream=True),
 ]
 
 
@@ -250,7 +262,8 @@ def test_each_route_lets_through_only_who_may(site, row):
         want, words = expected(row, role)
         if row.anyone and role == "anon" and row.path.endswith("/logout"):
             want = 200
-        status, payload, _ = site.as_(role, row.method, path, fill(row.body, ids), row.raw, fresh=row.fresh)
+        status, payload, _ = site.as_(role, row.method, path, fill(row.body, ids), row.raw, fresh=row.fresh,
+                                      stream=row.stream)
         said = json.dumps(payload) if isinstance(payload, (dict, list)) else ""
         if status != want or (words and words not in said):
             wrong.append(f"{role}: {status} {said[:160]} (wanted {want}{' ' + words if words else ''})")
@@ -259,23 +272,19 @@ def test_each_route_lets_through_only_who_may(site, row):
     assert not wrong, "\n".join(wrong)
 
 
-def route_cases():
-    """(method, path) of every case of server.route(), a capture as *; and each case's body."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(server_module.make_server)))
-    route = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "route")
-    match = next(n for n in route.body if isinstance(n, ast.Match))
+def app_routes(app):
+    """Every route of the app: (method, path as written, its function)."""
     out = []
-
-    def paths(pattern):
-        if isinstance(pattern, ast.MatchOr):
-            return [p for alt in pattern.patterns for p in paths(alt)]
-        return ["/".join(e.value.value if isinstance(e, ast.MatchValue) else "*" for e in pattern.patterns)]
-
-    for case in match.cases:
-        method_pattern, path_pattern = case.pattern.patterns
-        for path in paths(path_pattern):
-            out.append(((method_pattern.value.value, path), case))
+    for route in app.routes:
+        assert isinstance(route, APIRoute), f"{route!r}: not a route of the app's own (a mount, a router?)"
+        out += [(method, route.path, route.endpoint) for method in sorted(route.methods)]
     return out
+
+
+def api_cases(app):
+    """(method, path) of every call of the API, a capture as *, and its function."""
+    return [((method, as_case(path)), endpoint) for method, path, endpoint in app_routes(app)
+            if path.startswith("/api/")]
 
 
 def asks_the_gate(statement) -> bool:
@@ -284,17 +293,55 @@ def asks_the_gate(statement) -> bool:
         and isinstance(value.func.value, ast.Name) and value.func.value.id == "may"
 
 
-def test_every_case_of_route_asks_the_gate_first():
-    cases = route_cases()
+def first_line(endpoint):
+    """A call's first statement (after its docstring)."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(endpoint)))
+    body = next(n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))).body
+    first = body[0]
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+        body = body[1:]
+    return body[0]
+
+
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
+    return create_app(Studio(tmp_path_factory.mktemp("routes"), model=NoModel(), warm=False), accounts=None)
+
+
+def test_every_call_asks_the_gate_first(app):
+    cases = api_cases(app)
     assert len(cases) > 40
-    for (method, path), case in cases:
-        assert asks_the_gate(case.body[0]), f"{method} {path}: its first line does not ask the gate (may.…)"
+    for (method, path), endpoint in cases:
+        assert asks_the_gate(first_line(endpoint)), f"{method} {path}: its first line does not ask the gate (may.…)"
 
 
-def test_every_case_of_route_is_tried_here():
-    cases = {key for key, _ in route_cases()}
+def test_every_call_is_tried_here(app):
+    cases = {key for key, _ in api_cases(app)}
     tried = {row.case for row in ROWS}
-    # one case answers two paths (the project file by its old name too): both are the same rule
+    # one call answers two paths (the project file by its old name too): both are the same rule
     tried.add(("GET", "projects/*/project.storeypath"))
     assert cases - tried == set(), "routes without a row in ROWS"
     assert tried - cases == set(), "rows for routes that are not there"
+
+
+def test_what_needs_no_session_is_the_pages_alone(app):
+    public = {(method, path) for method, path, _ in app_routes(app) if not path.startswith("/api/")}
+    assert public == {("GET", p) for p in PAGES}, "a route outside /api/ that is not a page"
+    for method, path, endpoint in app_routes(app):
+        if not path.startswith("/api/"):
+            source = inspect.getsource(endpoint)
+            assert "May" not in source and "may." not in source, path  # a page asks nobody anything
+
+
+def test_a_route_without_a_rule_fails_here(app):
+    """What the two tests above catch: a call added without asking the gate first, or without a row."""
+    def careless(code: str):
+        return {"code": code}
+
+    app.add_api_route("/api/projects/{code}/careless", careless, methods=["GET"])
+    try:
+        (_, endpoint), = [(k, e) for k, e in api_cases(app) if k == ("GET", "projects/*/careless")]
+        assert not asks_the_gate(first_line(endpoint))
+        assert ("GET", "projects/*/careless") not in {row.case for row in ROWS}
+    finally:
+        app.router.routes.pop()
