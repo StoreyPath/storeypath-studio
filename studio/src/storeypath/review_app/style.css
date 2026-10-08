@@ -270,11 +270,48 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #menu .size-form button { display: inline-flex; width: auto; border: 1px solid var(--line); background: var(--panel); }
 #menu .size-form button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
-/* the floor in 3D (StoreyPath's world), instead of the plan */
+/* the floor in 3D (StoreyPath's world), or walked through, instead of the plan: one view,
+   the panel and toolbar the same in each */
 #world3d { position: absolute; inset: 0; }
 #map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
 #map.in3d .only2d { display: none !important; }
-#map:not(.in3d) .only3d { display: none !important; }
+#map:not(.in3d) .only3d, #map.walking .only3d { display: none !important; }
+#map:not(.walking) .onlywalk { display: none !important; }
+#map.placing #world3d { cursor: crosshair; }
+a.subtle { align-self: flex-start; font-size: 12px; color: var(--muted); text-decoration: none; }
+a.subtle:hover { color: var(--accent); text-decoration: underline; }
+/* walking: the cross aimed with, the room you are in, and how to start */
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 4;
+  pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .45);
+}
+#crosshair::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+}
+#map.placing #crosshair { border-color: #0ca678; }
+.walk-hud {
+  position: absolute; left: 12px; bottom: 12px; z-index: 4; min-width: 180px; max-width: min(380px, calc(100% - 24px));
+  padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--line); box-shadow: 0 2px 10px rgba(0, 0, 0, .12); pointer-events: none;
+}
+#walk-room { font-weight: 650; font-size: 15px; }
+#walk-keys:empty, #walk-meta:empty { display: none; }
+.walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
+.walk-enter .card {
+  max-width: min(420px, calc(100% - 32px)); padding: 16px 18px; border-radius: 12px; background: var(--panel);
+  border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); font-size: 13px;
+}
+.walk-enter .keys { list-style: none; margin: 8px 0 0; padding: 0; color: var(--muted); display: grid; gap: 4px; }
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0 5px; margin-right: 2px; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 5px; font: 600 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center; color: var(--text); background: var(--bg);
+}
+/* a place shown from the 3D view, for a moment */
+#guides circle.ping { fill: none; stroke: var(--select); stroke-width: 3; vector-effect: non-scaling-stroke; animation: ping 1.6s ease-out forwards; }
+@keyframes ping { from { opacity: 1; } to { opacity: 0; } }
 #view-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 #view-mode button { border: 0; border-radius: 0; }
 #view-mode button + button { border-left: 1px solid var(--line); }

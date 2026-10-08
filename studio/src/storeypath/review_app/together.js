@@ -51,7 +51,7 @@ export function avatar(p, cls = "") {
 
 // ---- the stream -----------------------------------------------------------------------
 
-/** Start: ``hooks`` are Review's (request, toast, floor, editableByAccess, changed,
+/** Start: ``hooks`` are Review's (request, toast, floor, editableByAccess, changed, elsewhere,
  * reload, showLock, status). */
 export function setupTogether({ code, base, me, hooks }) {
   Object.assign(live, { code, base, me, hooks });
@@ -97,7 +97,10 @@ export function onFloor(floor, lock) {
 }
 
 function heardChange(c) {
-  if (c.floor !== live.floor) return;
+  if (c.floor !== live.floor) { // another floor's, or the building's: of note to the 3D view
+    live.hooks.elsewhere?.(c);
+    return;
+  }
   refreshSteps();
   if (live.historyOpen) loadHistorySoon();
   if (c.page === PAGE) return; // made here: shown already

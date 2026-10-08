@@ -83,7 +83,6 @@ async function request(path, body) {
   if (sentAway(res, data)) throw new Error("log in again");
   if (res.status === 423) heardLocked(data.locked); // someone else is editing the floor: shown so
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
-  if (body !== undefined) changed3d(); // saved: the 3D view no longer shows it all
   return data;
 }
 
@@ -121,6 +120,7 @@ function showViewOnly() {
   for (const e of document.querySelectorAll("#ed-form input, #ed-form select, #asset-editor input, #asset-editor select, #it-size input")) {
     e.disabled = only || locked;
   }
+  draggable3d(); // items carried in 3D only by who may change the floor
 }
 
 function el(tag, attrs = {}, ...children) {
@@ -329,11 +329,15 @@ function renderFloorMeta() {
   if (f.converted_at) parts.push(new Date(f.converted_at).toLocaleString());
   $("floor-meta").textContent = parts.join(" · ");
   $("convert").disabled = !f.source;
-  $("walk3d").hidden = !f.converted_at;
   $("open-print").hidden = !f.source;
   $("open-print").href = `/api/${BASE}/floors/${encodeURIComponent(f.id)}/print.png`;
-  $("walk3d").href = "/viewer/examples/world/index.html?" + new URLSearchParams({ // its building as it is now
-    pkg: `/api/${BASE}/preview.storeypath?building=${encodeURIComponent(f.id.split("-").slice(0, 3).join("-"))}`, floor: f.id });
+  // 3D, 2D and walking are here, in one view; this is for showing the building full screen
+  $("own-window").hidden = !f.converted_at;
+  $("own-window").href = "/viewer/examples/world/index.html?" + new URLSearchParams({ // its building as it is now
+    pkg: `/api/${BASE}/preview.storeypath?building=${encodeURIComponent(buildingOf(f.id))}`, floor: f.id });
+  for (const b of document.querySelectorAll("#view-mode button[data-view='3d'], #view-mode button[data-view='walk']")) {
+    b.disabled = !f.converted_at;
+  }
 
   const box = $("warnings");
   box.hidden = !f.warnings.length;
@@ -705,9 +709,9 @@ function setupMap() {
     view3d.world?.setLabels(e.target.checked);
   });
   for (const b of document.querySelectorAll("#view-mode button")) {
-    b.addEventListener("click", () => show3d(b.dataset.view === "3d"));
+    b.addEventListener("click", () => setView(b.dataset.view));
   }
-  $("update3d").addEventListener("click", () => { view3d.stale = true; refresh3d(); });
+  setup3dPointer();
   $("show-hidden").addEventListener("change", (e) => {
     view3d.world?.setShowHidden(e.target.checked);
     state.showHidden = e.target.checked;
@@ -1033,6 +1037,7 @@ async function saveSpace(body, id = state.selected) {
   state.floor.spaces[i] = updated;
   state.byId.set(updated.id, updated);
   styleSpace(updated);
+  sync3dSpace(updated); // its label (and its floor's finish, by its type) in 3D at once
   placeLabels();
   renderLists();
   renderLegend();
@@ -1069,6 +1074,7 @@ async function reconvert() {
     toast(job.result.summaries.join("\n"));
     state.project = await request(`${BASE}/review`);
     fillFloorSelect();
+    view3d.dirty.add(id); // built again in 3D (that floor alone)
     await openFloor(id, state.selected, { keepView: true });
   } catch (e) {
     toast(`Could not re-read the drawing: ${e.message}`, true);
@@ -1096,6 +1102,8 @@ const HINTS = {
   window: "Window: click on a wall where it goes. Esc to stop.",
   opening: "Opening (a way through, no door): click on a wall where it goes. Esc to stop.",
   place: "Place: click on the plan where it goes; again for another. Esc to stop.",
+  place3d: "Place: click on the floor where it goes (it lines up as on the plan; Alt: as it is); again for another. Esc to stop.",
+  placeWalk: "Place: aim the cross at the floor where it goes and click; again for another. Esc frees the mouse, then Esc stops.",
   space: "Space: click its corners (they snap to walls); click the first again, double-click or Enter to close it. Backspace takes the last corner back, Esc stops.",
 };
 const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
@@ -1117,11 +1125,14 @@ function setTool(tool) {
   }
   $("map").classList.toggle("drawing-tool", Boolean(state.tool));
   clearPreview();
+  view3d.world?.ghost(null);
   if (state.tool) {
     select(null);
     selectItem(null);
-    toast(HINTS[state.tool]);
+    toast(HINTS[state.tool === "place" && view3d.shown ? (view3d.mode === "walk" ? "placeWalk" : "place3d") : state.tool]);
   }
+  draggable3d();
+  showWalk();
 }
 
 /** The floor's wall edges (and the walls drawn here), for snapping to. */
@@ -1295,6 +1306,7 @@ async function submitEdit(body, saying, after = null) {
     await followJob(await request(`${BASE}/floors/${state.floor.id}/edits`, body), saying);
     state.project = await request(`${BASE}/review`);
     fillFloorSelect();
+    view3d.dirty.add(state.floor.id); // read again with it: built again in 3D (that floor alone)
     await openFloor(state.floor.id, null, { keepView: true });
     toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
     after?.();
@@ -1595,6 +1607,7 @@ async function deleteItem() {
   try {
     const updated = await request(`${BASE}/objects/${d.id}`, { ignored: !d.ignored });
     Object.assign(d, updated);
+    dirty3d([state.floor.id]); // a wall with it or without it, in 3D
     toast(`${$("it-title").textContent}: ${d.ignored ? "deleted" : "restored"}`);
     if (d.ignored && !state.showHidden) selectItem(null);
     else selectItem(item);
@@ -1670,7 +1683,9 @@ function setupPanel() {
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (view3d.mode === "walk" && WALKING.has(e.code)) return; // the walker's
     if (state.asset && !state.tool && assetKey(e)) return;
+    if (view3d.shown && key3d(e)) return;
     if (state.tool === "space" && (e.key === "Backspace" || e.key === "Enter")) {
       e.preventDefault();
       if (e.key === "Enter") return closeSpace();
@@ -1690,9 +1705,8 @@ function setupPanel() {
       return;
     }
     if (e.key === "n" || e.key === "N") nextToReview();
-    else if (view3d.shown && "fFwWvVdDoOsS".includes(e.key)) {
-      if (e.key.toLowerCase() !== "f") toast("Switch to 2D to draw walls, dividers and doors");
-    } else if (e.key === "f" || e.key === "F") fit();
+    else if (view3d.shown) return; // (the drawing tools: on the plan, key3d)
+    else if (e.key === "f" || e.key === "F") fit();
     else if (!readable() && "wWvVdDoOsS".includes(e.key)) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
     else if (e.key === "w" || e.key === "W") setTool("wall");
     else if (e.key === "v" || e.key === "V") setTool("divide");
@@ -1800,7 +1814,7 @@ function assetAt(p) {
  * space), its rings, and the other items there mounted as it is (desks line up with
  * desks, not with the TV over them), for the magnet (fit.js). ``held``: whether the room
  * holds it (not when it stands across a wall already: it is held once it is in). */
-function placing(at, type, exceptId = null, rot = 0) {
+function placing(at, type, exceptId = null, rot = 0, reach = Math.max(0.15, 12 / state.view.k)) {
   const t = typeOf(type) || { code: type };
   const room = roomAt(at, (state.floor?.spaces || []).filter(visible));
   const rings = room ? ringsOf(room.geometry) : [];
@@ -1810,7 +1824,7 @@ function placing(at, type, exceptId = null, rot = 0) {
     .map((o) => ({ at: [o.x, o.y], rot: o.rotation || 0, box: itemBox(typeOf(o.type) || { code: o.type }) }));
   const box = itemBox(t);
   const held = !exceptId || !rings.length || fits(at, rot, box, rings);
-  return { room, rings: held ? rings : [], others, box, mount, reach: Math.max(0.15, 12 / state.view.k) };
+  return { room, rings: held ? rings : [], others, box, mount, reach };
 }
 
 const roomName = (room) => (room ? [room.name, room.number].filter(Boolean).join(" ") || "this room" : "this room");
@@ -1820,9 +1834,9 @@ function drawGuides(lines = []) {
   $("guides").replaceChildren(...lines.map(([a, b]) => svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })));
 }
 
-async function placeAsset(type, p, free = state.alt) {
+async function placeAsset(type, p, free = state.alt, reach = undefined) {
   if (!type || viewOnly()) return;
-  const ctx = placing(p, type);
+  const ctx = placing(p, type, null, 0, reach);
   const got = settle({ want: { at: p, rot: 0 }, last: null, ...ctx, free });
   drawGuides();
   if (!got) {
@@ -1834,6 +1848,7 @@ async function placeAsset(type, p, free = state.alt) {
       { type, x: round4(got.at[0]), y: round4(got.at[1]), rotation: round4(got.rot) });
     state.floor.items.push(a);
     renderAssets();
+    update3d(); // in 3D at once: this floor's items drawn again, nothing else
     if (state.byId.get(state.selected)) renderCapacity(state.byId.get(state.selected));
   } catch (e) {
     toast(`Not placed: ${e.message}`, true);
@@ -1849,9 +1864,11 @@ async function changeAsset(a, body) {
     if (got.floor_id && got.floor_id !== state.floor.id) {
       list.splice(i, 1);
       selectAsset(null);
+      view3d.dirty.add(got.floor_id); // there, in 3D, when that floor is shown
       toast("Carried to the other floor: it keeps its ID");
     } else if (i >= 0) list[i] = { ...got, floor_id: state.floor.id };
     renderAssets();
+    update3d();
     if (state.byId.get(state.selected)) renderCapacity(state.byId.get(state.selected));
     if (state.asset === a.id) renderAssetEditor();
   } catch (e) {
@@ -1968,14 +1985,28 @@ function setupAssets() {
   });
 }
 
-// ---- the floor in 3D ---------------------------------------------------------------
-// The floor as built, from the project as saved (Studio's package of the floor's
-// building, not recorded as an export): a click on a room chooses it here, as on the
-// plan. Walls, dividers and doors are drawn on the plan; what is saved shows in 3D
-// when it is built again (Update 3D, or another floor of another building).
+// ---- the floor in 3D, and walked through ---------------------------------------------------
+// One view, three ways to see the floor, in the same place: the plan (2D), the floor as
+// built (3D: orbit it) and a walk through it. The floor, what is chosen and the panel stay
+// as they are from one to another, and the plan keeps its view. The 3D world (Studio's
+// package of the floor's building, not recorded as an export) is built once and kept:
+// switching is at once. What changes shows in it at once: items (yours, or others' as
+// they are saved) are drawn again on their floor alone, a room's name or type its label
+// and floor; walls, doors, dividers and spaces (drawn on the plan) come with the floor
+// read again, and that floor alone is built again when the reading is done. In 3D and
+// walking, a click chooses a room or an item (walking: at the cross), items are placed as
+// on the plan (fit.js: held in their room, lined up by the magnet; Alt: as they are) and,
+// in 3D, dragged; right-click (or 2) shows that place on the plan, to draw there.
 
-// busy: the build under way (a promise); again: asked for while it was, so done once more after it
-const view3d = { world: null, building: null, stale: true, shown: false, busy: null, again: false, picking: false };
+// mode: "2d", "3d" or "walk" (shown: not 2d); busy: the build under way (a promise); again:
+// asked for while it was, so done once more after it; stale: the building to be built again
+// whole; dirty: floors to read again; from: the view before (where walking starts); plan:
+// the middle of the plan's view then; pointer: the last pointer over the 3D view
+const view3d = { world: null, building: null, stale: true, shown: false, mode: "2d", busy: null, again: false,
+  picking: false, dirty: new Set(), from: "2d", plan: null, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0 };
+const REACH_3D = 0.3; // m: how near a wall or an item the magnet takes an item in 3D (fit.js)
+const WALKING = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ShiftLeft", "ShiftRight"]);
+const buildingOf = (floorId) => floorId.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
 
 /** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
 function pick3d(id, { go = false } = {}) {
@@ -1988,21 +2019,33 @@ function pick3d(id, { go = false } = {}) {
   }
 }
 
-function changed3d() {
-  view3d.stale = true;
-  $("update3d").hidden = !view3d.shown;
-}
-
-async function show3d(on) {
-  view3d.shown = on;
-  for (const b of document.querySelectorAll("#view-mode button")) b.classList.toggle("active", (b.dataset.view === "3d") === on);
-  $("map").classList.toggle("in3d", on);
-  $("world3d").hidden = !on;
-  if (!on) {
-    $("update3d").hidden = true;
+/** The plan (2D), the floor in 3D, or walking through it ("2d", "3d", "walk"), in one view. */
+async function setView(mode) {
+  if (mode === view3d.mode) return;
+  if (mode !== "2d" && !state.floor?.converted_at) return toast("This floor is not converted yet: there is nothing to show in 3D", true);
+  const was = view3d.mode;
+  if (was === "2d") {
+    const { w, h } = viewport();
+    view3d.plan = w && h ? planPoint(w / 2, h / 2) : null; // where the plan looks: where walking starts
+  }
+  view3d.from = was;
+  view3d.mode = mode;
+  view3d.shown = mode !== "2d";
+  for (const b of document.querySelectorAll("#view-mode button")) b.classList.toggle("active", b.dataset.view === mode);
+  $("map").classList.toggle("in3d", view3d.shown);
+  $("map").classList.toggle("walking", mode === "walk");
+  $("world3d").hidden = !view3d.shown;
+  closeMenu();
+  if (state.tool && state.tool !== "place") setTool(null); // walls, dividers, doors and spaces: drawn on the plan
+  clearPreview();
+  drawGuides();
+  view3d.world?.ghost(null);
+  showWalk();
+  if (!view3d.shown) {
+    view3d.world?.pause(); // kept as it is, for the next time
     return;
   }
-  if (state.tool) setTool(null);
+  view3d.world?.resume();
   await refresh3d();
 }
 
@@ -2029,46 +2072,369 @@ async function refresh3d() {
   return view3d.busy;
 }
 
-/** The 3D view of the floor shown, built again when the project changed since (or it
- * showed another building): whether it could be shown. */
+/** The 3D view of the floor shown: its building built (again, whole, when it is another
+ * or was moved), the floors changed since read again (they alone), then the floor, its
+ * items and rooms as the page has them, what is chosen, and the mode. Whether it could be
+ * shown. */
 async function build3d() {
-  const building = state.floor.id.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
+  if (!state.floor.converted_at) {
+    toast("This floor is not converted yet: there is nothing to show in 3D", true);
+    setView("2d");
+    return false;
+  }
+  const building = buildingOf(state.floor.id);
+  const url = `/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`;
   try {
     if (!view3d.world) {
       const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
       view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
-      view3d.world.setLabels($("show-labels").checked);
-      view3d.world.addEventListener("select", ({ detail: { id } }) => {
-        if (view3d.picking) return; // our own choice, echoed back
-        if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
-        if (id === null && state.asset) return selectAsset(null);
-        if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
-      });
+      setup3d(view3d.world);
     }
     if (view3d.stale || view3d.building !== building) {
       $("status").textContent = "Building the 3D view…";
-      // up to date as of now: a change saved while it is built makes it stale again
+      // up to date as of now: a change saved while it is built makes its floor to read again
       view3d.stale = false;
+      const dirty = [...view3d.dirty].filter((f) => f.startsWith(`${building}-`));
+      dirty.forEach((f) => view3d.dirty.delete(f));
       try {
-        await view3d.world.open(`/api/${BASE}/preview.storeypath?building=${encodeURIComponent(building)}`);
+        await view3d.world.open(url);
       } catch (e) {
         view3d.stale = true;
         throw e;
       }
       view3d.building = building;
+    } else {
+      const floors = [...view3d.dirty].filter((f) => f.startsWith(`${building}-`));
+      if (floors.length) {
+        $("status").textContent = "Showing the change in 3D…";
+        floors.forEach((f) => view3d.dirty.delete(f));
+        try {
+          await view3d.world.reload(url, { floors });
+        } catch (e) {
+          floors.forEach((f) => view3d.dirty.add(f));
+          throw e;
+        }
+      }
     }
     // the floor shown now, when it is of the building built (else that one is built next)
-    if (state.floor?.id.startsWith(`${view3d.building}-`)) view3d.world.setFloor(state.floor.id);
-    if (state.selected || state.asset) pick3d(state.selected || state.asset, { go: false });
+    if (state.floor?.id.startsWith(`${view3d.building}-`)) {
+      view3d.world.setFloor(state.floor.id);
+      update3d();
+    }
+    pick3d(state.selected || state.asset || null, { go: false });
     $("status").textContent = "";
-    $("update3d").hidden = !view3d.stale; // a change saved while it was built is not in it yet
+    applyMode();
     return true;
   } catch (e) {
     $("status").textContent = "";
     toast(`The 3D view could not be shown: ${e.message}`, true);
-    show3d(false);
+    setView("2d");
     return false;
   }
+}
+
+/** The world in the mode asked for: orbiting (back where it was before walking), or
+ * walking: from the room or item chosen, else from where the 3D view looked, or the plan. */
+function applyMode() {
+  const w = view3d.world;
+  if (!w || !view3d.shown) return;
+  draggable3d();
+  if (view3d.mode === "walk" && w.mode !== "walk") {
+    const chosen = state.selected || state.asset;
+    w.setMode("walk", { floor: state.floor.id, ...walkFrom() });
+    if (chosen) pick3d(chosen, { go: true }); // walked to: in the room, before the item
+  } else if (view3d.mode === "3d" && w.mode !== "dollhouse") w.setMode("dollhouse", { back: true });
+  showWalk();
+}
+
+/** Where walking starts when nothing is chosen: where the 3D view looked; from the plan,
+ * the middle of its view, facing up the plan. */
+function walkFrom() {
+  const w = view3d.world;
+  if (view3d.from === "3d") return { at: w.target };
+  const c = view3d.plan;
+  const p = c && w.worldPoint(c), up = c && w.worldPoint([c[0], c[1] + 1]);
+  return p && up ? { at: p, heading: Math.atan2(-(up.x - p.x), -(up.z - p.z)) } : {};
+}
+
+/** Items carried in 3D by a drag: only by who may change the floor, and not while placing. */
+function draggable3d() {
+  view3d.world?.setDraggable(editable() && state.tool !== "place");
+}
+
+/** An item as the 3D world takes it: where it stands (the plan's metres) and its type's size. */
+function given3d(a) {
+  const t = typeOf(a.type);
+  return { id: a.id, type: a.type, x: a.x, y: a.y, rotation: a.rotation || 0, ...(t ? { width: t.width, depth: t.depth,
+    height: t.height, mount: t.mount || "floor", elevation: t.elevation ?? null, color: t.color, grade: t.grade ?? null } : {}) };
+}
+
+/** The floor shown, in 3D as the page has it now: its items drawn again (that floor's
+ * alone: milliseconds), and its rooms' names and types. */
+function update3d() {
+  const w = view3d.world, f = state.floor;
+  if (!w || !f || !view3d.building || !f.id.startsWith(`${view3d.building}-`)) return;
+  w.setFloorItems(f.id, (f.items || []).filter((a) => !a.retired).map(given3d));
+  for (const s of f.spaces) sync3dSpace(s);
+  view3d.crossKey = ""; // the cross's ghost seen again (the magnet sees the new items)
+  if (state.tool === "place") aimSoon();
+}
+
+/** A room as corrected here, in 3D: its label at once, its floor's finish by its type. */
+function sync3dSpace(s) {
+  const w = view3d.world;
+  const p = w?.package?.get(s.id)?.properties;
+  if (!p) return;
+  const now = { name: s.name || null, number: s.number || null, type: s.type, hidden: Boolean(s.hidden), ignored: Boolean(s.ignored) };
+  const was = { name: p.name || null, number: p.number || null, type: p.type, hidden: Boolean(p.hidden), ignored: Boolean(p.ignored) };
+  if (Object.keys(now).some((k) => now[k] !== was[k])) w.updateSpace(s.id, now);
+}
+
+/** Floors whose walls, doors or spaces changed: read again in 3D (they alone), soon when
+ * it is shown, else when it is next. */
+function dirty3d(floors) {
+  for (const f of floors) view3d.dirty.add(f);
+  if (!view3d.shown) return;
+  clearTimeout(view3d.soon);
+  view3d.soon = setTimeout(refresh3d, 250);
+}
+
+/** What the 3D world says: a click on a room or an item (chosen here, as on the plan), a
+ * click while placing (placed there), an item carried, the room walked into, the mouse
+ * taken or given back, another floor walked to. */
+function setup3d(world) {
+  world.setLabels($("show-labels").checked);
+  world.addEventListener("select", ({ detail: { id } }) => {
+    if (view3d.picking) return; // our own choice, echoed back
+    if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
+    if (id === null && state.asset) return selectAsset(null);
+    if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
+  });
+  world.addEventListener("pick", (e) => {
+    if (state.tool !== "place" || !state.placeType) return;
+    e.preventDefault(); // placed, not chosen
+    const p = e.detail;
+    if (!p.local || p.floor !== state.floor?.id) return toast("Click on this floor's floor, where it goes", true);
+    placeAsset(state.placeType, p.local, p.altKey || state.alt, REACH_3D);
+  });
+  world.addEventListener("itemdragstart", ({ detail }) => carryStart(detail));
+  world.addEventListener("itemdrag", ({ detail }) => carryMove(detail));
+  world.addEventListener("itemdragend", ({ detail }) => carryEnd(detail));
+  world.addEventListener("roomchange", ({ detail }) => showRoom(detail));
+  world.addEventListener("walklock", () => showWalk());
+  world.addEventListener("floorchange", () => { // up or down the stairs: that floor, here too
+    if (view3d.mode === "walk" && world.walkFloor && world.walkFloor !== state.floor?.id) openFloor(world.walkFloor);
+  });
+}
+
+/** The 3D view's pointer: where the item being placed would go, follows it; a press,
+ * walking with the mouse free, takes it to look; a right-click (not a drag) offers what
+ * can be done there. */
+function setup3dPointer() {
+  const box = $("world3d");
+  let right = null;
+  box.addEventListener("pointermove", (e) => {
+    view3d.pointer = [e.clientX, e.clientY];
+    state.alt = e.altKey;
+    if (state.tool === "place" && !e.buttons) aimSoon();
+  });
+  box.addEventListener("pointerleave", () => { if (!view3d.world?.walking) view3d.world?.ghost(null); });
+  box.addEventListener("pointerdown", (e) => {
+    if (e.button === 2) right = [e.clientX, e.clientY];
+  });
+  box.addEventListener("pointerup", (e) => {
+    if (e.button !== 2 || !right) return;
+    const moved = !view3d.world?.walking && Math.hypot(e.clientX - right[0], e.clientY - right[1]) > 4; // a drag moves the view
+    right = null;
+    if (!moved) menu3d(e.clientX, e.clientY);
+  });
+  box.addEventListener("contextmenu", (e) => e.preventDefault());
+  $("walk-enter").addEventListener("click", startLooking);
+}
+
+/** Walking: the mouse taken to look (from a click). */
+function startLooking() {
+  document.activeElement?.blur?.(); // keys to the walker, not to a field
+  view3d.world?.startWalking();
+}
+
+function aimSoon() {
+  if (view3d.aim) return;
+  view3d.aim = requestAnimationFrame(() => {
+    view3d.aim = 0;
+    aim3d();
+  });
+}
+
+/** Where the item being placed would go, shown in 3D: under the pointer, or walking at
+ * the cross; settled as on the plan (fit.js), red where it does not fit. */
+function aim3d() {
+  const w = view3d.world;
+  if (!w || !view3d.shown) return;
+  const t = state.tool === "place" ? typeOf(state.placeType) : null;
+  const walking = view3d.mode === "walk";
+  const p = !t ? null : walking ? (w.walking ? w.pointAt() : null) : view3d.pointer && w.pointAt(...view3d.pointer);
+  if (!p?.local || p.floor !== state.floor?.id) {
+    w.ghost(null);
+    return;
+  }
+  const got = settle({ want: { at: p.local, rot: 0 }, last: null, ...placing(p.local, t.code, null, 0, REACH_3D), free: state.alt });
+  const at = got?.at ?? p.local;
+  w.ghost({ ...given3d({ type: t.code, x: at[0], y: at[1], rotation: got?.rot ?? 0 }), ok: Boolean(got), guides: got?.guides || [] });
+}
+
+/** Walking with the mouse taken, while placing: the ghost at the cross, as the view moves. */
+function followCross() {
+  if (view3d.cross) return;
+  const step = () => {
+    const w = view3d.world;
+    if (!w || view3d.mode !== "walk" || !w.walking || state.tool !== "place") {
+      view3d.cross = 0;
+      view3d.crossKey = "";
+      return;
+    }
+    const key = [...w.camera.position.toArray(), ...w.camera.quaternion.toArray()].map((v) => v.toFixed(4)).join();
+    if (key !== view3d.crossKey) {
+      view3d.crossKey = key;
+      aim3d();
+    }
+    view3d.cross = requestAnimationFrame(step);
+  };
+  view3d.cross = requestAnimationFrame(step);
+}
+
+/** Walking: the room you are in, the cross when the mouse is taken, how to start when not. */
+function showWalk() {
+  const w = view3d.world, walking = view3d.mode === "walk";
+  const locked = walking && Boolean(w?.walking);
+  $("walk-hud").hidden = !walking;
+  $("crosshair").hidden = !locked;
+  $("walk-enter").hidden = !walking || locked || !w || w.mode !== "walk";
+  $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
+  $("walk-keys").textContent = !locked ? "" : state.tool === "place" ? "Click: place it at the cross · Alt: as it is · Esc: free the mouse"
+    : editable() ? "Click: choose · R [ ] turn · Del delete · 2: here in 2D · Esc: free the mouse"
+      : "Click: choose · 2: here in 2D · Esc: free the mouse";
+  if (locked && state.tool === "place") followCross();
+  else if (walking) w?.ghost(null);
+}
+
+function showRoom(r) {
+  $("walk-room").textContent = r.id ? r.name || typeLabel(r.type) : "Outside";
+  $("walk-meta").textContent = [r.id && r.name ? typeLabel(r.type) : "", r.number, r.stairs ? "E up · Q down" : ""].filter(Boolean).join(" · ");
+}
+
+/** Keys in 3D and walking: 2 shows the place under the pointer (walking: at the cross) on
+ * the plan; in 3D, the drawing tools' keys too, with that tool. Walking, E and Q go up and
+ * down at stairs and lifts. Whether the key was one of them. */
+function key3d(e) {
+  const w = view3d.world;
+  if (!w) return false;
+  const tool = view3d.mode === "3d" ? { w: "wall", v: "divide", s: "space", d: "door", o: "opening" }[e.key.toLowerCase()] : null;
+  if (e.key === "2" || tool) {
+    const p = w.walking ? w.pointAt() : view3d.pointer ? w.pointAt(...view3d.pointer) : null;
+    drawHere(p?.floor === state.floor?.id ? p.local : null, tool);
+    e.preventDefault();
+    return true;
+  }
+  if (view3d.mode === "walk" && (e.code === "KeyE" || e.code === "KeyQ")) {
+    const up = e.code === "KeyE";
+    if (!w.atStairs) toast("Find stairs or a lift to go up or down");
+    else if (!w.changeFloor(up ? 1 : -1)) toast(up ? "This is the top floor" : "This is the lowest floor");
+    return true;
+  }
+  return false;
+}
+
+/** A place on the plan: 2D, centred there (nearer, when it was far out), marked a moment;
+ * with ``tool``, drawing it from there. */
+function drawHere(p, tool = null) {
+  setView("2d");
+  requestAnimationFrame(() => {
+    if (p) {
+      centerOn([p[0], p[1], p[0], p[1]], Math.max(state.view.k, scaleFor([p[0] - 8, p[1] - 8, p[0] + 8, p[1] + 8], 20)));
+      const ping = svg("circle", { cx: p[0], cy: p[1], r: 0.6, class: "ping" });
+      $("guides").append(ping);
+      setTimeout(() => ping.remove(), 1700);
+    }
+    if (!tool) return;
+    if (!readable()) toast("This floor has no drawing yet: add its drawing to change its walls and openings", true);
+    else setTool(tool);
+  });
+}
+
+/** A right-click on the 3D view (walking: at the cross, the mouse given back): what is
+ * there, and showing that place on the plan, to draw there. */
+function menu3d(cx, cy) {
+  const w = view3d.world;
+  if (!w || !state.floor) return;
+  const walking = w.walking;
+  const p = walking ? w.pointAt() : w.pointAt(cx, cy);
+  if (walking) {
+    w.stopWalking();
+    const r = $("world3d").getBoundingClientRect();
+    [cx, cy] = [r.left + r.width / 2, r.top + r.height / 2];
+  }
+  if (state.tool) setTool(null);
+  const here = p?.floor === state.floor.id ? p.local : null;
+  const asset = p?.item ? (state.floor.items || []).find((a) => a.id === p.item) : null;
+  const s = !asset && p?.space ? state.byId.get(p.space) : null;
+  const items = [];
+  const may = editable();
+  if (asset) {
+    selectAsset(asset.id);
+    const t = typeOf(asset.type);
+    items.push(el("div", { class: "heading" }, t ? t.name_en : asset.type), el("div", { class: "meta" }, asset.id));
+    if (may) {
+      items.push(menuItem("Turn 90°", () => turnAsset(asset, (asset.rotation + 90) % 360), { hint: "R" }));
+      items.push(menuItem("Delete", () => changeAsset(asset, { retired: true }), { danger: true, hint: "Del" }));
+    }
+    items.push(el("hr"));
+  } else if (s) {
+    select(s.id);
+    items.push(el("div", { class: "heading" }, title(s)), el("div", { class: "meta" }, typeLabel(s.type)), el("hr"));
+  }
+  items.push(menuItem(may ? "Draw here in 2D" : "Show here in 2D", () => drawHere(here), { disabled: !here, hint: "2" }));
+  if (may && here) items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, here)));
+  $("menu").replaceChildren(...items);
+  placeMenu(cx, cy);
+  $("menu").querySelector("button:not(:disabled)")?.focus();
+}
+
+// An item carried across its floor in 3D: settled as on the plan (fit.js), shown as a
+// ghost (red where it does not fit: it goes where it last fitted), saved when put down.
+const carry = { asset: null };
+
+function carryStart({ id, local }) {
+  const a = (state.floor?.items || []).find((x) => x.id === id);
+  if (!a || !local || !editable()) return;
+  const rot = a.rotation || 0;
+  Object.assign(carry, { asset: a, from: [a.x, a.y], start: local, rot0: rot,
+    fit: { ...placing([a.x, a.y], a.type, a.id, rot, REACH_3D), last: { at: [a.x, a.y], rot } } });
+  view3d.world.setFloorItems(state.floor.id, state.floor.items.filter((x) => !x.retired && x !== a).map(given3d));
+}
+
+function carryMove({ local, altKey }) {
+  const a = carry.asset;
+  if (!a || !local) return;
+  const f = carry.fit;
+  const want = { at: [carry.from[0] + local[0] - carry.start[0], carry.from[1] + local[1] - carry.start[1]], rot: carry.rot0 };
+  const got = settle({ want, last: f.last, ...f, free: altKey });
+  if (got) f.last = { at: got.at, rot: got.rot };
+  const at = got ? got.at : want.at;
+  view3d.world.ghost({ ...given3d({ ...a, x: at[0], y: at[1], rotation: got ? got.rot : want.rot }), ok: Boolean(got), guides: got?.guides || [] });
+}
+
+function carryEnd({ cancelled }) {
+  const a = carry.asset;
+  carry.asset = null;
+  view3d.world?.ghost(null);
+  if (!a) return;
+  const { at, rot } = carry.fit.last;
+  if (cancelled || (Math.hypot(at[0] - a.x, at[1] - a.y) < 1e-4 && rot === carry.rot0)) return update3d();
+  [a.x, a.y, a.rotation] = [at[0], at[1], rot]; // shown there now; saved (or put back as saved)
+  update3d();
+  renderAssets();
+  changeAsset(a, { x: round4(at[0]), y: round4(at[1]), ...(rot !== carry.rot0 ? { rotation: round4(rot) } : {}) });
 }
 
 // ---- many people at once: what others change, refreshed in place (together.js) ------------
@@ -2079,14 +2445,30 @@ async function build3d() {
 // what is to be read again: everything, or what these IDs are of; and whether a read is under way
 const live = { busy: false, waiting: null, retry: 0 };
 
-/** What a change changed (null: anything; undefined: nothing more, a read put off). */
+/** What a change changed (null: anything; undefined: nothing more, a read put off), and
+ * whether it may have changed the floor's shape (its walls, doors or spaces: built again
+ * in 3D) rather than its items or rooms' details only. */
 function whatChanged(change) {
-  if (change === undefined) return { all: false, targets: new Set() };
-  return change && change.part !== "floor" ? { all: false, targets: new Set(change.targets || []) } : { all: true, targets: new Set() };
+  if (change === undefined) return { all: false, shape: false, targets: new Set() };
+  const shape = !change || !["item", "object"].includes(change.part);
+  return change && change.part !== "floor" ? { all: false, shape, targets: new Set(change.targets || []) }
+    : { all: true, shape, targets: new Set() };
 }
 
 function together(a, b) {
-  return a ? { all: a.all || b.all, targets: new Set([...a.targets, ...b.targets]) } : b;
+  return a ? { all: a.all || b.all, shape: a.shape || b.shape, targets: new Set([...a.targets, ...b.targets]) } : b;
+}
+
+/** A change on another floor, or to the building or project: what of it the 3D world
+ * shows, read again when that floor is shown (the building: built again whole). */
+function heardElsewhere(change) {
+  if (!view3d.building) return;
+  if (change.floor) {
+    if (change.floor.startsWith(`${view3d.building}-`) && change.floor !== state.floor?.id) view3d.dirty.add(change.floor);
+  } else if (change.part === "building" || change.part === "project") {
+    view3d.stale = true;
+    if (view3d.shown) dirty3d([]);
+  }
 }
 
 function togetherHooks() {
@@ -2104,6 +2486,7 @@ function togetherHooks() {
       refreshFloor(change);
     },
     reload: () => refreshFloor(null),
+    elsewhere: heardElsewhere,
     showLock: () => {
       showViewOnly();
       renderAssetEditor();
@@ -2116,7 +2499,7 @@ function togetherHooks() {
  * being saved waits for it. */
 async function refreshFloor(change) {
   const want = together(live.waiting, whatChanged(change));
-  if (live.busy || state.busy || document.querySelector(".pane.dragging")) {
+  if (live.busy || state.busy || document.querySelector(".pane.dragging") || carry.asset) {
     live.waiting = want;
     clearTimeout(live.retry);
     live.retry = setTimeout(() => refreshFloor(undefined), 400);
@@ -2161,7 +2544,10 @@ async function refreshFloor(change) {
     else if (state.item && changedHere(state.item.id)) renderItemEditor();
     if (state.selected) renderCapacity(state.byId.get(state.selected));
     showViewOnly();
-    changed3d();
+    // in 3D at once: the items (that floor's alone) and the rooms' labels; walls and doors
+    // changed (the floor read again, a door deleted): that floor built again
+    update3d();
+    if (want.shape || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
   } catch (e) {
     toast(`Could not show the change: ${e.message}`, true);
   } finally {
