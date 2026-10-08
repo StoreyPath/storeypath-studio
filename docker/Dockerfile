@@ -6,13 +6,12 @@
 #   docker/fetch-models.sh                                  # once, before building
 #   docker build -f docker/Dockerfile -t storeypath/studio .
 #   docker run -d --name storeypath -p 8080:8080 -v storeypath:/data storeypath/studio
-#   docker logs storeypath                                  # the setup link, the first time
+#   docker logs storeypath                                  # where it is, its certificate
 #
-# The first start prints a one-time link, https://127.0.0.1:8080/setup.html#…, to make
-# the first admin, admin (or set -e STOREYPATH_ADMIN_PASSWORD=… to have it made with
-# that password); then open https://localhost:8080 (or the machine's address)
-# and log in. Studio serves HTTPS with a certificate it makes in /data/tls the first
-# time: browsers warn once about it (the log prints its SHA-256 fingerprint, to
+# Open https://localhost:8080 (or the machine's address) and log in as admin, password
+# admin (or set -e STOREYPATH_ADMIN_PASSWORD=… for another at the first start; change
+# it in the person menu). Studio serves HTTPS with a certificate it makes in
+# /data/tls the first time: browsers warn once about it (the log prints its SHA-256 fingerprint, to
 # compare). To reach it by a host name other than localhost, give that name:
 # -e STOREYPATH_ALLOWED_HOSTS=gpu-server,studio.example; it goes on the certificate (and
 # Studio refuses requests addressed to other names, against DNS rebinding). Your own

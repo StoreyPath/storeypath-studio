@@ -576,7 +576,7 @@ def serve(
     """Run StoreyPath Studio in the browser: projects, drawings, review, export. Over
     HTTPS, with a certificate Studio makes in <data>/tls/ (browsers warn once: compare
     the fingerprint it prints), or your own (--cert, --key). People log in: the first
-    start prints a link to set up the first admin (or set STOREYPATH_ADMIN_PASSWORD);
+    start makes the first admin, admin / admin (or with STOREYPATH_ADMIN_PASSWORD);
     `storeypath users` manages accounts too."""
     import ssl
 
@@ -619,7 +619,9 @@ def serve(
     except ValueError as e:
         _fail(f"STOREYPATH_ADMIN_PASSWORD: {e}")
     if made is not None:
-        typer.echo(f"the first admin, {made.username}, made from STOREYPATH_ADMIN_PASSWORD")
+        typer.echo("the first admin made: log in as admin, password "
+                   + ("as STOREYPATH_ADMIN_PASSWORD says" if os.environ.get("STOREYPATH_ADMIN_PASSWORD") else "admin")
+                   + " (change it in the person menu, top right: Change password)")
     _serve(data, host, port, "/", open_browser, allowed=allowed_host or [], accounts=accounts,
            tls=tls, secure_cookies=secure_cookies, trusted_proxies=trusted_proxy or [])
 
@@ -653,11 +655,6 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     url = f"{scheme}://{shown}:{server.server_port}{page}"
     status = studio.status()
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
-    token = accounts.setup_token() if accounts is not None else None
-    if token is not None:
-        typer.echo("no users yet: make the first admin at this link (it works once; a new one is printed at each start until then)\n"
-                   f"  {scheme}://{shown}:{server.server_port}/setup.html#{token}"
-                   + ("\n  (or by this machine's name or address instead of 127.0.0.1)" if shown != host else ""))
     typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
                + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")

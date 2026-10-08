@@ -177,7 +177,7 @@ def test_a_username_too_long_to_be_one_is_refused_and_not_kept(proxied):
 
 def test_logging_in_takes_a_small_body(proxied):
     port, studio, accounts = proxied
-    for path in ("/api/login", "/api/setup", "/api/me/password"):
+    for path in ("/api/login", "/api/me/password"):
         status, said, _ = call(port, "POST", path, {"username": "ali", "password": "p" * 5000},
                                headers={"X-Real-IP": "203.0.113.7"})
         assert status == 413, (path, status, said)

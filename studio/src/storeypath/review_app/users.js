@@ -149,6 +149,9 @@ export async function usersPage(page, me, toast) {
       el("p", { class: "lead" }, "Who may log in to this Studio. ", ROLES.map(([, label, about]) => `${label}: ${about}.`).join(" "),
         " Projects are shared from their own page.")),
     el("div", { "data-notice": "" }, notice),
+    ...(users.some((u) => u.default_password) ? [el("section", { class: "card", role: "note" },
+      el("p", { class: "muted small" }, "admin still has its first password, admin. Change it when you like: "
+        + "Change password, in the person menu (top right), while logged in as admin."))] : []),
     el("section", { class: "card" }, el("h2", {}, "Add a user"), add,
       el("p", { class: "muted small" }, "They get a temporary password, shown once, to change when they first log in.")),
     el("section", { class: "card" },

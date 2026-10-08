@@ -57,7 +57,6 @@ ROLES = ("admin", "engineer", "user")
 CAPABILITIES = ("backup", "catalogue")
 LEVELS = ("view", "edit", "share")  # each includes the ones before it
 USERNAME = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}")
-MIN_PASSWORD = 10
 MAX_PASSWORD = 1024
 # scrypt: 32 MiB of memory a try (128·r·N), about a tenth of a second
 SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_LEN = 2**15, 8, 1, 32
@@ -77,7 +76,8 @@ PASSWORD_WAIT_S = 5.0  # …one waits this long for its turn, then is answered 5
 BUSY_TIMEOUT_MS = 5000  # a writer waits this long for another (Studio, the command line)
 COOKIE = "sp_session"
 ADMIN_PASSWORD_ENV = "STOREYPATH_ADMIN_PASSWORD"  # unattended first start: the first admin
-FIRST_ADMIN = "admin"  # the first admin's username: set up, or made from STOREYPATH_ADMIN_PASSWORD
+FIRST_ADMIN = "admin"  # the first admin, made at the first start: admin / admin (or STOREYPATH_ADMIN_PASSWORD)
+DEFAULT_PASSWORD = "admin"
 TEMPORARY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/o, 1/l/i: read out, typed in
 
 
@@ -158,14 +158,12 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def check_password(password, username: str) -> str:
-    """A password a person may have: at least MIN_PASSWORD characters, and not their
-    username. ValueError, saying why, when it is not."""
-    if not isinstance(password, str) or len(password) < MIN_PASSWORD:
-        raise ValueError(f"a password has at least {MIN_PASSWORD} characters")
+    """A password a person may have: any they choose (theirs to choose well), as long as
+    there is one and it is not absurdly long. ValueError, saying why, when it is not."""
+    if not isinstance(password, str) or not password:
+        raise ValueError("choose a password")
     if len(password) > MAX_PASSWORD:
         raise ValueError(f"a password has at most {MAX_PASSWORD} characters")
-    if password.strip().lower() == username.lower():
-        raise ValueError("a password is not the username")
     return password
 
 
@@ -319,9 +317,8 @@ class Accounts:
         self._failures: dict[tuple, list[float]] = {}  # a throttle's key -> when its tries failed
         self._noted: dict[tuple, float] = {}  # a throttle's key -> when a wait for it was last audited
         self._pruned = 0.0
-        self._lock = threading.Lock()  # the failures, and the setup token
+        self._lock = threading.Lock()  # the failures
         self._checks = threading.BoundedSemaphore(PASSWORD_CHECKS)  # passwords checked at once
-        self._setup: str | None = None
         self._dummy: str | None = None
         if not self.path.exists():  # the accounts' file is the owner's alone
             os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))
@@ -664,43 +661,26 @@ class Accounts:
 
     # ---- the first admin ---------------------------------------------------------
 
-    def setup_token(self) -> str | None:
-        """While there are no users: the one-time token of the setup link (made once per
-        start), for the first admin; None once there is a user."""
+    def bootstrap(self, environ=os.environ) -> User | None:
+        """The first start (no users yet): the first admin, ``admin``, with the password
+        ``admin`` (or STOREYPATH_ADMIN_PASSWORD when that is set), changed when they like
+        (Change password, in the person menu). The user made, or None when there were
+        users already."""
         if self.has_users():
             return None
-        with self._lock:
-            if self._setup is None:
-                self._setup = secrets.token_urlsafe(24)
-            return self._setup
-
-    def setup(self, token, password, address: str = "") -> tuple[str, User]:
-        """The first admin, ``admin`` (FIRST_ADMIN: nothing to choose), made with the setup
-        link's token; then the setup is gone for good. Its name is changed on the Users
-        page, like anyone's."""
-        expected = self._setup
-        if self.has_users() or expected is None:
-            raise Gone("Studio is set up already: log in")
-        with self._try("setup", [("address", _throttled_as(address))], address, None) as attempt:
-            if not isinstance(token, str) or not hmac.compare_digest(token.encode(), expected.encode()):
-                raise Forbidden("this setup link is not the one Studio printed when it started")
-            attempt.ok()
-            with self._checking():
-                user = self.add_user(FIRST_ADMIN, password, name="Admin", role="admin", must_change_password=False)
-        with self._lock:
-            self._setup = None
-        self.audit("setup", user, address, target=user.username)
-        return self.start_session(user, address), user
-
-    def bootstrap(self, environ=os.environ) -> User | None:
-        """Unattended start (Docker): with STOREYPATH_ADMIN_PASSWORD set and no users yet,
-        the first admin (``admin``) is made with it."""
-        password = environ.get(ADMIN_PASSWORD_ENV)
-        if not password or self.has_users():
-            return None
+        how = ADMIN_PASSWORD_ENV if environ.get(ADMIN_PASSWORD_ENV) else "default"
+        password = environ.get(ADMIN_PASSWORD_ENV) or DEFAULT_PASSWORD
         user = self.add_user(FIRST_ADMIN, password, name="Admin", role="admin", must_change_password=False)
-        self.audit("setup", user, None, target=user.username, how=ADMIN_PASSWORD_ENV)
+        self.audit("setup", user, None, target=user.username, how=how)
         return user
+
+    def default_password(self, user: User) -> bool:
+        """Whether ``admin`` still has the password it was made with (admin)."""
+        stored = self._read("SELECT password FROM users WHERE id = ?", (user.id,))
+        if user.username != FIRST_ADMIN or not stored:
+            return False
+        with self._checking():
+            return verify_password(DEFAULT_PASSWORD, stored[0]["password"])
 
     # ---- sharing ------------------------------------------------------------------
 

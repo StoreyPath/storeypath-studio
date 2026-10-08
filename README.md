@@ -378,9 +378,8 @@ uses which.
 docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.io/storeypath/studio
 ```
 
-The first time, `docker logs storeypath` prints a link,
-`https://127.0.0.1:8080/setup.html#…`: open it to make the first admin (it works
-once). Then open https://localhost:8080 and log in, create a project and drop in a
+Then open https://localhost:8080 and log in as `admin`, password `admin` (change it
+in the person menu, top right, when you like), create a project and drop in a
 drawing. The browser warns once about Studio's own certificate: the log prints its
 SHA-256 fingerprint, to compare with the one the browser shows. Projects, accounts
 and the certificate live in the `storeypath` volume, so they survive restarts and
@@ -390,7 +389,7 @@ upgrades:
 |---|---|
 | Stop, start again | `docker stop storeypath` · `docker start storeypath` |
 | Upgrade | `docker pull ghcr.io/storeypath/studio && docker rm -f storeypath`, then the `run` line again |
-| The first admin without the link | `-e STOREYPATH_ADMIN_PASSWORD=…`: `admin` is made with it at the first start, when there are no users |
+| The first admin's password | `admin` / `admin` at the first start; `-e STOREYPATH_ADMIN_PASSWORD=…` to start with another |
 | Let others on your network use it | publish the port on all interfaces: `-p 8080:8080`, and add them on the Users page. They reach it by the machine's address or name: give it with `-e STOREYPATH_ALLOWED_HOSTS=studio.example,192.168.1.20` so it is on the certificate (Studio also refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
 | Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
 | Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without |
@@ -420,9 +419,9 @@ sessions and an audit log. Everyone logs in.
   that building only. A person who may see only some floors sees those alone: on the
   project page, in Review (read only with *view*: no tools, a *View only* badge), in
   3D, and in the drawing (only their floor's part of a sheet).
-- **First start.** With no users, Studio prints a one-time setup link to make the
-  first admin, `admin` (only its password is chosen; `docker logs` in a container),
-  or makes it with `STOREYPATH_ADMIN_PASSWORD` when that is set.
+- **First start.** With no users, Studio makes the first admin: `admin`, password
+  `admin` (or `STOREYPATH_ADMIN_PASSWORD` when that is set). Anyone changes their own
+  password in the person menu; passwords have no rules: each person's to choose.
 - **HTTPS.** `storeypath serve` speaks HTTPS: with a certificate it makes itself in
   `<data>/tls/` for the names it is reached by (browsers warn once; it prints the
   fingerprint), or the organization's (`--cert`, `--key`); `--http --secure-cookies
@@ -523,7 +522,7 @@ docker logs -f storeypath        # "vision model ready", then Studio's address (
 | Without vision | `-e STOREYPATH_VISION=off`: rules and the language model only |
 | A vision model served elsewhere | `-e STOREYPATH_VISION_URL=…`: the image's own is then not started |
 | Reach it by a host name | `-e STOREYPATH_ALLOWED_HOSTS=<that name>` (addresses and localhost always work); the name goes on Studio's certificate too |
-| The first admin | the setup link in `docker logs storeypath`, or `-e STOREYPATH_ADMIN_PASSWORD=…` |
+| The first admin | `admin` / `admin`, or `-e STOREYPATH_ADMIN_PASSWORD=…` |
 | The model server's log | `docker exec storeypath cat /tmp/vision.log` |
 
 Loading the vision model takes a minute or two after each start; if it does not

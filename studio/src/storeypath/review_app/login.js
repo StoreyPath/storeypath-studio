@@ -22,10 +22,9 @@ function say(id, message) {
   $(id).hidden = !message;
 }
 
-function showLogin(setup) {
+function showLogin() {
   $("change-card").hidden = true;
   $("login-card").hidden = false;
-  $("setup-note").hidden = !setup;
   $("username").focus();
 }
 
@@ -84,7 +83,7 @@ async function start() {
     showLogin(false);
     return say("login-error", "Studio cannot be reached");
   }
-  if (res.status === 401) return showLogin(Boolean(data.setup));
+  if (res.status === 401) return showLogin();
   if (!res.ok) return showLogin(false);
   if (data.local) return location.replace(next); // this computer alone: no accounts
   if (data.must_change_password || params.has("change")) return showChange(data, Boolean(data.must_change_password));

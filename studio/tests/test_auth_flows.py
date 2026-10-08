@@ -325,7 +325,7 @@ def test_logging_in_sets_a_strict_cookie_and_out_clears_it(tmp_path):
         assert call(port, "POST", "/api/login", {"username": "ali", "password": PASSWORD},
                     headers={"Origin": "https://evil.example"})[0] == 403
         # the pages themselves need no session: they hold no data
-        for page in ("/", "/login.html", "/setup.html", "/review.html", "/studio.js"):
+        for page in ("/", "/login.html", "/review.html", "/studio.js"):
             status, _, res = call(port, "GET", page)
             assert status == 200 and res.getheader("X-Frame-Options") == "DENY", page  # never framed
         assert call(port, "GET", "/api/projects")[0] == 401
@@ -364,9 +364,9 @@ def test_a_temporary_password_is_changed_before_anything_else(tmp_path):
             status, said, _ = call(port, method, path, body, token=t)
             assert status == 403 and said["must_change_password"] is True
         assert call(port, "GET", "/api/me", token=t)[0] == 200
-        status, said, _ = call(port, "POST", "/api/me/password", {"current": made["password"], "new": "short"},
+        status, said, _ = call(port, "POST", "/api/me/password", {"current": made["password"], "new": ""},
                                token=t)
-        assert status == 400
+        assert status == 400  # a password there must be; any the person likes
         status, me, res = call(port, "POST", "/api/me/password", {"current": made["password"],
                                                                  "new": "my own password now"}, token=t)
         assert status == 200 and me["must_change_password"] is False
@@ -393,19 +393,25 @@ def test_a_temporary_password_is_changed_before_anything_else(tmp_path):
         srv.server_close()
 
 
-def test_the_first_admin_is_set_up_once_with_the_printed_link(tmp_path):
-    srv, studio, accounts = serve(tmp_path / "data")
+def test_the_first_start_is_logged_in_as_admin_admin(tmp_path):
+    accounts = Accounts(tmp_path / "data")
+    assert accounts.bootstrap({}).username == "admin"
+    srv, studio, accounts = serve(tmp_path / "data", accounts=accounts)
     try:
         port = srv.server_port
         status, said, _ = call(port, "GET", "/api/me")
-        assert status == 401 and said["setup"] is True
-        token = accounts.setup_token()
-        assert call(port, "POST", "/api/setup", {"token": "guess", "password": PASSWORD})[0] == 403
-        status, me, res = call(port, "POST", "/api/setup", {"token": token, "username": "boss", "password": PASSWORD})
-        assert status == 200 and me["user"]["username"] == "admin"  # always admin: no name is taken from the page
+        assert status == 401 and "setup" not in said  # nothing to set up: log in
+        status, me, res = call(port, "POST", "/api/login", {"username": "admin", "password": "admin"})
+        assert status == 200 and me["user"]["username"] == "admin" and me["must_change_password"] is False
         assert res.getheader("Set-Cookie").startswith(f"sp_session_{port}=")  # named by its port
-        assert call(port, "POST", "/api/setup", {"token": token, "password": PASSWORD})[0] == 404
-        assert call(port, "GET", "/api/me")[1]["setup"] is False
+        t = res.getheader("Set-Cookie").split(";")[0].split("=", 1)[1]
+        status, users, _ = call(port, "GET", "/api/admin/users", token=t)
+        assert status == 200 and [u["default_password"] for u in users] == [True]  # the Users page says so
+        assert call(port, "POST", "/api/setup", {"token": "x", "password": "y"})[0] == 404  # no such call
+        status, _, res = call(port, "POST", "/api/me/password", {"current": "admin", "new": "mine"}, token=t)
+        assert status == 200
+        t = res.getheader("Set-Cookie").split(";")[0].split("=", 1)[1]
+        assert [u["default_password"] for u in call(port, "GET", "/api/admin/users", token=t)[1]] == [False]
     finally:
         srv.shutdown()
         srv.server_close()

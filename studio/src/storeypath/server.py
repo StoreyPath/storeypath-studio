@@ -10,15 +10,14 @@ Projects live in the data folder, one folder each named by the project's code
 people give a project is only shown). Long steps — reading a drawing's plans,
 converting, exporting — run as jobs, one at a time, and report progress.
 
-People log in (accounts.py): every call but logging in, out and the first setup
-needs a session, and each needs a level (view, edit, share) on the narrowest part of
+People log in (accounts.py; the first start makes admin / admin): every call but
+logging in and out needs a session, and each needs a level (view, edit, share) on the narrowest part of
 a project — the project, a building, a floor — that covers what it reads or changes;
 nothing shows another floor's content to someone who may see only some floors. What
 each call needs is checked first in route() (the table is in studio/README.md):
 
     POST /api/login {username, password}       → a session (cookie sp_session_<port>)
     POST /api/logout
-    POST /api/setup {token, username, name, password}   the first admin (no users yet)
     GET  /api/me                               POST /api/me/password {current, new}
     GET  /api/status
     GET  /api/projects                         POST /api/projects {name}
@@ -1356,7 +1355,7 @@ class Gate:
 
     def _who(self, password_gate: bool = True) -> User:
         if self.user is None:
-            raise Unauthorized("log in to use Studio", setup=not self.accounts.has_users())
+            raise Unauthorized("log in to use Studio")
         if password_gate and self.user.must_change_password:
             raise Forbidden("change your password first: it was given to you to change", must_change_password=True)
         return self.user
@@ -1371,7 +1370,7 @@ class Gate:
             self.accounts.audit(action, self.user, self.address, target, outcome, **more)
 
     def anyone(self) -> None:
-        """Logging in, out, and the first setup: asked by anyone."""
+        """Logging in and out: asked by anyone."""
 
     def me(self) -> User:
         """Logged in, even with a password to change."""
@@ -1665,12 +1664,6 @@ class Gate:
                 self.accounts.audit("logout", user, self.address, user.username)
         return LoggedOut()
 
-    def setup(self, body: dict) -> LoggedIn:
-        if self.accounts is None:
-            raise NotFound("Studio runs without accounts here")
-        token, user = self.accounts.setup(body.get("token"), body.get("password"), self.address)
-        return LoggedIn(token, {"user": self._me(user), "must_change_password": False})
-
     def _me(self, user: User) -> dict:
         return {**user.view(), "role": user.role,
                 "capabilities": list(CAPABILITY_NAMES) if user.role == "admin" else list(user.capabilities),
@@ -1794,7 +1787,9 @@ class Gate:
         return self.accounts
 
     def all_users(self) -> list[dict]:
-        return [{**u.view(full=True)} for u in self._accounts().users()]
+        """Everyone, and whether admin still has its first password (said on the page)."""
+        accounts = self._accounts()
+        return [{**u.view(full=True), "default_password": accounts.default_password(u)} for u in accounts.users()]
 
     def add_user(self, body: dict) -> dict:
         """A new user, with a temporary password (shown once) to change at the first login."""
@@ -1859,8 +1854,8 @@ CAPABILITY_NAMES = ("backup", "catalogue")
 # ---- HTTP ----------------------------------------------------------------------
 
 MAX_JSON = 64 * 1024 * 1024  # a request's JSON body
-SMALL_JSON = 4096  # …logging in, the setup and one's own password: a few names and passwords
-SMALL_CALLS = (["login"], ["setup"], ["me", "password"])
+SMALL_JSON = 4096  # …logging in and one's own password: a few names and passwords
+SMALL_CALLS = (["login"], ["me", "password"])
 DRAIN_MAX = 1024 * 1024  # a refused request's body is read (and dropped) up to this size; else the connection closes
 ALLOWED_HOSTS_ENV = "STOREYPATH_ALLOWED_HOSTS"  # more names Studio may be reached by: "studio.example.org, studio"
 
@@ -2255,7 +2250,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 return self._refuse()
             parts = unquote(urlparse(self.path).path).split("/")[2:]
-            # what anyone may send (logging in, the setup) is small: never read beyond it
+            # what anyone may send (logging in) is small: never read beyond it
             if self._unread > (SMALL_JSON if parts in SMALL_CALLS else MAX_JSON):
                 return self._refuse(413, "too much to send at once")
             try:
@@ -2362,9 +2357,6 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             case "POST", ["logout"]:
                 may.anyone()
                 return may.logout()
-            case "POST", ["setup"]:
-                may.anyone()
-                return may.setup(body)
             case "GET", ["me"]:
                 may.me()
                 return may.whoami()

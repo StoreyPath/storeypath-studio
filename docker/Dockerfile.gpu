@@ -14,8 +14,8 @@
 # (to reach it by a host name, add -e STOREYPATH_ALLOWED_HOSTS=<that name>; addresses
 # and localhost always work, and the names go on Studio's certificate)
 # then, once `docker logs storeypath` says Studio is serving (loading the vision model
-# takes a minute or two), open the setup link it printed the first time, to make the
-# first admin (or set -e STOREYPATH_ADMIN_PASSWORD=…), and then https://localhost:8080.
+# takes a minute or two), open https://localhost:8080 and log in as admin, password
+# admin (or set -e STOREYPATH_ADMIN_PASSWORD=… for another at the first start).
 # Studio serves HTTPS with a certificate it makes in /data/tls: browsers warn once (the
 # log prints its fingerprint). Arguments after the image go to `storeypath serve`:
 # --cert /tls/cert.pem --key /tls/key.pem (your own, mounted), or --http

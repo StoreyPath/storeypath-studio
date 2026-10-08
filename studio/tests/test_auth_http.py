@@ -148,7 +148,6 @@ ROWS = [
     Row("POST", "/api/login", {"username": "spare", "password": PASSWORD}, ok=200, passes=ALL, anyone=True,
         fresh=True),
     Row("POST", "/api/logout", {}, ok=200, passes=ALL, anyone=True, fresh=True),
-    Row("POST", "/api/setup", {"token": "x"}, ok=(404, "set up already"), passes=ALL, anyone=True),
     Row("GET", "/api/me", ok=200, passes=ALL),
     Row("POST", "/api/me/password", {"current": PASSWORD, "new": PASSWORD}, ok=(400, "new password"), passes=ALL),
     Row("GET", "/api/status", ok=200, passes=ALL),

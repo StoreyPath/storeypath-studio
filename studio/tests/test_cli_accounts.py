@@ -37,8 +37,10 @@ def test_users_are_added_listed_and_changed_from_the_command_line(tmp_path):
     assert r.exit_code == 0, r.output
     eng = studio.by_username("eng")
     assert eng.capabilities == ["backup", "catalogue"] and eng.must_change_password  # temporary, by default
-    r = run("users", "add", "x", "--data", tmp_path, "--password-stdin", input="short\n")
-    assert r.exit_code == 1 and "10 characters" in r.output
+    r = run("users", "add", "x1", "--data", tmp_path, "--password-stdin", input="short\n")
+    assert r.exit_code == 0, r.output  # any password the person likes
+    r = run("users", "add", "x2", "--data", tmp_path, "--password-stdin", input="\n")
+    assert r.exit_code == 1 and "choose a password" in r.output
     r = run("users", "add", "eng", "--data", tmp_path, "--password-stdin", input=f"{PASSWORD}\n")
     assert r.exit_code == 1 and "already" in r.output
     r = run("users", "add", "bob", "--role", "king", "--data", tmp_path, "--password-stdin", input=f"{PASSWORD}\n")

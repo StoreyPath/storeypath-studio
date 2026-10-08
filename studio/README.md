@@ -116,15 +116,14 @@ read from a whole sheet that other floors are read from too shows theirs, so it
 needs view on each of them. A building's package holds every floor of it: making
 one needs edit on the whole building, downloading one view on it.
 
-**First start.** With no users yet, `storeypath serve` prints a link with a one-time
-token, `https://<host>:8080/setup.html#<token>` (in a container: `docker logs`), to
-make the first admin, `admin` (only its password is chosen; its name is changed on
-the Users page); it works until Studio stops, and once only. Unattended (a container
-started by a script): set `STOREYPATH_ADMIN_PASSWORD`, and `admin` is made with it at
-the first start instead.
+**First start.** With no users yet, `storeypath serve` makes the first admin:
+`admin`, password `admin` (or `STOREYPATH_ADMIN_PASSWORD`, when that is set). Its
+password is changed in the person menu (Change password) when its admin likes; the
+Users page says while it is still `admin`. Its name is changed there too.
 
-**Passwords and sessions.** Passwords have at least 10 characters and are not the
-username; Studio keeps only their scrypt hashes. A password an admin sets (a new
+**Passwords and sessions.** A password is whatever its person chooses (there is one,
+and it is not over 1024 characters): theirs to choose well. Studio keeps only their
+scrypt hashes. A password an admin sets (a new
 user, a reset) is temporary: it is changed at the next login before anything else.
 A session lasts until it is not used for 8 hours, or a week at most, and survives
 a restart of Studio. Its cookie (HttpOnly, SameSite=Strict, Secure over HTTPS) is named
@@ -564,7 +563,7 @@ items standing in it; its grade is the highest grade among its desks.
 | Environment | |
 |---|---|
 | `STOREYPATH_ALLOWED_HOSTS` | more names Studio may be reached by, separated by commas or spaces (`*`: any); as `serve --allowed-host` (each goes on Studio's certificate) |
-| `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin, `admin`, is made at start with this password (no setup link) |
+| `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin, `admin`, is made at start with this password, not `admin` |
 | `STOREYPATH_NODE` | Node.js for building the floors' 3D at export (default: `node` on the `PATH`; empty: never) |
 | `STOREYPATH_SYMBOLS` | the SymPoint-V2 folder (default `/opt/storeypath/symbols`) |
 

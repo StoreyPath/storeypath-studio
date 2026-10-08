@@ -2,8 +2,8 @@
 # StoreyPath Studio with its vision model on the GPU: start the model server, wait
 # until the model is loaded, then serve Studio. Arguments are passed to
 # `storeypath serve` (over HTTPS, with Studio's own certificate in /data/tls: --cert
-# and --key for your own, --http behind a proxy that speaks HTTPS). The first time, the
-# log has the link to make the first admin (or set STOREYPATH_ADMIN_PASSWORD).
+# and --key for your own, --http behind a proxy that speaks HTTPS). The first start
+# makes the first admin, admin / admin (or with STOREYPATH_ADMIN_PASSWORD).
 #
 #   STOREYPATH_VISION=off        no vision model (rules and the language model only)
 #   STOREYPATH_VISION_URL=...    use a vision model served elsewhere instead

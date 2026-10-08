@@ -50,13 +50,12 @@ def test_usernames_are_lower_case_and_never_paths():
             check_username(bad)
 
 
-def test_passwords_are_ten_characters_and_not_the_username():
-    assert check_password("0123456789", "ali") == "0123456789"
-    for bad in ("short", "", None, "x" * 1025):
+def test_a_password_is_whatever_its_person_chooses():
+    for good in ("0123456789", "short", "a", "admin"):
+        assert check_password(good, "admin") == good  # theirs to choose: even admin / admin
+    for bad in ("", None, "x" * 1025):
         with pytest.raises(ValueError):
             check_password(bad, "ali")
-    with pytest.raises(ValueError, match="not the username"):
-        check_password("LongUserName", "longusername")
     t = temporary_password()
     assert len(t) == 19 and check_password(t, "x")
 
@@ -233,29 +232,23 @@ def test_failed_logins_are_throttled_by_username_and_by_address(tmp_path, monkey
     assert a._waiting([zed], clock.t)[0] <= acc.THROTTLE_MAX_S
 
 
-def test_the_setup_token_makes_the_first_admin_once(tmp_path):
+def test_the_first_start_makes_admin_with_the_password_admin(tmp_path):
     a = Accounts(tmp_path)
-    token = a.setup_token()
-    assert token and a.setup_token() == token  # once per start
-    with pytest.raises(Forbidden):
-        a.setup("not it", PASSWORD)
-    session, user = a.setup(token, PASSWORD)
+    user = a.bootstrap({})
     assert (user.username, user.role, user.must_change_password) == ("admin", "admin", False)
-    assert a.session(session).id == user.id
-    assert a.setup_token() is None
-    with pytest.raises(Gone):
-        a.setup(token, PASSWORD)
+    assert a.login("admin", "admin")[1].id == user.id  # logs in as admin / admin
+    assert a.default_password(user)  # the Users page says so
+    assert a.bootstrap({}) is None  # only the first time
+    a.set_password(user.id, "something of mine", temporary=False)
+    assert not a.default_password(a.user(user.id))
 
 
-def test_an_admin_from_the_environment_when_there_are_no_users(tmp_path):
+def test_or_with_the_password_in_the_environment(tmp_path):
     a = Accounts(tmp_path)
-    assert a.bootstrap({}) is None
-    with pytest.raises(ValueError):
-        a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": "short"})
     user = a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": PASSWORD, "STOREYPATH_ADMIN_USER": "Root"})  # no other name
     assert (user.username, user.role, user.must_change_password) == ("admin", "admin", False)
+    assert not a.default_password(user)
     assert a.bootstrap({"STOREYPATH_ADMIN_PASSWORD": "another password"}) is None  # only the first time
-    assert a.setup_token() is None
 
 
 # ---- sharing: who may do what where -------------------------------------------------------

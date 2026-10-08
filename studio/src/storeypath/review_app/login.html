@@ -27,8 +27,6 @@
         <p id="login-error" class="form-error" role="alert" hidden></p>
         <button class="primary" type="submit">Log in</button>
       </form>
-      <p id="setup-note" class="note" hidden>Studio has no users yet. Open the setup link it printed when it started
-        (in its log: <code>docker logs</code> for the container), or ask whoever runs it.</p>
       <p class="muted small">Forgot your password? An admin of this Studio can give you a new one.</p>
     </section>
 
@@ -40,11 +38,11 @@
         <label class="field">Current password
           <input id="current" type="password" autocomplete="current-password" required>
         </label>
-        <label class="field"><span>New password <span class="muted">(at least 10 characters)</span></span>
-          <input id="new" type="password" autocomplete="new-password" minlength="10" required>
+        <label class="field">New password
+          <input id="new" type="password" autocomplete="new-password" required>
         </label>
         <label class="field">The new password again
-          <input id="again" type="password" autocomplete="new-password" minlength="10" required>
+          <input id="again" type="password" autocomplete="new-password" required>
         </label>
         <p id="change-error" class="form-error" role="alert" hidden></p>
         <div class="row">
