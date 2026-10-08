@@ -10,10 +10,22 @@ Projects live in the data folder, one folder each named by the project's code
 people give a project is only shown). Long steps — reading a drawing's plans,
 converting, exporting — run as jobs, one at a time, and report progress.
 
+People log in (accounts.py): every call but logging in, out and the first setup
+needs a session, and each needs a level (view, edit, share) on the narrowest part of
+a project — the project, a building, a floor — that covers what it reads or changes;
+nothing shows another floor's content to someone who may see only some floors. What
+each call needs is checked first in route() (the table is in studio/README.md):
+
+    POST /api/login {username, password}       → a session (cookie sp_session)
+    POST /api/logout
+    POST /api/setup {token, username, name, password}   the first admin (no users yet)
+    GET  /api/me                               POST /api/me/password {current, new}
     GET  /api/status
     GET  /api/projects                         POST /api/projects {name}
     GET  /api/projects/<code>
     POST /api/projects/<code>/delete {confirm: its name}  the project and everything in it, gone
+    GET  /api/projects/<code>/access           POST /api/projects/<code>/access {user, scope, level}
+    POST /api/projects/<code>/owner {user}     (an admin)
     PUT  /api/projects/<code>/drawings/<name>[?private=0]  (the file as the body)
                                                → job: what it holds that is private
                                                (privacy.py), {pending, found}; with
@@ -32,12 +44,18 @@ converting, exporting — run as jobs, one at a time, and report progress.
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
                                                building) as it is now, for Studio's viewers
-                                               (not recorded as an export, never sent)
+                                               (not recorded as an export, never sent):
+                                               only the floors the person may see
     GET  /api/projects/<code>/project.storeypath-project   the project to send to another
                                                Studio, to be continued there
     PUT  /api/open[?replace=<name>]               a project from a file: a building's
                                                package, or a project file (bundle.py)
     GET  /api/jobs/<id>
+    GET  /api/users                            who to share with (id, username, name)
+    GET  /api/admin/users                      POST /api/admin/users {username, name, role, capabilities}
+    POST /api/admin/users/<id> {name?, role?, capabilities?, active?}
+    POST /api/admin/users/<id>/password        a temporary password, shown once
+    GET  /api/admin/audit                      GET /api/backup (the data folder, .tar.gz)
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 
 What changes something (POST, a JSON object; PUT, a file) is sent with the header
@@ -52,10 +70,13 @@ import io
 import json
 import math
 import re
+import ssl
+import sys
 import threading
 import traceback
 import uuid
 import zipfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,13 +84,16 @@ from importlib import resources
 from importlib.metadata import version
 from pathlib import Path
 from queue import Queue
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
+from .accounts import (COOKIE, LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Throttled, Unauthorized,
+                       User, check_username, rank, temporary_password)
 from .assets import asset_dir
+from .backup import backup_name, jobs_paused, write_backup
 from .bundle import ProjectExists
 from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
@@ -103,6 +127,9 @@ class Job:
     result: object = None
     error: str | None = None
     started: str | None = None
+    project: str | None = None  # the project it works on, and the part of it (scope): who may follow it
+    scope: tuple[str, str | None] = ("project", None)
+    user: str | None = None  # who started it
 
     def say(self, line: str) -> None:
         self.log.append(line)
@@ -114,15 +141,18 @@ class Job:
 
 class Jobs:
     """Long steps, run one at a time in the background (drawings are large and the
-    language model has one slot)."""
+    language model has one slot). Each runs holding the data folder's job lock
+    (backup.py): a backup waits for it, and no job starts while one is written."""
 
-    def __init__(self):
+    def __init__(self, data: Path | None = None):
+        self.data = data
         self._jobs: dict[str, Job] = {}
         self._queue: Queue = Queue()
         threading.Thread(target=self._work, daemon=True).start()
 
-    def submit(self, title: str, fn) -> Job:
-        job = Job(uuid.uuid4().hex[:12], title)
+    def submit(self, title: str, fn, project: str | None = None, scope: tuple = ("project", None),
+               user: str | None = None) -> Job:
+        job = Job(uuid.uuid4().hex[:12], title, project=project, scope=scope, user=user)
         self._jobs[job.id] = job
         self._queue.put((job, fn))
         return job
@@ -135,9 +165,10 @@ class Jobs:
     def _work(self):
         while True:
             job, fn = self._queue.get()
-            job.state, job.started = "running", datetime.now(timezone.utc).isoformat()
             try:
-                job.result = fn(job)
+                with jobs_paused(self.data) if self.data is not None else ExitStack():
+                    job.state, job.started = "running", datetime.now(timezone.utc).isoformat()
+                    job.result = fn(job)
                 job.state = "done"
             except Exception as e:  # reported on the page
                 job.state, job.error = "failed", _message(e)
@@ -159,7 +190,7 @@ class Studio:
         self.model = model if model is not None else LocalModel()
         self.symbols = symbols if symbols is not None else SymbolSpotter()
         self.vision = vision if vision is not None else VisionModel()
-        self.jobs = Jobs()
+        self.jobs = Jobs(self.data)
         if warm and self.model.available():
             # Load the model now, in the background, so the first drawing does not
             # wait for 2–3 GB of weights to come off the disk.
@@ -245,14 +276,24 @@ class Studio:
             "plan": (asset_dir("viewer") / "svg" / "dist" / "index.js").is_file(),
         }
 
-    def projects(self) -> list[dict]:
+    def projects(self, sight_of=None) -> list[dict]:
+        """Every project, or with ``sight_of`` ((code, workspace) -> Sight: what a person
+        may see of it), those they may see, each counted in what they see of it, with
+        their level on it (``can``)."""
         out = []
         for code, path in self._workspaces().items():
             ws = Workspace.load(path)
-            spaces = [r for r in ws.objects.values() if r.kind == "space" and r.status == "active"]
-            out.append({"code": code, "name": ws.project.name, "file": path.name,
-                        "floors": sum(1 for _ in ws.iter_floors()), "spaces": len(spaces),
-                        "review": sum(1 for r in spaces if ws.review_reasons(r))})
+            sight = sight_of(code, ws) if sight_of is not None else None
+            if sight is not None and not sight.any():
+                continue
+            seen = sight.seen(ws) if sight is not None else ws
+            spaces = [r for r in seen.objects.values() if r.kind == "space" and r.status == "active"]
+            entry = {"code": code, "name": ws.project.name, "file": path.name,
+                     "floors": sum(1 for _ in seen.iter_floors()), "spaces": len(spaces),
+                     "review": sum(1 for r in spaces if seen.review_reasons(r))}
+            if sight is not None:
+                entry["can"] = {k: v for k, v in sight.can().items() if k not in ("buildings", "floors")}
+            out.append(entry)
         return sorted(out, key=lambda p: p["name"].lower())
 
     def create(self, name: str) -> dict:
@@ -271,18 +312,26 @@ class Studio:
         ws.save(folder / f"{ws.id}.spproj")
         return {"code": ws.id}
 
-    def project(self, code: str) -> dict:
+    def project(self, code: str, sight: Sight | None = None) -> dict:
+        """The project's page: its locations, buildings and floors, drawings and packages.
+        With ``sight``, only what that person may see of it: the floors (a building's
+        footprint and middle drawn from those alone, where it stands on its site as it
+        does for everyone), the drawings of those floors (all of them with a level on
+        the whole project), and the packages of the buildings they see whole."""
         path = self.path(code)
-        ws = Workspace.load(path)
-        info = self.review(code).project()
+        full = Workspace.load(path)
+        ws = sight.seen(full) if sight is not None else full
+        info = self.review_project(code, sight)
         from .export import footprint, site_positions
 
         tree = []
         for loc in ws.locations:
             buildings = []
-            positions = site_positions(loc)
+            whole_loc = next(x for x in full.locations if x.code == loc.code)
+            positions = site_positions(whole_loc)  # as everyone sees the site
             for b in loc.buildings:
                 b_id = f"{ws.id}-{loc.code}-{b.code}"
+                whole_b = next(x for x in whole_loc.buildings if x.code == b.code)
                 outline = [shape(f.outline) for f in b.floors if f.outline]
                 centre = unary_union(outline).centroid if outline else None
                 buildings.append({
@@ -290,7 +339,7 @@ class Studio:
                     "placement": b.placement.model_dump() if b.placement else None,
                     # its place on the site plan (as its drawing places it when not set) and
                     # its footprint in its own drawing metres, for the site plan to draw
-                    "site": {**positions[b.code].model_dump(), "set": b.site is not None},
+                    "site": {**positions[b.code].model_dump(), "set": whole_b.site is not None},
                     "footprint": _rings(footprint(b)),
                     "centre": [round(centre.x, 2), round(centre.y, 2)] if centre is not None else None,
                     "floors": [{"id": f"{b_id}-{f.code}", "name": f.name, "ordinal": f.ordinal,
@@ -308,12 +357,28 @@ class Studio:
             if (path.parent / "drawings").is_dir() else []
         exports = sorted((p.name for p in (path.parent / "exports").glob("*.storeypath")), reverse=True) \
             if (path.parent / "exports").is_dir() else []
+        if sight is not None and not sight.whole:
+            used = {Path(f.source.path).name for *_, f, _ in ws.iter_floors() if f.source}
+            drawings = [d for d in drawings if d in used]
+            exports = [e for e in exports if (held := package_buildings(full, e))
+                       and all(rank(sight.building(b)) >= rank("view") for b in held)]
         return {**info, "locations": tree, "drawings": drawings, "exports": exports,
-                "exported": len(ws.exports), "exports_folder": str(path.parent / "exports")}
+                "exported": len(full.exports) if sight is None or sight.whole else len(exports),
+                "exports_folder": str(path.parent / "exports"),
+                **({"can": sight.can()} if sight is not None else {})}
+
+    def review_project(self, code: str, sight: Sight | None = None) -> dict:
+        """The review editor's project: its floors (with ``sight``, those the person may see,
+        each with their level on it, ``can``), and the space types."""
+        info = self.review(code).project()
+        if sight is not None:
+            info["floors"] = [{**f, "can": sight.floor(f["id"])} for f in info["floors"] if sight.floor(f["id"])]
+            info["can"] = sight.can()
+        return info
 
     # ---- drawings ---------------------------------------------------------------
 
-    def upload(self, code: str, name: str, body: bytes, private: bool = True) -> dict | Job:
+    def upload(self, code: str, name: str, body: bytes, private: bool = True, by: str | None = None) -> dict | Job:
         """A drawing added to the project. Kept private (the default), a job finds what
         names the people and the project — title blocks, names, contacts, hidden file
         data, what the language model reads as private (privacy.py) — and a person
@@ -359,9 +424,9 @@ class Studio:
             job.say(f"found {len(choices.found)} things to take out: choose what to keep")
             return {"pending": token, "name": name, "found": choices.listed(), "reader": report.model}
 
-        return self.jobs.submit(f"Looking for private information in {name}", run)
+        return self.jobs.submit(f"Looking for private information in {name}", run, project=code, user=by)
 
-    def keep_private(self, code: str, token: str, body: dict) -> Job:
+    def keep_private(self, code: str, token: str, body: dict, by: str | None = None) -> Job:
         """A drawing sent, kept without the private information found in it, all but
         what a person chose to keep (``keep``: ids of found things)."""
         with self._lock:
@@ -387,7 +452,7 @@ class Studio:
                     raise
             return self._keep_private(p["folder"], p["incoming"], doc, report, job)
 
-        return self.jobs.submit(f"Adding {p['name']} without its private information", run)
+        return self.jobs.submit(f"Adding {p['name']} without its private information", run, project=code, user=by)
 
     def cancel_private(self, code: str, token: str) -> dict:
         with self._lock:
@@ -453,7 +518,7 @@ class Studio:
             raise NotFound(f"no drawing {name}")
         return path
 
-    def plans(self, code: str, name: str, units: str | None = None) -> Job:
+    def plans(self, code: str, name: str, units: str | None = None, by: str | None = None) -> Job:
         """The plans in a drawing, read in ``units``, or in the units it shows."""
         path = self._drawing(code, name)
         if units and units not in UNIT_NAMES:
@@ -520,9 +585,9 @@ class Studio:
             return {"drawing": path.name, "units": used, "units_sure": sure, "units_reason": reason,
                     "units_chosen": bool(units), "units_said": header_units(doc), "levels": levels, "plans": out}
 
-        return self.jobs.submit(f"Reading the plans in {path.name}", run)
+        return self.jobs.submit(f"Reading the plans in {path.name}", run, project=code, user=by)
 
-    def add_floors(self, code: str, body: dict) -> Job:
+    def add_floors(self, code: str, body: dict, by: str | None = None) -> Job:
         ws_path = self.path(code)
         drawing = self._drawing(code, body.get("drawing", ""))
         units = body.get("units") or None  # the units the plans were found in: kept with each floor
@@ -656,7 +721,7 @@ class Studio:
                 self._stand_apart(ws_path, set(made_buildings.values()), job)
             return {"floors": [f for fs in added.values() for f in fs]}
 
-        return self.jobs.submit(f"Adding floors from {drawing.name}", run)
+        return self.jobs.submit(f"Adding floors from {drawing.name}", run, project=code, user=by)
 
     def _stand_apart(self, ws_path: Path, new: set[str], job: Job) -> None:
         """A new building whose drawing would put it on top of another of its site (or
@@ -686,7 +751,7 @@ class Studio:
             if moved:
                 ws.save(ws_path)
 
-    def convert(self, code: str, floor: str | None = None, force: bool = False) -> Job:
+    def convert(self, code: str, floor: str | None = None, force: bool = False, by: str | None = None) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
         keeps its rooms (convert.py); ``force`` applies it all the same."""
@@ -706,7 +771,8 @@ class Studio:
                 self._stand_apart(ws_path, unread, job)
             return result
 
-        return self.jobs.submit("Converting", run)
+        return self.jobs.submit("Converting", run, project=code, user=by,
+                                scope=("floor", floor) if floor is not None else ("project", None))
 
     def _convert(self, ws_path: Path, floor_ids: list[str], job: Job, force: bool = False) -> dict:
         from .convert import convert_floor
@@ -833,9 +899,9 @@ class Studio:
             ws.save(ws_path)
         return {"placement": b.placement.model_dump()}
 
-    def export(self, code: str, body: dict | None = None) -> Job:
-        """The package of one of the project's buildings (``building``: its ID; may be
-        left out when the project has one building)."""
+    def export_building(self, code: str, body: dict | None = None) -> str:
+        """The building a request to export names (``building``: its ID; may be left out
+        when the project has one building)."""
         ws_path = self.path(code)
         building = (body or {}).get("building")
         if building is None and isinstance((body or {}).get("buildings"), list) and len(body["buildings"]) == 1:
@@ -851,6 +917,13 @@ class Studio:
             building = known[0]
         elif building not in known:
             raise ValueError(f"no building {building} in this project")
+        return building
+
+    def export(self, code: str, body: dict | None = None, by: str | None = None) -> Job:
+        """The package of one of the project's buildings (``building``: its ID; may be
+        left out when the project has one building)."""
+        ws_path = self.path(code)
+        building = self.export_building(code, body)
 
         def run(job: Job):
             with self._changing(ws_path):
@@ -868,7 +941,7 @@ class Studio:
                 job.say("not on the map yet (shapes are true, the position is not): " + ", ".join(loose))
             return {"file": out.name, "counts": manifest.counts}
 
-        return self.jobs.submit("Exporting", run)
+        return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=by)
 
     def project_file(self, code: str) -> "Download":
         """The project as one file to send (*.storeypath-project): its workspace,
@@ -882,12 +955,13 @@ class Studio:
             export_project(path, buf)
         return Download(buf.getvalue(), f"{Workspace.load(path).id}.storeypath-project")
 
-    def open(self, body: bytes, replace: str | None = None) -> dict:
+    def open(self, body: bytes, replace: str | None = None, allow=None) -> dict:
         """A project from a file (a building's package, or a project file): put in the
         data folder. A package of a project here adds its building to it; when that
         building is here already, or the file is a project file of a project here, it
         is put in its place only when the project's name is typed (``replace``). No
-        job may be working on the project meanwhile."""
+        job may be working on the project meanwhile. ``allow`` (its code, the workspace
+        file of the project here or None, the file) raises when the person may not."""
         from .bundle import ProjectExists, open_file, project_code
 
         if not body:
@@ -897,6 +971,8 @@ class Studio:
         try:
             code = project_code(tmp)
             path = self._workspaces().get(code) if code else None
+            if allow is not None:
+                allow(code, path, tmp)
             lock = self._changing(path) if path else None
             if lock is not None and not lock.acquire(blocking=False):
                 raise ValueError("a job is working on this project: open the file when the job is done")
@@ -922,12 +998,15 @@ class Studio:
         finally:
             tmp.unlink(missing_ok=True)
 
-    def preview(self, code: str, building: str | None = None) -> bytes:
+    def preview(self, code: str, building: str | None = None, sight: Sight | None = None) -> bytes:
         """The project as a package, as it is now, for the 3D view: built in memory
-        and not entered as an export. With ``building``, that building alone."""
+        and not entered as an export. With ``building``, that building alone; with
+        ``sight``, only the floors that person may see (Sight.seen)."""
         from .export import ExportError, preview_package
 
         ws = Workspace.load(self.path(code))  # saved whole (workspace.py): no lock to read it
+        if sight is not None:
+            ws = sight.seen(ws)
         if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
@@ -945,6 +1024,14 @@ class Studio:
 
 
 WRITING = ".writing-"  # a package being written, beside where it goes, until it is found valid
+
+
+def package_buildings(ws: Workspace, name: str) -> list[str] | None:
+    """The buildings a package of the project's exports folder holds, as the export that
+    wrote it entered them; None when no export entered it (or it held the whole project,
+    as packages before one building a package did)."""
+    record = next((r for r in reversed(ws.exports) if r.file == Path(name).name), None)
+    return list(record.buildings) if record is not None and record.buildings else None
 
 
 def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say):
@@ -1177,6 +1264,546 @@ def _code(text: str, default: str = "B1") -> str:
     return words[0][:8] if words else default
 
 
+# ---- who may do what ---------------------------------------------------------------
+
+@dataclass
+class LoggedIn:
+    """A session begun: its token goes into the cookie, and who it is of back to the page."""
+
+    token: str
+    data: dict
+
+
+@dataclass
+class LoggedOut:
+    """A session ended: the cookie goes."""
+
+
+@dataclass
+class Stream:
+    """A download written as it is made (a backup): no Content-Length, the connection
+    closed after it. ``done`` is told how it went ("ok", "interrupted", "failed")."""
+
+    name: str
+    content_type: str
+    write: Callable
+    done: Callable
+
+
+BACKUP_WAIT_S = 10.0  # a backup waits this long for a job to finish, then is refused
+AUDIT_SHOWN = 200
+
+
+def _need(have: str | None, level: str, what: str) -> None:
+    if rank(have) < rank(level):
+        raise Forbidden(f"this needs {level} access to {what}; you have {have or 'none'}")
+
+
+class Gate:
+    """What the person asking may do. route() asks it first in every case (a test checks
+    that every case does): it raises Unauthorized (401) when nobody is logged in,
+    Forbidden (403) when they are and may not, and NotFound (404) for a project,
+    building, floor, object, item or job they may not see at all, as for one that is not
+    there. Until a person changes a temporary password, only me, password and logout are
+    answered. Without accounts (``storeypath review``, on this computer alone) the person
+    is LOCAL, who may do everything."""
+
+    def __init__(self, studio: Studio, accounts: Accounts | None, user: User | None, address: str = "",
+                 token: str | None = None):
+        self.studio, self.accounts, self.address, self.token = studio, accounts, address, token
+        self.user = LOCAL if accounts is None else user
+        self._new_project = False
+
+    # ---- who is asking ------------------------------------------------------------
+
+    def _who(self, password_gate: bool = True) -> User:
+        if self.user is None:
+            raise Unauthorized("log in to use Studio", setup=not self.accounts.has_users())
+        if password_gate and self.user.must_change_password:
+            raise Forbidden("change your password first: it was given to you to change", must_change_password=True)
+        return self.user
+
+    @property
+    def uid(self) -> str | None:
+        """The asking person's id (None without accounts)."""
+        return None if self.user is None or self.user is LOCAL else self.user.id
+
+    def audit(self, action: str, target=None, outcome: str = "ok", **more) -> None:
+        if self.accounts is not None:
+            self.accounts.audit(action, self.user, self.address, target, outcome, **more)
+
+    def anyone(self) -> None:
+        """Logging in, out, and the first setup: asked by anyone."""
+
+    def me(self) -> User:
+        """Logged in, even with a password to change."""
+        return self._who(password_gate=False)
+
+    def logged_in(self) -> User:
+        return self._who()
+
+    def admin(self) -> User:
+        user = self._who()
+        if user.role != "admin":
+            raise Forbidden("only an admin may do this")
+        return user
+
+    def capability(self, name: str) -> User:
+        user = self._who()
+        if not user.can(name):
+            raise Forbidden({"backup": "only an admin, or someone an admin let, may download a backup",
+                             "catalogue": "only an admin, or someone an admin let, may change the item types"}[name])
+        return user
+
+    def create(self) -> User:
+        user = self._who()
+        if user.role not in ("admin", "engineer"):
+            raise Forbidden("only admins and engineers create projects")
+        return user
+
+    def picker(self) -> User:
+        """Someone who may share something (or an admin): to be shown the users to share with."""
+        user = self._who()
+        if self.accounts is not None and not self.accounts.shares_somewhere(user):
+            raise Forbidden("you may not share anything")
+        return user
+
+    # ---- projects and their parts ------------------------------------------------------
+
+    def sight_of(self, code: str, ws: Workspace) -> Sight:
+        """What the asking person may do in a project (its workspace as it is)."""
+        user = self._who()
+        access = self.accounts.project_access(code) if self.accounts is not None else None
+        return Sight(ws, access, None if user is LOCAL else user)
+
+    def _workspace(self, code: str) -> Workspace:
+        return self.studio.review(code).workspace()  # NotFound when there is no such project
+
+    def see(self, code: str) -> Sight:
+        """Any access to the project: a project nobody let them see is not there for them."""
+        self._who()
+        sight = self.sight_of(code, self._workspace(code))
+        if not sight.any():
+            raise NotFound(f"no project {code}")
+        return sight
+
+    def project(self, code: str, level: str) -> Sight:
+        sight = self.see(code)
+        _need(sight.project, level, "the whole project")
+        return sight
+
+    def own(self, code: str) -> Sight:
+        sight = self.see(code)
+        if not (sight.owner or sight.admin):
+            raise Forbidden("only the project's owner or an admin may delete it")
+        return sight
+
+    def building(self, code: str, building_id: str, level: str) -> Sight:
+        sight = self.see(code)
+        if not sight.sees_building(building_id):
+            raise NotFound(f"no building {building_id}")
+        _need(sight.building(building_id), level, "the whole building")
+        return sight
+
+    def floor(self, code: str, floor_id: str, level: str) -> Sight:
+        sight = self.see(code)
+        if not sight.floor(floor_id):
+            raise NotFound(f"no floor {floor_id}")
+        _need(sight.floor(floor_id), level, "this floor")
+        return sight
+
+    def convert(self, code: str, floor) -> Sight:
+        """Reading drawings again: one floor's (edit on it), or every floor's (edit on the project)."""
+        if floor is None:
+            return self.project(code, "edit")
+        if not isinstance(floor, str):
+            raise ValueError("floor: a floor's ID")
+        return self.floor(code, floor, "edit")
+
+    def drawing(self, code: str, floor_id: str) -> Sight:
+        """A floor's drawing, or its print: the part of the drawing that is this floor's
+        plan (its region), and nothing else of it. A floor read from a whole drawing (no
+        region) that other floors are read from too shows theirs: it needs view on each."""
+        sight = self.floor(code, floor_id, "view")
+        ws = self._workspace(code)
+        f = ws.floor(floor_id)
+        if f.source is None or f.source.region is not None:
+            return sight
+        folder = self.studio.path(code).parent
+        mine = (folder / f.source.path).resolve()
+        for *_, g, g_id in ws.iter_floors():
+            if g_id != floor_id and g.source is not None and (folder / g.source.path).resolve() == mine \
+                    and not sight.floor(g_id):
+                raise Forbidden("this floor's drawing holds other floors you may not see, and no part of it "
+                                "is marked as this floor's plan")
+        return sight
+
+    def object(self, code: str, object_id: str) -> Sight:
+        """A space, zone or opening corrected: edit on its floor."""
+        from .ids import parse_id
+
+        sight = self.see(code)
+        try:
+            floor_id = parse_id(object_id).prefix("floor")
+        except (ValueError, TypeError):
+            floor_id = None
+        if floor_id is None or not sight.floor(floor_id) or object_id not in self._workspace(code).objects:
+            raise NotFound(f"no active space, zone or opening {object_id}")
+        _need(sight.floor(floor_id), "edit", "its floor")
+        return sight
+
+    def item(self, code: str, item_id: str, body: dict) -> Sight:
+        """An item changed: edit on its floor, and on the floor it is carried to."""
+        sight = self.see(code)
+        it = self._workspace(code).items.get(item_id)
+        if it is None or not sight.floor(it.floor_id):
+            raise NotFound(f"no item {item_id}")
+        _need(sight.floor(it.floor_id), "edit", "its floor")
+        to = body.get("floor_id")
+        if isinstance(to, str) and to != it.floor_id:
+            if not sight.floor(to):
+                raise NotFound(f"no floor {to}")
+            _need(sight.floor(to), "edit", "the floor it goes to")
+        return sight
+
+    def add_floors(self, code: str, body: dict) -> Sight:
+        """Floors added from one of the project's drawings: edit on each building they go
+        into (on the project for a new building or location), and view on the whole
+        project, as the drawing is the project's and may hold any of its floors."""
+        sight = self.see(code)
+        _need(sight.project, "view", "the whole project (its drawings)")
+        plans = body.get("plans")
+        if not isinstance(plans, list) or not plans:
+            raise ValueError("choose at least one plan")
+        for place in _floors_to_add(self._workspace(code), [dict(p) if isinstance(p, dict) else p for p in plans]):
+            if place.building_id is None:
+                _need(sight.project, "edit", "the whole project (a new building)")
+            else:
+                if not sight.sees_building(place.building_id):
+                    raise NotFound(f"no building {place.building_id}")
+                _need(sight.building(place.building_id), "edit", f"the building {place.building_id}")
+        return sight
+
+    def export(self, code: str, body: dict) -> str:
+        """A building's package made: edit on the building (it holds every floor of it)."""
+        sight = self.see(code)
+        building = self.studio.export_building(code, body)
+        if not sight.sees_building(building):
+            raise NotFound(f"no building {building}")
+        _need(sight.building(building), "edit", "the whole building")
+        return building
+
+    def export_file(self, code: str, name: str) -> Sight:
+        """A package of the project's: view on the buildings it holds (on the project, for
+        one no export entered)."""
+        sight = self.see(code)
+        held = package_buildings(self._workspace(code), name)
+        if held is None:
+            if not sight.whole:
+                raise NotFound(f"no export {name}")
+            return sight
+        for b in held:
+            if not sight.sees_building(b):
+                raise NotFound(f"no export {name}")
+            _need(sight.building(b), "view", "the whole building it holds")
+        return sight
+
+    def preview(self, code: str, building) -> Sight:
+        sight = self.see(code)
+        if building is not None and not sight.sees_building(building):
+            raise NotFound(f"no building {building}")
+        return sight
+
+    def job(self, job_id: str) -> Job:
+        """A job, to its person, and to those who may see what it works on."""
+        user = self._who()
+        job = self.studio.jobs.get(job_id)
+        if self.accounts is None or user.role == "admin" or (job.user is not None and job.user == user.id):
+            return job
+        try:
+            sight = self.see(job.project) if job.project else None
+        except NotFound:
+            sight = None
+        if sight is None or not sight.scope(*job.scope):
+            raise NotFound(f"no job {job_id}")
+        return job
+
+    def opening(self):
+        """Who may open a file: a new project, an admin or an engineer (who then owns it);
+        a package into a project here, edit on each building it brings (on the project, for
+        a new one) and on each floor an item it holds is carried from; a project file in
+        place of the one here, its owner or an admin. Checked once the file is read (what
+        it holds says what it changes): the check is returned, Studio.open calls it."""
+        user = self._who()
+
+        def allow(code, path, source) -> None:
+            from .bundle import WORKSPACE_FILE, workspace_from_package
+
+            if path is None:
+                if user.role not in ("admin", "engineer"):
+                    raise Forbidden("only admins and engineers open files as new projects")
+                self._new_project = True
+                return
+            sight = self.sight_of(code, self._workspace(code))
+            if not sight.any():
+                raise Forbidden("this file's project is here already, and is not shared with you")
+            with zipfile.ZipFile(source) as z:
+                if WORKSPACE_FILE in z.namelist():
+                    if not (sight.owner or sight.admin):
+                        raise Forbidden("only the project's owner or an admin may put a project file in its place")
+                    return
+                try:
+                    pkg = workspace_from_package(z, source.name)
+                except Exception:
+                    return  # not a package: Studio.open says so
+            here = self._workspace(code)
+            from .export import building_ids
+
+            known = set(building_ids(here))
+            brought = building_ids(pkg)
+            for b in brought:
+                if b in known:
+                    _need(sight.building(b), "edit", f"the building {b}")
+                else:
+                    _need(sight.project, "edit", "the whole project (a new building)")
+            for i, it in pkg.items.items():  # an item of another building here, carried into this one
+                mine = here.items.get(i)
+                if mine is not None and mine.floor_id and sight.building_of.get(mine.floor_id) not in brought:
+                    _need(sight.floor(mine.floor_id), "edit", f"the floor {i} is on")
+
+        return allow
+
+    # ---- what follows what was done --------------------------------------------------
+
+    def made(self, made: dict) -> dict:
+        """A project created: its maker owns it."""
+        if self.accounts is not None:
+            if self.uid:
+                self.accounts.set_owner(made["code"], self.uid)
+            self.audit("project created", made["code"])
+        return made
+
+    def opened(self, opened: dict) -> dict:
+        if self.accounts is not None:
+            if self._new_project and self.uid:
+                self.accounts.set_owner(opened["code"], self.uid)
+            self.audit("project opened", opened["code"], how=opened.get("how"),
+                       buildings=opened.get("buildings"))
+        return opened
+
+    def deleted(self, code: str, deleted: dict) -> dict:
+        if self.accounts is not None:
+            self.accounts.forget(code)
+            self.audit("project deleted", code, name=deleted.get("name"))
+        return deleted
+
+    # ---- the person's own ------------------------------------------------------------
+
+    def login(self, body: dict) -> LoggedIn:
+        if self.accounts is None:
+            raise NotFound("Studio runs without accounts here")
+        token, user = self.accounts.login(body.get("username"), body.get("password"), self.address)
+        self.accounts.logout(self.token)  # the session it replaces, if any
+        return LoggedIn(token, {"user": self._me(user), "must_change_password": user.must_change_password})
+
+    def logout(self) -> LoggedOut:
+        if self.accounts is not None:
+            user = self.accounts.logout(self.token)
+            if user is not None:
+                self.accounts.audit("logout", user, self.address, user.username)
+        return LoggedOut()
+
+    def setup(self, body: dict) -> LoggedIn:
+        if self.accounts is None:
+            raise NotFound("Studio runs without accounts here")
+        token, user = self.accounts.setup(body.get("token"), body.get("username"), body.get("name"),
+                                          body.get("password"), self.address)
+        return LoggedIn(token, {"user": self._me(user), "must_change_password": False})
+
+    def _me(self, user: User) -> dict:
+        return {**user.view(), "role": user.role,
+                "capabilities": list(CAPABILITY_NAMES) if user.role == "admin" else list(user.capabilities),
+                "must_change_password": user.must_change_password, "local": self.accounts is None,
+                "create": user.role in ("admin", "engineer"),
+                "share": self.accounts is None or self.accounts.shares_somewhere(user)}
+
+    def whoami(self) -> dict:
+        return self._me(self.me())
+
+    def change_password(self, body: dict) -> LoggedIn:
+        user = self.me()
+        if self.accounts is None:
+            raise NotFound("Studio runs without accounts here")
+        token = self.accounts.change_own_password(user, body.get("current"), body.get("new"), self.address)
+        self.accounts.logout(self.token)
+        user = self.accounts.user(user.id)
+        return LoggedIn(token, {"user": self._me(user), "must_change_password": False})
+
+    # ---- sharing -----------------------------------------------------------------------
+
+    def share_some(self, code: str) -> Sight:
+        """Share on some part of the project: to see and change who it is shared with there."""
+        sight = self.see(code)
+        if sight.most() != "share":
+            raise Forbidden("you may not share anything in this project")
+        return sight
+
+    def _person(self, user_id) -> dict | None:
+        if self.accounts is None or user_id is None:
+            return None
+        u = self.accounts.user(user_id)
+        return u.view() if u else {"id": user_id, "username": "?", "name": "(not known)"}
+
+    def access(self, code: str, sight: Sight) -> dict:
+        """Who the project is shared with, where the asking person may share: its owner,
+        the grants on the scopes they have share on (and inside them), and those scopes,
+        as a tree, to share more."""
+        ws = self._workspace(code)
+        access = self.accounts.project_access(code) if self.accounts is not None else None
+        names = {"project": ws.project.name}
+        tree = []
+        for loc in ws.locations:
+            for b in loc.buildings:
+                b_id = f"{ws.id}-{loc.code}-{b.code}"
+                names[b_id] = b.name
+                floors = []
+                for f in sorted(b.floors, key=lambda f: f.ordinal):
+                    f_id = f"{b_id}-{f.code}"
+                    names[f_id] = f"{f.name} · {b.name}"
+                    if sight.floor(f_id) == "share":
+                        floors.append({"kind": "floor", "id": f_id, "name": f.name})
+                if sight.building(b_id) == "share" or floors:
+                    tree.append({"kind": "building", "id": b_id, "name": b.name,
+                                 "share": sight.building(b_id) == "share", "floors": floors})
+        grants = []
+        for g in (access.grants if access else []):
+            if sight.scope(g.scope.kind, g.scope.id) != "share":
+                continue
+            grants.append({"user": self._person(g.user), "scope": {**g.scope.model_dump(),
+                           "name": names.get(g.scope.id or "project", g.scope.id)},
+                           "level": g.level, "by": self._person(g.by), "at": g.at})
+        return {"project": {"code": code, "name": ws.project.name},
+                "owner": self._person(access.owner if access else None),
+                "you": {"level": sight.project, "owner": sight.owner, "admin": sight.admin},
+                "scopes": {"project": sight.project == "share", "buildings": tree},
+                "grants": grants}
+
+    def grant(self, code: str, sight: Sight, body: dict) -> dict:
+        """A person given a level on a scope of the project, or theirs taken away (level
+        null): by someone with share on that scope (not wider), for anyone but
+        themselves, and never the owner's access."""
+        if self.accounts is None:
+            raise ValueError("Studio runs without accounts here: nothing is shared")
+        scope = body.get("scope")
+        if not isinstance(scope, dict) or scope.get("kind") not in ("project", "building", "floor"):
+            raise ValueError('scope: {"kind": "project"}, {"kind": "building", "id": …} or {"kind": "floor", "id": …}')
+        kind, scope_id = scope["kind"], scope.get("id") if scope["kind"] != "project" else None
+        if kind != "project" and (not isinstance(scope_id, str) or not (sight.floor(scope_id) if kind == "floor"
+                                                                       else sight.sees_building(scope_id))):
+            raise NotFound(f"no {kind} {scope_id}")
+        _need(sight.scope(kind, scope_id), "share", f"the {kind}" if kind != "project" else "the whole project")
+        user = self.accounts.user(body.get("user")) if isinstance(body.get("user"), str) else None
+        if user is None:
+            raise ValueError("no such user")
+        if user.id == self.uid:
+            raise Forbidden("you cannot change your own access: ask someone else who may share it")
+        if user.id == sight.access.owner:
+            raise Forbidden("the project's owner has every access to it already, and keeps it")
+        level = body.get("level")
+        if level is not None and not user.active:
+            raise ValueError(f"{user.username} is disabled")
+        done = self.accounts.set_grant(code, user.id, Scope(kind=kind, id=scope_id), level, self.uid)
+        if done != "nothing":
+            self.audit(f"grant {done}", code, who=user.username, scope=f"{kind} {scope_id or ''}".strip(),
+                       level=level)
+        return self.access(code, self.see(code))
+
+    def set_owner(self, code: str, body: dict) -> dict:
+        self._workspace(code)
+        user = self.accounts.user(body.get("user")) if self.accounts and isinstance(body.get("user"), str) else None
+        if user is None or not user.active:
+            raise ValueError("no such user (or disabled)")
+        before = self.accounts.project_access(code).owner
+        self.accounts.set_owner(code, user.id)
+        self.audit("owner changed", code, owner=user.username,
+                   was=(self._person(before) or {}).get("username"))
+        return self.access(code, self.see(code))
+
+    def users_to_share(self) -> list[dict]:
+        if self.accounts is None:
+            return []
+        return [u.view() for u in self.accounts.users() if u.active]
+
+    # ---- users (admins) ----------------------------------------------------------------
+
+    def _accounts(self) -> Accounts:
+        if self.accounts is None:
+            raise NotFound("Studio runs without accounts here")
+        return self.accounts
+
+    def all_users(self) -> list[dict]:
+        return [{**u.view(full=True)} for u in self._accounts().users()]
+
+    def add_user(self, body: dict) -> dict:
+        """A new user, with a temporary password (shown once) to change at the first login."""
+        accounts = self._accounts()
+        password = temporary_password()
+        user = accounts.add_user(body.get("username"), password, name=body.get("name") or "",
+                                 role=body.get("role") or "user", capabilities=body.get("capabilities") or [],
+                                 must_change_password=True)
+        self.audit("user created", user.username, role=user.role, capabilities=user.capabilities)
+        return {"user": user.view(full=True), "password": password}
+
+    def change_user(self, user_id: str, body: dict) -> dict:
+        accounts = self._accounts()
+        if accounts.user(user_id) is None:
+            raise NotFound(f"no user {user_id}")
+        fields = {k: body[k] for k in ("name", "role", "capabilities", "active") if k in body}
+        user = accounts.update_user(user_id, **fields)
+        if fields.get("active") is False:
+            self.audit("user disabled", user.username)
+        elif fields:
+            self.audit("user changed", user.username, **{k: v for k, v in fields.items() if k != "name"})
+        return user.view(full=True)
+
+    def reset_password(self, user_id: str) -> dict:
+        accounts = self._accounts()
+        if accounts.user(user_id) is None:
+            raise NotFound(f"no user {user_id}")
+        password = temporary_password()
+        user = accounts.set_password(user_id, password, temporary=True)
+        self.audit("password reset", user.username)
+        return {"user": user.view(full=True), "password": password}
+
+    def audit_log(self, query: dict) -> list[dict]:
+        try:
+            n = int((query.get("n") or [AUDIT_SHOWN])[0])
+        except ValueError:
+            n = AUDIT_SHOWN
+        return self._accounts().audit_tail(max(1, min(n, 2000)))
+
+    # ---- the whole data folder -------------------------------------------------------
+
+    def backup(self) -> Stream:
+        """The data folder as a .tar.gz, written as it is sent; no job runs meanwhile."""
+        stack = ExitStack()
+        try:
+            stack.enter_context(jobs_paused(self.studio.data, timeout=BACKUP_WAIT_S))
+        except TimeoutError:
+            raise Busy("a job is running (reading a drawing, converting or exporting): download the backup "
+                       "when it is done") from None
+        name = backup_name()
+
+        def done(outcome: str) -> None:
+            stack.close()
+            self.audit("backup", name, outcome)
+
+        return Stream(name, "application/gzip", lambda out: write_backup(self.studio.data, out), done)
+
+
+CAPABILITY_NAMES = ("backup", "catalogue")
+
+
 # ---- HTTP ----------------------------------------------------------------------
 
 MAX_JSON = 64 * 1024 * 1024  # a request's JSON body
@@ -1235,19 +1862,60 @@ def _is_address(name: str) -> bool:
     return True
 
 
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+class StudioServer(ThreadingHTTPServer):
+    """The server: a request a thread. A connection that is not TLS where TLS is spoken
+    (or drops during its handshake) is let go quietly."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ssl.SSLError, ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
-                allowed: set[str] | list[str] | tuple = ()) -> ThreadingHTTPServer:
+                allowed: set[str] | list[str] | tuple = (), *, accounts: Accounts | None,
+                secure_cookies: bool = False, tls: ssl.SSLContext | None = None) -> ThreadingHTTPServer:
     """Studio's pages and API on ``host``:``port``. Reached by names other than those
-    of allowed_hosts (``allowed``: more of them), it answers 403."""
+    of allowed_hosts (``allowed``: more of them), it answers 403.
+
+    ``accounts`` is asked for by name, so that no caller gets an open server by
+    default: people log in, and each call is let through by what they may do (Gate).
+    None — no accounts, everyone may do everything — only on this computer (a loopback
+    address), as ``storeypath review`` serves one project. ``tls``: served over HTTPS
+    with that context. The session cookie is Secure over TLS, or with
+    ``secure_cookies`` (Studio reached through an HTTPS proxy)."""
+    if accounts is None and host not in LOOPBACK:
+        raise ValueError(f"without accounts Studio serves this computer alone (127.0.0.1), not {host}")
     app_dir = Path(str(resources.files("storeypath") / "review_app")).resolve()
     viewer_dir = asset_dir("viewer").resolve()
     theme = viewer_dir / "src" / "theme.js"
     names = allowed_hosts(host, allowed)
     any_name = "*" in names
+    secure = secure_cookies or tls is not None
+
+    def cookie(token: str | None) -> str:
+        parts = [f"{COOKIE}={token or ''}", "HttpOnly", "SameSite=Strict", "Path=/"]
+        if token is None:
+            parts.append("Max-Age=0")
+        if secure:
+            parts.append("Secure")
+        return "; ".join(parts)
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         _unread = 0  # what is left of the request's body: -1, not known (the connection is not kept)
+
+        def setup(self):
+            if isinstance(self.request, ssl.SSLSocket):  # the handshake here, not in the thread that accepts
+                self.request.settimeout(30)
+                self.request.do_handshake()
+                self.request.settimeout(None)
+            super().setup()
 
         def log_message(self, *args):
             pass
@@ -1383,9 +2051,24 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(400, {"error": "send a JSON object"})
             self._api("POST", unquote(urlparse(self.path).path).split("/")[2:], body, {})
 
+        def _token(self) -> str | None:
+            """The session's token, from the request's cookie."""
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                key, _, value = part.strip().partition("=")
+                if key == COOKIE and value:
+                    return value
+            return None
+
         def _api(self, method: str, parts: list[str], body, query) -> None:
+            token = self._token()
+            user = accounts.session(token) if accounts is not None else LOCAL
+            may = Gate(studio, accounts, user, self.client_address[0] if self.client_address else "", token)
             try:
-                data = route(method, parts, body, query)
+                data = route(method, parts, body, query, may)
+            except Refused as e:
+                extra = {"Retry-After": str(e.more["retry_after"])} if isinstance(e, Throttled) else None
+                return self._send(e.status, json.dumps({"error": str(e), **e.more}, ensure_ascii=False).encode(),
+                                  "application/json", extra)
             except NotFound as e:
                 return self._json(404, {"error": str(e)})
             except ProjectExists as e:
@@ -1397,6 +2080,13 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             except Exception as e:
                 traceback.print_exc()
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+            if isinstance(data, LoggedIn):
+                return self._send(200, json.dumps(data.data, ensure_ascii=False).encode(), "application/json",
+                                  {"Set-Cookie": cookie(data.token)})
+            if isinstance(data, LoggedOut):
+                return self._send(200, b'{"logged_out": true}', "application/json", {"Set-Cookie": cookie(None)})
+            if isinstance(data, Stream):
+                return self._stream(data)
             if isinstance(data, Download):  # made on the fly, saved by the browser
                 return self._send(200, data.data, "application/zip",
                                   {"Content-Disposition": f'attachment; filename="{data.name}"'})
@@ -1411,78 +2101,191 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 data = data.view()
             self._json(200, data)
 
-    def route(method: str, parts: list[str], body, query: dict):
+        def _stream(self, s: Stream) -> None:
+            """A download written as it is made: the connection closes after it, which is
+            how the browser knows it is whole (a stream cut short ends gzip unfinished)."""
+            outcome = "failed"
+            try:
+                self.close_connection = True
+                self.send_response(200)
+                self.send_header("Content-Type", s.content_type)
+                self.send_header("Content-Disposition", f'attachment; filename="{s.name}"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                s.write(self.wfile)
+                self.wfile.flush()
+                outcome = "ok"
+            except (OSError, ssl.SSLError):
+                outcome = "interrupted"
+            finally:
+                s.done(outcome)
+
+    def route(method: str, parts: list[str], body, query: dict, may: Gate):
+        # Every case asks the gate first (what it needs: tests/test_auth_http.py checks
+        # that each does, and tries each as people with each kind of access).
         match method, parts:
+            # logging in and out, and the person's own
+            case "POST", ["login"]:
+                may.anyone()
+                return may.login(body)
+            case "POST", ["logout"]:
+                may.anyone()
+                return may.logout()
+            case "POST", ["setup"]:
+                may.anyone()
+                return may.setup(body)
+            case "GET", ["me"]:
+                may.me()
+                return may.whoami()
+            case "POST", ["me", "password"]:
+                may.me()
+                return may.change_password(body)
             case "GET", ["status"]:
+                may.logged_in()
                 return studio.status()
-            case "GET", ["projects"]:
-                return studio.projects()
-            case "POST", ["projects"]:
-                return studio.create(body.get("name", ""))
-            case "GET", ["jobs", job_id]:
-                return studio.jobs.get(job_id)
-            case "GET", ["projects", code]:
-                return studio.project(code)
-            case "POST", ["projects", code, "delete"]:
-                return studio.delete(code, body)
-            case "GET", ["projects", code, "drawings", name, "words"]:
-                return studio.words(code, name)
-            case "POST", ["projects", code, "incoming", token]:
-                return studio.keep_private(code, token, body)
-            case "POST", ["projects", code, "incoming", token, "cancel"]:
-                return studio.cancel_private(code, token)
-            case "PUT", ["projects", code, "drawings", name]:
-                return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0")
-            case "POST", ["projects", code, "drawings", name, "plans"]:
-                return studio.plans(code, name, body.get("units") or None)
-            case "POST", ["projects", code, "floors"]:
-                return studio.add_floors(code, body)
-            case "POST", ["projects", code, "convert"]:
-                return studio.convert(code, body.get("floor"), body.get("force", False))
-            case "POST", ["projects", code, "buildings", b_id, "site"]:
-                return studio.move(code, b_id, body)
-            case "POST", ["projects", code, "locations", loc_id, "arrange"]:
-                return studio.arrange(code, loc_id)
-            case "POST", ["projects", code, "locations", loc_id, "placement"]:
-                return studio.place_site(code, loc_id, body)
-            case "POST", ["projects", code, "buildings", b_id, "placement"]:
-                return studio.place(code, b_id, body)
-            case "POST", ["projects", code, "export"]:
-                return studio.export(code, body)
-            case "GET", ["projects", code, "exports", name]:
-                return studio.export_file(code, name)
-            case "GET", ["projects", code, "preview.storeypath"]:
-                return studio.preview(code, (query.get("building") or [None])[0])
-            case "GET", ["projects", code, "project.storeypath"] | ["projects", code, "project.storeypath-project"]:
-                return studio.project_file(code)
-            case "PUT", ["open"]:
-                return studio.open(body, (query.get("replace") or [None])[0])
-            # the review editor
-            case "GET", ["projects", code, "floors", floor_id]:
-                return studio.review(code).floor(floor_id)
-            case "GET", ["projects", code, "floors", floor_id, "drawing"]:
-                return studio.review(code).drawing(floor_id)
-            case "GET", ["projects", code, "floors", floor_id, "print"]:
-                return floor_print(studio.review(code), floor_id)
-            case "GET", ["projects", code, "floors", floor_id, "print.png"]:
-                return floor_print_png(studio.review(code), floor_id)
-            case "POST", ["projects", code, "floors", floor_id, "edits"]:
-                studio.review(code).edit(floor_id, body)
-                return studio.convert(code, floor_id)
             case "GET", ["catalogue"]:
+                may.logged_in()
                 return studio.catalogue().model_dump()
             case "POST", ["catalogue"]:
+                may.capability("catalogue")
                 return studio.save_catalogue(body)
+            # projects
+            case "GET", ["projects"]:
+                may.logged_in()
+                return studio.projects(may.sight_of)
+            case "POST", ["projects"]:
+                may.create()
+                return may.made(studio.create(body.get("name", "")))
+            case "PUT", ["open"]:
+                allow = may.opening()
+                return may.opened(studio.open(body, (query.get("replace") or [None])[0], allow))
+            case "GET", ["jobs", job_id]:
+                return may.job(job_id)
+            case "GET", ["projects", code]:
+                sight = may.see(code)
+                return studio.project(code, sight)
+            case "GET", ["projects", code, "review"]:
+                sight = may.see(code)
+                return studio.review_project(code, sight)
+            case "POST", ["projects", code, "delete"]:
+                may.own(code)
+                return may.deleted(code, studio.delete(code, body))
+            # sharing
+            case "GET", ["projects", code, "access"]:
+                sight = may.share_some(code)
+                return may.access(code, sight)
+            case "POST", ["projects", code, "access"]:
+                sight = may.share_some(code)
+                return may.grant(code, sight, body)
+            case "POST", ["projects", code, "owner"]:
+                may.admin()
+                return may.set_owner(code, body)
+            case "GET", ["users"]:
+                may.picker()
+                return may.users_to_share()
+            # the project's drawings: they are the project's, and one may hold several floors
+            case "GET", ["projects", code, "drawings", name, "words"]:
+                may.project(code, "edit")
+                return studio.words(code, name)
+            case "POST", ["projects", code, "incoming", token]:
+                may.project(code, "edit")
+                return studio.keep_private(code, token, body, by=may.uid)
+            case "POST", ["projects", code, "incoming", token, "cancel"]:
+                may.project(code, "edit")
+                return studio.cancel_private(code, token)
+            case "PUT", ["projects", code, "drawings", name]:
+                may.project(code, "edit")
+                return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0", by=may.uid)
+            case "POST", ["projects", code, "drawings", name, "plans"]:
+                may.project(code, "edit")
+                return studio.plans(code, name, body.get("units") or None, by=may.uid)
+            case "POST", ["projects", code, "floors"]:
+                may.add_floors(code, body)
+                return studio.add_floors(code, body, by=may.uid)
+            case "POST", ["projects", code, "convert"]:
+                may.convert(code, body.get("floor"))
+                return studio.convert(code, body.get("floor"), body.get("force", False), by=may.uid)
+            # buildings and sites
+            case "POST", ["projects", code, "buildings", b_id, "site"]:
+                may.building(code, b_id, "edit")
+                return studio.move(code, b_id, body)
+            case "POST", ["projects", code, "buildings", b_id, "placement"]:
+                may.building(code, b_id, "edit")
+                return studio.place(code, b_id, body)
+            case "POST", ["projects", code, "locations", loc_id, "arrange"]:
+                may.project(code, "edit")
+                return studio.arrange(code, loc_id)
+            case "POST", ["projects", code, "locations", loc_id, "placement"]:
+                may.project(code, "edit")
+                return studio.place_site(code, loc_id, body)
+            # packages
+            case "POST", ["projects", code, "export"]:
+                building = may.export(code, body)
+                job = studio.export(code, {"building": building}, by=may.uid)
+                may.audit("export", building)
+                return job
+            case "GET", ["projects", code, "exports", name]:
+                may.export_file(code, name)
+                return studio.export_file(code, name)
+            case "GET", ["projects", code, "preview.storeypath"]:
+                sight = may.preview(code, (query.get("building") or [None])[0])
+                return studio.preview(code, (query.get("building") or [None])[0], sight)
+            case "GET", ["projects", code, "project.storeypath"] | ["projects", code, "project.storeypath-project"]:
+                may.project(code, "view")
+                return studio.project_file(code)
+            # the review editor
+            case "GET", ["projects", code, "floors", floor_id]:
+                may.floor(code, floor_id, "view")
+                return studio.review(code).floor(floor_id)
+            case "GET", ["projects", code, "floors", floor_id, "drawing"]:
+                may.drawing(code, floor_id)
+                return studio.review(code).drawing(floor_id)
+            case "GET", ["projects", code, "floors", floor_id, "print"]:
+                may.drawing(code, floor_id)
+                return floor_print(studio.review(code), floor_id)
+            case "GET", ["projects", code, "floors", floor_id, "print.png"]:
+                may.drawing(code, floor_id)
+                return floor_print_png(studio.review(code), floor_id)
+            case "POST", ["projects", code, "floors", floor_id, "edits"]:
+                may.floor(code, floor_id, "edit")
+                studio.review(code).edit(floor_id, body)
+                return studio.convert(code, floor_id, by=may.uid)
             case "POST", ["projects", code, "floors", floor_id, "items"]:
+                may.floor(code, floor_id, "edit")
                 return studio.review(code).add_item(floor_id, body)
             case "POST", ["projects", code, "items", item_id]:
+                may.item(code, item_id, body)
                 return studio.review(code).change_item(item_id, body)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
-                return studio.convert(code, floor_id, body.get("force", False))
+                may.floor(code, floor_id, "edit")
+                return studio.convert(code, floor_id, body.get("force", False), by=may.uid)
             case "POST", ["projects", code, "objects", object_id]:
+                may.object(code, object_id)
                 return studio.review(code).correct(object_id, body)
-            case "GET", ["projects", code, "review"]:
-                return studio.review(code).project()
+            # users (admins), the audit log and backups
+            case "GET", ["admin", "users"]:
+                may.admin()
+                return may.all_users()
+            case "POST", ["admin", "users"]:
+                may.admin()
+                return may.add_user(body)
+            case "POST", ["admin", "users", user_id]:
+                may.admin()
+                return may.change_user(user_id, body)
+            case "POST", ["admin", "users", user_id, "password"]:
+                may.admin()
+                return may.reset_password(user_id)
+            case "GET", ["admin", "audit"]:
+                may.admin()
+                return may.audit_log(query)
+            case "GET", ["backup"]:
+                may.capability("backup")
+                return may.backup()
         raise NotFound("not found")
 
-    return ThreadingHTTPServer((host, port), Handler)
+    server = StudioServer((host, port), Handler)
+    if tls is not None:  # the handshake is made in each request's thread (Handler.setup)
+        server.socket = tls.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    return server

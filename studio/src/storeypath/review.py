@@ -21,6 +21,13 @@ command line can be used side by side. The web server is in server.py:
 
 A change is refused (Busy, answered 409) while a job works on the project: the job
 would save over it.
+
+Who may call these is checked before they are (server.Gate): the project's floors
+are those the person may see; a floor, its drawing and its print need view on that
+floor (the drawing and print are its plan's part of the sheet; a floor read from a
+whole sheet other floors are read from too needs view on each of them); a change
+(edits, items, corrections, reading again) needs edit on the floor, and an item
+carried to another floor, edit on that one too.
 """
 
 from __future__ import annotations
@@ -112,6 +119,12 @@ class Review:
         if self._ws is None or stamp != self._mtime:
             self._ws, self._mtime = Workspace.load(self.path), stamp
         return self._ws
+
+    def workspace(self) -> Workspace:
+        """The workspace as it is on disk now (read again when it changed): to look things
+        up in (who may do what, server.Gate), never to change."""
+        with self._lock:
+            return self._load()
 
     def _save(self, ws: Workspace) -> None:
         ws.save(self.path)

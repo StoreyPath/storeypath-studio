@@ -135,11 +135,12 @@ def test_items_placed_moved_and_taken_away_in_review(tmp_path):
     # carry it to another floor, take it away and bring it back.
     import threading
 
-    from storeypath.server import Studio, make_server
+    from sessions import admin_server
+    from storeypath.server import Studio
     from test_review import NoModel, call, office_floor, wait, write_floor_dxf
 
     s = Studio(tmp_path / "data", model=NoModel())
-    srv = make_server(s, port=0)
+    srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
     try:

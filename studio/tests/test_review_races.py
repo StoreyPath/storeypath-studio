@@ -12,7 +12,8 @@ from shapely.geometry import shape
 
 from storeypath.review import Busy, Review
 from storeypath.samples import build_demo
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from sessions import admin_server
 from storeypath.workspace import Workspace
 
 
@@ -68,7 +69,7 @@ def studio(tmp_path, monkeypatch):
     monkeypatch.setattr("storeypath.review.BUSY_WAIT_S", 0.05)
     ws_path, _ = build_demo(tmp_path / "data" / "demo")
     s = Studio(tmp_path / "data", model=NoModel(), warm=False)
-    srv = make_server(s, port=0)
+    srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}", s, ws_path
     srv.shutdown()
