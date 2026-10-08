@@ -272,7 +272,7 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 
 /* the floor in 3D (StoreyPath's world), or walked through, instead of the plan: one view,
    the panel and toolbar the same in each */
-#world3d { position: absolute; inset: 0; }
+#world3d { position: absolute; inset: 0; z-index: 0; } /* its labels (each with its z-index) under the toolbar */
 #map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
 #map.in3d .only2d { display: none !important; }
 #map:not(.in3d) .only3d, #map.walking .only3d { display: none !important; }

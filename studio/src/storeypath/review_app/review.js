@@ -681,6 +681,7 @@ function setupMap() {
   let size = null;
   new ResizeObserver(() => {
     const { w, h } = viewport();
+    if (!w || !h) return; // hidden (the floor in 3D, or walked): the plan keeps its view for when it is back
     if (!state.fitted || state.refit) fit();
     else if (size) {
       state.view = { ...state.view, tx: state.view.tx + (w - size.w) / 2, ty: state.view.ty + (h - size.h) / 2 };
@@ -2563,4 +2564,5 @@ setupPanel();
 setupAssets();
 vertical.setup({ state, BASE, request, followJob, openFloor, fillFloorSelect, saveSpace, toast, el, setTool, snapWall, // vertical.js
   planPoint, viewOnly, readable, select });
+window.storeypathReview = { state, view3d }; // for the console (and the browser checks)
 start();
