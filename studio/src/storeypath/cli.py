@@ -560,29 +560,46 @@ def serve(
         "--allowed-host",
         help="another name Studio is reached by (a server's, a proxy's), as typed in the browser; again for "
              "more. localhost, this machine's name and addresses always are; also STOREYPATH_ALLOWED_HOSTS")] = None,
-    cert: Annotated[Optional[Path], typer.Option(help="serve HTTPS: the certificate (PEM, with its chain)")] = None,
-    key: Annotated[Optional[Path], typer.Option(help="the certificate's private key (PEM)")] = None,
+    cert: Annotated[Optional[Path], typer.Option(
+        help="your organization's certificate (PEM, with its chain), in place of the one Studio makes")] = None,
+    key: Annotated[Optional[Path], typer.Option(help="that certificate's private key (PEM)")] = None,
+    http: Annotated[bool, typer.Option(
+        "--http", help="plain HTTP, not HTTPS: for development, or behind a proxy that speaks HTTPS")] = False,
     secure_cookies: Annotated[bool, typer.Option(
-        "--secure-cookies", help="people reach Studio through an HTTPS proxy: the session cookie is sent "
-                                 "over HTTPS only")] = False,
+        "--secure-cookies", help="with --http behind an HTTPS proxy: the session cookie is sent over HTTPS only")] = False,
 ):
-    """Run StoreyPath Studio in the browser: projects, drawings, review, export. People
-    log in: the first start prints a link to set up the first admin (or set
-    STOREYPATH_ADMIN_PASSWORD); `storeypath users` manages accounts too."""
+    """Run StoreyPath Studio in the browser: projects, drawings, review, export. Over
+    HTTPS, with a certificate Studio makes in <data>/tls/ (browsers warn once: compare
+    the fingerprint it prints), or your own (--cert, --key). People log in: the first
+    start prints a link to set up the first admin (or set STOREYPATH_ADMIN_PASSWORD);
+    `storeypath users` manages accounts too."""
+    import ssl
+
     from .accounts import Accounts
+    from .tls import context, fingerprint, studio_certificate
 
     tls = None
-    if cert is not None or key is not None:
-        import ssl
-
+    if http:
+        if cert is not None or key is not None:
+            _fail("--http serves no certificate: leave out --cert and --key")
+    elif cert is not None or key is not None:
         if cert is None:
             _fail("--key needs --cert")
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
-            tls.load_cert_chain(cert, key)
+            tls = context(cert, key)
         except (OSError, ssl.SSLError) as e:
             _fail(f"cannot use the certificate {cert}: {e}")
+        typer.echo(f"HTTPS with {cert} (SHA-256 {fingerprint(cert)})")
+    else:
+        try:
+            made = studio_certificate(data, host, allowed_host or [])
+            tls = context(made.cert, made.key)
+        except (OSError, ValueError, ssl.SSLError) as e:
+            _fail(f"cannot make Studio's certificate in {data / 'tls'}: {e}")
+        typer.echo(f"HTTPS with Studio's own certificate ({'made now' if made.made else made.cert}), for "
+                   f"{', '.join(made.names)}\n  SHA-256 {made.fingerprint}\n"
+                   "  browsers warn once about it: check the fingerprint they show is this one; to be reached "
+                   "by another name or address, give it with --allowed-host")
     accounts = Accounts(data)
     try:
         made = accounts.bootstrap()

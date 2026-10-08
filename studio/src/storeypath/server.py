@@ -70,6 +70,7 @@ import io
 import json
 import math
 import re
+import socket
 import ssl
 import sys
 import threading
@@ -1863,11 +1864,13 @@ def _is_address(name: str) -> bool:
 
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+HANDSHAKE_S = 10.0  # a connection says what it speaks, and makes its TLS handshake, within this
 
 
 class StudioServer(ThreadingHTTPServer):
-    """The server: a request a thread. A connection that is not TLS where TLS is spoken
-    (or drops during its handshake) is let go quietly."""
+    """The server: a connection a thread (its TLS handshake made there, not where
+    connections are accepted, so one slow client holds up no other). A connection whose
+    handshake fails or times out is let go quietly."""
 
     daemon_threads = True
 
@@ -1886,9 +1889,12 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
     ``accounts`` is asked for by name, so that no caller gets an open server by
     default: people log in, and each call is let through by what they may do (Gate).
     None — no accounts, everyone may do everything — only on this computer (a loopback
-    address), as ``storeypath review`` serves one project. ``tls``: served over HTTPS
-    with that context. The session cookie is Secure over TLS, or with
-    ``secure_cookies`` (Studio reached through an HTTPS proxy)."""
+    address), as ``storeypath review`` serves one project.
+
+    ``tls``: served over HTTPS with that context (tls.py), and plain HTTP sent to the
+    same port is answered with a redirect to its https:// address (what a connection
+    speaks is told by its first byte, 0x16 for TLS). The session cookie is Secure over
+    HTTPS, or with ``secure_cookies`` (plain HTTP behind a proxy that speaks HTTPS)."""
     if accounts is None and host not in LOOPBACK:
         raise ValueError(f"without accounts Studio serves this computer alone (127.0.0.1), not {host}")
     app_dir = Path(str(resources.files("storeypath") / "review_app")).resolve()
@@ -1910,12 +1916,56 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
         protocol_version = "HTTP/1.1"
         _unread = 0  # what is left of the request's body: -1, not known (the connection is not kept)
 
+        _plain = False  # plain HTTP to a port that speaks HTTPS: answered with a redirect
+
         def setup(self):
-            if isinstance(self.request, ssl.SSLSocket):  # the handshake here, not in the thread that accepts
-                self.request.settimeout(30)
-                self.request.do_handshake()
+            if tls is not None:
+                # in this connection's own thread: what it speaks, then its handshake
+                sock = self.request
+                sock.settimeout(HANDSHAKE_S)
+                first = sock.recv(1, socket.MSG_PEEK)
+                if first == b"\x16":  # a TLS handshake begins so
+                    self.request = tls.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
+                    self.request.do_handshake()
+                elif first:
+                    self._plain = True
+                else:
+                    raise ConnectionError("closed before it said anything")
                 self.request.settimeout(None)
             super().setup()
+
+        def finish(self):
+            try:
+                super().finish()
+            finally:
+                if isinstance(self.request, ssl.SSLSocket):
+                    try:
+                        self.request.close()
+                    except OSError:
+                        pass
+
+        def handle(self):
+            if self._plain:
+                return self._to_https()
+            return super().handle()
+
+        def _to_https(self) -> None:
+            """Plain HTTP to the HTTPS port: the same address, over HTTPS (for one of
+            Studio's own names; refused for any other)."""
+            self.close_connection = True
+            self.raw_requestline = self.rfile.readline(65537)
+            if not self.raw_requestline or not self.parse_request():
+                return
+            host = (self.headers.get("Host") or "").strip()
+            name = _host_name(host)
+            if name is None or not (any_name or name in names or _is_address(name)):
+                return self._refuse()
+            target = urlparse(self.path)
+            where = (target.path or "/") + (f"?{target.query}" if target.query else "")
+            if not where.startswith("/") or where.startswith("//"):
+                where = "/"
+            self._send(307, b"Studio speaks HTTPS here\n", "text/plain; charset=utf-8",
+                       {"Location": f"https://{host}{where}"})
 
         def log_message(self, *args):
             pass
@@ -2285,7 +2335,4 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return may.backup()
         raise NotFound("not found")
 
-    server = StudioServer((host, port), Handler)
-    if tls is not None:  # the handshake is made in each request's thread (Handler.setup)
-        server.socket = tls.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
-    return server
+    return StudioServer((host, port), Handler)
