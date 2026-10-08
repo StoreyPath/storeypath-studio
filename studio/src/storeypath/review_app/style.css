@@ -290,6 +290,9 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #assets .asset.chosen rect, #assets .asset.chosen circle { stroke: var(--select); stroke-width: 3; }
 #assets .asset.retired { opacity: .35; }
 #map.in3d #assets { display: none; }
+#guides line { stroke: var(--select); stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.preview .asset-ghost.refused { fill: rgba(224, 49, 49, .2); stroke: #e03131; }
+.preview .asset-ghost.refused rect, .preview .asset-ghost.refused circle { fill: rgba(224, 49, 49, .35); stroke: #e03131; }
 .preview .asset-ghost { fill: rgba(12, 166, 120, .25); stroke: #0ca678; stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .as-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
 .as-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }

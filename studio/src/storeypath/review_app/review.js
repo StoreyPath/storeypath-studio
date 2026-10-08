@@ -3,6 +3,7 @@
 // correction is saved to the workspace file at once.
 
 import { TYPE_COLORS, typeLabel } from "./theme.js";
+import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DRAWING_ORDER = ["other", "outlines", "doors", "walls"]; // bottom to top
@@ -683,10 +684,15 @@ function bindPane(pane) {
     const asset = !state.tool && assetOf(e.target);
     drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
       asset, from: asset ? [asset.x, asset.y] : null };
+    if (asset) { // its room holds it; walls and other items draw it (fit.js)
+      const rot = asset.rotation || 0;
+      drag.fit = { ...placing(drag.from, asset.type, asset.id, rot), rot0: rot, last: { at: drag.from, rot } };
+    }
     pane.setPointerCapture(e.pointerId);
   });
   pane.addEventListener("pointermove", (e) => {
     const [sx, sy] = local(e);
+    state.alt = e.altKey;
     showCursor(pane, sx, sy);
     if (state.tool && !drag?.moved) preview(planPoint(sx, sy));
     if (!drag) return;
@@ -695,9 +701,16 @@ function bindPane(pane) {
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
     pane.classList.add("dragging");
-    if (drag.asset) { // an item carried across the plan: it follows the pointer
-      drag.asset.x = drag.from[0] + dx / state.view.k;
-      drag.asset.y = drag.from[1] - dy / state.view.k;
+    if (drag.asset) { // an item carried across the plan: it follows the pointer, held in its room
+      const f = drag.fit;
+      const want = { at: [drag.from[0] + dx / state.view.k, drag.from[1] - dy / state.view.k], rot: f.rot0 };
+      const got = settle({ want, last: f.last, ...f, free: e.altKey });
+      if (got) {
+        [drag.asset.x, drag.asset.y] = got.at;
+        drag.asset.rotation = got.rot;
+        f.last = { at: got.at, rot: got.rot };
+        drawGuides(got.guides);
+      }
       renderAssets();
       return;
     }
@@ -712,10 +725,14 @@ function bindPane(pane) {
   });
   const end = (e) => {
     if (!drag) return;
-    const { moved, target, asset } = drag;
+    const { moved, target, asset, fit } = drag;
     drag = null;
     pane.classList.remove("dragging");
-    if (asset && moved) return changeAsset(asset, { x: round4(asset.x), y: round4(asset.y) });
+    drawGuides();
+    if (asset && moved) {
+      const turned = (asset.rotation || 0) !== fit.rot0 ? { rotation: round4(asset.rotation) } : {};
+      return changeAsset(asset, { x: round4(asset.x), y: round4(asset.y), ...turned });
+    }
     if (moved) return;
     const p = planPoint(...local(e));
     if (state.tool) return toolClick(p);
@@ -736,6 +753,7 @@ function bindPane(pane) {
   pane.addEventListener("pointerup", end);
   pane.addEventListener("pointercancel", () => {
     drag = null;
+    drawGuides();
     pane.classList.remove("dragging");
   });
   pane.addEventListener("pointerleave", () => showCursor(pane, null, null));
@@ -1144,7 +1162,12 @@ function preview(p) {
   let shapes = [];
   if (state.tool === "place") {
     const t = typeOf(state.placeType);
-    if (t) shapes.push(() => assetShape({ x: p[0], y: p[1], rotation: 0 }, t, "asset-ghost"));
+    if (t) { // where it would go: drawn to walls and other items, kept in the room
+      const got = settle({ want: { at: p, rot: 0 }, last: null, ...placing(p, t.code), free: state.alt });
+      drawGuides(got?.guides);
+      shapes.push(() => assetShape({ x: (got?.at ?? p)[0], y: (got?.at ?? p)[1], rotation: got?.rot ?? 0 }, t,
+        got ? "asset-ghost" : "asset-ghost refused"));
+    }
   } else if (state.tool === "space") {
     const end = snapWall(p);
     const pts = [...state.corners, end];
@@ -1656,19 +1679,6 @@ async function loadCatalogue() {
   $("as-type").replaceChildren(...[...groups.values()]);
 }
 
-/** What goes with a desk, by the grade it is for, as the viewers draw it: visitors'
- * chairs across it (armchairs for the president's), a return at its side (an
- * L-shaped desk), a cabinet behind its chair, and a high-backed chair. */
-const DESK_SETS = {
-  junior: { visitors: 0 },
-  senior: { visitors: 0, return: true },
-  section_head: { visitors: 1, return: true },
-  manager: { visitors: 2, return: true },
-  director: { visitors: 2, return: true, cabinet: true, executive: true },
-  c_level: { visitors: 2, return: true, cabinet: true, executive: true },
-  president: { visitors: 2, armchairs: true, return: true, cabinet: true, executive: true },
-};
-
 /** A desk's chair and what goes with its grade, in its own frame: its user towards -y. */
 function deskSet(g, t, w, d) {
   const set = DESK_SETS[t?.grade] || DESK_SETS.junior;
@@ -1683,8 +1693,7 @@ function deskSet(g, t, w, d) {
   };
   if (set.executive) chair(0, d / 2 + 0.08, 0.6, 0.62, 0.14);
   else rect(-0.22, d / 2 + 0.1, 0.44, 0.42, { class: "chair", rx: 0.1 });
-  const vw = set.armchairs ? 0.7 : 0.46, vd = set.armchairs ? 0.62 : 0.46;
-  const xs = set.visitors === 1 ? [0] : set.visitors === 2 ? [-1, 1].map((q) => q * Math.max(vw / 2 + 0.06, Math.min(w / 4, 0.6))) : [];
+  const { xs, vw, vd } = visitorChairs(set, w);
   for (const x of xs) { // facing its user: their backs away from it
     rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, vd, { class: "chair", rx: 0.08 });
     rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, 0.12, { class: "chair back", rx: 0.04 });
@@ -1740,10 +1749,42 @@ function assetAt(p) {
   return null;
 }
 
-async function placeAsset(type, p) {
+/** What holds an item at ``at`` (of ``type``): the room it is in (a space; a zone's own
+ * space), its rings, and the other items there mounted as it is (desks line up with
+ * desks, not with the TV over them), for the magnet (fit.js). ``held``: whether the room
+ * holds it (not when it stands across a wall already: it is held once it is in). */
+function placing(at, type, exceptId = null, rot = 0) {
+  const t = typeOf(type) || { code: type };
+  const room = roomAt(at, (state.floor?.spaces || []).filter(visible));
+  const rings = room ? ringsOf(room.geometry) : [];
+  const mount = t.mount || "floor";
+  const others = (state.floor?.items || [])
+    .filter((o) => o.id !== exceptId && !o.retired && ((typeOf(o.type)?.mount || "floor") === mount) && (!room || inRings([o.x, o.y], rings)))
+    .map((o) => ({ at: [o.x, o.y], rot: o.rotation || 0, box: itemBox(typeOf(o.type) || { code: o.type }) }));
+  const box = itemBox(t);
+  const held = !exceptId || !rings.length || fits(at, rot, box, rings);
+  return { room, rings: held ? rings : [], others, box, mount, reach: Math.max(0.15, 12 / state.view.k) };
+}
+
+const roomName = (room) => (room ? [room.name, room.number].filter(Boolean).join(" ") || "this room" : "this room");
+
+/** The magnet's guides: what the item was drawn to, while it is placed or dragged. */
+function drawGuides(lines = []) {
+  $("guides").replaceChildren(...lines.map(([a, b]) => svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })));
+}
+
+async function placeAsset(type, p, free = state.alt) {
   if (!type) return;
+  const ctx = placing(p, type);
+  const got = settle({ want: { at: p, rot: 0 }, last: null, ...ctx, free });
+  drawGuides();
+  if (!got) {
+    toast(`It does not fit in ${roomName(ctx.room)}. To put it anywhere, choose it in Place and Alt-click.`, true);
+    return;
+  }
   try {
-    const a = await request(`${BASE}/floors/${state.floor.id}/items`, { type, x: round4(p[0]), y: round4(p[1]), rotation: 0 });
+    const a = await request(`${BASE}/floors/${state.floor.id}/items`,
+      { type, x: round4(got.at[0]), y: round4(got.at[1]), rotation: round4(got.rot) });
     state.floor.items.push(a);
     renderAssets();
     if (state.byId.get(state.selected)) renderCapacity(state.byId.get(state.selected));
@@ -1818,13 +1859,28 @@ function assetKey(e) {
   if (!a) return false;
   const step = e.shiftKey ? 1 : 0.1;
   const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
-  if (e.key === "r" || e.key === "R") changeAsset(a, { rotation: (a.rotation + (e.shiftKey ? 270 : 90)) % 360 });
-  else if (e.key === "[" || e.key === "]") changeAsset(a, { rotation: (a.rotation + (e.key === "]" ? 345 : 15)) % 360 });
-  else if (moves[e.key]) changeAsset(a, { x: round4(a.x + moves[e.key][0]), y: round4(a.y + moves[e.key][1]) });
-  else if (e.key === "Delete" || e.key === "Backspace") changeAsset(a, { retired: !a.retired });
+  if (e.key === "r" || e.key === "R") turnAsset(a, (a.rotation + (e.shiftKey ? 270 : 90)) % 360, e.altKey);
+  else if (e.key === "[" || e.key === "]") turnAsset(a, (a.rotation + (e.key === "]" ? 345 : 15)) % 360, e.altKey);
+  else if (moves[e.key]) {
+    const want = { at: [a.x + moves[e.key][0], a.y + moves[e.key][1]], rot: a.rotation || 0 };
+    const ctx = placing([a.x, a.y], a.type, a.id, a.rotation || 0);
+    const got = settle({ want, last: { at: [a.x, a.y], rot: want.rot }, ...ctx, free: e.altKey, magnet: false });
+    if (got && Math.hypot(got.at[0] - a.x, got.at[1] - a.y) > 1e-4) changeAsset(a, { x: round4(got.at[0]), y: round4(got.at[1]) });
+    else toast(`Against the wall of ${roomName(ctx.room)} (Alt: move it anyway)`);
+  } else if (e.key === "Delete" || e.key === "Backspace") changeAsset(a, { retired: !a.retired });
   else return false;
   e.preventDefault();
   return true;
+}
+
+/** An item turned where it stands, kept in its room (moved the least it takes, a
+ * metre at most); ``free``: turned as asked, wherever that leaves it. */
+function turnAsset(a, rot, free = false) {
+  const ctx = placing([a.x, a.y], a.type, a.id, a.rotation || 0);
+  const got = settle({ want: { at: [a.x, a.y], rot }, last: { at: [a.x, a.y], rot: a.rotation || 0 }, ...ctx, free, magnet: false });
+  if (!got) return toast(`No room to turn it there in ${roomName(ctx.room)} (Alt: turn it anyway)`, true);
+  const moved = Math.hypot(got.at[0] - a.x, got.at[1] - a.y) > 1e-4 ? { x: round4(got.at[0]), y: round4(got.at[1]) } : {};
+  changeAsset(a, { rotation: round4(rot), ...moved });
 }
 
 function placeItemMenu(cx, cy, p) {
@@ -1848,7 +1904,7 @@ function setupAssets() {
   });
   $("as-rotation").addEventListener("change", (e) => {
     const a = state.floor.items.find((x) => x.id === state.asset);
-    if (a && Number.isFinite(Number(e.target.value))) changeAsset(a, { rotation: ((Number(e.target.value) % 360) + 360) % 360 });
+    if (a && Number.isFinite(Number(e.target.value))) turnAsset(a, ((Number(e.target.value) % 360) + 360) % 360);
   });
   $("as-floor").addEventListener("change", (e) => {
     const a = state.floor.items.find((x) => x.id === state.asset);

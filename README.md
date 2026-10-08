@@ -241,6 +241,13 @@ the floors in review.
   turns it 90°, <kbd>[</kbd> and <kbd>]</kbd> by 15°, the arrows move it (Shift:
   further), <kbd>Del</kbd> deletes it. Its panel changes its type, its turn, its floor
   (carry it to another floor or building) and its details.
+- **It stays in its room, and lines up.** An item belongs to the room it was placed
+  in (right-clicked or clicked in): dragged, nudged or turned, it stops at that room's
+  walls (a zone has no walls: the whole space holds it). Near a wall it turns square to
+  it and moves up against it, into a corner too; near another item it lines up with it
+  (desks into rows); a TV goes on the nearest wall, its screen into the room. A desk
+  counts what is drawn round it (its cabinet goes against the wall, not through it).
+  Hold <kbd>Alt</kbd> to place or drag it freely, or into another room.
 - **Desks show who they are for.** Each grade's desk has its own size and shade, and
   is drawn (in review, on the plan and in 3D) with what goes with it: a junior's
   plain; a senior's with a return (an L-shaped desk); a head of section's with a
