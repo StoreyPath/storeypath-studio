@@ -1,9 +1,11 @@
 """The review editor's operations on one project: a floor's spaces over its
 drawing, and corrections to them.
 
-Corrections are written to the workspace file straight away, as ``storeypath fix``
-does, and the file is re-read whenever it changes on disk, so the editor and the
-command line can be used side by side. The web server is in server.py:
+A project is reviewed where it is kept (ProjectFile, StoredProject): in Studio's
+database, each change one small transaction on exactly what it touches (one
+correction, one item, one floor's drawn edits) with its history row (db/store.py); or
+as one workspace file (``storeypath fix`` and the tests), saved whole at each change
+and read again whenever it changes on disk. The web server is in server.py:
 
     GET  /api/projects/<code>/review              project, floors, space types
     GET  /api/projects/<code>/floors/<id>         a floor's spaces and doors, local meters
@@ -27,7 +29,8 @@ are those the person may see; a floor, its drawing and its print need view on th
 floor (the drawing and print are its plan's part of the sheet; a floor read from a
 whole sheet other floors are read from too needs view on each of them); a change
 (edits, items, corrections, reading again) needs edit on the floor, and an item
-carried to another floor, edit on that one too.
+carried to another floor, edit on that one too. Each change says who made it
+(``by``: the person, for its history).
 """
 
 from __future__ import annotations
@@ -43,11 +46,16 @@ from typing import NamedTuple
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from .cad import DrawingError, meters_per_unit, read_drawing
+from .db.store import Changes, _same, drawing_name, floor_of
+from .errors import Busy, NotFound
 from .export import _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
+from .ids import make_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .types import SpaceType
-from .workspace import DrawnOpening, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
+from .workspace import DrawnOpening, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
+
+__all__ = ["Busy", "NotFound", "Review", "ProjectFile", "StoredProject", "File"]
 
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml",
@@ -62,6 +70,7 @@ PRINT_MARGIN_M = 3.0  # around the floor's spaces, when the floor has no region 
 PRINT_VERSION = 1  # changing how prints are drawn draws them again
 CACHE_DIR = ".storeypath-cache"  # beside the workspace file
 _PRINTING = threading.Lock()  # one print drawn at a time: rendering goes through ezdxf's caches
+EDIT_LISTS = ("walls", "dividers", "openings", "resized", "spaces")
 
 
 class File(NamedTuple):
@@ -71,19 +80,112 @@ class File(NamedTuple):
     content_type: str
 
 
-class NotFound(Exception):
-    pass
-
-
-class Busy(Exception):
-    """A job is changing the project (reading a drawing, converting, exporting): a
-    change saved now would be lost when the job saves its own copy, so none is made."""
-
-
 BUSY_MESSAGE = ("a job is working on this project (adding floors, converting or exporting): "
                 "nothing was changed; make the change again when the job is done")
 BUSY_WAIT_S = 1.0  # a change waits this long for a short one (placing a building) to finish
 
+
+# ---- where a project is kept ------------------------------------------------------
+
+class ProjectFile:
+    """A project as one workspace file: read again whenever it changed on disk (the
+    command line may change it meanwhile), and saved whole at each change. Its drawings
+    are where its floors say, beside it; its prints are kept in CACHE_DIR beside it."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._lock = threading.RLock()
+        self._ws: Workspace | None = None
+        self._stamp: tuple | None = None
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    def _on_disk(self) -> tuple:
+        s = self.path.stat()  # every save is a new file (Workspace.save): its inode tells it apart
+        return s.st_mtime_ns, s.st_ino, s.st_size
+
+    def current(self) -> Workspace:
+        with self._lock:
+            stamp = self._on_disk()
+            if self._ws is None or stamp != self._stamp:
+                self._ws, self._stamp = Workspace.load(self.path), stamp
+            return self._ws
+
+    def change(self, fn, by=None):
+        with self._lock:
+            base = self.current()
+            changes, result = fn(base)
+            if not changes.empty():
+                ws = changes.apply(base)
+                ws.save(self.path)
+                self._ws, self._stamp = ws, self._on_disk()
+            return result
+
+    def _path(self, src) -> Path:
+        path = self.path.parent / src.path
+        if not path.exists():
+            raise DrawingError(f"drawing not found: {path}")
+        return path
+
+    def drawing_key(self, src) -> tuple:
+        """What tells this drawing apart from another (and from itself changed)."""
+        path = self._path(src)
+        return str(path), path.stat().st_mtime_ns
+
+    @contextmanager
+    def drawing_file(self, src):
+        yield self._path(src)
+
+    def profile(self, src) -> str:
+        return resolve_profile(src.profile, self.path.parent)
+
+    def prints(self) -> Path:
+        return self.path.parent / CACHE_DIR / "prints"
+
+
+class StoredProject:
+    """A project in Studio's database (db/store.py): its changes are transactions on what
+    they touch; its drawings are read from the database into a file for as long as one
+    is needed (in ``work``); its prints are kept in ``cache`` (made again when gone)."""
+
+    def __init__(self, store, code: str, cache: Path, work: Path | None = None):
+        self.store, self.code, self.cache, self.work = store, code, Path(cache), work
+
+    @property
+    def name(self) -> str:
+        return self.code
+
+    def current(self) -> Workspace:
+        return self.store.current(self.code)
+
+    def change(self, fn, by=None):
+        return self.store.change(self.code, fn, by=by)
+
+    def drawing_key(self, src) -> tuple:
+        name = drawing_name(src.path)
+        info = self.store.drawing(self.code, name)
+        if info is None:
+            raise DrawingError(f"drawing not found: {name}")
+        return name, info["sha256"]
+
+    @contextmanager
+    def drawing_file(self, src):
+        name = drawing_name(src.path)
+        if self.work is not None:
+            self.work.mkdir(parents=True, exist_ok=True)
+        with self.store.files(self.code, [name], folder=self.work) as folder:
+            path = folder / "drawings" / name
+            if not path.exists():
+                raise DrawingError(f"drawing not found: {name}")
+            yield path
+
+    def profile(self, src) -> str:
+        return src.profile  # a built-in profile, or auto (a project's own YAML is not kept)
+
+    def prints(self) -> Path:
+        return self.cache / "prints" / self.code
 
 
 def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | None:
@@ -96,56 +198,44 @@ def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | No
     lines = [g for g in getattr(edge, "geoms", [edge]) if isinstance(g, LineString) and g.length >= 0.05]
     return [[[round(x, 3), round(y, 3)] for x, y in g.coords] for g in lines] or None
 
-class Review:
-    """The editor's operations on one workspace file."""
 
-    def __init__(self, path: str | Path, catalogue=None, changing=None):
-        self.path = Path(path)
+def _dump(model) -> dict | None:
+    return None if model is None else model.model_dump(mode="json", exclude_none=True)
+
+
+class Review:
+    """The editor's operations on one project: ``source`` is where it is kept (a
+    ProjectFile or a StoredProject; a path is a workspace file)."""
+
+    def __init__(self, source, catalogue=None, changing=None):
+        if isinstance(source, (str, Path)):
+            source = ProjectFile(source)
+        self.source = source
+        self.path = getattr(source, "path", None)  # a workspace file's
         self._catalogue = catalogue  # () -> the Studio's catalogue of item types (catalogue.py)
         # () -> the lock a job holds while it changes the project (server.py): a change
         # made here takes it, and is refused while a job has it
         self._changing = changing
-        self._lock = threading.RLock()
-        self._ws: Workspace | None = None
-        self._mtime: tuple | None = None
         self._drawings: dict[tuple, dict] = {}
-
-    def _stamp(self) -> tuple:
-        s = self.path.stat()  # every save is a new file (Workspace.save): its inode tells it apart
-        return s.st_mtime_ns, s.st_ino, s.st_size
-
-    def _load(self) -> Workspace:
-        stamp = self._stamp()
-        if self._ws is None or stamp != self._mtime:
-            self._ws, self._mtime = Workspace.load(self.path), stamp
-        return self._ws
+        # what each object's shape gives (its area, where its label goes…), worked out
+        # once a shape: object ID -> (the geometry it is of, what it gives)
+        self._shapes: dict[str, tuple[dict, dict]] = {}
+        self._dividers: dict[str, tuple[tuple, list | None]] = {}
 
     def workspace(self) -> Workspace:
-        """The workspace as it is on disk now (read again when it changed): to look things
-        up in (who may do what, server.Gate), never to change."""
-        with self._lock:
-            return self._load()
+        """The project as it is now: to look things up in (who may do what, server.Gate),
+        never to change."""
+        return self.source.current()
 
-    def _save(self, ws: Workspace) -> None:
-        ws.save(self.path)
-        self._mtime = self._stamp()
-
-    @contextmanager
-    def _writing(self):
-        """The workspace, to change and save: only while no job is changing the project
-        (else Busy: a job saves the copy it loaded, which would lose the change). A
-        change that fails part way leaves nothing of it behind: the workspace is read
-        again from its file."""
+    def _change(self, fn, by=None):
+        """A change (``fn``: the project as it is -> (Changes, answer)), made only while no
+        job is changing the project (else Busy: a job saves the copy it loaded, which
+        would lose the change). One that fails part way changes nothing."""
         lock = self._changing() if self._changing else None
         if lock is not None and not lock.acquire(timeout=BUSY_WAIT_S):
             raise Busy(BUSY_MESSAGE)
         try:
-            with self._lock:
-                try:
-                    yield self._load()
-                except BaseException:
-                    self._ws = None
-                    raise
+            return self.source.change(fn, by=by)
         finally:
             if lock is not None:
                 lock.release()
@@ -157,46 +247,88 @@ class Review:
             raise NotFound(f"no floor {floor_id}") from None
 
     def project(self) -> dict:
-        with self._lock:
-            ws = self._load()
-            floors = []
-            for loc, b, f, fid in ws.iter_floors():
-                spaces = [r for r in ws.floor_objects(fid) if r.kind in ("space", "zone") and not r.zones]
-                floors.append({
-                    "id": fid, "name": f.name, "ordinal": f.ordinal,
-                    "building": b.name, "building_id": fid.rsplit("-", 1)[0], "location": loc.name,
-                    "source": Path(f.source.path).name if f.source else None,
-                    "converted": f.converted_at is not None,
-                    "spaces": len(spaces), "review": sum(1 for r in spaces if ws.review_reasons(r)),
-                })
-            return {
-                "project": {"id": ws.id, "name": ws.project.name},
-                "file": self.path.name,
-                "floors": floors,
-                "types": [t.value for t in SpaceType],
-            }
+        ws = self.workspace()
+        floors = []
+        for loc, b, f, fid in ws.iter_floors():
+            spaces = [r for r in ws.floor_objects(fid) if r.kind in ("space", "zone") and not r.zones]
+            floors.append({
+                "id": fid, "name": f.name, "ordinal": f.ordinal,
+                "building": b.name, "building_id": fid.rsplit("-", 1)[0], "location": loc.name,
+                "source": Path(f.source.path).name if f.source else None,
+                "converted": f.converted_at is not None,
+                "spaces": len(spaces), "review": sum(1 for r in spaces if ws.review_reasons(r)),
+            })
+        return {
+            "project": {"id": ws.id, "name": ws.project.name},
+            "file": self.source.name,
+            "floors": floors,
+            "types": [t.value for t in SpaceType],
+        }
+
+    # ---- what a shape gives ------------------------------------------------------
+
+    def _shape(self, r: ObjectRecord) -> dict:
+        """What an object's shape gives, worked out once a shape (a record whose geometry
+        is the same object as before gives what it gave)."""
+        kept = self._shapes.get(r.id)
+        if kept is not None and kept[0] is r.geometry:
+            return kept[1]
+        geom = shape(r.geometry)
+        out = {"shape": geom, "empty": geom.is_empty}
+        if r.kind != "opening" and not geom.is_empty:
+            x, y = _label_point(geom)
+            width, height = _room_at(geom, x, y)
+            out.update(area=round(geom.area, 2), label_point=[round(x, 3), round(y, 3)],
+                       label_room=[round(width, 2), round(height, 2)])
+        self._shapes[r.id] = (r.geometry, out)
+        return out
+
+    def _divider_of(self, ws: Workspace, r: ObjectRecord) -> list | None:
+        if r.type_source not in ("split", "doorway"):
+            return None
+        joined = [ws.objects.get(c) for c in r.connects]
+        key = (id(r.geometry), tuple(r.connects), *(id(j.geometry) if j is not None else None for j in joined))
+        kept = self._dividers.get(r.id)
+        if kept is not None and kept[0] == key and kept[2] is r.geometry:
+            return kept[1]
+        areas = {j.id: self._shape(j)["shape"] for j in joined if j is not None and j.kind == "space"}
+        out = _divider(r, areas)
+        self._dividers[r.id] = (key, out, r.geometry)
+        return out
+
+    def _seats(self, ws: Workspace, cat, floor_id: str, objects=None) -> dict:
+        """What the items on a floor say of its spaces (export.seating), from the shapes
+        worked out once."""
+        if not any((t := cat.get(it.type)) is not None and (t.workplaces or t.grade)
+                   for it in ws.floor_items(floor_id)):
+            return {}
+        objects = ws.floor_objects(floor_id) if objects is None else objects
+        units = [(self._shape(r)["shape"], r) for r in objects
+                 if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+        return seating(ws, cat, floor_id, units=units)
 
     def floor(self, floor_id: str) -> dict:
-        with self._lock:
-            ws = self._load()
-            f = self._floor(ws, floor_id)
-            objects = sorted(ws.floor_objects(floor_id), key=lambda r: r.id)
-            areas = {r.id: shape(r.geometry) for r in objects if r.kind == "space"}
-            seats = seating(ws, self.catalogue(), floor_id)
-            return {
-                "id": floor_id, "name": f.name, "ordinal": f.ordinal,
-                "source": Path(f.source.path).name if f.source else None,
-                "converted_at": f.converted_at.isoformat() if f.converted_at else None,
-                "method": f.method, "warnings": f.warnings, "outline": f.outline,
-                # spaces and their zones; a space divided into zones is used through them
-                # a shape with nothing in it (a sliver read by an older Studio) is not shown
-            "spaces": [self._space(ws, r, seats) for r in objects if r.kind in ("space", "zone") and not shape(r.geometry).is_empty],
-                "doors": [self._door(ws, r, areas, f.edits.resized) for r in objects if r.kind == "opening"],
-                # for drawing walls and doors onto: the walls as found, and what was drawn
-                "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
-                # furniture and equipment on the floor, retired ones too (to be restored)
-                "items": [self._item(i) for i in sorted(ws.floor_items(floor_id, include_retired=True), key=lambda i: i.id)],
-            }
+        ws = self.workspace()
+        f = self._floor(ws, floor_id)
+        cat = self.catalogue()
+        objects = sorted(ws.floor_objects(floor_id), key=lambda r: r.id)
+        seats = self._seats(ws, cat, floor_id, objects)
+        return {
+            "id": floor_id, "name": f.name, "ordinal": f.ordinal,
+            "source": Path(f.source.path).name if f.source else None,
+            "converted_at": f.converted_at.isoformat() if f.converted_at else None,
+            "method": f.method, "warnings": f.warnings, "outline": f.outline,
+            # spaces and their zones; a space divided into zones is used through them
+            # a shape with nothing in it (a sliver read by an older Studio) is not shown
+            "spaces": [self._space(ws, r, seats, cat) for r in objects
+                       if r.kind in ("space", "zone") and not self._shape(r)["empty"]],
+            "doors": [self._door(ws, r, f.edits.resized) for r in objects if r.kind == "opening"],
+            # for drawing walls and doors onto: the walls as found, and what was drawn
+            "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
+            # furniture and equipment on the floor, retired ones too (to be restored)
+            "items": [self._item(i, cat) for i in sorted(ws.floor_items(floor_id, include_retired=True),
+                                                          key=lambda i: i.id)],
+        }
 
     # ---- items: furniture and equipment ---------------------------------------------
 
@@ -205,18 +337,18 @@ class Review:
 
         return self._catalogue() if self._catalogue else default_catalogue()
 
-    def _item(self, it) -> dict:
-        t = self.catalogue().get(it.type)
+    def _item(self, it, cat=None) -> dict:
+        t = (cat or self.catalogue()).get(it.type)
         return {"id": it.id, "type": it.type, "floor_id": it.floor_id, "x": it.x, "y": it.y, "rotation": it.rotation,
                 "values": it.values, "retired": it.status == "retired",
                 "name_en": t.name_en if t else it.type, "name_ar": t.name_ar if t else "",
                 "category": t.category if t else "furniture", "color": t.color if t else "#8a8a8a",
                 "width": t.width if t else 1.0, "depth": t.depth if t else 0.6, "mount": t.mount if t else "floor"}
 
-    def _item_values(self, type_code: str, values) -> dict:
+    def _item_values(self, type_code: str, values, cat=None) -> dict:
         """An item's details from a request: only its type's StoreyPath fields, each of
         its kind (the managing system's fields are entered there, not here)."""
-        t = self.catalogue().get(type_code)
+        t = (cat or self.catalogue()).get(type_code)
         if t is None or t.retired:
             raise ValueError(f"no item type {type_code} in the catalogue")
         if values is None:
@@ -244,52 +376,77 @@ class Review:
             out[key] = value
         return out
 
-    def add_item(self, floor_id: str, body: dict) -> dict:
-        """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres)."""
-        with self._writing() as ws:
-            self._floor(ws, floor_id)
-            values = self._item_values(body.get("type"), body.get("values"))
-            x, y = _number(body, "x"), _number(body, "y")
-            it = ws.add_item(body["type"], floor_id, x, y, _number(body, "rotation", 0.0), values)
-            self._save(ws)
-            return self._item(it)
+    def add_item(self, floor_id: str, body: dict, by=None) -> dict:
+        """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres),
+        numbered after every item of the project."""
+        cat = self.catalogue()
 
-    def change_item(self, item_id: str, body: dict) -> dict:
+        def fn(ws: Workspace):
+            self._floor(ws, floor_id)
+            values = self._item_values(body.get("type"), body.get("values"), cat)
+            x, y = _number(body, "x"), _number(body, "y")
+            it = Item(id=make_item_id(ws.id, ws.next_item_seq), type=body["type"], floor_id=floor_id, x=x, y=y,
+                      rotation=_number(body, "rotation", 0.0) % 360, values=values)
+            ch = Changes(part="item", kind="add", targets=[it.id], floors={floor_id},
+                         before={"item": None}, after={"item": _dump(it)})
+            ch.items[it.id] = it
+            ch.project = {"next_item_seq": ws.next_item_seq + 1}
+            return ch, it
+
+        return self._item(self._change(fn, by), cat)
+
+    def change_item(self, item_id: str, body: dict, by=None) -> dict:
         """An item moved, turned, given another type or details, carried to another floor
         (``floor_id``), taken away (``{"retired": true}``) or brought back: all that is
         asked, or (when any of it cannot be) nothing."""
-        with self._writing() as ws:
+        cat = self.catalogue()
+
+        def fn(ws: Workspace):
             it = ws.items.get(item_id)
             if it is None:
                 raise NotFound(f"no item {item_id}")
             new = it.model_copy(deep=True)  # changed whole, then put in its place
+            kinds = []
             if "retired" in body:
                 if not isinstance(body["retired"], bool):
                     raise ValueError("retired is true or false")
                 new.status = "retired" if body["retired"] else "active"
                 new.retired_at = utcnow() if body["retired"] else None
+                kinds.append("delete" if body["retired"] else "restore")
             if "floor_id" in body:
                 if not isinstance(body["floor_id"], str):
                     raise NotFound(f"no floor {body['floor_id']}")
                 self._floor(ws, body["floor_id"])
+                if body["floor_id"] != new.floor_id:
+                    kinds.append("carry")
                 new.floor_id = body["floor_id"]
             if "type" in body:
-                self._item_values(body["type"], None)  # a type of the catalogue
+                self._item_values(body["type"], None, cat)  # a type of the catalogue
                 new.type = body["type"]
-                own = {f.key for f in self.catalogue().get(new.type).fields if f.owner == "storeypath"}
+                own = {f.key for f in cat.get(new.type).fields if f.owner == "storeypath"}
                 new.values = {k: v for k, v in new.values.items() if k in own}  # what the new type has
+                kinds.append("retype")
             if "values" in body:
-                new.values = self._item_values(new.type, body["values"])
+                new.values = self._item_values(new.type, body["values"], cat)
+                kinds.append("values")
             for key in ("x", "y"):
                 if key in body:
                     setattr(new, key, _number(body, key))
+            if "x" in body or "y" in body:
+                kinds.append("move")
             if "rotation" in body:
                 new.rotation = _number(body, "rotation") % 360
-            ws.items[item_id] = new
-            self._save(ws)
-            return self._item(new)
+                kinds.append("turn")
+            ch = Changes(part="item", kind=kinds[0] if kinds else "change", targets=[item_id],
+                         floors={f for f in (it.floor_id, new.floor_id) if f},
+                         before={"item": _dump(it)}, after={"item": _dump(new)})
+            if not _same(new, it):
+                ch.items[item_id] = new
+            return ch, new
 
-    def _door(self, ws: Workspace, r: ObjectRecord, areas: dict | None = None, resized=()) -> dict:
+        return self._item(self._change(fn, by), cat)
+
+    def _door(self, ws: Workspace, r: ObjectRecord, resized=()) -> dict:
         eff = ws.effective(r)
         middle = _middle(r)
         return {"id": r.id, "type": r.type, "point": r.geometry["coordinates"], "connects": r.connects,
@@ -300,21 +457,24 @@ class Review:
                 "resize": next((x.model_dump(exclude={"at"}) for x in resized
                                 if Point(x.at).distance(middle) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
-                "divider": _divider(r, areas or {}) if r.type_source in ("split", "doorway") else None}
+                "divider": self._divider_of(ws, r)}
 
-    def edit(self, floor_id: str, body: dict) -> None:
+    def edit(self, floor_id: str, body: dict, by=None) -> None:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
         takes the one of its kind drawn as the page shows it (_remove)."""
-        with self._writing() as ws:
-            f = self._floor(ws, floor_id)
+
+        def fn(ws: Workspace):
+            was = self._floor(ws, floor_id)
+            f = was.model_copy(update={"edits": was.edits.model_copy(deep=True)})  # its edits changed alone
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
+            kind = "draw"
             if "wall" in add or "divider" in add:
-                kind = "wall" if "wall" in add else "divider"
-                line = _points(add[kind], 2)
+                what = "wall" if "wall" in add else "divider"
+                line = _points(add[what], 2)
                 if LineString(line).length < 0.1:
-                    raise ValueError(f"a {kind} is longer than 10 cm")
-                (f.edits.walls if kind == "wall" else f.edits.dividers).append(line)
+                    raise ValueError(f"a {what} is longer than 10 cm")
+                (f.edits.walls if what == "wall" else f.edits.dividers).append(line)
             elif isinstance(body.get("add"), dict) and "opening" in body["add"]:
                 o = body["add"]["opening"]
                 if not isinstance(o, dict) or o.get("type") not in ("door", "window", "opening"):
@@ -327,13 +487,25 @@ class Review:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
                 self._resize(ws, floor_id, f, body["resize"])
+                kind = "resize"
             elif isinstance(body.get("remove"), dict) and ("at" in body["remove"] or "shape" in body["remove"]):
                 _remove(f, body["remove"])
+                kind = "erase"
             else:
                 raise ValueError('send {"add": {"wall" or "divider": …}}, {"add": {"opening": …}}, '
                                  '{"add": {"space": [[x, y], …]}}, {"resize": {"at": [x, y], "width", "sill", '
                                  '"height"}} or {"remove": {"kind", "shape": its points as drawn, "at": [x, y]}}')
-            self._save(ws)
+            ch = Changes(part="edit", kind=kind, targets=[floor_id], floors={floor_id})
+            old, new = was.edits.model_dump(mode="json"), f.edits.model_dump(mode="json")
+            for name in EDIT_LISTS:
+                if old[name] != new[name]:
+                    ch.more.setdefault("list", name)
+                    ch.before = [x for x in old[name] if x not in new[name]]
+                    ch.after = [x for x in new[name] if x not in old[name]]
+                    ch.edits[floor_id] = f.edits
+            return ch, None
+
+        self._change(fn, by)
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> None:
         """A door, window or opening given another width, sill or height (metres; null:
@@ -358,15 +530,13 @@ class Review:
         if any(v is not None for v in sizes.values()):
             f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **sizes))
 
-    def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None) -> dict:
+    def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None, cat=None) -> dict:
         eff = ws.effective(r)
         o = ws.overrides.get(r.id)
-        geom = shape(r.geometry)
         if seats is None:  # what the items on its floor say of it
-            seats = seating(ws, self.catalogue(), r.id.rsplit("-", 1)[0])
+            seats = self._seats(ws, cat or self.catalogue(), floor_of(r.id))
         capacity, capacity_from = capacity_of(eff, seats.get(r.id))
-        x, y = _label_point(geom)
-        width, height = _room_at(geom, x, y)
+        geo = self._shape(r)
         return {
             "id": r.id, "kind": r.kind, "space_id": r.parent, "zones": list(r.zones),
             "type": eff["type"], "name": eff["name"], "number": eff["number"],
@@ -380,13 +550,13 @@ class Review:
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
             "workplaces": (seats.get(r.id) or {}).get("workplaces", 0), "grade": (seats.get(r.id) or {}).get("grade"),
             "reasons": ws.review_reasons(r),
-            "area": round(geom.area, 2),
-            "label_point": [round(x, 3), round(y, 3)],
-            "label_room": [round(width, 2), round(height, 2)],
+            "area": geo.get("area", 0.0),
+            "label_point": geo.get("label_point", [0.0, 0.0]),
+            "label_room": geo.get("label_room", [0.0, 0.0]),
             "geometry": r.geometry,
         }
 
-    def correct(self, object_id: str, body: dict) -> dict:
+    def correct(self, object_id: str, body: dict, by=None) -> dict:
         """Change a space's correction:
 
         ``{"correction": {type, name, number}}`` replaces type, name and number: fields
@@ -395,7 +565,8 @@ class Review:
         flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
         desks say). ``{"reset": true}`` removes the correction (the flags and capacity
         stay)."""
-        with self._writing() as ws:
+
+        def fn(ws: Workspace):
             r = ws.objects.get(object_id)
             if r is None or r.status != "active" or r.kind not in ("space", "zone", "opening"):
                 raise NotFound(f"no active space, zone or opening {object_id}")
@@ -440,27 +611,34 @@ class Review:
             override = Override(**values, **flags, capacity=capacity)
             if checked and not values and capacity is not None and override.hidden is None:
                 override.hidden = False  # accepted as it is, with a capacity: the mark of the check
-            if override == Override() and not checked:
-                ws.overrides.pop(object_id, None)
-            else:
-                ws.overrides[object_id] = override
-            self._save(ws)
-            return self._door(ws, r) if r.kind == "opening" else self._space(ws, r)
+            new = None if override == Override() and not checked else override
+            had = ws.overrides.get(object_id)
+            kind = "reset" if body.get("reset") else "correct" if "correction" in body else \
+                ("delete" if body["ignored"] else "restore") if "ignored" in body else \
+                ("hide" if body["hidden"] else "show") if "hidden" in body else "capacity"
+            ch = Changes(part="object", kind=kind, targets=[object_id], floors={floor_of(object_id)},
+                         before={"override": _dump(had)}, after={"override": _dump(new)})
+            if not (had is None and new is None) and not _same(had, new):
+                ch.overrides[object_id] = new
+            return ch, None
+
+        self._change(fn, by)
+        ws = self.workspace()
+        r = ws.objects[object_id]
+        return self._door(ws, r, self._floor(ws, floor_of(object_id)).edits.resized) if r.kind == "opening" \
+            else self._space(ws, r)
 
     def drawing(self, floor_id: str) -> dict:
-        with self._lock:
-            ws = self._load()
-            f = self._floor(ws, floor_id)
+        ws = self.workspace()
+        f = self._floor(ws, floor_id)
         if f.source is None:
             return {"groups": {}, "texts": []}
-        path = self.path.parent / f.source.path
-        if not path.exists():
-            raise DrawingError(f"drawing not found: {path}")
         src = f.source
-        key = (floor_id, str(path), path.stat().st_mtime_ns, src.profile, src.units, src.region, src.offset)
+        key = (floor_id, *self.source.drawing_key(src), src.profile, src.units, src.region, src.offset)
         if key not in self._drawings:
-            doc = read_drawing(path)
-            profile = load_profile(resolve_profile(src.profile, self.path.parent))
+            with self.source.drawing_file(src) as path:
+                doc = read_drawing(path)
+            profile = load_profile(self.source.profile(src))
             self._drawings[key] = drawing_linework(
                 doc, profile, meters_per_unit(doc, src.units), src.region, src.offset
             )
@@ -608,27 +786,25 @@ def _round_box(box) -> list[float]:
 def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
     """Where a floor's print and its placement are kept, drawing them first when the
     drawing, the part of it read or the floor's spaces changed."""
-    with review._lock:
-        ws = review._load()
-        f = review._floor(ws, floor_id)
-        if f.source is None:
-            raise NotFound(f"floor {floor_id} has no drawing")
-        src = f.source
-        path = review.path.parent / src.path
-        if not path.exists():
-            raise DrawingError(f"drawing not found: {path}")
-        extent = None
-        if src.region is None:  # around what was found on the floor
-            geoms = [shape(r.geometry) for r in ws.floor_objects(floor_id) if r.kind == "space"]
-            if f.outline:
-                geoms.append(shape(f.outline))
-            if geoms:
-                xs0, ys0, xs1, ys1 = zip(*(g.bounds for g in geoms))
-                extent = _round_box((min(xs0) - PRINT_MARGIN_M, min(ys0) - PRINT_MARGIN_M,
-                                     max(xs1) + PRINT_MARGIN_M, max(ys1) + PRINT_MARGIN_M))
-    raw = json.dumps([PRINT_VERSION, str(path), path.stat().st_mtime_ns, src.units, src.region, src.offset, extent])
+    ws = review.workspace()
+    f = review._floor(ws, floor_id)
+    if f.source is None:
+        raise NotFound(f"floor {floor_id} has no drawing")
+    src = f.source
+    stamp = review.source.drawing_key(src)
+    extent = None
+    if src.region is None:  # around what was found on the floor
+        geoms = [review._shape(r)["shape"] for r in ws.floor_objects(floor_id) if r.kind == "space"]
+        if f.outline:
+            geoms.append(shape(f.outline))
+        geoms = [g for g in geoms if not g.is_empty]
+        if geoms:
+            xs0, ys0, xs1, ys1 = zip(*(g.bounds for g in geoms))
+            extent = _round_box((min(xs0) - PRINT_MARGIN_M, min(ys0) - PRINT_MARGIN_M,
+                                 max(xs1) + PRINT_MARGIN_M, max(ys1) + PRINT_MARGIN_M))
+    raw = json.dumps([PRINT_VERSION, *stamp, src.units, src.region, src.offset, extent])
     key = hashlib.sha1(raw.encode()).hexdigest()[:16]
-    folder = review.path.parent / CACHE_DIR / "prints"
+    folder = review.source.prints()
     png, info = folder / f"{floor_id}-{key}.png", folder / f"{floor_id}-{key}.json"
     if png.exists() and info.exists():
         return png, info
@@ -639,7 +815,8 @@ def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
 
         from .vision import print_png
 
-        doc = read_drawing(path)
+        with review.source.drawing_file(src) as path:
+            doc = read_drawing(path)
         scale = meters_per_unit(doc, src.units)
         ox, oy = src.offset or (0.0, 0.0)
         if src.region is not None:
