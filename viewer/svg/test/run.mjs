@@ -322,6 +322,23 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
   equal(got.fill, "rgb(59, 110, 165)", "the copier in its type's colour");
 });
 
+inChrome("a desk is drawn with what goes with its grade: visitors' chairs, a return, a cabinet, a high-backed chair", async (page) => {
+  const plans = [`${HQ}-F00`, `${HQ}-F01`].map((id) => floorFromPackage(hq, id));
+  equal(plans[0].items.find((i) => i.type === "DESK-DIRECTOR").grade, "director", "its type's grade");
+  const drawn = {};
+  for (const plan of plans) {
+    await page.run((p) => window.fresh({}, p), plan);
+    Object.assign(drawn, await page.run(() => Object.fromEntries([...document.querySelectorAll(".sp-item-desk")].map((g) => [
+      g.querySelector("title").textContent, [g.querySelectorAll(".sp-item-body").length, g.querySelectorAll(".sp-item-visitor").length,
+        g.querySelectorAll(".sp-item-back").length]]))));
+  }
+  // [desk, return, cabinet], visitors, chairs' backs (a high-backed one's and the visitors')
+  equal(drawn, { "Director's desk": [3, 2, 3], "Senior staff desk": [2, 0, 0], "Junior staff desk": [1, 0, 0],
+    "Manager's desk": [2, 2, 2], "Head of section desk": [2, 1, 1] }, "by grade (in the order drawn)");
+  const older = floorFromPackage(pkg, "EWBSSN-DEMO-HQ-F00"); // 0.6: no grades in its catalogue
+  truly(older.items.every((i) => i.grade === null), "an older package's desks are plain");
+});
+
 inChrome("a wayfinding kiosk: its screen along its front, and the way it faces", async (page) => {
   const plan = floorFromPackage(hq, `${HQ}-F00`);
   const kiosk = plan.items.find((i) => i.type === "KIOSK");

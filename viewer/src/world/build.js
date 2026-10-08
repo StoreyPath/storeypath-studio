@@ -286,10 +286,11 @@ export function planFloor(pkg, floor, origin, options = {}) {
     // the drawing's +y faces the placement's bearing, so its -y the opposite way
     const heading = own ? (placement.bearing || 0) + 180 - (own.rotation_deg || 0) : p.heading ?? 0;
     const h = (heading * Math.PI) / 180;
-    const color = pkg.itemType?.(p.type)?.color;
+    const { color, grade } = pkg.itemType?.(p.type) ?? {};
     const it = { id: item.id, type: p.type, mount: p.mount ?? "floor", x, n, fx: Math.sin(h), fn: Math.cos(h),
       width: p.width_m || 1, depth: p.depth_m || 0.6, height: p.height_m || 0.75,
-      color: typeof color === "string" && COLOR.test(color) ? color : ITEM_COLOR };
+      color: typeof color === "string" && COLOR.test(color) ? color : ITEM_COLOR,
+      grade: typeof grade === "string" && grade in DESK_SETS ? grade : null };
     it.y = it.mount === "ceiling" ? wallHeight - it.height - 0.01 : p.elevation_m ?? (it.mount === "wall" ? WALL_ITEM : 0);
     plan.items.push(it);
     if (it.mount !== "floor") continue;
@@ -611,22 +612,62 @@ const SCREEN = "#0e1117";
 const BED_FRAME = "#5a4334";
 const LINEN = "#ecebe6";
 
+/** What goes with a desk, by the grade it is for (its type's, format 0.7): visitors'
+ * chairs across it (armchairs for the president's), a return at its side (an
+ * L-shaped desk), a cabinet behind its chair, and a high-backed chair. The SVG plan
+ * draws the same. */
+export const DESK_SETS = {
+  junior: { visitors: 0 },
+  senior: { visitors: 0, return: true },
+  section_head: { visitors: 1, return: true },
+  manager: { visitors: 2, return: true },
+  director: { visitors: 2, return: true, cabinet: true, executive: true },
+  c_level: { visitors: 2, return: true, cabinet: true, executive: true },
+  president: { visitors: 2, armchairs: true, return: true, cabinet: true, executive: true },
+};
+
 /** How each kind of item is drawn, by its type code's first part (DESK-MANAGER is a
  * desk); others by how they are mounted. Each gets the item (w, d, h: its size) and
  * draws it in its own frame, its front ahead. */
 const DRAW = {
-  // a top on two end panels with a modesty panel at the back, and a chair
+  // a top on two end panels with a modesty panel at the back, and a chair; and what
+  // goes with a desk of its grade (DESK_SETS)
   DESK(s, it, k, c) {
     const { width: w, depth: d, height: h } = it;
+    const set = DESK_SETS[it.grade] ?? DESK_SETS.junior;
     const top = Math.min(0.035, h / 4), under = rgb(c, { dark: 0.55 }), chair = rgb(CHAIR);
     s.box(it, k, [-w / 2, w / 2], [h - top, h], [-d / 2, d / 2], rgb(c));
     for (const side of [-1, 1]) {
       s.box(it, k, side < 0 ? [-w / 2 + 0.02, -w / 2 + 0.06] : [w / 2 - 0.06, w / 2 - 0.02], [0, h - top], [-d / 2 + 0.04, d / 2 - 0.04], under);
     }
     s.box(it, k, [-w / 2 + 0.06, w / 2 - 0.06], [Math.max(0, h - 0.45), h - top], [-d / 2 + 0.04, -d / 2 + 0.06], under);
-    s.box(it, k, [-0.24, 0.24], [0.42, 0.48], [d / 2 + 0.14, d / 2 + 0.6], chair);
-    s.box(it, k, [-0.22, 0.22], [0.48, 0.95], [d / 2 + 0.56, d / 2 + 0.62], chair);
-    s.box(it, k, [-0.03, 0.03], [0, 0.42], [d / 2 + 0.34, d / 2 + 0.4], chair);
+    if (set.return) { // at its side towards its user, on an end panel
+      const r = Math.min(0.45, w / 3);
+      s.box(it, k, [w / 2 - r, w / 2], [h - top, h], [d / 2, d / 2 + 0.8], rgb(c));
+      s.box(it, k, [w / 2 - r + 0.04, w / 2 - 0.04], [0, h - top], [d / 2 + 0.74, d / 2 + 0.78], under);
+    }
+    if (set.cabinet) { // low, behind the chair
+      s.box(it, k, [-w * 0.45, w * 0.45], [0, Math.min(0.72, h)], [d / 2 + 0.95, d / 2 + 1.4], rgb(c, { dark: 0.15 }));
+    }
+    if (set.executive) { // wider, its back up to the head
+      s.box(it, k, [-0.3, 0.3], [0.42, 0.5], [d / 2 + 0.1, d / 2 + 0.66], chair);
+      s.box(it, k, [-0.28, 0.28], [0.5, 1.25], [d / 2 + 0.6, d / 2 + 0.7], chair);
+      s.box(it, k, [-0.04, 0.04], [0, 0.42], [d / 2 + 0.34, d / 2 + 0.42], chair);
+    } else {
+      s.box(it, k, [-0.24, 0.24], [0.42, 0.48], [d / 2 + 0.14, d / 2 + 0.6], chair);
+      s.box(it, k, [-0.22, 0.22], [0.48, 0.95], [d / 2 + 0.56, d / 2 + 0.62], chair);
+      s.box(it, k, [-0.03, 0.03], [0, 0.42], [d / 2 + 0.34, d / 2 + 0.4], chair);
+    }
+    // visitors across it, facing its user: their backs away from it
+    const vw = set.armchairs ? 0.7 : 0.46, vd = set.armchairs ? 0.62 : 0.46;
+    const xs = set.visitors === 1 ? [0] : set.visitors === 2 ? [-1, 1].map((q) => q * Math.max(vw / 2 + 0.06, Math.min(w / 4, 0.6))) : [];
+    const seat = set.armchairs ? rgb(c, { dark: 0.35 }) : chair;
+    for (const x of xs) {
+      const [z0, z1] = [-d / 2 - 0.15 - vd, -d / 2 - 0.15];
+      s.box(it, k, [x - vw / 2, x + vw / 2], [0, 0.45], [z0 + 0.1, z1], seat);
+      s.box(it, k, [x - vw / 2, x + vw / 2], [0, set.armchairs ? 0.95 : 0.88], [z0, z0 + 0.1], seat);
+      if (set.armchairs) for (const a of [-1, 1]) s.box(it, k, a < 0 ? [x - vw / 2, x - vw / 2 + 0.1] : [x + vw / 2 - 0.1, x + vw / 2], [0.45, 0.62], [z0 + 0.1, z1], seat);
+    }
   },
   // a seat between two arms, before a back
   SOFA(s, it, k, c) {

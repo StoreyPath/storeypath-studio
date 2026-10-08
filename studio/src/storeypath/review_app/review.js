@@ -1656,8 +1656,43 @@ async function loadCatalogue() {
   $("as-type").replaceChildren(...[...groups.values()]);
 }
 
+/** What goes with a desk, by the grade it is for, as the viewers draw it: visitors'
+ * chairs across it (armchairs for the president's), a return at its side (an
+ * L-shaped desk), a cabinet behind its chair, and a high-backed chair. */
+const DESK_SETS = {
+  junior: { visitors: 0 },
+  senior: { visitors: 0, return: true },
+  section_head: { visitors: 1, return: true },
+  manager: { visitors: 2, return: true },
+  director: { visitors: 2, return: true, cabinet: true, executive: true },
+  c_level: { visitors: 2, return: true, cabinet: true, executive: true },
+  president: { visitors: 2, armchairs: true, return: true, cabinet: true, executive: true },
+};
+
+/** A desk's chair and what goes with its grade, in its own frame: its user towards -y. */
+function deskSet(g, t, w, d) {
+  const set = DESK_SETS[t?.grade] || DESK_SETS.junior;
+  // [x, y] from its middle towards its user, as the viewers measure it
+  const rect = (x, y, rw, rh, attrs) => g.append(svg("rect", { x, y: -(y + rh), width: rw, height: rh, ...attrs }));
+  const color = t?.color || "#8a8a8a";
+  if (set.return) rect(w / 2 - Math.min(0.45, w / 3), d / 2, Math.min(0.45, w / 3), 0.8, { fill: color });
+  if (set.cabinet) rect(-w * 0.45, d / 2 + 0.95, w * 0.9, 0.45, { fill: color });
+  const chair = (x, y, cw, cd, back) => { // its back at y + cd
+    rect(x - cw / 2, y, cw, cd, { class: "chair", rx: 0.08 });
+    rect(x - cw / 2, y + cd - back, cw, back, { class: "chair back", rx: 0.04 });
+  };
+  if (set.executive) chair(0, d / 2 + 0.08, 0.6, 0.62, 0.14);
+  else rect(-0.22, d / 2 + 0.1, 0.44, 0.42, { class: "chair", rx: 0.1 });
+  const vw = set.armchairs ? 0.7 : 0.46, vd = set.armchairs ? 0.62 : 0.46;
+  const xs = set.visitors === 1 ? [0] : set.visitors === 2 ? [-1, 1].map((q) => q * Math.max(vw / 2 + 0.06, Math.min(w / 4, 0.6))) : [];
+  for (const x of xs) { // facing its user: their backs away from it
+    rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, vd, { class: "chair", rx: 0.08 });
+    rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, 0.12, { class: "chair back", rx: 0.04 });
+  }
+}
+
 /** An item's shape on the plan: its footprint turned with it, the edge it faces
- * darker; on the ceiling, a circle. */
+ * darker, and a desk's chair and what goes with its grade; on the ceiling, a circle. */
 function assetShape(a, t, cls) {
   const g = svg("g", { transform: `translate(${a.x} ${a.y}) rotate(${a.rotation || 0})`, class: cls });
   const w = t?.width ?? 1, d = t?.depth ?? 0.6;
@@ -1667,6 +1702,7 @@ function assetShape(a, t, cls) {
   } else {
     g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t?.color || "#8a8a8a" }));
     g.append(svg("line", { x1: -w / 2, y1: -d / 2, x2: w / 2, y2: -d / 2, class: "front" })); // its front: the plan's -y, turned
+    if ((t?.code || t?.type || "").split("-")[0] === "DESK") deskSet(g, t, w, d);
   }
   return g;
 }

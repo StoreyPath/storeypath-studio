@@ -241,6 +241,12 @@ the floors in review.
   turns it 90°, <kbd>[</kbd> and <kbd>]</kbd> by 15°, the arrows move it (Shift:
   further), <kbd>Del</kbd> deletes it. Its panel changes its type, its turn, its floor
   (carry it to another floor or building) and its details.
+- **Desks show who they are for.** Each grade's desk has its own size and shade, and
+  is drawn (in review, on the plan and in 3D) with what goes with it: a junior's
+  plain; a senior's with a return (an L-shaped desk); a head of section's with a
+  visitor's chair as well; a manager's with two; a director's and a C-level's with a
+  cabinet behind a high-backed chair too; the president's with armchairs for its
+  visitors. Only the desk itself is the item: the rest is drawn round it.
 - **A kiosk** (type `KIOSK`) is where a wayfinding kiosk stands, its screen at its
   front: wayfinder links each of its kiosks to one, so the kiosk's map shows "you are
   here", and a way to an office can later start from it.

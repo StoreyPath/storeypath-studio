@@ -71,6 +71,9 @@ export interface PlanItem {
   depth: number;
   /** Its colour (its type's), a CSS colour. */
   color?: string;
+  /** Who a desk is for (its type's grade: president, c_level, director, manager,
+   * section_head, senior, junior): drawn with what goes with it, as Studio draws it. */
+  grade?: string | null;
 }
 
 export interface FloorPlan {

@@ -238,6 +238,30 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
   }
 });
 
+test("a desk is built with what goes with its grade: visitors' chairs, a return, a cabinet, a high-backed chair", async () => {
+  const boxes = {}; // a type's desk: how many boxes it is built of (8 corners each)
+  for (const name of ["campus-hq", "campus-annex"]) {
+    const pkg = await loadPackage(readFileSync(join(packages, `${name}.storeypath`)));
+    const b = pkg.buildings[0].id;
+    for (const floor of pkg.floorsOf(b)) {
+      const plan = planFloor(pkg, floor, originOf(pkg, b));
+      const item = buildItems(plan).find((p) => p.name === "items")?.geometry.getAttribute("_item");
+      plan.items.forEach((it, k) => {
+        if (!it.type.startsWith("DESK-")) return;
+        let n = 0;
+        for (let i = 0; i < item.count; i++) if (item.getX(i) === k) n++;
+        boxes[it.type] = n / 8;
+      });
+    }
+  }
+  // a top, its end and modesty panels, a chair (3); a return (2); visitors (2 each, an
+  // armchair 4); a cabinet (1); a high-backed chair (3)
+  const want = { "DESK-DIRECTOR": 14, "DESK-JUNIOR": 7, "DESK-MANAGER": 13, "DESK-PRESIDENT": 18, "DESK-SECTION-HEAD": 11,
+    "DESK-SENIOR": 9 };
+  const got = Object.fromEntries(Object.entries(boxes).sort(([a], [b]) => a.localeCompare(b)));
+  truly(JSON.stringify(got) === JSON.stringify(want), `by grade: ${JSON.stringify(got)}`);
+});
+
 test("a wayfinding kiosk: a plinth, a post and a head, its screen ahead, as tall as its type, seen in the cutaway", async () => {
   const pkg = await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")));
   const plan = planFloor(pkg, pkg.floorsOf(HQ).find((f) => f.id.endsWith("-F00")), originOf(pkg, HQ));

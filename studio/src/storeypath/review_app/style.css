@@ -283,6 +283,8 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #assets .asset { cursor: grab; }
 #assets .asset rect, #assets .asset circle { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
 #assets .asset .front { stroke: var(--text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+#assets .asset .chair { fill: #5b5f69; }
+#assets .asset .chair.back { fill: var(--text); fill-opacity: .55; }
 #assets .asset.ceiling circle { fill-opacity: .3; stroke-dasharray: 3 3; }
 #assets .asset.chosen rect, #assets .asset.chosen circle { stroke: var(--select); stroke-width: 3; }
 #assets .asset.retired { opacity: .35; }

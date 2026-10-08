@@ -46,7 +46,7 @@ export interface PackageLike {
   openings: Feature<OpeningProps>[];
   /** Furniture and equipment (format 0.6; placed in their building, 0.7), and the catalogue of their types. */
   items?: Feature<ItemProps>[];
-  catalogue?: { types: { code: string; color?: string }[] } | null;
+  catalogue?: { types: { code: string; color?: string; grade?: string | null }[] } | null;
 }
 
 export interface FromPackageOptions {
@@ -57,6 +57,8 @@ export interface FromPackageOptions {
 const ITEM_COLOR = "#8a8a8a"; // an item whose type the package does not describe (or not as #rrggbb)
 /** The colours a package may give (catalogue.json): #rrggbb, nothing else reaches the page. */
 const COLOR = /^#[0-9a-f]{6}$/i;
+/** The grades a desk may be for (catalogue.json, format 0.7): no other reaches the page. */
+const GRADES = new Set(["president", "c_level", "director", "manager", "section_head", "senior", "junior"]);
 
 /** A floor of a package, ready to draw. */
 export function floorFromPackage(pkg: PackageLike, floorId: string, options: FromPackageOptions = {}): FloorPlan {
@@ -111,6 +113,8 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
   // is turned to the placement's bearing)
   const colors = new Map((pkg.catalogue?.types ?? []).filter((t) => typeof t.color === "string" && COLOR.test(t.color))
     .map((t) => [t.code, t.color]));
+  const grades = new Map((pkg.catalogue?.types ?? []).filter((t) => typeof t.grade === "string" && GRADES.has(t.grade))
+    .map((t) => [t.code, t.grade]));
   const items: PlanItem[] = [];
   for (const f of pkg.items ?? []) {
     const p = f.properties;
@@ -126,7 +130,8 @@ export function floorFromPackage(pkg: PackageLike, floorId: string, options: Fro
       front = [Math.sin(a), Math.cos(a)];
     }
     items.push({ id: f.id, type: p.type, category: p.category ?? "furniture", name: p.name ?? null, mount: p.mount ?? "floor",
-      at, front, width: p.width_m || 1, depth: p.depth_m || 0.6, color: colors.get(p.type) ?? ITEM_COLOR });
+      at, front, width: p.width_m || 1, depth: p.depth_m || 0.6, color: colors.get(p.type) ?? ITEM_COLOR,
+      grade: grades.get(p.type) ?? null });
   }
   return {
     id: floorId,

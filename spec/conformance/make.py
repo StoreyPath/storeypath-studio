@@ -201,7 +201,7 @@ def furnish(ws) -> None:
         ws.add_item(code, f_id, round(x, 3), round(y, 3), rotation=rotation, values=values)
 
     f_id, (x0, y0, x1, y1) = room("HQ-F00", "001")  # an office on the south side, its door north
-    place("DESK-DIRECTOR", f_id, (x0 + x1) / 2, y0 + 1.6)
+    place("DESK-DIRECTOR", f_id, (x0 + x1) / 2, y0 + 2.0)  # room behind its chair for its cabinet
     f_id, (x0, y0, x1, y1) = room("HQ-F00", "002")
     place("DESK-SENIOR", f_id, x0 + 0.4, y0 + 1.5, rotation=90)
     place("DESK-JUNIOR", f_id, x0 + 0.35, y0 + 4.0, rotation=90)
@@ -232,7 +232,7 @@ def furnish(ws) -> None:
     place("DESK-JUNIOR", f_id, hx1 - 3.9, hy1 - 0.35)
 
     f_id, (x0, y0, x1, y1) = room("ANNEX-F00", "001")
-    place("DESK-PRESIDENT", f_id, (x0 + x1) / 2, y0 + 2.0)
+    place("DESK-PRESIDENT", f_id, (x0 + x1) / 2, y0 + 2.2)
 
     # placed last, so the others keep their numbers
     f_id, (x0, y0, x1, y1) = room("HQ-F00", "006")  # an office for long shifts: its bed's head on the south wall
