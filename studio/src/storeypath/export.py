@@ -260,17 +260,33 @@ def _walls_and_parapets(walls, spaces, thickness: float | None):
 WALL_ELEVATION_M = 1.2  # a wall item's bottom above the floor, when its type does not say
 
 
-def floor_units(ws: Workspace, f_id: str) -> list:
+class Units(list):
+    """A floor's spaces and zones with their shapes, (shape, record) each, that finds
+    those a point is in through a tree of their shapes (made the first time it is
+    asked): a floor of a thousand rooms and a thousand desks in a second's fraction,
+    not half a minute."""
+
+    _tree = None
+
+    def at(self, point) -> list:
+        """Those whose shape covers ``point``, in their order."""
+        if self._tree is None:
+            self._tree = shapely.STRtree([geom for geom, _ in self])
+        return [self[i] for i in sorted(self._tree.query(point, predicate="covered_by"))]
+
+
+def floor_units(ws: Workspace, f_id: str) -> Units:
     """A floor's spaces and zones in use, with their shapes: where items stand."""
-    return [(shape(r.geometry), r) for r in ws.floor_objects(f_id)
-            if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+    return Units((shape(r.geometry), r) for r in ws.floor_objects(f_id)
+                 if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"])
 
 
 def standing_in(it, units) -> tuple[str | None, str | None]:
     """The space, and the zone when the space is divided, an item's middle stands in."""
     middle = shapely.Point(it.x, it.y)
-    zone = next((rec for geom, rec in units if rec.kind == "zone" and geom.covers(middle)), None)
-    space = zone.parent if zone else next((rec.id for geom, rec in units if rec.kind == "space" and geom.covers(middle)), None)
+    near = units.at(middle) if isinstance(units, Units) else units
+    zone = next((rec for geom, rec in near if rec.kind == "zone" and geom.covers(middle)), None)
+    space = zone.parent if zone else next((rec.id for geom, rec in near if rec.kind == "space" and geom.covers(middle)), None)
     return space, zone.id if zone else None
 
 

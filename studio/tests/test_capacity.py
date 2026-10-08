@@ -86,6 +86,33 @@ def test_a_divided_space_counts_its_zones_desks(converted, tmp_path):
     assert [got[z.id] for z in zones] == [1, 1] and _spaces(tmp_path / "p.storeypath")[container]["capacity"] == 2
 
 
+def test_where_an_item_stands_is_found_through_the_tree_as_by_every_room(converted):
+    """floor_units' tree (Units.at) finds the same space and zone as asking every room in
+    turn: on rooms, zones, walls and outside, edges and corners included."""
+    from types import SimpleNamespace
+
+    from storeypath.convert import convert_floor
+    from storeypath.export import Units, floor_units, standing_in
+
+    ws, d, f_id, *_ = converted
+    room, x, y = _office(ws, f_id)
+    x0, y0, x1, y1 = shape(room.geometry).bounds
+    ws.floor(f_id).edits.dividers.append([[(x0 + x1) / 2, y0 - 0.1], [(x0 + x1) / 2, y1 + 0.1]])
+    convert_floor(ws, f_id, d)  # a space of two zones among the others
+    units = floor_units(ws, f_id)
+    assert isinstance(units, Units) and any(rec.kind == "zone" for _, rec in units)
+    fx0, fy0, fx1, fy1 = shape(ws.floor(f_id).outline).bounds if ws.floor(f_id).outline else (0, 0, 60, 30)
+    points = [(fx0 - 1 + (fx1 - fx0 + 2) * i / 37, fy0 - 1 + (fy1 - fy0 + 2) * j / 23) for i in range(38) for j in range(24)]
+    for geom, _ in units:  # on their corners, too
+        points += list(geom.exterior.coords) if geom.geom_type == "Polygon" else []
+    found = 0
+    for px, py in points:
+        it = SimpleNamespace(x=px, y=py)
+        assert standing_in(it, units) == standing_in(it, list(units)), (px, py)
+        found += standing_in(it, units)[0] is not None
+    assert found > len(points) // 3
+
+
 def test_an_older_catalogue_learns_what_its_desks_seat(tmp_path):
     older = catalogue.default_catalogue().model_dump()
     for t in older["types"]:

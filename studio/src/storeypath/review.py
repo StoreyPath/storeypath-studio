@@ -55,7 +55,7 @@ from .cad import DrawingError, meters_per_unit, read_drawing
 from . import history
 from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
-from .export import _label_point, capacity_of, seating
+from .export import Units, _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .ids import make_item_id
 from .profile import Profile, load_profile, resolve_profile
@@ -404,8 +404,8 @@ class Review:
                    for it in ws.floor_items(floor_id)):
             return {}
         objects = ws.floor_objects(floor_id) if objects is None else objects
-        units = [(self._shape(r)["shape"], r) for r in objects
-                 if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"]]
+        units = Units((self._shape(r)["shape"], r) for r in objects
+                      if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"])
         return seating(ws, cat, floor_id, units=units)
 
     def floor(self, floor_id: str) -> dict:
