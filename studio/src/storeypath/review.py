@@ -52,6 +52,7 @@ from .export import _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .ids import make_item_id
 from .profile import Profile, load_profile, resolve_profile
+from .stacks import NOT_LINKED, STACK_TYPES
 from .types import SpaceType
 from .workspace import DrawnOpening, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
 
@@ -543,7 +544,7 @@ class Review:
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "drawing_label": r.label,
             # a person's correction or check ({}: accepted as it is); not a capacity alone
-            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
+            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity", "stack"})
             if o and eff["corrected"] else None,
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             # how many it seats: set here, else its desks'; and who it is laid out for
@@ -563,8 +564,9 @@ class Review:
         left out (or null) use what was detected, "" removes a detected name or number,
         {} accepts it as it is. ``{"hidden": bool}`` and ``{"ignored": bool}`` set the
         flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
-        desks say). ``{"reset": true}`` removes the correction (the flags and capacity
-        stay)."""
+        desks say). ``{"stack": id}`` links a lift, stairs, escalator or ramp to one on
+        another floor of its building (stacks.py), ``""`` to none, null: as found.
+        ``{"reset": true}`` removes the correction (the flags, capacity and link stay)."""
 
         def fn(ws: Workspace):
             r = ws.objects.get(object_id)
@@ -598,24 +600,29 @@ class Review:
                 values = {k: v.strip() if isinstance(v, str) else v for k, v in c.items() if v is not None}
                 if "type" in values:
                     values["type"] = SpaceType(values["type"])
-            elif any(f in body for f in flags) or "capacity" in body:
-                values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity"})
+            elif any(f in body for f in flags) or "capacity" in body or "stack" in body:
+                values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity", "stack"})
             else:
                 raise ValueError("nothing to change")
+            stack = current.stack
+            if "stack" in body:  # linked as it will be typed: a lift drawn is typed and linked at once
+                typed = values.get("type") if "correction" in body else None
+                stack = _stack_target(ws, r, body["stack"], typed or ws.effective(r)["type"])
             # Checked: a person saved a correction, or accepted it as it is, and has not reset
             # it since. A flag or a capacity set keeps that as it was: a capacity alone is no
             # check (workspace.effective), nor one left empty by clearing a flag.
             was_checked = object_id in ws.overrides and ws.effective(r)["corrected"] \
                 and not (current.hidden or current.ignored)
             checked = False if body.get("reset") else True if "correction" in body else was_checked
-            override = Override(**values, **flags, capacity=capacity)
-            if checked and not values and capacity is not None and override.hidden is None:
-                override.hidden = False  # accepted as it is, with a capacity: the mark of the check
+            override = Override(**values, **flags, capacity=capacity, stack=stack)
+            if checked and not values and (capacity is not None or stack is not None) and override.hidden is None:
+                override.hidden = False  # accepted as it is, with a capacity or a link: the mark of the check
             new = None if override == Override() and not checked else override
             had = ws.overrides.get(object_id)
             kind = "reset" if body.get("reset") else "correct" if "correction" in body else \
                 ("delete" if body["ignored"] else "restore") if "ignored" in body else \
-                ("hide" if body["hidden"] else "show") if "hidden" in body else "capacity"
+                ("hide" if body["hidden"] else "show") if "hidden" in body else \
+                ("link" if stack else "unlink" if stack == NOT_LINKED else "as found") if "stack" in body else "capacity"
             ch = Changes(part="object", kind=kind, targets=[object_id], floors={floor_of(object_id)},
                          before={"override": _dump(had)}, after={"override": _dump(new)})
             if not (had is None and new is None) and not _same(had, new):
@@ -643,6 +650,29 @@ class Review:
                 doc, profile, meters_per_unit(doc, src.units), src.region, src.offset
             )
         return self._drawings[key]
+
+
+def _stack_target(ws: Workspace, r: ObjectRecord, target, kind: str) -> str | None:
+    """A space's link to other floors from a request (``kind``: its type, as it will be):
+    the ID of a lift, stairs, escalator or ramp on another floor of its building, ""
+    (linked to none) or None (as found)."""
+    if target is None:
+        return None
+    if not isinstance(target, str):
+        raise ValueError('stack is the ID of a lift or stairs on another floor, "" for none, or null for as found')
+    if r.kind != "space" or kind not in STACK_TYPES:
+        raise ValueError("only a lift, stairs, escalator or ramp is linked to other floors")
+    if target == NOT_LINKED:
+        return target
+    t = ws.objects.get(target)
+    if t is None or t.status != "active" or t.kind != "space":
+        raise NotFound(f"no space {target}")
+    here, there = floor_of(r.id), floor_of(target)
+    if here == there or floor_of(here) != floor_of(there):
+        raise ValueError("a lift or stairs is linked to one on another floor of its building")
+    if ws.effective(t)["type"] not in STACK_TYPES:
+        raise ValueError(f"{target} is not a lift, stairs, escalator or ramp")
+    return target
 
 
 DRAWN_KINDS = ("wall", "divider", "opening", "space")

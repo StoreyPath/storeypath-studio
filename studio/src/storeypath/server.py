@@ -1428,6 +1428,16 @@ BACKUP_WAIT_S = 10.0  # a backup waits this long for a job to finish, then is re
 AUDIT_SHOWN = 200
 
 
+def _floor_of(object_id) -> str | None:
+    """The floor of an object, by its ID (None for what is not an object's ID)."""
+    from .ids import parse_id
+
+    try:
+        return parse_id(object_id).prefix("floor")
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _need(have: str | None, level: str, what: str) -> None:
     if rank(have) < rank(level):
         raise Forbidden(f"this needs {level} access to {what}; you have {have or 'none'}")
@@ -1570,18 +1580,42 @@ class Gate:
                                 "is marked as this floor's plan")
         return sight
 
-    def object(self, code: str, object_id: str) -> Sight:
-        """A space, zone or opening corrected: edit on its floor."""
-        from .ids import parse_id
+    def object(self, code: str, object_id: str, body: dict | None = None) -> Sight:
+        """A space, zone or opening corrected: edit on its floor. A lift or stairs linked
+        to one on another floor (``stack``): that one seen too."""
+        sight = self._space_seen(code, object_id, "no active space, zone or opening")
+        _need(sight.floor(_floor_of(object_id)), "edit", "its floor")
+        target = (body or {}).get("stack")
+        if isinstance(target, str) and target:
+            self._space_seen(code, target, "no space", sight)
+        return sight
 
-        sight = self.see(code)
-        try:
-            floor_id = parse_id(object_id).prefix("floor")
-        except (ValueError, TypeError):
-            floor_id = None
+    def _space_seen(self, code: str, object_id, missing: str, sight: Sight | None = None) -> Sight:
+        """The person's sight of a project, when they see the floor of an object of it
+        (NotFound, saying ``missing``, when not)."""
+        sight = sight or self.see(code)
+        floor_id = _floor_of(object_id)
         if floor_id is None or not sight.floor(floor_id) or object_id not in self._workspace(code).objects:
-            raise NotFound(f"no active space, zone or opening {object_id}")
-        _need(sight.floor(floor_id), "edit", "its floor")
+            raise NotFound(f"{missing} {object_id}")
+        return sight
+
+    def stack(self, code: str, object_id: str) -> Sight:
+        """The floors a lift or stairs serves: view on its floor (the others listed are
+        those the person may see)."""
+        return self._space_seen(code, object_id, "no space")
+
+    def copy_vertical(self, code: str, object_id: str, body: dict) -> Sight:
+        """A lift or stairs drawn again on other floors and linked: edit on its floor and on
+        each of them."""
+        sight = self._space_seen(code, object_id, "no space")
+        _need(sight.floor(_floor_of(object_id)), "edit", "its floor")
+        floors = body.get("floors")
+        if not isinstance(floors, list) or not floors or not all(isinstance(f, str) for f in floors):
+            raise ValueError("floors: choose the floors to add it on")
+        for f in floors:
+            if not sight.floor(f):
+                raise NotFound(f"no floor {f}")
+            _need(sight.floor(f), "edit", f"the floor {f}")
         return sight
 
     def item(self, code: str, item_id: str, body: dict) -> Sight:

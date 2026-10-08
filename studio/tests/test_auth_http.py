@@ -100,6 +100,7 @@ def site(tmp_path_factory):
         item = ws.add_item("DESK-JUNIOR", hq0, 2.0, 2.0)
         ws.save(ws_path)
         space = next(r.id for r in ws.floor_objects(hq0) if r.kind == "space")
+        lift = next(r.id for r in ws.floor_objects(hq0) if r.kind == "space" and r.type == "elevator")
         studio = Studio(data, model=NoModel(), warm=False)
         accounts = Accounts(data)
         roles = {"admin": "admin", "owner": "engineer", "engineer": "engineer", "floor_viewer": "user",
@@ -114,7 +115,7 @@ def site(tmp_path_factory):
         srv = make_server(studio, port=0, accounts=accounts)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         ids = {"code": code, "hq": hq, "annex": annex, "hq0": hq0, "hq1": hq1, "an0": an0, "item": item.id,
-               "space": space, "loc": f"{code}-NOPE", "spare": users["spare"].id,
+               "space": space, "lift": lift, "loc": f"{code}-NOPE", "spare": users["spare"].id,
                "resettable": users["resettable"].id, "hq_pkg": packages[0].name, "annex_pkg": packages[1].name,
                "drawing": "hq-level-0.dxf", "token": "abc", "notes": "notes.txt", "missing": "missing.dxf"}
         s = Site(srv.server_port, studio, accounts, ids, tokens, users, None, srv.app)
@@ -225,6 +226,13 @@ ROWS = [
     Row("POST", C + "/floors/{hq0}/convert", {"force": "yes"}, ok=(400, "force is true or false"),
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/objects/{space}", {}, ok=(400, "nothing to change"), passes={"admin", "owner"},
+        hidden=OUTSIDE | {"building_editor"}),
+    # lifts and stairs drawn, and linked through the floors (vertical.py)
+    Row("POST", C + "/floors/{hq0}/vertical", {"type": "lift"}, ok=(400, "type is"), passes={"admin", "owner"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("GET", C + "/objects/{lift}/stack", ok=200, passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/objects/{lift}/copy", {"floors": []}, ok=(400, "choose the floors"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
     Row("GET", "/api/admin/users", ok=200, passes={"admin"}),
     Row("POST", "/api/admin/users", {}, ok=(400, "username"), passes={"admin"}),
