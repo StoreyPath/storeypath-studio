@@ -73,8 +73,16 @@ export class Walker extends EventTarget {
     this.keys = new Set();
     this.fast = false;
     this.enabled = false;
-    this.controls.addEventListener("lock", () => this.dispatchEvent(new Event("lock")));
-    this.controls.addEventListener("unlock", () => this.dispatchEvent(new Event("unlock")));
+    // (the controls say so before they count themselves locked: here it counts already)
+    this._locked = false;
+    this.controls.addEventListener("lock", () => {
+      this._locked = true;
+      this.dispatchEvent(new Event("lock"));
+    });
+    this.controls.addEventListener("unlock", () => {
+      this._locked = false;
+      this.dispatchEvent(new Event("unlock"));
+    });
     this._down = (e) => {
       // keys typed into a field of the page are its own, not steps
       if (!this.enabled || e.target?.closest?.("input, textarea, select, [contenteditable]")) return;
@@ -90,7 +98,7 @@ export class Walker extends EventTarget {
   }
 
   get locked() {
-    return this.controls.isLocked;
+    return this._locked;
   }
 
   lock() {
