@@ -7,6 +7,8 @@
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { helpersPage } from "./helpers.js";
 import { openShare } from "./share.js";
+import { ProjectStream } from "./stream.js";
+import { avatar } from "./together.js";
 import { usersPage } from "./users.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -83,19 +85,22 @@ function toast(message, error = false, ms = undefined) {
   toastTimer = setTimeout(() => (t.hidden = true), ms ?? (error ? 9000 : 3000));
 }
 
-/** Run a server job, showing its progress; resolves with its result. */
+/** Run a server job, showing its progress (as the project's stream tells it); resolves
+ * with its result. */
 async function runJob(started) {
   const panel = $("job");
   panel.hidden = false;
   panel.className = "job";
   let job = await started;
   $("job-title").textContent = job.title;
-  while (job.state === "waiting" || job.state === "running") {
-    $("job-log").replaceChildren(...job.log.slice(-12).map((l) => el("li", {}, l)));
+  const say = (log) => $("job-log").replaceChildren(...log.slice(-12).map((l) => el("li", {}, l)));
+  if (live.stream) job = await live.stream.follow(job, say);
+  while (job.state === "waiting" || job.state === "running") { // (no stream: asked for)
+    say(job.log);
     await new Promise((r) => setTimeout(r, 600));
     job = await api(`jobs/${job.id}`);
   }
-  $("job-log").replaceChildren(...job.log.slice(-12).map((l) => el("li", {}, l)));
+  say(job.log);
   panel.classList.add(job.state);
   setTimeout(() => (panel.hidden = true), job.state === "failed" ? 15000 : 4000);
   if (job.state === "failed") throw new Error(job.error || "failed");
@@ -128,6 +133,7 @@ setInterval(showStatus, 10000);
 
 async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  watchProject(parts[0] === "p" && parts[1] ? decodeURIComponent(parts[1]) : null);
   try {
     if (parts[0] === "p" && parts[1]) await projectPage(decodeURIComponent(parts[1]));
     else if (parts[0] === "users" && me?.role === "admin") {
@@ -183,6 +189,37 @@ async function projectsPage() {
   );
 }
 
+// ---- who is on which floor (the project's stream: stream.js) ---------------------------------
+
+const live = { code: null, stream: null, floors: new Map() }; // floor id → {viewing, editing}
+
+/** The project page's stream open on ``code`` (null: none, another page is shown). */
+function watchProject(code) {
+  if (live.code === code) return;
+  live.stream?.close();
+  Object.assign(live, { code, stream: null, floors: new Map() });
+  if (!code) return;
+  live.stream = new ProjectStream(code, null, api).on("presence", (p) => {
+    live.floors.set(p.floor, p);
+    showWhoIsOn();
+  });
+}
+
+/** By each floor of the page: who is on it (small marks), and who is editing it. */
+function showWhoIsOn() {
+  for (const spot of document.querySelectorAll("[data-on-floor]")) {
+    const p = live.floors.get(spot.dataset.onFloor);
+    const editing = p?.editing?.who;
+    const others = (p?.viewing || []).filter((v) => v.id !== editing?.id);
+    const said = [editing ? `${editing.name} is editing` : null,
+      others.length ? `${others.map((v) => v.name).join(", ")} ${others.length === 1 ? "is" : "are"} looking at it` : null]
+      .filter(Boolean).join("; ");
+    spot.title = said;
+    spot.replaceChildren(...[editing ? avatar(editing, "editing") : null, ...others.slice(0, 4).map((v) => avatar(v)),
+      editing ? el("span", { class: "muted small" }, ` ${editing.name.split(" ")[0]} editing`) : null].filter(Boolean));
+  }
+}
+
 async function projectPage(code) {
   const p = await api(`projects/${code}`);
   document.title = `${p.project.name} · StoreyPath Studio`;
@@ -210,6 +247,7 @@ async function projectPage(code) {
     exportCard(code, p),
     p.can?.delete !== false ? deleteCard(code, p) : null,
   );
+  showWhoIsOn();
 }
 
 /** Deleting a project: everything in it goes, once its name is typed. */
@@ -624,7 +662,8 @@ function buildingsCard(code, p) {
     el("table", { class: "floors" },
       el("thead", {}, el("tr", {}, el("th", {}, "Floor"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
       el("tbody", {}, b.floors.map((f) => el("tr", {},
-        el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, `${f.ordinal} · ${f.id.split("-").at(-1)}`)),
+        el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, `${f.ordinal} · ${f.id.split("-").at(-1)}`),
+          el("div", { class: "on-floor", "data-on-floor": f.id })),
         el("td", {}, f.drawing || "–", el("div", { class: "muted small" }, f.view || "")),
         el("td", {}, f.layers.length
           ? el("details", {}, el("summary", {}, `${f.layers.length} layers recognised`), el("ul", { class: "layers" }, f.layers.map((l) => el("li", {}, l))))

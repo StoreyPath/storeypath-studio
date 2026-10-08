@@ -211,6 +211,11 @@ dialog.share h3 { font-size: 13px; margin: 6px 0 0; }
 .audit li > span { overflow-wrap: anywhere; }
 .audit .failed, .audit .throttled, .audit .interrupted { color: var(--danger); }
 
+/* who is on each floor (the project's stream) */
+.on-floor { display: flex; align-items: center; margin-top: 4px; }
+.on-floor:empty { display: none; }
+.on-floor .avatar + .avatar { margin-left: -6px; }
+
 /* GPU helpers (admins) */
 .helpers td input[type="text"] { min-width: 240px; padding: 4px 8px; }
 .helpers td input[type="password"] { min-width: 130px; padding: 4px 8px; font: inherit; color: var(--text);
