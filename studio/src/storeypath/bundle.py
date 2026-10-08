@@ -1,6 +1,8 @@
 """A project as one file to send, and a project from one.
 
 A package (*.storeypath, export.py) is what other systems read: one building.
+Studio opens files into its database (open_into); open_file opens one into a data
+folder of workspace files (the command line's, and the tests').
 A project file (*.storeypath-project) is for another Studio to continue the
 project: the workspace (every correction, edit and ID, its export history), its
 drawings, and the item types it uses. It is not a package: no other system
@@ -62,6 +64,7 @@ CATALOGUE_FILE = "catalogue.json"
 WORKSPACE_FILE = "studio/project.spproj"
 DRAWINGS = "studio/drawings/"
 DRAWING_TYPES = {".dxf", ".dwg"}
+WORDS_SUFFIX = ".words.txt"  # beside a drawing: every word and string left in it
 MAX_FILES = 5000  # entries in a file opened
 MAX_BYTES = 4 << 30  # what they hold, uncompressed
 LOCAL_DECIMALS = 4  # metres: a tenth of a millimetre
@@ -86,21 +89,18 @@ class ItemClash(ValueError):
 
 
 def export_project(ws_path: Path, out) -> None:
-    """The project as one file for another Studio (*.storeypath-project): the
-    workspace and its drawings (every floor's in the project's folder, and the
-    others added to it; a file outside the folder is never sent), the workspace
-    pointing at them there, and the item types of this Studio's catalogue. Not
-    entered as an export (it is for people, not systems)."""
-    from importlib.metadata import version
-
+    """The project of a workspace file as one file for another Studio
+    (*.storeypath-project): the workspace and its drawings (every floor's in the
+    project's folder, and the others added to it; a file outside the folder is never
+    sent), the workspace pointing at them there, and the item types of the Studio data
+    folder it is in (else the built-in ones). Not entered as an export (it is for
+    people, not systems)."""
     from . import catalogue
-    from .workspace import utcnow
 
     ws_path = Path(ws_path)
     folder = ws_path.parent
     root = folder.resolve()
     ws = Workspace.load(ws_path)
-    shipped = ws.model_copy(deep=True)
     files: dict[str, Path] = {}  # name in drawings/ -> the file
 
     def inside(path: Path) -> bool:  # only what is in the project's folder is sent
@@ -120,6 +120,7 @@ def export_project(ws_path: Path, out) -> None:
             files[name + ".words.txt"] = words.resolve()
         return name
 
+    shipped = ws.model_copy(deep=True)
     for _, _, f, _ in shipped.iter_floors():
         if f.source is None:
             continue
@@ -133,16 +134,30 @@ def export_project(ws_path: Path, out) -> None:
                 ship(p)
     data = ws_path.parent.parent  # the Studio's data folder: its catalogue of item types, when it has one
     cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else catalogue.default_catalogue()
+    write_project_file(shipped, files, cat, out)
+
+
+def write_project_file(ws: Workspace, drawings: dict, cat, out) -> None:
+    """A project file (*.storeypath-project) written to ``out``: ``ws`` (its floors'
+    drawings named drawings/<name>), ``drawings`` (name in drawings/ -> its bytes, or a
+    file), and the item types ``cat``."""
+    from importlib.metadata import version
+
+    from .workspace import utcnow
+
     about = {"format": PROJECT_FORMAT, "format_version": 1, "project": {"id": ws.id, "name": ws.project.name},
              "made_at": utcnow().isoformat(), "generator": {"name": "storeypath", "version": version("storeypath")},
              "about": "A StoreyPath project, for StoreyPath Studio to continue it (open it on the Projects page). "
                       "It is not a package: other systems read a building's package (*.storeypath)."}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(PROJECT_MANIFEST, json.dumps(about, ensure_ascii=False, indent=2))
-        z.writestr(WORKSPACE_FILE, shipped.model_dump_json(indent=1))
+        z.writestr(WORKSPACE_FILE, ws.model_dump_json(indent=1))
         z.writestr(CATALOGUE_FILE, json.dumps(cat.model_dump(), ensure_ascii=False, indent=1))
-        for name, path in files.items():
-            z.write(path, DRAWINGS + name)
+        for name, data in drawings.items():
+            if isinstance(data, (bytes, bytearray)):
+                z.writestr(DRAWINGS + name, data)
+            else:
+                z.write(data, DRAWINGS + name)
 
 
 # ---- a project from a file -----------------------------------------------------
@@ -230,7 +245,7 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
                 raise ProjectExists(code, here.project.name, there[0])
             _merge(here, ws)
             here.save(existing)
-            learned, left = _learn_types(data, source, learn_types)
+            learned, left = _learn_types(source, learn_types, *_folder_catalogue(data))
             return {"code": code, "name": here.project.name, "how": "building", "buildings": b_ids,
                     "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
                     "item_types_added": learned, "item_types_not_added": left}
@@ -268,7 +283,7 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
     os.replace(folder / unseen.name, folder / f"{code}.spproj")
     if existing is not None and existing.parent == data:
         existing.unlink(missing_ok=True)  # a project kept as a file of the data folder: replaced
-    learned, left = _learn_types(data, source, learn_types)
+    learned, left = _learn_types(source, learn_types, *_folder_catalogue(data))
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
             "item_types_added": learned, "item_types_not_added": left}
@@ -531,12 +546,20 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
         last.held, last.items_held = held, sorted(known | their_known)
 
 
-def _learn_types(data: Path, source: Path, add: bool = True) -> tuple[list[str], list[str]]:
+def _folder_catalogue(data: Path):
+    """The catalogue of a Studio data folder: how to read it, how to write it."""
+    from . import catalogue
+
+    return (lambda: catalogue.load(data)), (lambda cat: catalogue.save(data, cat))
+
+
+def _learn_types(source: Path, add: bool, load, save) -> tuple[list[str], list[str]]:
     """The item types a package's (or a project file's) catalogue has and this
-    Studio's lacks: added to it when ``add`` (by who may change the item types; a
-    type's code is its identity everywhere: one already here is kept as it is), else
-    left out (the catalogue is the organization's: its items open all the same, and
-    are drawn as plain items). The codes added, and those not."""
+    Studio's (``load()``, written with ``save(cat)``) lacks: added to it when ``add``
+    (by who may change the item types; a type's code is its identity everywhere: one
+    already here is kept as it is), else left out (the catalogue is the
+    organization's: its items open all the same, and are drawn as plain items). The
+    codes added, and those not."""
     from . import catalogue
 
     with zipfile.ZipFile(source) as z:
@@ -549,14 +572,71 @@ def _learn_types(data: Path, source: Path, add: bool = True) -> tuple[list[str],
         if not name or name not in names:
             return [], []
         theirs = catalogue.Catalogue.model_validate_json(z.read(name))
-    ours = catalogue.load(data)
+    ours = load()
     new = [t for t in theirs.types if ours.get(t.code) is None]
     if not add:
         return [], [t.code for t in new]
     if new:
         ours.types.extend(new)
-        catalogue.save(data, ours)
+        save(ours)
     return [t.code for t in new], []
+
+
+def open_into(store, source: Path, *, replace: bool = False, incoming: Incoming | None = None,
+              existing=_FIND, learn_types: bool = True, by=None) -> dict:
+    """A project from a file, put in Studio's database (``store``, db/store.py), as
+    open_file puts one in a data folder: a project file gives the project as it was
+    (its drawings with it); a package, its building rebuilt from it. Raises
+    ProjectExists when the project is here and ``replace`` is not set: a project file
+    is then put in its place, once read through whole (in one transaction: a damaged
+    file leaves the project as it was), keeping its history; a package's building is
+    added to it, or put in place of that building (the project's others are left as
+    they are). ``existing``: whether the caller found the project here (refused when
+    that is no longer so)."""
+    how, ws, code = incoming or read_file(source)
+    here = store.exists(code)
+    if existing is not _FIND and bool(existing) != here:
+        raise ValueError("the project changed while the file was being opened: open it again")
+    catalogue_io = (store.catalogue, store.save_catalogue)
+    if how == "package" and here:
+        mine = store.load(code)
+        b_ids = [b for b in _building_ids(ws)]
+        there = [b for b in b_ids if b in _building_ids(mine)]
+        if there and not replace:
+            raise ProjectExists(code, mine.project.name, there[0])
+        _merge(mine, ws)
+        store.save_project(mine, by=by, part="building", kind="open", targets=b_ids,
+                           more={"how": "package", "file": source.name, "replaced": there, "barrier": bool(there)})
+        learned, left = _learn_types(source, learn_types, *catalogue_io)
+        return {"code": code, "name": mine.project.name, "how": "building", "buildings": b_ids,
+                "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
+                "item_types_added": learned, "item_types_not_added": left}
+    if here and not replace:
+        raise ProjectExists(code, store.name(code))
+    drawings: dict[str, bytes] = {}
+    words: dict[str, str] = {}
+    with zipfile.ZipFile(source) as z:
+        for info in z.infolist():
+            if not info.filename.startswith(DRAWINGS) or info.is_dir():
+                continue
+            name = PurePosixPath(info.filename).name  # a name only: nothing outside the project
+            if not name or name.startswith(".") or name != info.filename[len(DRAWINGS):]:
+                continue
+            data = z.read(info)  # its CRC checked
+            if name.endswith(WORDS_SUFFIX) and name[:-len(WORDS_SUFFIX)]:
+                words[name[:-len(WORDS_SUFFIX)]] = data.decode("utf-8", "replace")
+            else:
+                drawings[name] = data
+    kept = {name: (data, words.get(name)) for name, data in drawings.items()}
+    if here:
+        store.save_project(ws, by=by, part="project", kind="open", targets=[code], drawings=kept,
+                           replace_drawings=True, more={"how": how, "barrier": True})
+    else:
+        store.create(ws, by=by, kind="open", drawings=kept)
+    learned, left = _learn_types(source, learn_types, *catalogue_io)
+    floors = sum(1 for _ in ws.iter_floors())
+    return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": len(drawings),
+            "item_types_added": learned, "item_types_not_added": left}
 
 
 def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:

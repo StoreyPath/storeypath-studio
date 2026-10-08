@@ -5,10 +5,11 @@ port. Everything runs locally: drawings are read here, the language model runs
 here (llama-server, started on first use), and nothing is fetched from anywhere
 else — Studio works on a machine with no network at all.
 
-Projects live in the data folder, one folder each named by the project's code
-(``<data>/<code>/<code>.spproj`` with its drawings and exports beside it; the name
-people give a project is only shown). Long steps — reading a drawing's plans,
-converting, exporting — run as jobs, one at a time, and report progress.
+Projects live in Studio's database (db/), whole: their drawings and the packages
+exported of them too; the data folder holds only what is made again when gone (the
+cache) and the server's certificate. A project is known by its code (the name people
+give it is only shown). Long steps — reading a drawing's plans, converting,
+exporting — run as jobs, one at a time, and report progress.
 
 People log in (accounts.py; the first start makes admin / admin): every call but
 logging in and out needs a session, and each needs a level (view, edit, share) on the narrowest part of
@@ -76,7 +77,7 @@ import threading
 import traceback
 import uuid
 import zipfile
-from contextlib import ExitStack
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -93,8 +94,9 @@ from shapely.ops import unary_union
 from .accounts import (LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Unauthorized, cookie_name,
                        User, check_username, rank, temporary_password)
 from .assets import asset_dir
-from .backup import backup_name, jobs_paused, write_backup
+from .backup import backup_name, write_backup
 from .bundle import ProjectExists
+from .db.store import drawing_name
 from .ids import make_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
@@ -141,8 +143,7 @@ class Job:
 
 class Jobs:
     """Long steps, run one at a time in the background (drawings are large and the
-    language model has one slot). Each runs holding the data folder's job lock
-    (backup.py): a backup waits for it, and no job starts while one is written."""
+    language model has one slot)."""
 
     def __init__(self, data: Path | None = None):
         self.data = data
@@ -166,9 +167,8 @@ class Jobs:
         while True:
             job, fn = self._queue.get()
             try:
-                with jobs_paused(self.data) if self.data is not None else ExitStack():
-                    job.state, job.started = "running", datetime.now(timezone.utc).isoformat()
-                    job.result = fn(job)
+                job.state, job.started = "running", datetime.now(timezone.utc).isoformat()
+                job.result = fn(job)
                 job.state = "done"
             except Exception as e:  # reported on the page
                 job.state, job.error = "failed", _message(e)
@@ -182,11 +182,31 @@ def _message(e: Exception) -> str:
 
 # ---- the application -----------------------------------------------------------
 
+CACHE = "cache"  # in the data folder: what is made again when gone (prints of floors)
+WORK = "work"  # in the cache: drawings read from the database for a step, removed after it
+
+
 class Studio:
+    """The application: its projects in its database (``db``: the data folder's, as
+    db.default_url says, unless given), and its data folder ``data`` for what is not
+    data — the cache (prints of floors; drawings put in files while a step reads them)
+    and the server's certificate. The first start with an empty database brings the
+    projects of the data folder in (db/importer.py), when it has any, and the
+    accounts and item types an older Studio kept there; nothing of the folder is
+    deleted."""
+
     def __init__(self, data: str | Path, model: LocalModel | None = None, warm: bool = True,
-                 symbols: SymbolSpotter | None = None, vision: VisionModel | None = None):
+                 symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, db=None,
+                 first_start: bool = True):
+        from . import db as databases
+        from .db.store import ProjectStore
+
         self.data = Path(data)
         self.data.mkdir(parents=True, exist_ok=True)
+        self.cache = self.data / CACHE
+        self.work = self.cache / WORK
+        self.db = db if db is not None else databases.connect(data=self.data)
+        self.store = ProjectStore(self.db)
         self.model = model if model is not None else LocalModel()
         self.symbols = symbols if symbols is not None else SymbolSpotter()
         self.vision = vision if vision is not None else VisionModel()
@@ -195,56 +215,50 @@ class Studio:
             # Load the model now, in the background, so the first drawing does not
             # wait for 2–3 GB of weights to come off the disk.
             threading.Thread(target=self.model.warm, daemon=True).start()
-        self._reviews: dict[Path, Review] = {}
+        self._reviews: dict[str, Review] = {}
         # One lock per project, held while a job changes it: converting one project
-        # (minutes, with vision) never holds up another, and pages only read files.
+        # (minutes, with vision) never holds up another, and pages only read.
         self._lock = threading.Lock()  # the tables below
-        self._project_locks: dict[Path, threading.RLock] = {}
+        self._project_locks: dict[str, threading.RLock] = {}
         self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
-        for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
-            left.unlink(missing_ok=True)
-        for left in self.data.glob(f"*/exports/{WRITING}*"):  # a package never finished (Studio stopped)
-            import shutil
+        self.store.drop_incoming()  # sent and never kept (Studio stopped meanwhile): not kept
+        import shutil
 
-            shutil.rmtree(left, ignore_errors=True)
+        shutil.rmtree(self.work, ignore_errors=True)  # what a step left when Studio stopped
+        self.imported = None
+        if first_start:
+            from .db.importer import first_start as bring_in
+
+            self.imported = bring_in(self.data, self.db, self.store)
 
     # ---- projects ---------------------------------------------------------------
 
-    def _workspaces(self) -> dict[str, Path]:
-        """Every project here, by its code: as bundle.find_project finds one (a folder
-        being unpacked or put aside, hidden, holds none)."""
-        found = {}
-        for path in sorted(self.data.glob("*.spproj")) + sorted(self.data.glob("*/*.spproj")):
-            if any(part.startswith(".") for part in path.relative_to(self.data).parts):
-                continue
-            try:
-                code = json.loads(path.read_text(encoding="utf-8"))["project"]["code"]
-            except (OSError, ValueError, KeyError, TypeError):
-                continue
-            found.setdefault(code, path)
-        return found
+    def workspace(self, code: str) -> Workspace:
+        """The project as it is now (NotFound when there is none): to look things up in,
+        never to change."""
+        return self.store.current(code)
 
-    def path(self, code: str) -> Path:
-        path = self._workspaces().get(code)
-        if path is None:
+    def _known(self, code: str) -> str:
+        if not isinstance(code, str) or not self.store.exists(code):
             raise NotFound(f"no project {code}")
-        return path
+        return code
 
     def review(self, code: str) -> Review:
-        path = self.path(code)
+        self._known(code)
         with self._lock:
-            if path not in self._reviews:
+            if code not in self._reviews:
+                from .review import StoredProject
+
                 # its changes wait for (or are refused while) a job changes the project
-                self._reviews[path] = Review(path, catalogue=self.catalogue,
-                                             changing=lambda path=path: self._changing(path))
-            return self._reviews[path]
+                self._reviews[code] = Review(StoredProject(self.store, code, self.cache, self.work),
+                                             catalogue=self.catalogue,
+                                             changing=lambda code=code: self._changing(code))
+            return self._reviews[code]
 
     def catalogue(self):
-        """The item types of every project here (catalogue.json in the data folder)."""
-        from . import catalogue
-
-        return catalogue.load(self.data)
+        """The item types of every project here (the organization's)."""
+        return self.store.catalogue()
 
     def save_catalogue(self, body: dict) -> dict:
         """The catalogue replaced: types may be added, changed or retired, never taken
@@ -252,23 +266,25 @@ class Studio:
         from . import catalogue
 
         with self._lock:
-            old = catalogue.load(self.data)
+            old = self.store.catalogue()
             new = catalogue.Catalogue.model_validate({**body, "format": catalogue.CATALOGUE_FORMAT})
             if gone := sorted({t.code for t in old.types} - {t.code for t in new.types}):
                 raise ValueError(f"types are retired, not removed: {', '.join(gone)}")
-            catalogue.save(self.data, new)
+            self.store.save_catalogue(new)
             return new.model_dump()
 
-    def _changing(self, ws_path: Path) -> threading.RLock:
+    def _changing(self, code: str) -> threading.RLock:
         """The lock held while a job changes this project."""
         with self._lock:
-            return self._project_locks.setdefault(ws_path, threading.RLock())
+            return self._project_locks.setdefault(code, threading.RLock())
 
     def status(self, paths: bool = True) -> dict:
-        """What Studio can do; ``paths``: and where its data folder is (for an admin)."""
+        """What Studio can do; ``paths``: and where its data folder and database are (for
+        an admin)."""
         from shutil import which
 
         from .cad import odafc
+        from .db import shown
 
         return {
             "version": version("storeypath"),
@@ -277,7 +293,7 @@ class Studio:
             "symbols": self.symbols.name if self.symbols.available() else None,
             "vision": self.vision.name if self.vision.available() else None,
             "dwg": bool(which("dwg2dxf")) or odafc.is_installed(),
-            **({"data": str(self.data)} if paths else {}),
+            **({"data": str(self.data), "database": shown(self.db.url)} if paths else {}),
             # the 2D plan page: the plan engine compiled (npm run build in viewer/svg)
             "plan": (asset_dir("viewer") / "svg" / "dist" / "index.js").is_file(),
         }
@@ -287,14 +303,17 @@ class Studio:
         may see of it), those they may see, each counted in what they see of it, with
         their level on it (``can``)."""
         out = []
-        for code, path in self._workspaces().items():
-            ws = Workspace.load(path)
+        for code in self.store.codes():
+            try:
+                ws = self.store.current(code)
+            except NotFound:
+                continue  # deleted meanwhile
             sight = sight_of(code, ws) if sight_of is not None else None
             if sight is not None and not sight.any():
                 continue
             seen = sight.seen(ws) if sight is not None else ws
             spaces = [r for r in seen.objects.values() if r.kind == "space" and r.status == "active"]
-            entry = {"code": code, "name": ws.project.name, "file": path.name,
+            entry = {"code": code, "name": ws.project.name, "file": code,
                      "floors": sum(1 for _ in seen.iter_floors()), "spaces": len(spaces),
                      "review": sum(1 for r in spaces if seen.review_reasons(r))}
             if sight is not None:
@@ -302,35 +321,35 @@ class Studio:
             out.append(entry)
         return sorted(out, key=lambda p: p["name"].lower())
 
-    def create(self, name: str, kept=()) -> dict:
+    def create(self, name: str, kept=(), by=None) -> dict:
         """A new project, its code one no project here has, nor one ``kept`` (codes
         whose sharing is kept, accounts.py)."""
+        from .db.store import ProjectExists as Taken
+
         if name is not None and not isinstance(name, str):
             raise ValueError("a project's name is text")
         name = (name or "").strip()
         if not name:
             raise ValueError("a project needs a name")
-        # The folder is named by the project's code, which never changes, not by its
-        # name, which people type (and retype, repeat, or write in Arabic).
-        taken = {*self._workspaces(), *kept}
-        ws = Workspace.new(name)
-        while ws.id in taken or (self.data / ws.id).exists():
+        taken = {*self.store.codes(), *kept}
+        while True:
             ws = Workspace.new(name)
-        ws.add_location("SITE", name)
-        folder = self.data / ws.id
-        folder.mkdir(parents=True)
-        ws.save(folder / f"{ws.id}.spproj")
-        return {"code": ws.id}
+            if ws.id in taken:
+                continue
+            ws.add_location("SITE", name)
+            try:
+                self.store.create(ws, by=by)
+            except Taken:
+                continue  # made meanwhile
+            return {"code": ws.id}
 
     def project(self, code: str, sight: Sight | None = None) -> dict:
         """The project's page: its locations, buildings and floors, drawings and packages.
         With ``sight``, only what that person may see of it: the floors (a building's
         footprint and middle drawn from those alone, where it stands on its site as it
         does for everyone), the drawings of those floors (all of them with a level on
-        the whole project), and the packages of the buildings they see whole; where the
-        packages are kept on the server, to an admin alone."""
-        path = self.path(code)
-        full = Workspace.load(path)
+        the whole project), and the packages of the buildings they see whole."""
+        full = self.workspace(code)
         ws = sight.seen(full) if sight is not None else full
         info = self.review_project(code, sight)
         from .export import footprint, site_positions
@@ -362,12 +381,8 @@ class Studio:
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
                          "placement": loc.placement.model_dump() if loc.placement else None})
-        drawings = sorted(p.name for p in (path.parent / "drawings").glob("*")
-                          if p.suffix.lower() in DRAWING_TYPES and not p.name.startswith(INCOMING)
-                          and not p.name.endswith(WORDS)) \
-            if (path.parent / "drawings").is_dir() else []
-        exports = sorted((p.name for p in (path.parent / "exports").glob("*.storeypath")), reverse=True) \
-            if (path.parent / "exports").is_dir() else []
+        drawings = [d["name"] for d in self.store.drawings(code) if Path(d["name"]).suffix.lower() in DRAWING_TYPES]
+        exports = self.store.export_files(code)
         if sight is not None and not sight.whole:
             used = {Path(f.source.path).name for *_, f, _ in ws.iter_floors() if f.source}
             drawings = [d for d in drawings if d in used]
@@ -375,8 +390,6 @@ class Studio:
                        and all(rank(sight.building(b)) >= rank("view") for b in held)]
         return {**info, "locations": tree, "drawings": drawings, "exports": exports,
                 "exported": len(full.exports) if sight is None or sight.whole else len(exports),
-                # where the server keeps them: for an admin alone
-                **({"exports_folder": str(path.parent / "exports")} if sight is None or sight.admin else {}),
                 **({"can": sight.can()} if sight is not None else {})}
 
     def review_project(self, code: str, sight: Sight | None = None) -> dict:
@@ -390,25 +403,34 @@ class Studio:
 
     # ---- drawings ---------------------------------------------------------------
 
-    def upload(self, code: str, name: str, body: bytes, private: bool = True, by: str | None = None) -> dict | Job:
+    @contextmanager
+    def _files(self, code: str, names=None, incoming: bool = False):
+        """The project's drawings (``names``, or all) as files while the block runs (in
+        the cache's work folder), then removed: the folder they are in, as
+        ``drawings/<name>``."""
+        self.work.mkdir(parents=True, exist_ok=True)
+        with self.store.files(code, names, folder=self.work, incoming=incoming) as folder:
+            yield folder
+
+    def upload(self, code: str, name: str, body: bytes, private: bool = True, by=None) -> dict | Job:
         """A drawing added to the project. Kept private (the default), a job finds what
         names the people and the project — title blocks, names, contacts, hidden file
         data, what the language model reads as private (privacy.py) — and a person
         chooses what of it to keep (keep_private); only that copy is kept, as
         drawing-N.dxf: the file as sent, and its name, are not. Otherwise it is kept
         as sent."""
+        self._known(code)
         name = Path(name).name
         suffix = Path(name).suffix.lower()
         if suffix not in DRAWING_TYPES:
             raise ValueError("drawings are .dwg or .dxf files")
-        folder = self.path(code).parent / "drawings"
-        folder.mkdir(exist_ok=True)
         if not private:
-            (folder / name).write_bytes(body)
+            self.store.put_drawing(code, name, body, by=by)
             return {"drawing": name, "bytes": len(body)}
         token = uuid.uuid4().hex[:12]
-        incoming = folder / f"{INCOMING}{token}{suffix}"
-        incoming.write_bytes(body)
+        incoming = f"{INCOMING}{token}{suffix}"
+        self.store.put_incoming(code, incoming, body, by=by)
+        uid = _uid(by)
 
         def run(job: Job):
             from .cad import read_drawing_to_change
@@ -417,28 +439,29 @@ class Studio:
 
             try:
                 job.say("reading the drawing")
-                doc = read_drawing_to_change(incoming)
+                with self._files(code, [incoming], incoming=True) as folder:
+                    doc = read_drawing_to_change(folder / "drawings" / incoming)
                 job.say("looking for title blocks, names, contacts and hidden file data")
                 reader = InWords(self.vision) if self.vision.available() else \
                     self.model if self.model.available() else None
                 choices = Choices()
                 report = make_private(doc, reader, job.say, choices)
             except Exception:
-                incoming.unlink(missing_ok=True)
+                self.store.drop_incoming(code, incoming)
                 raise
             if not choices.found:  # nothing to choose: kept as it is
-                return self._keep_private(folder, incoming, doc, report, job)
+                return self._keep_private(code, incoming, doc, report, job, by)
             # what was found goes once a person says what to keep; the cleaned copy
             # waits, as it is what keeping nothing gives
             with self._lock:
-                self._pending[token] = {"code": code, "folder": folder, "incoming": incoming, "name": name,
+                self._pending[token] = {"code": code, "incoming": incoming, "name": name,
                                         "doc": doc, "report": report, "choices": choices, "reader": reader}
             job.say(f"found {len(choices.found)} things to take out: choose what to keep")
             return {"pending": token, "name": name, "found": choices.listed(), "reader": report.model}
 
-        return self.jobs.submit(f"Looking for private information in {name}", run, project=code, user=by)
+        return self.jobs.submit(f"Looking for private information in {name}", run, project=code, user=uid)
 
-    def keep_private(self, code: str, token: str, body: dict, by: str | None = None) -> Job:
+    def keep_private(self, code: str, token: str, body: dict, by=None) -> Job:
         """A drawing sent, kept without the private information found in it, all but
         what a person chose to keep (``keep``: ids of found things)."""
         keep = body.get("keep") or []
@@ -450,6 +473,7 @@ class Studio:
             if p is None or p["code"] != code:
                 raise NotFound("no drawing waiting to be added: send it again")
             del self._pending[token]
+        uid = _uid(by)
 
         def run(job: Job):
             from .cad import read_drawing_to_change
@@ -459,86 +483,94 @@ class Studio:
             if keep:  # read again, taking out all but what is kept
                 job.say(f"taking out all but the {len(keep)} kept")
                 try:
-                    doc = read_drawing_to_change(p["incoming"])
+                    with self._files(code, [p["incoming"]], incoming=True) as folder:
+                        doc = read_drawing_to_change(folder / "drawings" / p["incoming"])
                     choices = Choices(keep, p["choices"].model_found)
                     report = make_private(doc, p["reader"], job.say, choices)
                 except Exception:
-                    p["incoming"].unlink(missing_ok=True)
+                    self.store.drop_incoming(code, p["incoming"])
                     raise
-            return self._keep_private(p["folder"], p["incoming"], doc, report, job)
+            return self._keep_private(code, p["incoming"], doc, report, job, by)
 
-        return self.jobs.submit(f"Adding {p['name']} without its private information", run, project=code, user=by)
+        return self.jobs.submit(f"Adding {p['name']} without its private information", run, project=code, user=uid)
 
     def cancel_private(self, code: str, token: str) -> dict:
         with self._lock:
             p = self._pending.pop(token, None)
         if p is None or p["code"] != code:
             raise NotFound("no drawing waiting to be added")
-        p["incoming"].unlink(missing_ok=True)
+        self.store.drop_incoming(code, p["incoming"])
         return {"cancelled": p["name"]}
 
-    def _keep_private(self, folder: Path, incoming: Path, doc, report, job: Job) -> dict:
+    def _keep_private(self, code: str, incoming: str, doc, report, job: Job, by=None) -> dict:
         """The cleaned drawing kept as drawing-N.dxf, with its words; the file as sent gone."""
+        import tempfile
+
         try:
             job.say(report.summary())
-            taken = [int(m.group(1)) for p in folder.glob("drawing-*.dxf") if (m := DRAWING_NAME.fullmatch(p.name))]
-            out = folder / f"drawing-{max(taken, default=0) + 1}.dxf"
-            doc.saveas(out)
-            job.say(f"kept as {out.name}")
-            _words_of(out).write_text(words(doc, out.name, report.summary()), encoding="utf-8")
-            job.say(f"every word left in it: Words, beside {out.name}")
+            taken = [int(m.group(1)) for d in self.store.drawings(code) if (m := DRAWING_NAME.fullmatch(d["name"]))]
+            name = f"drawing-{max(taken, default=0) + 1}.dxf"
+            self.work.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="storeypath-", dir=self.work) as folder:
+                out = Path(folder) / name
+                doc.saveas(out)
+                data = out.read_bytes()
+            self.store.put_drawing(code, name, data, words=words(doc, name, report.summary()), by=by)
+            job.say(f"kept as {name}")
+            job.say(f"every word left in it: Words, beside {name}")
         finally:
-            incoming.unlink(missing_ok=True)
-        return {"drawing": out.name, "privacy": report.view()}
+            self.store.drop_incoming(code, incoming)
+        return {"drawing": name, "privacy": report.view()}
 
     def words(self, code: str, name: str) -> File:
-        """Every word and string left in a drawing, written when it was added (or now,
+        """Every word and string left in a drawing, kept when it was added (or read now,
         for one added before), as text."""
-        path = self._drawing(code, name)
-        kept = _words_of(path)
-        if not kept.exists() or kept.stat().st_mtime < path.stat().st_mtime:
+        name = self._drawing(code, name)
+        kept = self.store.words(code, name)
+        if kept is None:
             from .cad import read_drawing
 
-            kept.write_text(words(read_drawing(path), path.name), encoding="utf-8")
-        return File(kept.read_bytes(), "text/plain; charset=utf-8")
+            with self._files(code, [name]) as folder:
+                kept = words(read_drawing(folder / "drawings" / name), name)
+            self.store.set_words(code, name, kept)
+        return File(kept.encode("utf-8"), "text/plain; charset=utf-8")
 
-    def delete(self, code: str, body: dict) -> dict:
-        """A project and everything in it (drawings, floors, corrections, exports),
-        gone: only when its name is typed to confirm, no job is changing it, and it has
-        a folder of its own in the data folder."""
+    def delete(self, code: str, body: dict, by=None) -> dict:
+        """A project and everything in it (drawings, floors, corrections, packages, its
+        history), gone: only when its name is typed to confirm and no job is changing
+        it."""
         import shutil
 
-        path = self.path(code)
-        ws = Workspace.load(path)
+        ws = self.workspace(code)
         confirm = body.get("confirm")
         if not isinstance(confirm, str) or confirm.strip() != ws.project.name.strip():
             raise ValueError("type the project's name to delete it")
-        folder = path.parent
-        if folder.resolve().parent != self.data.resolve() or folder.name != ws.id:
-            raise ValueError("this project is not in a folder of its own: remove it by hand")
-        lock = self._changing(path)
+        lock = self._changing(code)
         if not lock.acquire(blocking=False):
             raise ValueError("a job is working on this project: delete it when the job is done")
         try:
-            shutil.rmtree(folder)
+            self.store.delete(code)
             with self._lock:
-                self._reviews.pop(path, None)
-                self._project_locks.pop(path, None)
+                self._reviews.pop(code, None)
+                self._project_locks.pop(code, None)
+            shutil.rmtree(self.cache / "prints" / code, ignore_errors=True)
         finally:
             lock.release()
         return {"deleted": code, "name": ws.project.name}
 
-    def _drawing(self, code: str, name: str) -> Path:
+    def _drawing(self, code: str, name: str) -> str:
+        """A drawing of the project, by its name (NotFound when it has none of that name)."""
         if not isinstance(name, str):
             raise ValueError("drawing: a drawing's name")
-        path = self.path(code).parent / "drawings" / Path(name).name
-        if not path.is_file():
+        self._known(code)
+        name = Path(name).name
+        if self.store.drawing(code, name) is None:
             raise NotFound(f"no drawing {name}")
-        return path
+        return name
 
-    def plans(self, code: str, name: str, units: str | None = None, by: str | None = None) -> Job:
+    def plans(self, code: str, name: str, units: str | None = None, by=None) -> Job:
         """The plans in a drawing, read in ``units``, or in the units it shows."""
-        path = self._drawing(code, name)
+        name = self._drawing(code, name)
         if units is not None and not isinstance(units, str):
             raise ValueError(f"units: one of {', '.join(UNIT_NAMES)}")
         if units and units not in UNIT_NAMES:
@@ -547,8 +579,9 @@ class Studio:
         def run(job: Job):
             from .sheets import find_views
 
-            job.say(f"reading {path.name}")
-            doc = read_drawing(path)
+            job.say(f"reading {name}")
+            with self._files(code, [name]) as folder:
+                doc = read_drawing(folder / "drawings" / name)
             if units:
                 used, sure, reason = units, True, f"Read in {UNIT_WORDS[units]}, as you chose."
             else:
@@ -602,13 +635,12 @@ class Studio:
             levels = {"summary": found.summary() or None, "heights": {str(n): h for n, h in found.heights.items()},
                       "height": found.typical_height(), "roof": found.roof, "parapet": found.parapet,
                       "default_parapet": DEFAULT_PARAPET_M}
-            return {"drawing": path.name, "units": used, "units_sure": sure, "units_reason": reason,
+            return {"drawing": name, "units": used, "units_sure": sure, "units_reason": reason,
                     "units_chosen": bool(units), "units_said": header_units(doc), "levels": levels, "plans": out}
 
-        return self.jobs.submit(f"Reading the plans in {path.name}", run, project=code, user=by)
+        return self.jobs.submit(f"Reading the plans in {name}", run, project=code, user=_uid(by))
 
-    def add_floors(self, code: str, body: dict, by: str | None = None) -> Job:
-        ws_path = self.path(code)
+    def add_floors(self, code: str, body: dict, by=None) -> Job:
         drawing = self._drawing(code, body.get("drawing", ""))
         units = body.get("units") or None  # the units the plans were found in: kept with each floor
         if units is not None and not isinstance(units, str) or units and units not in UNIT_NAMES:
@@ -616,14 +648,14 @@ class Studio:
         plans = body.get("plans") or []
         if not plans:
             raise ValueError("choose at least one plan")
-        _floors_to_add(Workspace.load(ws_path), plans)  # two plans as one floor: say so now, change nothing
+        _floors_to_add(self.workspace(code), plans)  # two plans as one floor: say so now, change nothing
 
         def run(job: Job):
             from .sheets import align, floor_walls
             from .analyse import analyse
 
-            with self._changing(ws_path):
-                ws = Workspace.load(ws_path)
+            with self._changing(code):
+                ws = self.store.load(code, floors=[])
                 places = _floors_to_add(ws, plans)
                 added: dict[str, list[str]] = {}  # building -> floors added or given this drawing
                 replaced: set[str] = set()  # floors given this drawing in place of theirs
@@ -633,19 +665,19 @@ class Studio:
                     p = place.plan
                     loc_id = place.location_id
                     if loc_id is None:
-                        code, name = place.location
-                        if code not in made_locations:
-                            made_locations[code] = ws.add_location(code, name)
-                            job.say(f"location {name} ({code})")
-                        loc_id = made_locations[code]
+                        loc_code, loc_name = place.location
+                        if loc_code not in made_locations:
+                            made_locations[loc_code] = ws.add_location(loc_code, loc_name)
+                            job.say(f"location {loc_name} ({loc_code})")
+                        loc_id = made_locations[loc_code]
                     b_id = place.building_id
                     if b_id is None:
-                        code, name = place.building
-                        if (loc_id, code) not in made_buildings:
-                            made_buildings[loc_id, code] = ws.add_building(loc_id, code, name)
-                            job.say(f"building {name} ({code})")
-                        b_id = made_buildings[loc_id, code]
-                    source = SourceDrawing(path=str(drawing.relative_to(ws_path.parent)), profile=AUTO,
+                        b_code, b_name = place.building
+                        if (loc_id, b_code) not in made_buildings:
+                            made_buildings[loc_id, b_code] = ws.add_building(loc_id, b_code, b_name)
+                            job.say(f"building {b_name} ({b_code})")
+                        b_id = made_buildings[loc_id, b_code]
+                    source = SourceDrawing(path=f"drawings/{drawing}", profile=AUTO,
                                            units=units, region=tuple(p["region"]), view=p.get("title"))
                     if place.replaces:
                         # a new drawing of a floor the building has: its spaces keep their IDs
@@ -668,89 +700,93 @@ class Studio:
                     added.setdefault(b_id, []).append(f_id)
                 for b_id in added:
                     ws.restack(b_id)  # elevations from the heights
-                ws.save(ws_path)
+                self.store.save(ws, floors=[], by=by, part="project", kind="floors",
+                                targets=[f for fs in added.values() for f in fs], more={"drawing": drawing})
 
             # Each floor added lines up with its building's lowest floor (from this
             # drawing or another: one drawing per floor is common), so floors stand on
             # one another.
-            docs: dict[Path, object] = {}
+            docs: dict[str, object] = {}
+            needed = {drawing_name(f.source.path) for b_id in added for f in ws.building(b_id).floors if f.source}
+            with self._files(code, needed) as folder:
 
-            def doc_of(f):
-                path = ws_path.parent / f.source.path
-                if path not in docs:
-                    docs[path] = read_drawing(path)
-                return docs[path]
+                def doc_of(f):
+                    name = drawing_name(f.source.path)
+                    if name not in docs:
+                        docs[name] = read_drawing(folder / "drawings" / name)
+                    return docs[name]
 
-            def walls(f):
-                doc = doc_of(f)
-                scale = meters_per_unit(doc, f.source.units)
-                prof = analyse(doc, scale, f.source.region, None, load_profile(AUTO)).profile
-                return floor_walls(doc, prof, scale, f.source.region), scale
+                def walls(f):
+                    doc = doc_of(f)
+                    scale = meters_per_unit(doc, f.source.units)
+                    prof = analyse(doc, scale, f.source.region, None, load_profile(AUTO)).profile
+                    return floor_walls(doc, prof, scale, f.source.region), scale
 
-            for b_id, new in added.items():
-                ids = {fl_id.rsplit("-", 1)[-1] for fl_id in new}
-                # A new drawing of a floor that has walls (read before, or from a package)
-                # lines up on them: its rooms come back where they were, keeping their IDs.
-                own = set()
-                for f in ws.building(b_id).floors:
-                    if f.code not in ids or f"{b_id}-{f.code}" not in replaced or not f.walls:
+                for b_id, new in added.items():
+                    ids = {fl_id.rsplit("-", 1)[-1] for fl_id in new}
+                    # A new drawing of a floor that has walls (read before, or from a package)
+                    # lines up on them: its rooms come back where they were, keeping their IDs.
+                    own = set()
+                    for f in ws.building(b_id).floors:
+                        if f.code not in ids or f"{b_id}-{f.code}" not in replaced or not f.walls:
+                            continue
+                        f_walls, scale = walls(f)
+                        (tx, ty), overlap = align(shape(f.walls), f_walls)
+                        if overlap < MIN_ALIGN_OVERLAP:
+                            tx = ty = 0.0
+                            job.say(f"  {f.name}: too few walls line up with its walls before ({overlap:.0%}): kept where its drawing has it")
+                        else:
+                            job.say(f"  {f.name}: lined up on its walls before: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} line up")
+                        f.source.offset = (tx / scale, ty / scale)
+                        own.add(f.code)
+                    floors = sorted((f for f in ws.building(b_id).floors if f.source is not None and f.code not in own),
+                                    key=lambda f: f.ordinal)
+                    if len(floors) < 2:
                         continue
-                    f_walls, scale = walls(f)
-                    (tx, ty), overlap = align(shape(f.walls), f_walls)
-                    if overlap < MIN_ALIGN_OVERLAP:
-                        tx = ty = 0.0
-                        job.say(f"  {f.name}: too few walls line up with its walls before ({overlap:.0%}): kept where its drawing has it")
-                    else:
-                        job.say(f"  {f.name}: lined up on its walls before: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} line up")
-                    f.source.offset = (tx / scale, ty / scale)
-                    own.add(f.code)
-                floors = sorted((f for f in ws.building(b_id).floors if f.source is not None and f.code not in own),
-                                key=lambda f: f.ordinal)
-                if len(floors) < 2:
-                    continue
-                # the lowest floor that was there before, else the lowest one added
-                ref = next((f for f in floors if f.code not in ids), floors[0])
-                job.say(f"lining up the floors of {b_id} with {ref.name}")
-                ref_walls, ref_scale = walls(ref)
-                ref_off = ref.source.offset or (0.0, 0.0)
-                for f in floors:
-                    if f is ref or f.code not in ids:
-                        continue
-                    f_walls, scale = walls(f)
-                    (tx, ty), overlap = align(ref_walls, f_walls)
-                    if f.source.path != ref.source.path and overlap < MIN_ALIGN_OVERLAP:
-                        # another drawing, its walls too unlike: as its drawing places it (one
-                        # drawing per floor usually shares the building's coordinates)
-                        tx = ty = 0.0
-                        job.say(f"  {f.name}: too few walls line up ({overlap:.0%}): kept where its drawing has it")
-                    else:
-                        job.say(f"  {f.name}: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} of walls line up")
-                    # in this floor's drawing units, from where the reference stands
-                    f.source.offset = ((ref_off[0] * ref_scale + tx) / scale, (ref_off[1] * ref_scale + ty) / scale)
-            with self._changing(ws_path):
-                saved = Workspace.load(ws_path)
+                    # the lowest floor that was there before, else the lowest one added
+                    ref = next((f for f in floors if f.code not in ids), floors[0])
+                    job.say(f"lining up the floors of {b_id} with {ref.name}")
+                    ref_walls, ref_scale = walls(ref)
+                    ref_off = ref.source.offset or (0.0, 0.0)
+                    for f in floors:
+                        if f is ref or f.code not in ids:
+                            continue
+                        f_walls, scale = walls(f)
+                        (tx, ty), overlap = align(ref_walls, f_walls)
+                        if f.source.path != ref.source.path and overlap < MIN_ALIGN_OVERLAP:
+                            # another drawing, its walls too unlike: as its drawing places it (one
+                            # drawing per floor usually shares the building's coordinates)
+                            tx = ty = 0.0
+                            job.say(f"  {f.name}: too few walls line up ({overlap:.0%}): kept where its drawing has it")
+                        else:
+                            job.say(f"  {f.name}: moved {tx:.2f}, {ty:.2f} m; {overlap:.0%} of walls line up")
+                        # in this floor's drawing units, from where the reference stands
+                        f.source.offset = ((ref_off[0] * ref_scale + tx) / scale, (ref_off[1] * ref_scale + ty) / scale)
+            with self._changing(code):
+                saved = self.store.load(code, floors=[])
                 for b_id in added:
                     for f in ws.building(b_id).floors:
                         if f.source is not None:
                             saved_floor = next(x for x in saved.building(b_id).floors if x.code == f.code)
                             if saved_floor.source is not None:
                                 saved_floor.source.offset = f.source.offset
-                saved.save(ws_path)
-            self._convert(ws_path, [f for fs in added.values() for f in fs], job)
+                self.store.save(saved, floors=[], by=by, part="project", kind="align",
+                                targets=[f for fs in added.values() for f in fs])
+            self._convert(code, [f for fs in added.values() for f in fs], job, by=by)
             if made_buildings:
-                self._stand_apart(ws_path, set(made_buildings.values()), job)
+                self._stand_apart(code, set(made_buildings.values()), job, by=by)
             return {"floors": [f for fs in added.values() for f in fs]}
 
-        return self.jobs.submit(f"Adding floors from {drawing.name}", run, project=code, user=by)
+        return self.jobs.submit(f"Adding floors from {drawing}", run, project=code, user=_uid(by))
 
-    def _stand_apart(self, ws_path: Path, new: set[str], job: Job) -> None:
+    def _stand_apart(self, code: str, new: set[str], job: Job, by=None) -> None:
         """A new building whose drawing would put it on top of another of its site (or
         far off: a drawing with its own origin) is placed beside the others."""
         from .export import beside, site_footprint, site_positions
 
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
-            moved = False
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
+            moved = []
             for loc in ws.locations:
                 for b in loc.buildings:
                     b_id = f"{ws.id}-{loc.code}-{b.code}"
@@ -766,35 +802,35 @@ class Studio:
                         continue  # stands apart already, as drawn (its drawing shares the site's coordinates)
                     _settle(loc, positions)
                     b.site = beside(loc, b)
-                    moved = True
+                    moved.append(b_id)
                     job.say(f"{b.name}: its drawing put it on top of another building (or far off): placed beside them on the site plan")
             if moved:
-                ws.save(ws_path)
+                self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=moved)
 
-    def convert(self, code: str, floor: str | None = None, force: bool = False, by: str | None = None) -> Job:
+    def convert(self, code: str, floor: str | None = None, force: bool = False, by=None) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
         keeps its rooms (convert.py); ``force`` applies it all the same."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
-        ws_path = self.path(code)
+        self._known(code)
 
         def run(job: Job):
-            ws = Workspace.load(ws_path)
+            ws = self.workspace(code)
             floors = [fid for *_, fid in ws.iter_floors() if floor in (None, fid)]
             # a building read for the first time (its first reading failed, say) is put
             # beside the others when its drawing would stack it on one of them
             unread = {f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings
                       if all(f.converted_at is None for f in b.floors)}
-            result = self._convert(ws_path, floors, job, force=force)
+            result = self._convert(code, floors, job, force=force, by=by)
             if unread:
-                self._stand_apart(ws_path, unread, job)
+                self._stand_apart(code, unread, job, by=by)
             return result
 
-        return self.jobs.submit("Converting", run, project=code, user=by,
+        return self.jobs.submit("Converting", run, project=code, user=_uid(by),
                                 scope=("floor", floor) if floor is not None else ("project", None))
 
-    def _convert(self, ws_path: Path, floor_ids: list[str], job: Job, force: bool = False) -> dict:
+    def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None) -> dict:
         from .convert import convert_floor
 
         if self.model.available():
@@ -804,38 +840,40 @@ class Studio:
         if self.vision.available():
             job.say(f"looking at the rooms with {self.vision.name}")
         summaries, held, failed = [], [], []
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
-            for fid in floor_ids:
-                if ws.floor(fid).source is None:
-                    continue
-                job.say(f"converting {fid}")
-                # a read that would retire most of a floor is not applied: the floor keeps its rooms
-                try:
-                    report = convert_floor(ws, fid, ws_path.parent, self.model, self.symbols,
-                                           self.vision if self.vision.available() else None,
-                                           say=lambda m: job.say("  " + m), force=force)
-                except Exception as e:  # this floor stays as it was; the others are converted
-                    traceback.print_exc()
-                    job.say(f"  {fid}: not converted: {_message(e)}")
-                    failed.append(f"{fid}: {_message(e)}")
-                    saved = Workspace.load(ws_path)  # as last saved, with what the models answered meanwhile
-                    saved.readings.update(ws.readings)
-                    saved.vision.update(ws.vision)
-                    ws = saved
-                    continue
-                job.say("  " + report.summary())
-                for w in report.warnings:
-                    job.say("  warning: " + w)
-                summaries.append(report.summary())
-                if report.held:
-                    held.append(fid)
-                ws.save(ws_path)
+        with self._changing(code):
+            ws = self.store.load(code)
+            names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
+            with self._files(code, names) as folder:
+                for fid in floor_ids:
+                    if ws.floor(fid).source is None:
+                        continue
+                    job.say(f"converting {fid}")
+                    # a read that would retire most of a floor is not applied: the floor keeps its rooms
+                    try:
+                        report = convert_floor(ws, fid, folder, self.model, self.symbols,
+                                               self.vision if self.vision.available() else None,
+                                               say=lambda m: job.say("  " + m), force=force)
+                    except Exception as e:  # this floor stays as it was; the others are converted
+                        traceback.print_exc()
+                        job.say(f"  {fid}: not converted: {_message(e)}")
+                        failed.append(f"{fid}: {_message(e)}")
+                        saved = self.store.load(code)  # as last saved, with what the models answered meanwhile
+                        saved.readings.update(ws.readings)
+                        saved.vision.update(ws.vision)
+                        ws = saved
+                        continue
+                    job.say("  " + report.summary())
+                    for w in report.warnings:
+                        job.say("  warning: " + w)
+                    summaries.append(report.summary())
+                    if report.held:
+                        held.append(fid)
+                    self.store.save_floor(ws, fid, by=by, more={"summary": report.summary(), "held": report.held})
         if failed:  # the job fails, the floors converted kept
             raise ValueError(f"not converted: {'; '.join(failed)}")
         return {"summaries": summaries, "held": held}
 
-    def move(self, code: str, building_id: str, body: dict) -> dict:
+    def move(self, code: str, building_id: str, body: dict, by=None) -> dict:
         """A building moved on its location's site plan: ``x``, ``y`` (metres from the
         site's centre) and ``rotation`` (degrees clockwise). The other buildings stay
         where they are on it."""
@@ -843,25 +881,25 @@ class Studio:
         from .workspace import SitePosition
 
         x, y, rotation = (_number(body, k) for k in ("x", "y", "rotation"))
-        ws_path = self.path(code)
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
+        self._known(code)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
             loc, b = self._building_of(ws, building_id)
             positions = _settle(loc, site_positions(loc))
             b.site = SitePosition(x=round(x, 3), y=round(y, 3), rotation=round(rotation % 360, 3), pivot=positions[b.code].pivot)
-            ws.save(ws_path)
+            self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=[building_id])
         return {"site": b.site.model_dump()}
 
-    def arrange(self, code: str, location_id: str) -> dict:
+    def arrange(self, code: str, location_id: str, by=None) -> dict:
         """The location's buildings side by side on its site plan, left to right in the
         order of their codes, SITE_GAP_M apart, each as it is turned, centred on the
         site's centre line."""
         from .export import SITE_GAP_M, site_footprint, site_positions
         from .workspace import SitePosition
 
-        ws_path = self.path(code)
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
+        self._known(code)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
             loc = ws.location(location_id)
             positions = _settle(loc, site_positions(loc))
             cursor = None
@@ -874,19 +912,19 @@ class Studio:
                 dx = 0.0 if cursor is None else cursor - x0
                 b.site = SitePosition(x=round(dx, 3), y=round(-(y0 + y1) / 2, 3), rotation=at_centre.rotation, pivot=at_centre.pivot)
                 cursor = x1 + dx + SITE_GAP_M
-            ws.save(ws_path)
+            self.store.save(ws, floors=[], by=by, part="project", kind="arrange", targets=[location_id])
         return {"sites": {b.code: b.site.model_dump() if b.site else None for b in loc.buildings}}
 
-    def place_site(self, code: str, location_id: str, body: dict) -> dict:
+    def place_site(self, code: str, location_id: str, body: dict, by=None) -> dict:
         """The location's site on the map: its centre at ``lat``, ``lon``, its up at
         ``bearing``; every building not placed by itself goes with it. ``clear``
         takes it off the map. Its buildings keep the places they have on it: one
         changed or added later moves no other on the map."""
         from .export import site_positions
 
-        ws_path = self.path(code)
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
+        self._known(code)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
             loc = ws.location(location_id)
             if body.get("clear"):
                 loc.placement = None
@@ -896,7 +934,7 @@ class Studio:
                     raise ValueError("latitude is -90…90 and longitude -180…180")
                 _settle(loc, site_positions(loc))
                 loc.placement = Placement(lat=lat, lon=lon, x=0.0, y=0.0, bearing=_number(body, "bearing", 0.0) % 360)
-            ws.save(ws_path)
+            self.store.save(ws, floors=[], by=by, part="project", kind="place", targets=[location_id])
         return {"placement": loc.placement.model_dump() if loc.placement else None}
 
     def _building_of(self, ws: Workspace, building_id: str):
@@ -906,23 +944,22 @@ class Studio:
                     return loc, b
         raise NotFound(f"no building {building_id}")
 
-    def place(self, code: str, building_id: str, body: dict) -> dict:
-        ws_path = self.path(code)
-        with self._changing(ws_path):
-            ws = Workspace.load(ws_path)
+    def place(self, code: str, building_id: str, body: dict, by=None) -> dict:
+        self._known(code)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
             b = ws.building(building_id)
             lat, lon = _number(body, "lat"), _number(body, "lon")
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 raise ValueError("latitude is -90…90 and longitude -180…180")
             b.placement = Placement(lat=lat, lon=lon, x=_number(body, "x", 0.0), y=_number(body, "y", 0.0),
                                     bearing=_number(body, "bearing", 0.0) % 360)
-            ws.save(ws_path)
+            self.store.save(ws, floors=[], by=by, part="building", kind="place", targets=[building_id])
         return {"placement": b.placement.model_dump()}
 
     def export_building(self, code: str, body: dict | None = None) -> str:
         """The building a request to export names (``building``: its ID; may be left out
         when the project has one building)."""
-        ws_path = self.path(code)
         building = (body or {}).get("building")
         if building is None and isinstance((body or {}).get("buildings"), list) and len(body["buildings"]) == 1:
             building = body["buildings"][0]  # as earlier pages sent it
@@ -930,7 +967,7 @@ class Studio:
             raise ValueError("building: a building's ID")
         from .export import building_ids
 
-        known = building_ids(Workspace.load(ws_path))  # saved whole (workspace.py): no lock to read it
+        known = building_ids(self.workspace(code))
         if building is None:
             if len(known) != 1:
                 raise ValueError(f"choose the building to export: a package holds one building, this project has {len(known)}")
@@ -939,84 +976,92 @@ class Studio:
             raise ValueError(f"no building {building} in this project")
         return building
 
-    def export(self, code: str, body: dict | None = None, by: str | None = None) -> Job:
+    def export(self, code: str, body: dict | None = None, by=None) -> Job:
         """The package of one of the project's buildings (``building``: its ID; may be
-        left out when the project has one building)."""
-        ws_path = self.path(code)
+        left out when the project has one building): made from the project as it is,
+        entered in its export history, and kept as sent (its bytes, in the database)."""
         building = self.export_building(code, body)
 
         def run(job: Job):
-            with self._changing(ws_path):
-                ws = Workspace.load(ws_path)
-                folder = ws_path.parent / "exports"
-                folder.mkdir(exist_ok=True)
+            with self._changing(code):
+                ws = self.store.load(code)
                 seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
-                # by code, as the folder, with the building's
-                out = folder / f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
-                job.say(f"writing {out.name}")
-                manifest = write_valid_package(ws, ws_path, out, building, self.catalogue(), job.say)
+                # by code, with the building's
+                name = f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
+                job.say(f"writing {name}")
+                self.work.mkdir(parents=True, exist_ok=True)
+                manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work)
+                self.store.save(ws, by=by, part="building", kind="export", targets=[building],
+                                more={"file": name, "sequence": manifest.export.sequence}, export_bytes={name: data})
             job.say("valid: " + ", ".join(f"{n} {k}" for k, n in manifest.counts.items()))
             loose = [b for b, p in manifest.placements.items() if not p.placed]
             if loose:
                 job.say("not on the map yet (shapes are true, the position is not): " + ", ".join(loose))
-            return {"file": out.name, "counts": manifest.counts}
+            return {"file": name, "counts": manifest.counts}
 
-        return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=by)
+        return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=_uid(by))
 
     def project_file(self, code: str) -> "Download":
         """The project as one file to send (*.storeypath-project): its workspace,
         drawings and item types, for another Studio to continue it (bundle.py). Not a
         package: other systems read a building's."""
-        from .bundle import export_project
+        from .bundle import write_project_file
 
-        path = self.path(code)
+        self._known(code)
         buf = io.BytesIO()
-        with self._changing(path):
-            export_project(path, buf)
-        return Download(buf.getvalue(), f"{Workspace.load(path).id}.storeypath-project")
+        with self._changing(code):
+            ws = self.store.load(code)
+            drawings = {}
+            for d in self.store.drawings(code):
+                drawings[d["name"]] = self.store.drawing_bytes(code, d["name"])
+                if (kept := self.store.words(code, d["name"])) is not None:
+                    drawings[d["name"] + WORDS] = kept.encode("utf-8")
+            write_project_file(ws, drawings, self.catalogue(), buf)
+        return Download(buf.getvalue(), f"{ws.id}.storeypath-project")
 
-    def open(self, body: bytes, replace: str | None = None, allow=None, learn_types: bool = True) -> dict:
+    def open(self, body: bytes, replace: str | None = None, allow=None, learn_types: bool = True, by=None) -> dict:
         """A project from a file (a building's package, or a project file): put in the
-        data folder. A package of a project here adds its building to it; when that
+        database. A package of a project here adds its building to it; when that
         building is here already, or the file is a project file of a project here, it
         is put in its place only when the project's name is typed (``replace``). No
         job may be working on the project meanwhile.
 
         The file is read once (bundle.read_file: its parts name one project), and that
         project is the one checked and the one written: ``allow`` (the file as read,
-        the workspace file of its project here or None) raises when the person may not,
-        and may return what undoes what it did (a new project's owner) should the file
-        not be opened after all. One file is opened at a time, so what was checked is
-        still so when it is written. ``learn_types``: the item types its catalogue has
-        and Studio's lacks are added (by who may change them), else listed as not added
+        and whether its project is here) raises when the person may not, and may return
+        what undoes what it did (a new project's owner) should the file not be opened
+        after all. One file is opened at a time, so what was checked is still so when
+        it is written. ``learn_types``: the item types its catalogue has and Studio's
+        lacks are added (by who may change them), else listed as not added
         (``item_types_not_added``)."""
-        from .bundle import ProjectExists, find_project, open_file, read_file
+        from .bundle import ProjectExists, open_into, read_file
 
         if not isinstance(body, bytes) or not body:
             raise ValueError("the file is empty")
-        tmp = self.data / f".opening-{uuid.uuid4().hex}.storeypath"
+        self.work.mkdir(parents=True, exist_ok=True)
+        tmp = self.work / f".opening-{uuid.uuid4().hex}.storeypath"  # read as a file, then removed
         tmp.write_bytes(body)
         try:
             incoming = read_file(tmp)
             with self._opening:
-                path = find_project(self.data, incoming.code)
-                undo = allow(incoming, path) if allow is not None else None
+                here = self.store.exists(incoming.code)
+                undo = allow(incoming, here) if allow is not None else None
                 try:
-                    lock = self._changing(path) if path else None
+                    lock = self._changing(incoming.code) if here else None
                     if lock is not None and not lock.acquire(blocking=False):
                         raise ValueError("a job is working on this project: open the file when the job is done")
                     try:
                         try:
-                            opened = open_file(self.data, tmp, incoming=incoming, existing=path,
-                                               learn_types=learn_types)
+                            opened = open_into(self.store, tmp, incoming=incoming, existing=here,
+                                               learn_types=learn_types, by=by)
                         except ProjectExists as e:
                             if replace is None:
                                 raise
                             if replace.strip() != e.name.strip():
                                 raise ValueError(f"type the name of the project here, {e.name}, to replace "
                                                  f"{'its building ' + e.building if e.building else 'it'}") from None
-                            opened = open_file(self.data, tmp, replace=True, incoming=incoming, existing=path,
-                                               learn_types=learn_types)
+                            opened = open_into(self.store, tmp, replace=True, incoming=incoming, existing=here,
+                                               learn_types=learn_types, by=by)
                     finally:
                         if lock is not None:
                             lock.release()
@@ -1024,9 +1069,6 @@ class Studio:
                     if undo is not None:
                         undo()
                     raise
-                if path is not None:
-                    with self._lock:
-                        self._reviews.pop(path, None)
                 return opened
         except zipfile.BadZipFile:
             raise ValueError("not a StoreyPath file (.storeypath or .storeypath-project)") from None
@@ -1039,7 +1081,7 @@ class Studio:
         ``sight``, only the floors that person may see (Sight.seen)."""
         from .export import ExportError, preview_package
 
-        ws = Workspace.load(self.path(code))  # saved whole (workspace.py): no lock to read it
+        ws = self.store.load(code)
         if sight is not None:
             ws = sight.seen(ws)
         if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
@@ -1051,54 +1093,76 @@ class Studio:
             raise NotFound(str(e)) from None
         return buf.getvalue()
 
-    def export_file(self, code: str, name: str) -> Path:
-        path = self.path(code).parent / "exports" / Path(name).name
-        if not path.is_file():
+    def export_file(self, code: str, name: str) -> "Download":
+        """A package of the project, as it was sent."""
+        self._known(code)
+        if not isinstance(name, str) or not name:
             raise NotFound(f"no export {name}")
-        return path
+        name = Path(name).name
+        return Download(self.store.export_bytes(code, name), name)
+
+
+def _uid(by) -> str | None:
+    """The id of who started a job (a user, or their id; None on this computer without
+    accounts)."""
+    if by is None or isinstance(by, str):
+        return by
+    return None if by is LOCAL else getattr(by, "id", None)
 
 
 WRITING = ".writing-"  # a package being written, beside where it goes, until it is found valid
 
 
 def package_buildings(ws: Workspace, name: str) -> list[str] | None:
-    """The buildings a package of the project's exports folder holds, as the export that
+    """The buildings a package of the project's exports holds, as the export that
     wrote it entered them; None when no export entered it (or it held the whole project,
     as packages before one building a package did)."""
     record = next((r for r in reversed(ws.exports) if r.file == Path(name).name), None)
     return list(record.buildings) if record is not None and record.buildings else None
 
 
-def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say):
-    """A building's package written to ``out`` and entered as an export in the workspace
-    (saved to ``ws_path``) only when it is valid: it is written beside ``out`` first and
-    checked; one that is not valid is not kept, nor entered (its number is not used up).
-    Raises ValueError, saying what is wrong, when it is not."""
+def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue, say, folder=None):
+    """A building's package made (in a folder of its own, removed after) and checked; when
+    it is valid, entered as an export in ``ws`` (not saved) and given back with its
+    bytes: (manifest, bytes). One that is not valid is not entered (its number is not
+    used up): ValueError, saying what is wrong."""
     import shutil
     import tempfile
 
     from .export import export_package
     from .validate import validate_package
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix=WRITING, dir=out.parent))  # beside it: put in place by a rename
+    where = Path(tempfile.mkdtemp(prefix=WRITING, dir=folder))
     try:
-        part = folder / out.name  # the name it is entered under
+        part = where / name  # the name it is entered under
+        before = list(ws.exports)
         manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue)
         errors = validate_package(part)
         for e in errors:
             say("invalid: " + e)
         if errors:
+            ws.exports[:] = before
             raise ValueError("the package failed validation: it was not kept, nor entered as an export")
-        part.replace(out)
-        try:
-            ws.save(ws_path)
-        except BaseException:
-            out.unlink(missing_ok=True)
-            raise
-        return manifest
+        return manifest, part.read_bytes()
     finally:
-        shutil.rmtree(folder, ignore_errors=True)
+        shutil.rmtree(where, ignore_errors=True)
+
+
+def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say):
+    """A building's package written to ``out`` and entered as an export in the workspace
+    (saved to ``ws_path``) only when it is valid (make_valid_package). Raises
+    ValueError, saying what is wrong, when it is not. (The command line's: files.)"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent)
+    part = out.with_name(f"{WRITING}{out.name}")
+    part.write_bytes(data)
+    part.replace(out)
+    try:
+        ws.save(ws_path)
+    except BaseException:
+        out.unlink(missing_ok=True)
+        raise
+    return manifest
 
 
 FAR_APART_M = 2000.0  # a building drawn this far from the others has a drawing of its own origin
@@ -1414,7 +1478,7 @@ class Gate:
         return Sight(ws, access, None if user is LOCAL else user)
 
     def _workspace(self, code: str) -> Workspace:
-        return self.studio.review(code).workspace()  # NotFound when there is no such project
+        return self.studio.workspace(code)  # NotFound when there is no such project
 
     def see(self, code: str) -> Sight:
         """Any access to the project: a project nobody let them see is not there for them."""
@@ -1466,10 +1530,9 @@ class Gate:
         f = ws.floor(floor_id)
         if f.source is None or f.source.region is not None:
             return sight
-        folder = self.studio.path(code).parent
-        mine = (folder / f.source.path).resolve()
+        mine = drawing_name(f.source.path)
         for *_, g, g_id in ws.iter_floors():
-            if g_id != floor_id and g.source is not None and (folder / g.source.path).resolve() == mine \
+            if g_id != floor_id and g.source is not None and drawing_name(g.source.path) == mine \
                     and not sight.floor(g_id):
                 raise Forbidden("this floor's drawing holds other floors you may not see, and no part of it "
                                 "is marked as this floor's plan")
@@ -1582,9 +1645,9 @@ class Gate:
                 and not self.accounts.edits_somewhere(user):
             raise new  # nothing they could open: the file is not even read
 
-        def allow(incoming, path):
+        def allow(incoming, here: bool):
             code = incoming.code
-            if path is None:
+            if not here:
                 if user.role not in ("admin", "engineer"):
                     raise new
                 if self.accounts is None or not self.uid:
@@ -1832,20 +1895,14 @@ class Gate:
     # ---- the whole data folder -------------------------------------------------------
 
     def backup(self) -> Stream:
-        """The data folder as a .tar.gz, written as it is sent; no job runs meanwhile."""
-        stack = ExitStack()
-        try:
-            stack.enter_context(jobs_paused(self.studio.data, timeout=BACKUP_WAIT_S))
-        except TimeoutError:
-            raise Busy("a job is running (reading a drawing, converting or exporting): download the backup "
-                       "when it is done") from None
+        """Studio's database, every project and account in it as one moment saw them
+        (backup.py), written as it is sent."""
         name = backup_name()
 
         def done(outcome: str) -> None:
-            stack.close()
             self.audit("backup", name, outcome)
 
-        return Stream(name, "application/gzip", lambda out: write_backup(self.studio.data, out), done)
+        return Stream(name, "application/gzip", lambda out: write_backup(self.studio.db, out), done)
 
 
 CAPABILITY_NAMES = ("backup", "catalogue")
@@ -2378,11 +2435,11 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return studio.projects(may.sight_of)
             case "POST", ["projects"]:
                 may.create()
-                return may.made(studio.create(body.get("name", ""), may.kept_codes()))
+                return may.made(studio.create(body.get("name", ""), may.kept_codes(), by=may.user))
             case "PUT", ["open"]:
                 allow = may.opening()
                 return may.opened(studio.open(body, (query.get("replace") or [None])[0], allow,
-                                              learn_types=may.user.can("catalogue")))
+                                              learn_types=may.user.can("catalogue"), by=may.user))
             case "GET", ["jobs", job_id]:
                 return may.job(job_id)
             case "GET", ["projects", code]:
@@ -2393,7 +2450,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return studio.review_project(code, sight)
             case "POST", ["projects", code, "delete"]:
                 may.own(code)
-                return may.deleted(code, studio.delete(code, body))
+                return may.deleted(code, studio.delete(code, body, by=may.user))
             # sharing
             case "GET", ["projects", code, "access"]:
                 sight = may.share_some(code)
@@ -2413,39 +2470,39 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return studio.words(code, name)
             case "POST", ["projects", code, "incoming", token]:
                 may.project(code, "edit")
-                return studio.keep_private(code, token, body, by=may.uid)
+                return studio.keep_private(code, token, body, by=may.user)
             case "POST", ["projects", code, "incoming", token, "cancel"]:
                 may.project(code, "edit")
                 return studio.cancel_private(code, token)
             case "PUT", ["projects", code, "drawings", name]:
                 may.project(code, "edit")
-                return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0", by=may.uid)
+                return studio.upload(code, name, body, private=query.get("private", ["1"])[0] != "0", by=may.user)
             case "POST", ["projects", code, "drawings", name, "plans"]:
                 may.project(code, "edit")
-                return studio.plans(code, name, body.get("units") or None, by=may.uid)
+                return studio.plans(code, name, body.get("units") or None, by=may.user)
             case "POST", ["projects", code, "floors"]:
                 may.add_floors(code, body)
-                return studio.add_floors(code, body, by=may.uid)
+                return studio.add_floors(code, body, by=may.user)
             case "POST", ["projects", code, "convert"]:
                 may.convert(code, body.get("floor"))
-                return studio.convert(code, body.get("floor"), body.get("force", False), by=may.uid)
+                return studio.convert(code, body.get("floor"), body.get("force", False), by=may.user)
             # buildings and sites
             case "POST", ["projects", code, "buildings", b_id, "site"]:
                 may.building(code, b_id, "edit")
-                return studio.move(code, b_id, body)
+                return studio.move(code, b_id, body, by=may.user)
             case "POST", ["projects", code, "buildings", b_id, "placement"]:
                 may.building(code, b_id, "edit")
-                return studio.place(code, b_id, body)
+                return studio.place(code, b_id, body, by=may.user)
             case "POST", ["projects", code, "locations", loc_id, "arrange"]:
                 may.project(code, "edit")
-                return studio.arrange(code, loc_id)
+                return studio.arrange(code, loc_id, by=may.user)
             case "POST", ["projects", code, "locations", loc_id, "placement"]:
                 may.project(code, "edit")
-                return studio.place_site(code, loc_id, body)
+                return studio.place_site(code, loc_id, body, by=may.user)
             # packages
             case "POST", ["projects", code, "export"]:
                 building = may.export(code, body)
-                job = studio.export(code, {"building": building}, by=may.uid)
+                job = studio.export(code, {"building": building}, by=may.user)
                 may.audit("export", building)
                 return job
             case "GET", ["projects", code, "exports", name]:
@@ -2472,20 +2529,20 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return floor_print_png(studio.review(code), floor_id)
             case "POST", ["projects", code, "floors", floor_id, "edits"]:
                 may.floor(code, floor_id, "edit")
-                studio.review(code).edit(floor_id, body)
-                return studio.convert(code, floor_id, by=may.uid)
+                studio.review(code).edit(floor_id, body, by=may.user)
+                return studio.convert(code, floor_id, by=may.user)
             case "POST", ["projects", code, "floors", floor_id, "items"]:
                 may.floor(code, floor_id, "edit")
-                return studio.review(code).add_item(floor_id, body)
+                return studio.review(code).add_item(floor_id, body, by=may.user)
             case "POST", ["projects", code, "items", item_id]:
                 may.item(code, item_id, body)
-                return studio.review(code).change_item(item_id, body)
+                return studio.review(code).change_item(item_id, body, by=may.user)
             case "POST", ["projects", code, "floors", floor_id, "convert"]:
                 may.floor(code, floor_id, "edit")
-                return studio.convert(code, floor_id, body.get("force", False), by=may.uid)
+                return studio.convert(code, floor_id, body.get("force", False), by=may.user)
             case "POST", ["projects", code, "objects", object_id]:
                 may.object(code, object_id)
-                return studio.review(code).correct(object_id, body)
+                return studio.review(code).correct(object_id, body, by=may.user)
             # users (admins), the audit log and backups
             case "GET", ["admin", "users"]:
                 may.admin()
