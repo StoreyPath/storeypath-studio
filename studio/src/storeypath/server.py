@@ -1988,38 +1988,46 @@ def trusted_networks(more=()) -> list:
 def client_address(peer: str, headers, trusted: list) -> str | None:
     """Who is asking: the connection's address, unless it is a trusted proxy's, then the
     address that proxy says it serves: X-Real-IP (nginx: proxy_set_header X-Real-IP
-    $remote_addr), else the nearest address in X-Forwarded-For that is not a trusted
+    $remote_addr), and the nearest address in X-Forwarded-For that is not a trusted
     proxy's (read from the right: what a client puts there itself is further left).
-    None when a trusted proxy says neither, or says something that is not an address:
-    refused, never taken as the proxy's own (every person would share one address, and
-    one person's failed logins would make everyone wait)."""
+    When both are said they must agree: a proxy that sets one passes the other on as
+    the client sent it, and a client's own word is never taken for where it is. None
+    (refused) when a trusted proxy says neither, they disagree, or one says what is not
+    an address: never taken as the proxy's own (every person would share one address,
+    and one person's failed logins would make everyone wait). An IPv4 address written
+    as IPv6 (::ffff:203.0.113.7) is that IPv4 address."""
     import ipaddress
 
     def ip(text):
         try:
-            return ipaddress.ip_address(text.strip().strip("[]"))
+            got = ipaddress.ip_address(text.strip().strip("[]"))
         except ValueError:
             return None
+        return getattr(got, "ipv4_mapped", None) or got
 
     if not trusted or not peer:
         return peer
     at = ip(peer)
     if at is None or not any(at in n for n in trusted):
         return peer  # not a proxy we trust: what it says of others is not heard
+    said = []  # what the proxy says, each way it says it
     real = headers.get_all("X-Real-IP") or []
-    if len(real) == 1:
-        got = ip(real[0])
-        return str(got) if got is not None else None
     if len(real) > 1:
         return None
+    if real:
+        said.append(ip(real[0]))
     chain = [x for h in (headers.get_all("X-Forwarded-For") or []) for x in h.split(",") if x.strip()]
-    for hop in reversed(chain):
-        got = ip(hop)
-        if got is None:
-            return None
-        if not any(got in n for n in trusted):
-            return str(got)
-    return None
+    if chain:
+        nearest = None
+        for hop in reversed(chain):
+            got = ip(hop)
+            if got is None or not any(got in n for n in trusted):
+                nearest = got
+                break
+        said.append(nearest)
+    if not said or None in said or len(set(said)) > 1:
+        return None
+    return str(said[0])
 
 
 def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,

@@ -25,7 +25,7 @@ import pytest
 from sessions import call
 from storeypath import accounts as acc
 from storeypath import server as server_module
-from storeypath.accounts import Accounts, Scope, Unauthorized
+from storeypath.accounts import Accounts, Scope, Throttled, Unauthorized
 from storeypath.bundle import export_project
 from storeypath.tls import context, studio_certificate
 from storeypath.workspace import Project, Workspace
@@ -242,6 +242,31 @@ def test_passwords_are_counted_before_they_are_checked_and_checked_a_few_at_a_ti
     assert set(statuses) <= {401, 429, 503}, statuses
     assert checked[0] <= acc.ADDRESS_FAILURES, checked  # no more than may fail, however many at once
     assert most[0] <= getattr(acc, "PASSWORD_CHECKS", 4), most
+
+
+def test_an_address_a_client_says_itself_is_not_taken_through_a_proxy(proxied):
+    """A proxy that sets X-Forwarded-For alone passes on the X-Real-IP a client sends: when
+    the two disagree, the call is refused, never counted as from the address it claims."""
+    port, studio, accounts = proxied
+    statuses = [call(port, "POST", "/api/login", {"username": "ali", "password": "nope nope"},
+                     headers={"X-Forwarded-For": "203.0.113.7", "X-Real-IP": f"198.51.100.{i}"})[0]
+                for i in range(acc.ADDRESS_FAILURES + 5)]
+    assert set(statuses) == {400}, statuses
+    for i in range(acc.ADDRESS_FAILURES):  # the proxy's own say, alone: who is asking
+        assert call(port, "POST", "/api/login", {"username": f"u{i}", "password": "nope nope"},
+                    headers={"X-Forwarded-For": "203.0.113.7"})[0] == 401
+    assert login(port, "z", "nope nope", "203.0.113.7")[0] == 429  # one address, however it was said
+
+
+def test_an_ipv6_client_is_counted_by_its_network(tmp_path):
+    a = Accounts(tmp_path)
+    for i in range(acc.ADDRESS_FAILURES):  # an address of its own each time, from one /64
+        with pytest.raises(Unauthorized):
+            a.login(f"u{i}", "nope nope", f"2001:db8:1:2::{i + 1:x}")
+    with pytest.raises(Throttled):
+        a.login("ali", "nope nope", "2001:db8:1:2:ffff::1")
+    with pytest.raises(Unauthorized):
+        a.login("ali", "nope nope", "2001:db8:1:3::1")  # another network
 
 
 def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):

@@ -70,7 +70,7 @@ give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 |---|---|
 | By default | Studio makes an EC P-256 key and a self-signed certificate in `<data>/tls/` (the folder and its files its owner's alone: 0700, 0600), valid 825 days, for `localhost`, `127.0.0.1`, `::1`, the address it is bound to, every `--allowed-host` / `STOREYPATH_ALLOWED_HOSTS` name or address, and this machine's name and addresses as found when it is made. It prints the certificate's SHA-256 fingerprint as it starts: browsers warn once about a certificate nobody vouches for, and the fingerprint they show should be that one. It is made again (browsers then warn again) only when it is within 30 days of its end, or lacks a name you give with `--allowed-host`; to reach Studio by another name or address, give it so |
 | Your own certificate | `--cert cert.pem --key key.pem` (PEM, the chain after the certificate); Studio never changes it |
-| Behind a proxy that speaks HTTPS | `--http --secure-cookies --trusted-proxy <the proxy's address>`: plain HTTP from the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host`. The proxy must say who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`; `X-Forwarded-For` is taken when it sends no `X-Real-IP`): the limits on failed logins and the audit go by it, and a call through the proxy without it is refused (400), so a proxy left unset shows at once rather than putting everyone behind one address. From any other address those headers are not heard |
+| Behind a proxy that speaks HTTPS | `--http --secure-cookies --trusted-proxy <the proxy's address>`: plain HTTP from the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host`. The proxy must say who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`; else `X-Forwarded-For`, its nearest address not the proxy's; when both come they must agree, or the call is refused: a proxy that sets one passes the other on as the client sent it): the limits on failed logins and the audit go by it, and a call through the proxy without it is refused (400), so a proxy left unset shows at once rather than putting everyone behind one address. From any other address those headers are not heard |
 | On this computer, for development | `--http` |
 
 Plain `http://` sent to the HTTPS port is redirected to the same address over
@@ -132,8 +132,8 @@ by the port Studio is reached on, `sp_session_8080`: browsers keep one machine's
 cookies for all its ports, and two Studios on one machine keep their own. Logging
 out, changing one's password, or an admin changing someone's role or capabilities or
 disabling them ends their sessions. After 5 failed
-logins for a username from one address, or 20 from one address, within 15 minutes,
-logins from there wait (from 30 seconds, doubling, up to 15 minutes): someone else's
+logins for a username from one address, or 20 from one address (an IPv6 address
+counts as its /64), within 15 minutes, logins from there wait (from 30 seconds, doubling, up to 15 minutes): someone else's
 wrong passwords never lock a person out. A wrong current password, changing one's
 own, counts as a failed login. Each try is counted before its password is checked,
 and passwords are checked four at a time (scrypt takes 32 MiB each; more wait a

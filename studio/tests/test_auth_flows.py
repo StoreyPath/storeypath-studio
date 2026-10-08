@@ -499,6 +499,13 @@ def test_behind_a_trusted_proxy_who_is_asking_is_its_x_real_ip():
     assert client_address("10.0.0.5", headers(X_Forwarded_For="10.1.0.4"), proxy) is None
     assert client_address("10.0.0.5", headers(X_Forwarded_For="203.0.113.7, junk"), proxy) is None
     assert client_address("10.0.0.5", headers(X_Real_IP="203.0.113.7"), []) == "10.0.0.5"  # no proxies named
+    # both said: they agree (a proxy that sets one passes on the other as the client sent it)
+    assert client_address("10.0.0.5", headers(X_Real_IP="203.0.113.7", X_Forwarded_For="6.6.6.6, 203.0.113.7"),
+                          proxy) == "203.0.113.7"
+    assert client_address("10.0.0.5", headers(X_Real_IP="6.6.6.6", X_Forwarded_For="203.0.113.7"), proxy) is None
+    assert client_address("10.0.0.5", headers(X_Real_IP="203.0.113.7", X_Forwarded_For="6.6.6.6"), proxy) is None
+    # an IPv4 address written as IPv6 is that IPv4 address (a proxy's, a client's)
+    assert client_address("::ffff:10.0.0.5", headers(X_Real_IP="::ffff:203.0.113.7"), proxy) == "203.0.113.7"
     with pytest.raises(ValueError, match="trusted proxy"):
         trusted_networks(["proxy.example"])
 

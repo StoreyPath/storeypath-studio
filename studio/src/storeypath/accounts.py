@@ -866,8 +866,20 @@ class _Attempt:
 
 
 def _throttled_as(address: str | None) -> str:
-    """The address failed tries are counted by."""
-    return address or ""
+    """What failed tries from ``address`` are counted by: an IPv4 address, or the /64 an
+    IPv6 one is in (each client has a /64 of its own, and may take a new address of it
+    for every try)."""
+    import ipaddress
+
+    try:
+        at = ipaddress.ip_address((address or "").split("%")[0])
+    except ValueError:
+        return address or ""
+    if at.version == 4:
+        return str(at)
+    if at.ipv4_mapped is not None:
+        return str(at.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{at}/64", strict=False))
 
 
 # ---- what one person may do in one project ------------------------------------------
