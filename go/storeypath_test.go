@@ -990,6 +990,39 @@ func TestAnItemCarriedAwayIsNotRetired(t *testing.T) {
 	}
 }
 
+func TestAKioskIsAnItemAWayStartsFrom(t *testing.T) {
+	// campus-hq: a wayfinding kiosk in the Headquarters' reception, facing its door;
+	// campus-hq-2: the building moved on the map, the kiosk where it was in it
+	before, after := open(t, "campus-hq.storeypath"), open(t, "campus-hq-2.storeypath")
+	ground := before.Buildings[0].ID + "-F00"
+	kiosks := before.KiosksOn(ground)
+	if len(kiosks) != 1 {
+		t.Fatalf("kiosks on %s: %d", ground, len(kiosks))
+	}
+	k := kiosks[0]
+	if k.Space == nil || before.Space(*k.Space).Type != "lobby" || *before.Space(*k.Space).Number != "017" {
+		t.Errorf("the kiosk stands in %v, not the reception", k.Space)
+	}
+	if k.Local == nil || k.Local.Rotation != 0 || k.Values["model"] != "TS-32" || k.Mount != "floor" {
+		t.Errorf("the kiosk: %+v", k)
+	}
+	moved := after.Item(k.ID)
+	if moved == nil || *moved.Local != *k.Local || len(after.KiosksOn(ground)) != 1 || slices.Contains(after.Changes.Changed, k.ID) {
+		t.Errorf("after the building moved: %+v", moved)
+	}
+	if moved.Heading == k.Heading {
+		t.Error("its heading on the map did not turn with the building")
+	}
+	for code, want := range map[string]bool{"KIOSK": true, "KIOSK-WALL": true, "KIOSKS": false, "DESK-KIOSK": false, "": false} {
+		if got := (&Item{Type: code}).IsKiosk(); got != want {
+			t.Errorf("%q: IsKiosk %v", code, got)
+		}
+	}
+	if len(before.KiosksOn(before.Buildings[0].ID+"-F01")) != 0 || len(before.KiosksOn("nowhere")) != 0 {
+		t.Error("kiosks where there are none")
+	}
+}
+
 func TestRowsOfKindsThisReaderDoesNotKnowAreLeftAlone(t *testing.T) {
 	// A later format may add kinds, as 0.6 added items: their rows in objects.csv,
 	// and their IDs in changes.json, are no problem.

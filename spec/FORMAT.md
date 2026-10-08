@@ -278,6 +278,15 @@ model) or `"system"` (the system that manages the asset: an access point's netwo
 A reader keeps the `system` fields itself, by the item's ID; the package never
 carries them. The catalogue is the organization's: the same for every project.
 
+**Kiosks.** An item whose type is `KIOSK`, or `KIOSK-` and more (`KIOSK-WALL`), is
+where a wayfinding kiosk stands: a screen where people type their employee number
+and are shown their office. Its front is the side its screen faces, where people
+stand to use it. A system running kiosks links each of its own to such an item by
+the item's ID: the item's floor is the kiosk's floor, and its `local` position (its
+`display_point` on the map) is the "you are here" of the kiosk's maps, and where a
+way to an office will start. A kiosk moved keeps its ID, so the link holds; one
+retired leaves its kiosk without a place until it is linked again.
+
 Items are for asset management: where things are, and where they have been. They
 are not inventory: nothing in a package says who holds what. An inventory system
 keys its own records to the items' IDs, as every system keys its own to StoreyPath's.
@@ -456,7 +465,7 @@ taken away (the building changed, and the office the desk left, which seats one 
 nothing else; the desk moved away; the TV retired; every item's `local` as it was),
 then the Annex's, the desk in it. They have items:
 desks of several grades (one in a zone, one in a building turned on the map), a
-photocopier, two access points, a sofa, a TV and a bed. The others are packages of
+photocopier, two access points, a sofa, a TV, a bed and a wayfinding kiosk. The others are packages of
 earlier formats, which readers still read: `campus` (0.6, the whole campus, with
 items), `campus-world` and `simple-office-world` (pre-built in 3D: a reader reads
 them as it reads `campus` and `simple-office`, and the viewer shows them as it shows

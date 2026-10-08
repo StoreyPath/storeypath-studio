@@ -60,6 +60,8 @@ def test_the_campus_packages_have_furniture_and_equipment():
                                                       for p in by_type["ACCESS-POINT"])
     assert len(by_type["SOFA"]) == 1 and [(p["mount"], p["elevation_m"]) for p in by_type["TV"]] == [("wall", 1.2)]
     assert [spaces[p["space_id"]]["type"] for p in by_type["BED-KING"]] == ["office"]
+    # a wayfinding kiosk in the reception, facing its door (the drawing's -y)
+    assert [(spaces[p["space_id"]]["type"], p["local"]["rotation_deg"]) for p in by_type["KIOSK"]] == [("lobby", 0)]
 
 
 def test_the_local_frame_vectors_are_studios_projection():

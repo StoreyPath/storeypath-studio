@@ -196,7 +196,9 @@ def test_a_buildings_package_opens_into_its_project(tmp_path):
         placed = {f["id"]: f["properties"]["local"] for f in json.loads(z.read("items.geojson"))["features"]}
     assert all((ws.items[i].x, ws.items[i].y, ws.items[i].rotation) == (p["x_m"], p["y_m"], p["rotation_deg"])
                for i, p in placed.items())
-    assert len([i for i in ws.items.values() if i.status == "active"]) == 16
+    with zipfile.ZipFile(PACKAGES / "campus-annex.storeypath") as z:
+        held = len(placed) + len(json.loads(z.read("items.geojson"))["features"])
+    assert len([i for i in ws.items.values() if i.status == "active"]) == held  # the two buildings' items
     ws.building(hq).floors[0].source = SourceDrawing(path="drawings/hq-ground.dxf")
     ws.save(ws_path)
 

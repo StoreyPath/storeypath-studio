@@ -379,7 +379,7 @@ gives, at every conversion.
 ## Furniture and equipment
 
 Items (desks by grade, central photocopiers, wireless access points, sofas, TVs,
-beds) are placed on floors in the review editor, and kept in the workspace. Each has
+beds, wayfinding kiosks) are placed on floors in the review editor, and kept in the workspace. Each has
 an ID of its own, the project's code and its number (`K7Q2XM-I000142`), which stays
 with it wherever it is carried; a deleted item's ID is never issued again.
 

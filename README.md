@@ -224,23 +224,26 @@ Every change is saved to the project at once.
 
 ### Furniture and equipment
 
-Desks, photocopiers, access points, sofas, TVs, beds: **items** are placed on the
-floors in review.
+Desks, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
+the floors in review.
 
 - **The catalogue** of item types is the organization's: one `catalogue.json` in
   Studio's data folder, the same for every project, and copied into every package.
   A new Studio starts with desks by grade (president, C-level, director, manager,
   head of section, senior and junior staff), a central photocopier, a wireless
-  access point, a sofa, a TV screen, and king- and queen-size beds, each with a code,
-  English and Arabic names, a size, how it is mounted (floor, wall, ceiling) and a
-  colour. Types are added or changed by editing that file; a type no longer used is
-  marked `retired`, never removed, so its code stays with the items that have it and
-  is never given to another type.
+  access point, a sofa, a TV screen, king- and queen-size beds and a wayfinding
+  kiosk, each with a code, English and Arabic names, a size, how it is mounted
+  (floor, wall, ceiling) and a colour. Types are added or changed by editing that
+  file; a type no longer used is marked `retired`, never removed, so its code stays
+  with the items that have it and is never given to another type.
 - **Place** one by choosing its type in *Place* on the toolbar (or right-click,
   *Place an item here…*) and clicking where it goes. Drag it to move it; <kbd>R</kbd>
   turns it 90°, <kbd>[</kbd> and <kbd>]</kbd> by 15°, the arrows move it (Shift:
   further), <kbd>Del</kbd> deletes it. Its panel changes its type, its turn, its floor
   (carry it to another floor or building) and its details.
+- **A kiosk** (type `KIOSK`) is where a wayfinding kiosk stands, its screen at its
+  front: wayfinder links each of its kiosks to one, so the kiosk's map shows "you are
+  here", and a way to an office can later start from it.
 - **An item's ID never changes when it moves**: it is the project's code and the
   item's own number (`K7Q2XM-I000142`), not its place. Carried to another office,
   floor or building, it keeps it; deleted, its ID is never issued again.

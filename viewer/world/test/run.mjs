@@ -28,7 +28,7 @@ register(`data:text/javascript,${encodeURIComponent(`
     return path ? { url: ${JSON.stringify(vendor)} + path, shortCircuit: true } : next(specifier, context);
   }`)}`);
 const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
-const { originOf, planFloor, toLocal } = await import("../../src/world/build.js");
+const { buildItems, originOf, planFloor, toLocal } = await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
 
 const tests = [];
@@ -113,7 +113,8 @@ for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's ite
     execFileSync(process.execPath, [join(root, "bake.mjs"), join(packages, `${name}.storeypath`), out]);
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
-    truly(x.builder === 2 && x.items.length === 9 && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
+    const held = { campus: 9, "campus-hq": 10 }[name]; // campus-hq: and a kiosk
+    truly(x.builder === 2 && x.items.length === held && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
     const want = { items: {}, "items:high": { view: "full" }, "items:light": { form: "light" },
       "items:light:high": { view: "full", form: "light" } };
@@ -235,6 +236,26 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
         `${it.id}: ${JSON.stringify([it.x, it.n, it.fx, it.fn])} vs ${JSON.stringify([want.x, want.n, want.fx, want.fn])}`);
     }
   }
+});
+
+test("a wayfinding kiosk: a plinth, a post and a head, its screen ahead, as tall as its type, seen in the cutaway", async () => {
+  const pkg = await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")));
+  const plan = planFloor(pkg, pkg.floorsOf(HQ).find((f) => f.id.endsWith("-F00")), originOf(pkg, HQ));
+  const k = plan.items.findIndex((i) => i.type === "KIOSK");
+  truly(k >= 0 && plan.items[k].height === 1.7, "a kiosk on the ground floor, 1.7 m tall");
+  const pieces = buildItems(plan);
+  const of = (name) => {
+    const g = pieces.find((p) => p.name === name)?.geometry;
+    const at = [];
+    for (let i = 0; g && i < g.getAttribute("_item").count; i++) if (g.getAttribute("_item").getX(i) === k) at.push(i);
+    return { g, at };
+  };
+  const { g, at } = of("items"), high = of("items:high");
+  truly(at.length === 32 && high.at.length === 0, `four boxes, below the cut: ${at.length} vertices, ${high.at.length} above it`);
+  const top = Math.max(...at.map((i) => g.getAttribute("position").getY(i)));
+  truly(Math.abs(top - (plan.elevation + 1.7)) < 1e-4, `its top at ${top}`);
+  const color = g.getAttribute("color");
+  truly(at.some((i) => color.getX(i) < 0.01 && color.getY(i) < 0.01), "its screen, dark");
 });
 
 test("a catalogue colour that is not #rrggbb is not used: the item takes the default colour", async () => {

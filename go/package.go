@@ -576,6 +576,24 @@ func (p *Package) ItemsOn(floorID string) []*Item {
 	return out
 }
 
+// IsKiosk says whether the item is where a wayfinding kiosk stands: its type is
+// KIOSK, or KIOSK- and more (KIOSK-WALL). Its front is the side its screen faces,
+// where people stand to use it. A system running kiosks links each of its own to
+// such an item by the item's ID: the item's floor is the kiosk's, and Local the
+// "you are here" of its maps and where a way to an office starts.
+func (it *Item) IsKiosk() bool { return it.Type == "KIOSK" || strings.HasPrefix(it.Type, "KIOSK-") }
+
+// KiosksOn is the wayfinding kiosks on a floor (items IsKiosk), in file order.
+func (p *Package) KiosksOn(floorID string) []*Item {
+	var out []*Item
+	for _, it := range p.ItemsOn(floorID) {
+		if it.IsKiosk() {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
 // ItemType is the catalogue's type with a code (an item's Type), or nil when the
 // package has no catalogue or no such type.
 func (p *Package) ItemType(code string) *ItemType { return p.Catalogue.Type(code) }

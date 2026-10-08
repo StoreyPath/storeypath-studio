@@ -50,9 +50,9 @@ folder: `npm run build && python3 -m http.server`, and open `/example/`).
 - **Items** (format 0.6: furniture and equipment) over the spaces and under the
   walls and labels, as Studio draws them: the footprint in its type's colour, its
   front edge darker, and a mark of its kind: a desk's chair, a sofa's seat, the
-  way a TV faces, a photocopier's lid; an access point a small circle with a wifi
-  mark; anything on the ceiling dashed, as overhead. Each is a `<g>` with
-  `data-sp-item`, a button in the tab order. `items: false` (or `setItems(false)`)
+  way a TV faces, a photocopier's lid, a kiosk's screen and the way it faces; an
+  access point a small circle with a wifi mark; anything on the ceiling dashed, as
+  overhead. Each is a `<g>` with `data-sp-item`, a button in the tab order. `items: false` (or `setItems(false)`)
   hides them; `interactiveItems: false` leaves them out of clicks, which then
   choose the space under them. A floor model gives them as `items`, each its middle
   (`at`), the way its front faces (`front`, a direction in the plan's

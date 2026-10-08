@@ -81,6 +81,7 @@
 .sp-item-view { stroke-dasharray: 3 3; }
 .sp-item-chair { fill: var(--sp-item-chair); stroke: var(--sp-item-stroke); stroke-width: 1; }
 .sp-item-dot { fill: var(--sp-item-front); stroke: none; }
+.sp-item-screen { fill: var(--sp-item-front); stroke: none; }
 .sp-item-ap .sp-item-mark { stroke: var(--sp-item-front); stroke-width: 1.5; stroke-linecap: round; }
 .sp-item.sp-selected .sp-item-body, .sp-item:focus-visible .sp-item-body { stroke: var(--sp-select); stroke-width: 3; stroke-dasharray: none; }
 

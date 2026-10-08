@@ -322,6 +322,19 @@ inChrome("draws the items over the spaces and under the labels, each with a mark
   equal(got.fill, "rgb(59, 110, 165)", "the copier in its type's colour");
 });
 
+inChrome("a wayfinding kiosk: its screen along its front, and the way it faces", async (page) => {
+  const plan = floorFromPackage(hq, `${HQ}-F00`);
+  const kiosk = plan.items.find((i) => i.type === "KIOSK");
+  near(kiosk.front, [0, -1], 1e-6, "it faces the drawing's -y: the reception's door");
+  await page.run((p) => window.fresh({}, p), plan);
+  const got = await page.run((id) => {
+    const g = document.querySelector(`[data-sp-item="${id}"]`);
+    return [g.classList.contains("sp-item-kiosk"), g.querySelectorAll(".sp-item-screen").length, g.querySelectorAll(".sp-item-view").length,
+      getComputedStyle(g.querySelector(".sp-item-body")).fill];
+  }, kiosk.id);
+  equal(got, [true, 1, 1, "rgb(217, 120, 43)"], "a kiosk: its screen, the way it faces, its type's colour");
+});
+
 inChrome("an item's colour reaches the page as a colour, never as CSS of its own", async (page) => {
   const changed = structuredClone(pkg);
   for (const t of changed.catalogue.types) if (t.code === "COPIER") t.color = BEACON;

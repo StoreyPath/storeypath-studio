@@ -10,8 +10,8 @@ furnish below), exported a building at a time:
   the Headquarters with desks of several grades in offices (two in one office, one
   in a zone), a photocopier and an access point in a corridor, a sofa in the
   reception, a TV on a meeting room's wall, an open office's desks and access
-  point, a king-size bed in an office; the Annex, turned 110° on the map, with the
-  president's desk;
+  point, a king-size bed in an office, a wayfinding kiosk in the reception; the
+  Annex, turned 110° on the map, with the president's desk;
 - packages/campus-hq-2.storeypath (export 3): the Headquarters' next export after
   it was moved on the map (shifted and turned), a junior staff desk carried to the
   Annex and the TV taken away: only the building is changed, the desk is moved
@@ -183,7 +183,8 @@ def furnish(ws) -> None:
     corridor; a sofa in the reception. On its first floor: a head of section's desk,
     the open office's three desks and its access point (its capacity set to 8 in
     review), and a desk in a zone of the divided hall. In the Annex, turned 110° on the map: the president's desk. Back on
-    the Headquarters' ground floor: a king-size bed in an office."""
+    the Headquarters' ground floor: a king-size bed in an office, and a wayfinding
+    kiosk in the reception, facing its door."""
     from shapely.geometry import shape
 
     from storeypath.workspace import Override
@@ -236,6 +237,8 @@ def furnish(ws) -> None:
     # placed last, so the others keep their numbers
     f_id, (x0, y0, x1, y1) = room("HQ-F00", "006")  # an office for long shifts: its bed's head on the south wall
     place("BED-KING", f_id, (x0 + x1) / 2, y0 + 0.05 + 1.05, rotation=180)
+    f_id, (x0, y0, x1, y1) = room("HQ-F00", "017")  # the reception: a kiosk facing its door, beside the way in
+    place("KIOSK", f_id, (x0 + x1) / 2 + 2.0, y0 + 2.0, model="TS-32")
 
 
 def simple_office(work: Path) -> None:

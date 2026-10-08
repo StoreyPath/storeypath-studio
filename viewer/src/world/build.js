@@ -667,6 +667,16 @@ const DRAW = {
       s.box(it, k, [x, x + pw], [top - 0.01, top + 0.12], [back + 0.06, back + 0.46], linen);
     }
   },
+  // a plinth, a post and a head on it, its screen ahead
+  KIOSK(s, it, k, c) {
+    const { width: w, depth: d, height: h } = it;
+    const plinth = Math.min(0.05, h / 20), head = Math.min(0.8, h * 0.45), b = Math.min(0.04, w / 10, head / 10);
+    const back = -Math.min(0.06, d / 4), front = Math.min(0.08, d / 2);
+    s.box(it, k, [-w / 2, w / 2], [0, plinth], [-d / 2, d / 2], rgb(c, { dark: 0.45 }));
+    s.box(it, k, [-w * 0.2, w * 0.2], [plinth, h - head], [-d * 0.25, d * 0.15], rgb(c));
+    s.box(it, k, [-w / 2, w / 2], [h - head, h], [back, front], rgb(c));
+    s.box(it, k, [-w / 2 + b, w / 2 - b], [h - head + b, h - b], [front, front + 0.004], rgb(SCREEN));
+  },
   // a small disc, under the ceiling
   ACCESS(s, it, k, c) {
     s.disc(it, k, Math.min(it.width, it.depth) / 2, [0, it.height], rgb(c));
@@ -683,14 +693,15 @@ function drawPlain(s, it, k, c) {
 
 /** A floor's furniture and equipment as pieces, as buildPieces gives its other
  * ones: ``form`` "detailed" (each drawn as DRAW says), or "light", a box each, for
- * a whole building at once. Two pieces at most: what stands below the cut
- * (``items``), and what is above it, on a wall or under the ceiling (``items:high``);
- * ``_item`` indexes ``plan.items``. */
+ * a whole building at once. Two pieces at most: what stands on the floor or below
+ * the cut (``items``: a kiosk taller than the cut walls is still seen), and what is
+ * above it, on a wall or under the ceiling (``items:high``); ``_item`` indexes
+ * ``plan.items``. */
 export function buildItems(plan, form = "detailed", options = {}) {
   const o = { ...GEOMETRY, ...options };
   const low = new Shapes(), high = new Shapes();
   plan.items.forEach((it, k) => {
-    const s = it.y + it.height <= o.cutHeight ? low : high;
+    const s = it.mount === "floor" || it.y + it.height <= o.cutHeight ? low : high;
     const placed = { ...it, base: plan.elevation + it.y };
     if (form === "light") drawPlain(s, { ...placed, mount: "floor" }, k, it.color);
     else (DRAW[it.type.split("-")[0]] ?? drawPlain)(s, placed, k, it.color);

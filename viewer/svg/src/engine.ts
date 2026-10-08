@@ -59,7 +59,7 @@ export interface SelectDetail {
 /** How an item is drawn, by its type code's first part (DESK-MANAGER is a desk);
  * others by how they are mounted. */
 const ITEM_KINDS: Record<string, string> = { DESK: "desk", SOFA: "sofa", TV: "tv", SCREEN: "tv", COPIER: "copier",
-  PRINTER: "copier", ACCESS: "ap", BED: "bed" };
+  PRINTER: "copier", ACCESS: "ap", BED: "bed", KIOSK: "kiosk" };
 const itemKind = (it: PlanItem): string =>
   ITEM_KINDS[(it.type ?? "").split("-")[0]!] ?? (it.mount === "ceiling" ? "round" : "plain");
 const fine = (v: number): number => Math.round(v * 1e4) / 1e4;
@@ -457,6 +457,11 @@ export class FloorPlanEngine extends EventTarget {
           mark("rect", { x: round(-w / 2 + 0.06 + i * (pw + gap)), y: round(back + 0.06), width: round(pw), height: 0.4, rx: 0.08 });
         }
         mark("line", { x1: round(-w / 2), y1: round(back + 0.62), x2: round(w / 2), y2: round(back + 0.62) });
+      } else if (kind === "kiosk") { // its screen along its front, and the way it faces
+        const t = Math.min(0.08, d / 4), m = Math.min(0.06, w / 8);
+        mark("rect", { x: round(-w / 2 + m), y: round(d / 2 - t), width: round(w - 2 * m), height: round(t) }, "sp-item-screen");
+        mark("path", { d: `M${round(-w * 0.3)},${round(d / 2)}L0,${round(d / 2 + Math.min(0.5, w * 0.6))}L${round(w * 0.3)},${round(d / 2)}` },
+          "sp-item-mark sp-item-view");
       } else if (kind === "copier") { // its lid
         const m = Math.min(0.08, w / 8, d / 8);
         mark("rect", { x: round(-w / 2 + m), y: round(-d / 2 + m), width: round(w - 2 * m), height: round((d - 2 * m) * 0.6) });

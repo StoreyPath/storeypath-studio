@@ -108,7 +108,7 @@ def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str, g
 
 def default_catalogue() -> Catalogue:
     """What a new Studio starts with: desks by grade, central photocopiers, access
-    points, sofas, TVs and beds. People add more as they need them."""
+    points, sofas, TVs, beds and wayfinding kiosks. People add more as they need them."""
     return Catalogue(types=[
         _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b", "president"),
         _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532", "c_level"),
@@ -138,6 +138,12 @@ def default_catalogue() -> Catalogue:
                  width=1.9, depth=2.1, height=1.0, mount="floor", color="#8a5a6e"),
         ItemType(code="BED-QUEEN", name_en="Queen-size bed", name_ar="سرير مقاس كوين", category="furniture",
                  width=1.7, depth=2.1, height=1.0, mount="floor", color="#a87b8c"),
+        # where a kiosk stands, its screen at its front: where people look for their
+        # office, and later start the way to it (a system that guides people links its
+        # kiosks to these items)
+        ItemType(code="KIOSK", name_en="Wayfinding kiosk", name_ar="كشك إرشاد", category="equipment",
+                 width=0.6, depth=0.45, height=1.7, mount="floor", color="#d9782b",
+                 fields=[ItemField(key="model", name_en="Model", name_ar="الطراز")]),
     ])
 
 
