@@ -560,9 +560,55 @@ def serve(
         "--allowed-host",
         help="another name Studio is reached by (a server's, a proxy's), as typed in the browser; again for "
              "more. localhost, this machine's name and addresses always are; also STOREYPATH_ALLOWED_HOSTS")] = None,
+    cert: Annotated[Optional[Path], typer.Option(
+        help="your organization's certificate (PEM, with its chain), in place of the one Studio makes")] = None,
+    key: Annotated[Optional[Path], typer.Option(help="that certificate's private key (PEM)")] = None,
+    http: Annotated[bool, typer.Option(
+        "--http", help="plain HTTP, not HTTPS: for development, or behind a proxy that speaks HTTPS")] = False,
+    secure_cookies: Annotated[bool, typer.Option(
+        "--secure-cookies", help="with --http behind an HTTPS proxy: the session cookie is sent over HTTPS only")] = False,
 ):
-    """Run StoreyPath Studio in the browser: projects, drawings, review, export."""
-    _serve(data, host, port, "/" , open_browser, allowed=allowed_host or [])
+    """Run StoreyPath Studio in the browser: projects, drawings, review, export. Over
+    HTTPS, with a certificate Studio makes in <data>/tls/ (browsers warn once: compare
+    the fingerprint it prints), or your own (--cert, --key). People log in: the first
+    start prints a link to set up the first admin (or set STOREYPATH_ADMIN_PASSWORD);
+    `storeypath users` manages accounts too."""
+    import ssl
+
+    from .accounts import Accounts
+    from .tls import context, fingerprint, studio_certificate
+
+    tls = None
+    if http:
+        if cert is not None or key is not None:
+            _fail("--http serves no certificate: leave out --cert and --key")
+    elif cert is not None or key is not None:
+        if cert is None:
+            _fail("--key needs --cert")
+        try:
+            tls = context(cert, key)
+        except (OSError, ssl.SSLError) as e:
+            _fail(f"cannot use the certificate {cert}: {e}")
+        typer.echo(f"HTTPS with {cert} (SHA-256 {fingerprint(cert)})")
+    else:
+        try:
+            made = studio_certificate(data, host, allowed_host or [])
+            tls = context(made.cert, made.key)
+        except (OSError, ValueError, ssl.SSLError) as e:
+            _fail(f"cannot make Studio's certificate in {data / 'tls'}: {e}")
+        typer.echo(f"HTTPS with Studio's own certificate ({'made now' if made.made else made.cert}), for "
+                   f"{', '.join(made.names)}\n  SHA-256 {made.fingerprint}\n"
+                   "  browsers warn once about it: check the fingerprint they show is this one; to be reached "
+                   "by another name or address, give it with --allowed-host")
+    accounts = Accounts(data)
+    try:
+        made = accounts.bootstrap()
+    except ValueError as e:
+        _fail(f"STOREYPATH_ADMIN_PASSWORD: {e}")
+    if made is not None:
+        typer.echo(f"the first admin, {made.username}, made from STOREYPATH_ADMIN_PASSWORD")
+    _serve(data, host, port, "/", open_browser, allowed=allowed_host or [], accounts=accounts,
+           tls=tls, secure_cookies=secure_cookies)
 
 
 @app.command()
@@ -571,24 +617,33 @@ def review(
     port: Annotated[int, typer.Option()] = 8766,
     open_browser: Annotated[bool, typer.Option("--open/--no-open")] = True,
 ):
-    """Open the review editor: each floor over its drawing, click a space to correct it."""
+    """Open the review editor: each floor over its drawing, click a space to correct it.
+    On this computer alone (127.0.0.1), without accounts."""
     ws = _load(workspace)
     _serve(workspace.parent, "127.0.0.1", port, f"/review.html?p={ws.id}", open_browser,
-           f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them")
+           f"reviewing {ws.project.name} ({ws.id}); corrections are saved as you make them", accounts=None)
 
 
 def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
-           allowed: list[str] | None = None) -> None:
+           allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False) -> None:
     from .server import Studio, make_server
 
     studio = Studio(data)
     try:
-        server = make_server(studio, host, port, allowed=allowed or [])
+        server = make_server(studio, host, port, allowed=allowed or [], accounts=accounts, tls=tls,
+                             secure_cookies=secure_cookies)
     except OSError as e:
         _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
-    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{server.server_port}{page}"
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    scheme = "https" if tls is not None else "http"
+    url = f"{scheme}://{shown}:{server.server_port}{page}"
     status = studio.status()
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
+    token = accounts.setup_token() if accounts is not None else None
+    if token is not None:
+        typer.echo("no users yet: make the first admin at this link (it works once; a new one is printed at each start until then)\n"
+                   f"  {scheme}://{shown}:{server.server_port}/setup.html#{token}"
+                   + ("\n  (or by this machine's name or address instead of 127.0.0.1)" if shown != host else ""))
     typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
                + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
@@ -606,6 +661,182 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     finally:
         server.server_close()
         studio.model.close()
+
+
+# ---- users, backups --------------------------------------------------------------
+
+users_app = typer.Typer(no_args_is_help=True, help="The accounts of a Studio data folder (safe while Studio runs).")
+app.add_typer(users_app, name="users")
+DataOption = Annotated[Path, typer.Option(help="Studio's data folder")]
+
+
+def _accounts(data: Path):
+    from .accounts import Accounts
+
+    if not data.is_dir():
+        _fail(f"{data} is not a folder")
+    return Accounts(data)
+
+
+def _user_named(accounts, username: str):
+    user = accounts.by_username(username)
+    if user is None:
+        _fail(f"no user {username}")
+    return user
+
+
+def _new_password(password_stdin: bool, username: str) -> str:
+    from .accounts import check_password
+
+    if password_stdin:
+        import sys
+
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    try:
+        return check_password(password, username)
+    except ValueError as e:
+        _fail(str(e))
+
+
+@users_app.command("add")
+def users_add(
+    username: str,
+    role: Annotated[str, typer.Option(help="admin, engineer or user")] = "user",
+    name: Annotated[Optional[str], typer.Option(help="as shown (default: the username)")] = None,
+    capability: Annotated[Optional[list[str]], typer.Option(
+        help="backup (download the whole data folder) or catalogue (change the item types); again for both")] = None,
+    data: DataOption = Path("."),
+    password_stdin: Annotated[bool, typer.Option("--password-stdin", help="read the password from standard input")] = False,
+    temporary: Annotated[bool, typer.Option("--temporary/--permanent",
+                                            help="the person changes the password at their first login")] = True,
+):
+    """Add a user (asks for the password twice)."""
+    accounts = _accounts(data)
+    password = _new_password(password_stdin, username.strip().lower())
+    try:
+        user = accounts.add_user(username, password, name=name or "", role=role, capabilities=capability or [],
+                                 must_change_password=temporary)
+    except ValueError as e:
+        _fail(str(e))
+    accounts.audit("user created", None, "command line", user.username, role=user.role, capabilities=user.capabilities)
+    typer.echo(f"added {user.username} ({user.role}{', ' + ', '.join(user.capabilities) if user.capabilities else ''})"
+               + ("; they change the password at their first login" if temporary else ""))
+
+
+@users_app.command("list")
+def users_list(data: DataOption = Path(".")):
+    """List the users."""
+    accounts = _accounts(data)
+    for u in accounts.users():
+        caps = ",".join(u.capabilities) or "-"
+        state = "active" if u.active else "disabled"
+        typer.echo(f"{u.username:<24} {u.role:<9} {caps:<18} {state:<9} last login {u.last_login_at or 'never'}"
+                   f"  {u.name}")
+
+
+@users_app.command("passwd")
+def users_passwd(
+    username: str,
+    data: DataOption = Path("."),
+    password_stdin: Annotated[bool, typer.Option("--password-stdin", help="read the password from standard input")] = False,
+    temporary: Annotated[bool, typer.Option("--temporary/--permanent",
+                                            help="the person changes it at their next login")] = True,
+):
+    """Set a user's password (their sessions end)."""
+    accounts = _accounts(data)
+    user = _user_named(accounts, username)
+    password = _new_password(password_stdin, user.username)
+    accounts.set_password(user.id, password, temporary=temporary)
+    accounts.audit("password reset", None, "command line", user.username)
+    typer.echo(f"password of {user.username} set" + ("; they change it at their next login" if temporary else ""))
+
+
+def _set_active(username: str, data: Path, active: bool) -> None:
+    accounts = _accounts(data)
+    user = _user_named(accounts, username)
+    try:
+        accounts.update_user(user.id, active=active)
+    except ValueError as e:
+        _fail(str(e))
+    accounts.audit("user disabled" if not active else "user changed", None, "command line", user.username,
+                   **({"active": True} if active else {}))
+    typer.echo(f"{user.username} {'enabled' if active else 'disabled: their sessions have ended'}")
+
+
+@users_app.command("disable")
+def users_disable(username: str, data: DataOption = Path(".")):
+    """Disable a user: they cannot log in, and their sessions end (they are never deleted)."""
+    _set_active(username, data, False)
+
+
+@users_app.command("enable")
+def users_enable(username: str, data: DataOption = Path(".")):
+    """Let a disabled user log in again."""
+    _set_active(username, data, True)
+
+
+@users_app.command("role")
+def users_role(username: str, role: Annotated[str, typer.Argument(help="admin, engineer or user")],
+               data: DataOption = Path(".")):
+    """Change a user's role (their sessions end)."""
+    accounts = _accounts(data)
+    user = _user_named(accounts, username)
+    try:
+        accounts.update_user(user.id, role=role)
+    except ValueError as e:
+        _fail(str(e))
+    accounts.audit("user changed", None, "command line", user.username, role=role)
+    typer.echo(f"{user.username} is now {role}")
+
+
+@app.command()
+def backup(
+    data: DataOption = Path("."),
+    out: Annotated[Optional[Path], typer.Option(help="the file (default: storeypath-backup-<UTC time>.tar.gz here)")] = None,
+):
+    """Write the whole data folder (projects, item types, users, sharing, audit log) as
+    one .tar.gz, as Studio's Backup does. Waits for a job Studio is running to finish."""
+    from .accounts import Accounts
+    from .backup import backup_name, jobs_paused, write_backup
+
+    if not data.is_dir():
+        _fail(f"{data} is not a folder")
+    out = out or Path(backup_name())
+    if out.exists():
+        _fail(f"{out} exists already")
+    if out.resolve().is_relative_to(data.resolve()):
+        _fail("write the backup outside the data folder")
+    part = out.with_name(out.name + ".part")
+    try:
+        with jobs_paused(data), open(part, "wb") as f:
+            counts = write_backup(data, f)
+        part.replace(out)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    Accounts(data).audit("backup", None, "command line", out.name)
+    typer.echo(f"{out}: {counts['files']} files, {counts['bytes'] / 1e6:.1f} MB before compression")
+
+
+@app.command()
+def restore(
+    archive: Annotated[Path, typer.Argument(help="a backup (.tar.gz)")],
+    data: Annotated[Path, typer.Option(help="an empty folder to restore into (Studio not running on it)")],
+):
+    """Put a backup into an empty data folder: its projects, item types, users and sharing."""
+    from .backup import restore as restore_backup
+
+    if not archive.is_file():
+        _fail(f"{archive} is not a file")
+    try:
+        counts = restore_backup(archive, data)
+    except (ValueError, OSError) as e:
+        _fail(str(e))
+    except Exception as e:  # tarfile's own: a damaged file
+        _fail(f"not a StoreyPath backup: {e}")
+    typer.echo(f"restored {counts['files']} files into {data}")
 
 
 @app.command()

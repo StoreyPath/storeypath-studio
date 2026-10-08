@@ -150,3 +150,71 @@ dialog.private-review p { margin: 0; }
 .site-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .site-fields input { width: 7em; }
 
+/* logging in, setting up */
+.topbar .end { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.auth-page { max-width: 440px; padding-top: 56px; }
+.auth-card { display: flex; flex-direction: column; gap: 14px; padding: 24px; }
+.auth-card h1 { font-size: 22px; }
+.auth-card .lead { margin: 0; }
+.auth-form { display: flex; flex-direction: column; gap: 12px; }
+.auth-form button.primary { justify-content: center; padding: 9px 12px; }
+input[type="password"] {
+  font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%;
+}
+.form-error { margin: 0; color: var(--danger); font-size: 13px; }
+.note { margin: 0; font-size: 13px; padding: 10px 12px; border-radius: 8px; background: var(--hover); }
+
+/* who a project is shared with (share.js) */
+.project-card { position: relative; }
+.project-card .card-link { position: absolute; inset: 0; border-radius: 12px; }
+.project-card .card-actions { position: relative; z-index: 1; display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.project-card .card-actions button { padding: 3px 10px; font-size: 13px; }
+.owner-line { font-size: 12px; color: var(--muted); }
+dialog.share { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px 22px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); }
+dialog.share[open] { display: flex; flex-direction: column; gap: 12px; }
+dialog.share::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.share h2 { margin: 0; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }
+dialog.share h3 { font-size: 13px; margin: 6px 0 0; }
+.grants { width: 100%; border-collapse: collapse; font-size: 14px; }
+.grants th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.grants td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.grants td select { width: auto; padding: 4px 8px; }
+.grants td.actions { text-align: right; white-space: nowrap; }
+.grants-wrap { overflow: auto; max-height: 40vh; }
+.share-add { display: grid; grid-template-columns: 1.2fr 1.6fr .8fr auto; gap: 8px; align-items: end; }
+.share-add label, .share-owner label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.share-owner { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.share-owner select { width: auto; min-width: 200px; }
+
+/* users (admins) */
+.users { width: 100%; border-collapse: collapse; font-size: 14px; }
+.users th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.users td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.users tr.disabled td { color: var(--muted); }
+.users td select { width: auto; padding: 4px 8px; }
+.users td input[type="text"] { min-width: 140px; padding: 4px 8px; }
+.users .caps { display: flex; gap: 10px; flex-wrap: wrap; }
+.users .caps label { display: inline-flex; gap: 4px; align-items: center; font-size: 13px; white-space: nowrap; }
+.users .actions { white-space: nowrap; text-align: right; }
+.users .actions button { padding: 3px 10px; font-size: 13px; }
+.table-wrap { overflow-x: auto; }
+.user-add { display: grid; grid-template-columns: 1fr 1.2fr .8fr auto auto; gap: 10px; align-items: end; }
+.user-add > label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.user-add .caps { display: flex; flex-direction: column; gap: 4px; }
+.user-add .caps label { margin: 0; font-size: 13px; color: var(--text); }
+.secret { font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 12px; border-radius: 8px;
+  background: var(--hover); user-select: all; display: inline-block; }
+.audit { list-style: none; margin: 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; }
+.audit li { display: grid; grid-template-columns: 150px 120px 1fr auto; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.audit li > span { overflow-wrap: anywhere; }
+.audit .failed, .audit .throttled, .audit .interrupted { color: var(--danger); }
+
+@media (max-width: 720px) {
+  .share-add, .user-add { grid-template-columns: 1fr; }
+  .audit li { grid-template-columns: 1fr; gap: 2px; }
+  .account-name { display: none; }
+  .account-button { padding: 4px; }
+}
+

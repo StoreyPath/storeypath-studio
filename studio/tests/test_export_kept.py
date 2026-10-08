@@ -16,7 +16,8 @@ from typer.testing import CliRunner
 from storeypath import catalogue
 from storeypath.cli import app
 from storeypath.samples import build_demo
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from sessions import admin_server
 from storeypath.workspace import Workspace
 
 
@@ -54,7 +55,7 @@ def finished(base, job):
 def studio(tmp_path):
     ws_path, _ = build_demo(tmp_path / "data" / "demo")
     s = Studio(tmp_path / "data", model=NoModel(), warm=False)
-    srv = make_server(s, port=0)
+    srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}", ws_path
     srv.shutdown()

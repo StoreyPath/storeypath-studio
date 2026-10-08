@@ -16,7 +16,8 @@ from shapely.geometry import LineString, shape
 from storeypath.package import FORMAT_VERSION
 from storeypath.review import NotFound, Review
 from storeypath.samples import office_floor, write_floor_dxf, write_sheet_dxf
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from sessions import admin_server
 from storeypath.workspace import Override, Workspace
 
 
@@ -176,7 +177,7 @@ def test_a_floor_as_printed_lies_under_its_spaces(review):
 @pytest.fixture
 def studio(tmp_path):
     s = Studio(tmp_path / "data", model=NoModel())
-    srv = make_server(s, port=0)
+    srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}", s
     srv.shutdown()
@@ -482,7 +483,8 @@ def test_project_folders_are_named_by_code_not_by_name(studio):
         path = app.path(code)
         assert path == app.data / code / f"{code}.spproj"  # the name people type is only shown
         assert Workspace.load(path).project.name == name
-    assert sorted(p.name for p in app.data.iterdir()) == sorted(codes)
+    # (beside them: the accounts, sharing and audit log, never named by what people type)
+    assert sorted(p.name for p in app.data.iterdir() if p.is_dir()) == sorted(codes)
 
 
 def test_pages_answer_while_a_job_changes_a_project(studio):

@@ -11,7 +11,8 @@ import urllib.request
 
 import pytest
 
-from storeypath.server import Studio, allowed_hosts, make_server
+from sessions import admin_server, cookie
+from storeypath.server import Studio, allowed_hosts
 
 
 class NoModel:
@@ -32,7 +33,7 @@ def server(tmp_path, monkeypatch):
 
     def start(**kw):
         studio = Studio(tmp_path / "data", model=NoModel(), warm=False)
-        srv = make_server(studio, port=0, **kw)
+        srv = admin_server(studio, port=0, **kw)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         servers.append(srv)
         return srv.server_port, studio
@@ -65,7 +66,7 @@ def exchange(port: int, raw: bytes, wait: float = 1.0) -> tuple[list[str], bool]
 
 
 def request(method: str, path: str, port: int, body: bytes = b"", headers: dict | None = None) -> bytes:
-    head = {"Host": f"127.0.0.1:{port}", "Content-Length": str(len(body)), **(headers or {})}
+    head = {"Host": f"127.0.0.1:{port}", "Content-Length": str(len(body)), "Cookie": cookie(port), **(headers or {})}
     return (f"{method} {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in head.items() if v is not None)
             + "\r\n").encode() + body
 

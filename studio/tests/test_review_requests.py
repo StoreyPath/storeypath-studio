@@ -11,7 +11,8 @@ import pytest
 
 from storeypath.review import NotFound, Review
 from storeypath.samples import build_demo
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from sessions import admin_server
 from storeypath.workspace import Workspace
 
 NOT_NUMBERS = ["NaN", "nan", "Infinity", "-inf", "1e999", None, True, "", "x"]
@@ -88,7 +89,7 @@ def test_a_plans_numbers_are_checked_before_anything_changes(demo):
 def test_json_nan_is_refused_by_the_server(demo):
     ws_path, ws, f0 = demo
     s = Studio(ws_path.parent.parent, model=NoModel(), warm=False)
-    srv = make_server(s, port=0)
+    srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         base = f"http://127.0.0.1:{srv.server_port}"

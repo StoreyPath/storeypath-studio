@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up · StoreyPath Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body class="studio">
+  <header class="topbar">
+    <a class="brand" href="/">StoreyPath <span>Studio</span></a>
+  </header>
+
+  <main class="page auth-page">
+    <section class="card auth-card" id="setup-card" hidden>
+      <h1>Set up Studio</h1>
+      <p class="lead">Studio has no users yet. Make the first admin: they add everyone else, and choose who sees which
+        projects.</p>
+      <form id="setup" class="auth-form">
+        <label class="field"><span>Username <span class="muted">(letters, digits, . - _)</span></span>
+          <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"
+                 pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" required>
+        </label>
+        <label class="field"><span>Your name <span class="muted">(as others see it)</span></span>
+          <input id="name" type="text" autocomplete="name">
+        </label>
+        <label class="field"><span>Password <span class="muted">(at least 10 characters)</span></span>
+          <input id="password" type="password" autocomplete="new-password" minlength="10" required>
+        </label>
+        <label class="field">The password again
+          <input id="again" type="password" autocomplete="new-password" minlength="10" required>
+        </label>
+        <p id="setup-error" class="form-error" role="alert" hidden></p>
+        <button class="primary" type="submit">Make the first admin</button>
+      </form>
+    </section>
+
+    <section class="card auth-card" id="done-card" hidden>
+      <h1>Studio is set up</h1>
+      <p class="lead" id="done-why">It has its admin already: log in.</p>
+      <div class="row"><a class="button primary" href="/login.html">Log in</a></div>
+    </section>
+  </main>
+
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

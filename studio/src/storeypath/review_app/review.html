@@ -19,6 +19,7 @@
 <body>
   <aside id="panel">
     <header>
+      <div id="account"></div>
       <a id="back" class="back" href="/">← Projects</a>
       <h1 id="project-name">StoreyPath Review</h1>
       <div id="project-meta" class="meta"></div>
@@ -28,9 +29,10 @@
       <label class="field">Floor
         <select id="floor"></select>
       </label>
+      <span id="view-only" class="badge view-only" hidden title="You may look at this floor, not change it: its owner, or whoever shares it, can let you">View only</span>
       <div id="floor-meta" class="meta"></div>
       <div class="row">
-        <button id="convert" type="button" title="Read the floor's drawing again; IDs and corrections are kept">Re-read drawing</button>
+        <button id="convert" type="button" class="edit-only" title="Read the floor's drawing again; IDs and corrections are kept">Re-read drawing</button>
         <a id="walk3d" class="button" target="_blank" title="This floor in 3D, as it is now: orbit it or walk through it">Walk in 3D</a>
         <a id="open-print" class="button" target="_blank" title="The floor's drawing as printed, full size, in a new tab">Open print</a>
       </div>
@@ -66,12 +68,12 @@
           <span class="detected" id="ed-capacity-from"></span>
         </label>
         <div class="meta" id="ed-area"></div>
-        <div class="row">
+        <div class="row edit-only">
           <button id="ed-save" type="submit" class="primary">Save</button>
           <button id="ed-reset" type="button" title="Remove the corrections and use what was detected">Use detected</button>
         </div>
         <div class="row flags">
-          <button id="ed-delete" type="button" title="Not there, or not worth anything (a sliver, the outside): out of the plan, the lists and the 3D view; kept with its ID, and back with Show deleted">Delete</button>
+          <button id="ed-delete" type="button" class="edit-only" title="Not there, or not worth anything (a sliver, the outside): out of the plan, the lists and the 3D view; kept with its ID, and back with Show deleted">Delete</button>
           <span id="ed-flags" class="meta"></span>
         </div>
       </form>
@@ -90,9 +92,9 @@
         <label>Floor <select id="as-floor"></select></label>
       </div>
       <div id="as-fields" class="as-grid"></div>
-      <p class="meta">Drag it to move it: near a wall or another item it turns square and moves up against it, and it stays in its room (hold Alt to move it freely, or out of the room). R turns it 90°, [ and ] by 15°, the arrows move it (Shift: further).</p>
+      <p class="meta edit-only">Drag it to move it: near a wall or another item it turns square and moves up against it, and it stays in its room (hold Alt to move it freely, or out of the room). R turns it 90°, [ and ] by 15°, the arrows move it (Shift: further).</p>
       <div class="row flags">
-        <button id="as-delete" type="button" title="Delete (Del)">Delete</button>
+        <button id="as-delete" type="button" class="edit-only" title="Delete (Del)">Delete</button>
         <span id="as-flags" class="meta"></span>
       </div>
     </section>
@@ -104,7 +106,7 @@
       </div>
       <div class="id-row"><code id="it-id"></code></div>
       <div id="it-meta" class="meta"></div>
-      <form id="it-size" class="size-form" autocomplete="off" hidden>
+      <form id="it-size" class="size-form edit-only" autocomplete="off" hidden>
         <label>Width <input name="width" type="number" min="0.3" max="8" step="0.05" placeholder="as drawn"> m</label>
         <label class="sill">Sill <input name="sill" type="number" min="0" max="3" step="0.05" placeholder="as drawn"> m</label>
         <label>Height <input name="height" type="number" min="0.3" max="10" step="0.05" placeholder="as drawn"> m</label>
@@ -114,7 +116,7 @@
         </div>
       </form>
       <div class="row flags">
-        <button id="it-delete" type="button" title="Delete (Del)">Delete</button>
+        <button id="it-delete" type="button" class="edit-only" title="Delete (Del)">Delete</button>
         <span id="it-flags" class="meta"></span>
       </div>
     </section>
@@ -172,7 +174,7 @@
       </div>
       <button id="update3d" type="button" hidden title="Show the changes made since the 3D view was built">Update 3D</button>
       <button id="fit" type="button" class="only2d" title="Show the whole floor (F)">Fit</button>
-      <label class="only2d" title="Furniture and equipment: choose a type, then click in the room where it goes; it lines up with the walls and items near it (Alt-click: anywhere, as it is). Esc to stop">Place
+      <label class="only2d edit-only" title="Furniture and equipment: choose a type, then click in the room where it goes; it lines up with the walls and items near it (Alt-click: anywhere, as it is). Esc to stop">Place
         <select id="place-type"><option value="">an item…</option></select>
       </label>
       <label class="only2d" title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
@@ -185,7 +187,7 @@
       </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
-      <span class="hint only2d" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, S space, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
+      <span class="hint only2d edit-only" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, S space, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
       <span class="hint only3d" title="On a trackpad: hold Shift and drag to move it; pinch or scroll with two fingers to zoom">Drag to turn · Shift-drag or right-drag to move · scroll to zoom</span>
       <span id="status" class="meta"></span>
     </div>
