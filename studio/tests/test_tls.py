@@ -134,8 +134,9 @@ def test_a_slow_client_holds_up_no_other(https):
             s.close()
 
 
-def test_serve_speaks_https_by_default_and_prints_how_to_check_it(tmp_path):
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path), "STOREYPATH_ADMIN_PASSWORD": PASSWORD}
+def test_serve_speaks_https_by_default_and_prints_how_to_check_it(tmp_path, databases):
+    env = {**databases.env(tmp_path / "data"), "PYTHONPATH": os.pathsep.join(sys.path),
+           "STOREYPATH_ADMIN_PASSWORD": PASSWORD}
     env.pop("STOREYPATH_ALLOWED_HOSTS", None)
     proc = subprocess.Popen([sys.executable, "-c", "from storeypath.cli import main; main()", "serve",
                              "--data", str(tmp_path / "data"), "--port", "0", "--allowed-host", "studio.lan"],

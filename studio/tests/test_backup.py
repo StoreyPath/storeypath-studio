@@ -91,7 +91,7 @@ def test_restore_puts_it_all_back_into_an_empty_database(data, tmp_path, databas
     counts = restore(archive, target)
     assert counts["rows"] > 50
     back = ProjectStore(studio_db_module.connect(target))
-    assert back.current(ws.id) == store.current(ws.id)
+    assert back.current(ws.id).model_dump(mode="json") == store.current(ws.id).model_dump(mode="json")
     assert back.drawing_bytes(ws.id, "level-2.dxf") == store.drawing_bytes(ws.id, "level-2.dxf")
     assert back.words(ws.id, "level-2.dxf") == "its words"
     assert back.export_bytes(ws.id, "p-001.storeypath") == b"PK the package as sent"

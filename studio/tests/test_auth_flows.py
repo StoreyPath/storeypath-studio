@@ -5,6 +5,7 @@ password is changed before anything else; the first admin is set up once; logins
 are throttled; a backup is streamed; Studio without accounts serves this computer
 alone."""
 
+import gzip
 import io
 import json
 import shutil
@@ -195,7 +196,7 @@ def test_items_carried_between_floors_need_both(campus):
     code, b = ids["demo"], tokens["bob"]
     accounts.set_grant(code, users["bob"].id, Scope(kind="floor", id=ids["hq0"]), "edit", users["eng"].id)
     accounts.set_grant(code, users["bob"].id, Scope(kind="floor", id=ids["hq1"]), "view", users["eng"].id)
-    ws = Workspace.load(studio.path(code))
+    ws = studio.workspace(code)
     desk = next(i for i in ws.items.values() if i.floor_id == ids["hq0"])
     sofa = next(i for i in ws.items.values() if i.floor_id == ids["hq1"])
     assert call(port, "POST", f"/api/projects/{code}/items/{desk.id}", {"x": 3}, token=b)[0] == 200
@@ -287,7 +288,7 @@ def test_opening_a_file_needs_the_right_to_what_it_changes(campus, tmp_path):
     assert call(port, "PUT", "/api/open?replace=Demo%20Campus", raw=project_file, token=tokens["other"])[0] == 403
     assert call(port, "PUT", "/api/open", raw=project_file, token=tokens["eng"])[0] == 409
     # a new project: admins and engineers, who then own it
-    other = Workspace.load(studio.path(ids["demo"])).save_as_new_project(tmp_path / "copy.spproj", "Copy")
+    other = studio.store.load(ids["demo"]).save_as_new_project(tmp_path / "copy.spproj", "Copy")
     from storeypath.export import export_package
 
     export_package(other, tmp_path / "copy.storeypath", building=f"{other.id}-DEMO-HQ", record=False)
@@ -435,11 +436,10 @@ def test_a_backup_is_streamed_whole_and_recorded(campus):
     assert status == 200 and res.getheader("Content-Type") == "application/gzip"
     assert res.getheader("Content-Length") is None and res.getheader("Connection") == "close"
     name = res.getheader("Content-Disposition").split('filename="')[1].rstrip('"')
-    assert name.startswith("storeypath-backup-") and name.endswith(".tar.gz")
-    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-        names = set(tar.getnames())
-    assert {"storeypath-data/studio.db",
-            f"storeypath-data/{ids['sheet']}/{ids['sheet']}.spproj", "storeypath-data/demo/demo.spproj"} <= names
+    assert name.startswith("storeypath-backup-") and name.endswith(".sql.gz")
+    dump = gzip.decompress(blob).decode()  # the database, whole: every project, its drawings, the accounts
+    assert dump.startswith("-- StoreyPath Studio backup") and "COPY storeypath.users (" in dump
+    assert ids["sheet"] in dump and ids["demo"] in dump and "boss" in dump
     entry = accounts.audit_tail()[0]
     assert (entry["action"], entry["target"], entry["outcome"], entry["user"]["username"]) == \
         ("backup", name, "ok", "boss")

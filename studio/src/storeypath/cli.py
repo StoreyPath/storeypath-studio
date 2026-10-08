@@ -28,6 +28,7 @@ from .workspace import Override, Placement, SourceDrawing, Workspace
 app = typer.Typer(no_args_is_help=True, help="Convert DWG/DXF floor plans into indoor map packages.")
 
 WorkspaceArg = Annotated[Path, typer.Argument(help="Workspace file (*.spproj)")]
+REVIEW_DATABASE = "storeypath_review_"  # `storeypath review`: the database it makes for the while, named so
 
 
 def _load(path: Path) -> Workspace:
@@ -686,7 +687,7 @@ def review(
 
     ws = _load(workspace)
     server = databases.default_url(workspace.parent)
-    name = f"storeypath_review_{uuid.uuid4().hex[:12]}"
+    name = f"{REVIEW_DATABASE}{uuid.uuid4().hex[:12]}"
     try:
         with psycopg.connect(server, autocommit=True) as conn:
             conn.execute(f'CREATE DATABASE "{name}"')
@@ -809,7 +810,7 @@ def users_add(
     role: Annotated[str, typer.Option(help="admin, engineer or user")] = "user",
     name: Annotated[Optional[str], typer.Option(help="as shown (default: the username)")] = None,
     capability: Annotated[Optional[list[str]], typer.Option(
-        help="backup (download the whole data folder) or catalogue (change the item types); again for both")] = None,
+        help="backup (download the whole database) or catalogue (change the item types); again for both")] = None,
     data: DataOption = Path("."),
     password_stdin: Annotated[bool, typer.Option("--password-stdin", help="read the password from standard input")] = False,
     temporary: Annotated[bool, typer.Option("--temporary/--permanent",

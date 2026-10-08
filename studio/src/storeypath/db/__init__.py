@@ -50,8 +50,10 @@ def default_url(data: str | Path | None = None) -> str:
 
 
 def shown(url: str) -> str:
-    """A database's URL as it may be shown: without its password."""
-    return re.sub(r"(://[^:/@]+):[^@/]*@", r"\1:***@", url)
+    """A database's URL (or connection string) as it may be shown: without its password."""
+    url = re.sub(r"(://[^:/@]+):[^@/]*@", r"\1:***@", url)
+    url = re.sub(r"([?&]password=)[^&]*", r"\1***", url)
+    return re.sub(r"(^|\s)password=('(?:[^'\\]|\\.)*'|\S*)", r"\1password=***", url)
 
 
 class Database:

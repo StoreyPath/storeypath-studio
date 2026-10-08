@@ -1,6 +1,7 @@
 """`storeypath users`, `backup` and `restore`: the accounts of a data folder changed from
 the command line (while Studio runs, too), and the folder backed up and put back."""
 
+import gzip
 import io
 import tarfile
 
@@ -69,28 +70,31 @@ def test_users_are_added_listed_and_changed_from_the_command_line(tmp_path):
     assert {"user created", "password reset", "user changed", "user disabled"} <= set(actions)
 
 
-def names(blob: bytes) -> set[str]:
-    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-        return set(tar.getnames())
-
-
 def test_the_command_line_backs_up_and_restores(tmp_path):
+    from storeypath.db.store import ProjectStore
+    from storeypath import db as studio_db
+    from storeypath.workspace import Workspace
+
     data = tmp_path / "data"
-    (data / "K7Q2XM").mkdir(parents=True)
-    (data / "K7Q2XM" / "K7Q2XM.spproj").write_text("{}")
+    data.mkdir()
+    ws = Workspace.new("Kept")
+    ws.add_location("SITE", "Site")
+    ProjectStore(studio_db.connect(data=data)).create(ws)
     Accounts(data).add_user("boss", PASSWORD, role="admin", must_change_password=False)
-    out = tmp_path / "copy.tar.gz"
+    out = tmp_path / "copy.sql.gz"
     r = run("backup", "--data", data, "--out", out)
     assert r.exit_code == 0, r.output
-    assert {f"{ROOT}/studio.db", f"{ROOT}/K7Q2XM/K7Q2XM.spproj"} <= names(out.read_bytes())
+    dump = gzip.decompress(out.read_bytes()).decode()
+    assert "COPY storeypath.users (" in dump and ws.id in dump
     assert any(e["action"] == "backup" for e in Accounts(data).audit_tail())
-    r = run("backup", "--data", data, "--out", data / "inside.tar.gz")
+    r = run("backup", "--data", data, "--out", data / "inside.sql.gz")
     assert r.exit_code == 1 and "outside" in r.output
     r = run("restore", out, "--data", tmp_path / "new")
     assert r.exit_code == 0, r.output
     assert Accounts(tmp_path / "new").login("boss", PASSWORD)[1].role == "admin"
+    assert ProjectStore(studio_db.connect(data=tmp_path / "new")).current(ws.id) == ws
     r = run("restore", out, "--data", tmp_path / "new")
-    assert r.exit_code == 1 and "not empty" in r.output
+    assert r.exit_code == 1 and "empty" in r.output
     evil = tmp_path / "evil.tar.gz"
     with tarfile.open(evil, "w:gz") as tar:
         info = tarfile.TarInfo(f"{ROOT}/../x")

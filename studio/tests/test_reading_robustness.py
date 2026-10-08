@@ -161,8 +161,9 @@ def test_the_studio_converts_the_other_floors_when_one_fails(tmp_path, monkeypat
     studio = Studio(data, model=NoModel(), warm=False, vision=vision.VisionModel(url=""))
     job = Job("j", "Converting")
     with pytest.raises(ValueError, match=f"not converted: {floors[1]}: RuntimeError: something unforeseen"):
-        studio._convert(ws_file, floors, job)  # the job fails…
-    first, failed, last = _rooms_by_floor(ws_file, floors)  # …the other floors converted
+        studio._convert(Workspace.load(ws_file).id, floors, job)  # the job fails…
+    ws = studio.workspace(Workspace.load(ws_file).id)
+    first, failed, last = [sum(1 for r in ws.floor_objects(f) if r.kind == "space") for f in floors]  # …the others converted
     assert first > 10 and failed == 0 and last > 10
 
 

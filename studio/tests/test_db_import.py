@@ -117,4 +117,36 @@ def test_the_command_line_imports_a_folder(old, databases):
     r = CliRunner().invoke(app, ["db", "import", "--data", str(data)])
     assert r.exit_code == 0 and "in the database already" in r.output
     r = CliRunner().invoke(app, ["db", "url"])
-    assert r.exit_code == 0 and "spa_" in r.output and ":***@" in r.output
+    assert r.exit_code == 0 and "spa_" in r.output and "password=***" in r.output and "password=storeypath" not in r.output
+
+
+def test_review_works_on_a_database_of_its_own_and_writes_the_file_back(converted, monkeypatch, databases):
+    import os
+
+    import psycopg
+
+    from storeypath import cli
+
+    ws, d, f_id, *_ = converted
+    path = d / "p.spproj"
+    ws.save(path)
+    space = next(r.id for r in ws.floor_objects(f_id) if r.kind == "space")
+    monkeypatch.setattr(cli, "REVIEW_DATABASE", f"spa_{os.getpid()}_review_")
+    seen = {}
+
+    def served(data, host, port, page, open_browser, note="", allowed=None, *, accounts, db=None, store=None, **kw):
+        studio = Studio(data, model=NoModel(), warm=False, db=db)
+        studio.store = store
+        assert accounts is None and host == "127.0.0.1" and page == f"/review.html?p={ws.id}"
+        studio.review(ws.id).correct(space, {"correction": {"name": "Named in review"}})
+        seen["walls"] = studio.review(ws.id).drawing(f_id)["groups"]["walls"]  # its drawing, from the database
+        seen["db"] = psycopg.conninfo.conninfo_to_dict(db.url)["dbname"]
+
+    monkeypatch.setattr(cli, "_serve", served)
+    r = CliRunner().invoke(app, ["review", str(path), "--no-open"])
+    assert r.exit_code == 0, r.output
+    back = Workspace.load(path)
+    assert back.overrides[space].name == "Named in review" and seen["walls"]
+    assert back.floor(f_id).source.path == "level-2.dxf"  # as the file names its drawing
+    with psycopg.connect(databases.url(d)) as conn:  # the database made for it, gone
+        assert conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (seen["db"],)).fetchone() is None

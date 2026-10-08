@@ -25,7 +25,7 @@ def stored(converted, tmp_path, databases):
     space = next(r for r in ws.floor_objects(f_id) if r.kind == "space")
     ws.overrides[space.id] = Override(name="Boardroom")
     ws.add_item("DESK-JUNIOR", f_id, 2.5, 3.0, 90)
-    ws.readings["MEETING"] = Reading(type="meeting", source="rules")
+    ws.readings["MEETING"] = Reading(type="meeting_room", source="rules")
     ws.vision["abc"] = {"type": "office", "sure": 0.8}
     ws.exports.append(ExportRecord(sequence=1, exported_at=ws.project.created_at, file="x.storeypath",
                                    objects={space.id: "0123456789abcdef"}))
@@ -38,10 +38,10 @@ def test_a_project_comes_back_as_it_went_in(stored):
     store, ws, f_id, _ = stored
     store.forget()  # read from the database, not from memory
     back = store.current(ws.id)
-    assert back == ws
-    assert back.model_dump(mode="json") == ws.model_dump(mode="json")
+    as_a_file = Workspace.model_validate_json(ws.model_dump_json())  # (its shapes' points as lists)
+    assert back == as_a_file and back.model_dump(mode="json") == ws.model_dump(mode="json")
     mine = store.load(ws.id)
-    assert mine == ws and mine is not back  # one's own, to change
+    assert mine == as_a_file and mine is not back  # one's own, to change
     assert store.save_project(mine) is False  # nothing differs: nothing written
     floor = store.load(ws.id, floors=[f_id])
     assert set(floor.objects) == {i for i in ws.objects if i.startswith(f_id + "-")}

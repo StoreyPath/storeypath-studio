@@ -737,6 +737,13 @@ class ProjectStore:
 
         self.change(code, fn, by=by)
 
+    def remove_drawing(self, code: str, name: str, by=None) -> None:
+        """A drawing of the project taken away (a floor read from it keeps what was read)."""
+        if self.drawing(code, name) is None:
+            raise NotFound(f"no drawing {name}")
+        self.change(code, lambda base: (Changes(part="project", kind="drawing removed", targets=[name],
+                                                drawings={name: None}), None), by=by)
+
     def put_incoming(self, code: str, name: str, data: bytes, by=None) -> None:
         """A drawing sent, kept until a person says what of it to keep (not yet the
         project's: no change of it)."""

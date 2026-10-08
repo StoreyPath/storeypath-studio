@@ -11,7 +11,8 @@ sharing and an audit log, kept in Studio's database (db/) beside the projects:
 Roles: an admin manages users and sees and does everything; an engineer may create
 projects and open files as new projects, and owns what they create; a user sees only
 what is shared with them. Capabilities an admin may give anyone: ``backup`` (download
-the whole data folder) and ``catalogue`` (change the item types); admins have both.
+the whole database: every project and account) and ``catalogue`` (change the item types);
+admins have both.
 
 A project is shared with a person on a scope (the whole project, one of its buildings,
 one of its floors) at a level: view < edit < share, each including the ones before.

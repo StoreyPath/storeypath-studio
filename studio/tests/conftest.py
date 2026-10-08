@@ -63,13 +63,16 @@ class Databases:
     _count = 0
     _count_lock = threading.Lock()
 
-    def __init__(self, template: str):
+    def __init__(self, template: str, wider: "Databases | None" = None):
         self.template = template
+        self.wider = wider  # the session's: a folder that has one there keeps it
         self.made: dict[str, str] = {}  # data folder -> its database's URL
         self._lock = threading.Lock()
 
     def url(self, data=None) -> str:
         key = str(Path(data).resolve()) if data is not None else ""
+        if self.wider is not None and key in self.wider.made:
+            return self.wider.made[key]
         with self._lock:
             if key not in self.made:
                 with Databases._count_lock:
@@ -91,13 +94,31 @@ class Databases:
         self.made.clear()
 
 
+    def env(self, data=None) -> dict:
+        """The environment of a process (``storeypath serve``…) that is to use the
+        database of ``data``."""
+        return {**os.environ, studio_db.URL_ENV: self.url(data)}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def session_databases(database_template):
+    """The databases of what a module or the session sets up (a Studio a module's tests
+    share), one a data folder, dropped at the end."""
+    dbs = Databases(database_template)
+    patch = pytest.MonkeyPatch()
+    patch.setattr(studio_db, "default_url", dbs.url)
+    patch.delenv(studio_db.URL_ENV, raising=False)
+    yield dbs
+    patch.undo()
+    dbs.drop()
+
+
 @pytest.fixture(autouse=True)
-def databases(database_template, monkeypatch):
+def databases(database_template, session_databases, monkeypatch):
     """Each data folder a test's Studio, accounts or store uses: a database of its own
     (STOREYPATH_DATABASE_URL is not read)."""
-    dbs = Databases(database_template)
+    dbs = Databases(database_template, wider=session_databases)
     monkeypatch.setattr(studio_db, "default_url", dbs.url)
-    monkeypatch.delenv(studio_db.URL_ENV, raising=False)
     yield dbs
     dbs.drop()
 

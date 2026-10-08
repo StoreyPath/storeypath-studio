@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import socket
-import sqlite3
 import ssl
 import stat
 import subprocess
@@ -62,7 +61,7 @@ def test_a_file_whose_parts_name_different_projects_is_refused(campus):
     port, studio, accounts, users, tokens, ids = campus
     mallory, m = engineer(accounts)
     demo = ids["demo"]
-    before = studio.path(demo).read_bytes()
+    before = studio.store.version(demo)
     _, project_file, _ = call(port, "GET", f"/api/projects/{demo}/project.storeypath-project", token=tokens["boss"])
     new_code = lambda about: {**about, "project": {**about["project"], "id": "ZZZZ0000"}}  # noqa: E731
     forged = {
@@ -77,19 +76,21 @@ def test_a_file_whose_parts_name_different_projects_is_refused(campus):
             status, said, _ = call(port, "PUT", f"/api/open{query}", raw=blob, token=m)
             assert status == 400 and "different projects" in said["error"], (what, query, status, said)
             assert "Demo Campus" not in json.dumps(said) and demo not in json.dumps(said), (what, said)
-    assert studio.path(demo).read_bytes() == before
+    assert studio.store.version(demo) == before  # nothing of it changed
     assert accounts.project_access(demo).owner == users["eng"].id
     assert "ZZZZ0000" not in accounts.all_access()
 
 
-def test_a_new_project_never_takes_the_place_of_a_folder_that_is_not_its_own(campus, tmp_path):
+def test_a_project_opened_never_touches_the_data_folder(campus, tmp_path):
     port, studio, accounts, users, tokens, ids = campus
     mallory, m = engineer(accounts)
-    # a project kept in a folder not named by its code (moved there by hand)
+    # a project kept in a folder of the data folder named by another code (moved there
+    # by hand): the database is where projects are, and the folder is never written
     kept = Workspace.new("Kept by hand")
     kept.add_location("SITE", "Site")
     (studio.data / "QQQQ1111").mkdir()
     kept.save(studio.data / "QQQQ1111" / f"{kept.id}.spproj")
+    on_disk = (studio.data / "QQQQ1111" / f"{kept.id}.spproj").read_bytes()
     # a new project whose code is that folder's name
     fresh = Workspace.new("Fresh")
     fresh.project = Project(code="QQQQ1111", name="Fresh")
@@ -97,11 +98,13 @@ def test_a_new_project_never_takes_the_place_of_a_folder_that_is_not_its_own(cam
     fresh.save(tmp_path / "out" / "QQQQ1111" / "QQQQ1111.spproj")
     buf = io.BytesIO()
     export_project(tmp_path / "out" / "QQQQ1111" / "QQQQ1111.spproj", buf)
-    for query in ("", "?replace=Fresh"):
-        status, said, _ = call(port, "PUT", f"/api/open{query}", raw=buf.getvalue(), token=m)
-        assert status == 400 and "not this project" in said["error"], (query, status, said)
-    assert studio.path(kept.id).parent.name == "QQQQ1111"  # still there, as it was
-    assert accounts.project_access("QQQQ1111").owner is None
+    status, opened, _ = call(port, "PUT", "/api/open", raw=buf.getvalue(), token=m)
+    assert status == 200 and opened["code"] == "QQQQ1111", (status, opened)
+    assert studio.workspace("QQQQ1111").project.name == "Fresh"
+    assert accounts.project_access("QQQQ1111").owner == mallory.id
+    assert sorted(p.name for p in (studio.data / "QQQQ1111").iterdir()) == [f"{kept.id}.spproj"]
+    assert (studio.data / "QQQQ1111" / f"{kept.id}.spproj").read_bytes() == on_disk  # as it was
+    assert not studio.store.exists(kept.id)  # (a folder is brought in by db import, not by opening a file)
 
 
 def test_a_new_projects_owner_is_never_put_in_place_of_one_kept(campus, tmp_path):
@@ -118,7 +121,7 @@ def test_a_new_projects_owner_is_never_put_in_place_of_one_kept(campus, tmp_path
     status, said, _ = call(port, "PUT", "/api/open", raw=buf.getvalue(), token=m)
     assert status == 403 and "from before" in said["error"], (status, said)
     assert accounts.project_access("QQQQ2222").owner == users["eng"].id
-    assert "QQQQ2222" not in studio._workspaces()  # nothing was opened
+    assert not studio.store.exists("QQQQ2222")  # nothing was opened
     # an admin opens it; who it is shared with stays as it was
     status, opened, _ = call(port, "PUT", "/api/open", raw=buf.getvalue(), token=tokens["boss"])
     assert status == 200 and opened["code"] == "QQQQ2222"
@@ -341,21 +344,12 @@ def lax_umask():
     os.umask(old)
 
 
-def test_the_accounts_and_studios_key_are_the_owners_alone(tmp_path, lax_umask):
+def test_studios_key_is_the_owners_alone_and_no_account_is_kept_in_a_file(tmp_path, lax_umask):
     data = tmp_path / "data"
+    data.mkdir()
     a = Accounts(data)
     a.add_user("ali", PASSWORD, must_change_password=False)
-    files = ("studio.db", "studio.db-wal", "studio.db-shm")
-    reading = sqlite3.connect(data / "studio.db")  # (the -wal and -shm are there while it is open)
-    try:
-        reading.execute("SELECT COUNT(*) FROM users").fetchone()
-        assert {name: mode(data / name) for name in files} == dict.fromkeys(files, 0o600)
-        for name in files:  # put there by hand, or by an older Studio
-            os.chmod(data / name, 0o644)
-        Accounts(data)
-        assert {name: mode(data / name) for name in files} == dict.fromkeys(files, 0o600)
-    finally:
-        reading.close()
+    assert list(data.iterdir()) == []  # the accounts are in the database: no studio.db
     made = studio_certificate(data, "127.0.0.1", [], machine=set())
     assert (mode(data / "tls"), mode(made.key), mode(made.cert)) == (0o700, 0o600, 0o600)
     os.chmod(data / "tls", 0o755)  # opened up by hand: closed again when Studio starts
@@ -376,7 +370,7 @@ def test_what_the_command_line_writes_is_the_owners_alone(tmp_path, lax_umask):
     assert mode(out) == 0o600  # every password's hash is in it
     r = CliRunner().invoke(app, ["restore", str(out), "--data", str(tmp_path / "new")])
     assert r.exit_code == 0, r.output
-    assert mode(tmp_path / "new") == 0o700 and mode(tmp_path / "new" / "studio.db") == 0o600
+    assert not (tmp_path / "new").exists()  # into the database: nothing written beside it
 
 
 # ---- what is told ------------------------------------------------------------------------
@@ -386,9 +380,10 @@ def test_the_servers_folders_are_told_to_admins_alone(campus):
     status, said, _ = call(port, "GET", "/api/status", token=tokens["eng"])
     assert status == 200 and "data" not in said
     assert call(port, "GET", "/api/status", token=tokens["boss"])[1]["data"] == str(studio.data)
+    assert "database" not in said
+    assert "spa_" in call(port, "GET", "/api/status", token=tokens["boss"])[1]["database"]
     status, project, _ = call(port, "GET", f"/api/projects/{ids['demo']}", token=tokens["eng"])  # its owner
-    assert status == 200 and "exports_folder" not in project and project["exports"]
-    assert call(port, "GET", f"/api/projects/{ids['demo']}", token=tokens["boss"])[1]["exports_folder"]
+    assert status == 200 and "exports_folder" not in project and project["exports"]  # (no folder holds them)
 
 
 def test_a_bad_body_is_answered_400_and_a_failure_500_without_what_went_wrong(campus, monkeypatch):

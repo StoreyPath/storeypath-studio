@@ -229,13 +229,13 @@ def test_two_plans_as_one_floor_are_refused_before_anything_changes(studio, tmp_
                          {"drawing": "sheet.dxf", "plans": [plan(house, "Main building"), plan(annex, "Main building")]})
     assert status == 400
     assert error["error"].startswith("GROUND FLOOR PLAN and GROUND FLOOR PLAN are both floor 0 of Main building")
-    assert Workspace.load(app.path(code)).locations[0].buildings == []  # nothing was added
+    assert app.workspace(code).locations[0].buildings == []  # nothing was added
 
     # Buildings are known by name: "Main annex" is not "Main building", though both start with Main.
     _, job = call(f"{base}/api/projects/{code}/floors",
                   {"drawing": "sheet.dxf", "plans": [plan(house, "Main building"), plan(annex, "Main annex")]})
     wait(base, job)
-    buildings = Workspace.load(app.path(code)).locations[0].buildings
+    buildings = app.workspace(code).locations[0].buildings
     assert [(b.code, b.name, len(b.floors)) for b in buildings] == [("MAIN", "Main building", 1), ("MAIN2", "Main annex", 1)]
 
     status, error = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [plan(house, "main building")]})
@@ -267,12 +267,12 @@ def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
 
     status, job = add("level-0.dxf", building="Engineering", ordinal=0)
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     loc_id = f"{ws.id}-{ws.locations[0].code}"
     b_id = f"{loc_id}-{ws.locations[0].buildings[0].code}"
     status, job = add("level-1.dxf", location_id=loc_id, building_id=b_id, ordinal=1)
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     b = ws.building(b_id)
     assert [(f.ordinal, Path(f.source.path).name) for f in sorted(b.floors, key=lambda f: f.ordinal)] == \
         [(0, "level-0.dxf"), (1, "level-1.dxf")]
@@ -287,7 +287,7 @@ def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     before = {r.id for r in ws.floor_objects(ground_id) if r.kind == "space"}
     status, job = add("level-0-rev.dxf", building_id=b_id, ordinal=0, replace=True)
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     ground = ws.floor(ground_id)
     assert Path(ground.source.path).name == "level-0-rev.dxf"
     assert {r.id for r in ws.floor_objects(ground_id) if r.kind == "space"} == before  # the same rooms, the same IDs
@@ -295,7 +295,7 @@ def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     # a building in another location
     status, job = add("level-1.dxf", location="North campus", building="Workshop", ordinal=0)
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     assert [loc.name for loc in ws.locations] == ["Large building", "North campus"]
     assert ws.locations[1].code == "NORTH" and [b.name for b in ws.locations[1].buildings] == ["Workshop"]
 
@@ -326,8 +326,8 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     _, job = call(f"{base}/api/projects/{code}/incoming/{found['pending']}", {"keep": []})
     added = wait(base, job)  # kept without its private information, under a plain name
     assert added["drawing"] == "drawing-1.dxf" and "$LASTSAVEDBY" in added["privacy"]["hidden"]
-    assert sorted(p.name for p in (app.path(code).parent / "drawings").iterdir()) == ["drawing-1.dxf",
-                                                                                     "drawing-1.dxf.words.txt"]
+    assert [d["name"] for d in app.store.drawings(code)] == ["drawing-1.dxf"]  # (its words with it)
+    assert app.store.drawings(code, incoming=True) == []  # nothing of what was sent is left
     status, words = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/words")
     words = words.decode()
     assert status == 200 and "OFFICE" in words and "someone" not in words  # what is left, and only that
@@ -336,7 +336,7 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     # as sent, when asked
     _, kept = call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=sheet.read_bytes())
     assert kept["drawing"] == "sheet.dxf"
-    (app.path(code).parent / "drawings" / "sheet.dxf").unlink()
+    app.store.remove_drawing(code, "sheet.dxf")
 
     _, job = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/plans", {})
     found = wait(base, job)
@@ -359,7 +359,7 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
                                                          "plans": chosen})
     added = wait(base, job)
     assert len(added["floors"]) == 2
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     assert [f.source.units for _, _, f, _ in ws.iter_floors()] == ["mm", "mm"]  # kept with each floor
     log = call(f"{base}/api/jobs/{job['id']}")[1]["log"]
     assert any("moved 70.0" in line for line in log)  # the first floor was drawn 70 m to the right
@@ -469,7 +469,7 @@ def test_floor_heights_come_from_the_levels_on_the_sheet(studio, tmp_path):
                "ordinal": p["floor"], "height": 3.4, "parapet": 1.1} for p in found["plans"][:2]]
     _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "units": "mm", "plans": chosen})
     wait(base, job)
-    floors = {f.ordinal: f for _, _, f, _ in Workspace.load(app.path(code)).iter_floors()}
+    floors = {f.ordinal: f for _, _, f, _ in app.workspace(code).iter_floors()}
     assert {n: (f.elevation, f.height, f.parapet_height) for n, f in floors.items()} == {
         0: (0.0, 3.4, 1.1), 1: (3.4, 3.4, 1.1)}
 
@@ -480,11 +480,9 @@ def test_project_folders_are_named_by_code_not_by_name(studio):
     codes = [call(f"{base}/api/projects", {"name": n})[1]["code"] for n in names]
     assert len(set(codes)) == 3
     for code, name in zip(codes, names):
-        path = app.path(code)
-        assert path == app.data / code / f"{code}.spproj"  # the name people type is only shown
-        assert Workspace.load(path).project.name == name
-    # (beside them: the accounts, sharing and audit log, never named by what people type)
-    assert sorted(p.name for p in app.data.iterdir() if p.is_dir()) == sorted(codes)
+        assert app.workspace(code).project.name == name  # the name people type is only shown
+    # in the database: nothing of them in the data folder (its cache alone, and none of their names)
+    assert not [p for p in app.data.rglob("*") if p.name in codes or "Villa" in p.name or "فيلا" in p.name]
 
 
 def test_pages_answer_while_a_job_changes_a_project(studio):
@@ -495,7 +493,7 @@ def test_pages_answer_while_a_job_changes_a_project(studio):
     held, done = threading.Event(), threading.Event()
 
     def converting():
-        with app._changing(app.path(codes[0])):
+        with app._changing(codes[0]):
             held.set()
             done.wait(10)
 
@@ -588,15 +586,14 @@ def test_a_project_is_deleted_only_when_its_name_is_typed(studio):
     base, app = studio
     _, created = call(f"{base}/api/projects", {"name": "Old site"})
     code = created["code"]
-    folder = app.path(code).parent
     status, error = call(f"{base}/api/projects/{code}/delete", {"confirm": "old"})
-    assert status == 400 and "type the project's name" in error["error"] and folder.exists()
-    with app._changing(app.path(code)):  # a job working on it
+    assert status == 400 and "type the project's name" in error["error"] and app.store.exists(code)
+    with app._changing(code):  # a job working on it
         status, error = call(f"{base}/api/projects/{code}/delete", {"confirm": "Old site"})
-    assert status == 400 and "job" in error["error"] and folder.exists()
+    assert status == 400 and "job" in error["error"] and app.store.exists(code)
     status, done = call(f"{base}/api/projects/{code}/delete", {"confirm": "Old site"})
     assert status == 200 and done["deleted"] == code
-    assert not folder.exists() and code not in [p["code"] for p in call(f"{base}/api/projects")[1]]
+    assert not app.store.exists(code) and code not in [p["code"] for p in call(f"{base}/api/projects")[1]]
     assert call(f"{base}/api/projects/{code}")[0] == 404
 
 
@@ -703,7 +700,7 @@ def test_a_package_opened_gets_its_drawing_back_and_keeps_its_ids(studio, tmp_pa
         {"index": p["index"], "title": p["title"], "region": p["region"], "building": "Main", "ordinal": n}
         for n, p in enumerate(plans)]})
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     b_id = f"{ws.id}-{ws.locations[0].code}-{ws.locations[0].buildings[0].code}"
     first = next(f for f in ws.building(b_id).floors if f.ordinal == 1)
     first_id = f"{b_id}-{first.code}"
@@ -727,7 +724,7 @@ def test_a_package_opened_gets_its_drawing_back_and_keeps_its_ids(studio, tmp_pa
         {"index": p["index"], "title": p["title"], "region": p["region"], "building_id": b_id, "ordinal": 1, "replace": True}]})
     assert status == 200, job
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     assert {r.id for r in ws.floor_objects(first_id) if r.kind == "space"} == rooms  # the same rooms, the same IDs
     assert ws.effective(ws.objects[named.id])["name"] == "Board room"  # kept over the drawing's reading
     assert ws.floor(first_id).source.path.endswith("sheet.dxf")
@@ -758,7 +755,7 @@ def test_buildings_on_the_site_plan(studio, tmp_path):
     add("c.dxf", "Labs")
 
     def site():
-        ws = Workspace.load(app.path(code))
+        ws = app.workspace(code)
         loc = ws.locations[0]
         pos = site_positions(loc)
         return ws, loc, {b.name: site_footprint(b, pos[b.code]) for b in loc.buildings}
@@ -828,7 +825,7 @@ def test_a_building_whose_first_reading_failed_is_read_again_and_put_beside(stud
     assert not clinic["floors"][0]["converted"]
     _, job = call(f"{base}/api/projects/{code}/floors/{clinic['floors'][0]['id']}/convert", {})
     wait(base, job)
-    ws = Workspace.load(app.path(code))
+    ws = app.workspace(code)
     loc = ws.locations[0]
     pos = site_positions(loc)
     fps = {b.name: site_footprint(b, pos[b.code]) for b in loc.buildings}
@@ -944,13 +941,13 @@ def test_a_reading_that_would_retire_a_floor_is_held_back_unless_forced(studio, 
     _, job = call(f"{base}/api/projects/{code}/floors", {"drawing": "a.dxf", "plans": [
         {"index": plan["index"], "title": plan["title"], "region": plan["region"], "building": "Admin", "ordinal": 0}]})
     wait(base, job)
-    ws_path = app.path(code)
-    ws = Workspace.load(ws_path)
+    ws = app.workspace(code)
     (f_id, f), = [(fid, f) for *_, f, fid in ws.iter_floors()]
-    active = lambda: {r.id for r in Workspace.load(ws_path).floor_objects(f_id) if r.kind == "space"}
+    active = lambda: {r.id for r in app.workspace(code).floor_objects(f_id) if r.kind == "space"}
     rooms = active()
     assert rooms
-    ezdxf.new().saveas(ws_path.parent / f.source.path)  # the same name, no rooms
+    ezdxf.new().saveas(tmp_path / "empty.dxf")
+    app.store.put_drawing(code, Path(f.source.path).name, (tmp_path / "empty.dxf").read_bytes())  # the same name, no rooms
 
     _, job = call(f"{base}/api/projects/{code}/floors/{f_id}/convert", {})
     assert wait(base, job)["held"] == [f_id] and active() == rooms

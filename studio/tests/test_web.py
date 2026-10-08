@@ -19,7 +19,6 @@ import pytest
 from sessions import call
 from storeypath import accounts as acc
 from storeypath.accounts import Accounts, Scope, cookie_name
-from storeypath.backup import jobs_paused
 from storeypath.samples import build_demo
 from storeypath.server import Studio
 from storeypath.web import create_app, events as events_module, make_server
@@ -197,12 +196,12 @@ def test_studio_stopping_ends_every_stream(tmp_path):
 
 # ---- a backup -----------------------------------------------------------------------------
 
-def test_a_backup_cut_short_is_recorded_so_and_lets_jobs_run_again(tmp_path):
+def test_a_backup_cut_short_is_recorded_so_and_studio_goes_on(tmp_path):
     data = tmp_path / "data"
     srv, studio, accounts = serve(data)
     try:
-        (data / "big").mkdir()
-        (data / "big" / "noise.bin").write_bytes(os.urandom(24 * 1024 * 1024))  # gzip makes it no smaller
+        code = studio.create("Big")["code"]
+        studio.store.put_drawing(code, "noise.dxf", os.urandom(24 * 1024 * 1024))  # gzip makes it no smaller
         boss = accounts.add_user("boss", PASSWORD, role="admin", must_change_password=False)
         token = accounts.start_session(boss)
         s = socket.create_connection(("127.0.0.1", srv.server_port))
@@ -217,8 +216,9 @@ def test_a_backup_cut_short_is_recorded_so_and_lets_jobs_run_again(tmp_path):
                 break
             time.sleep(0.1)
         assert [e["outcome"] for e in entries] == ["interrupted"]
-        with jobs_paused(data, timeout=2):  # what the backup held, let go
-            pass
+        stats = studio.db.pool.get_stats()  # the connection the backup read with, given back
+        assert stats["pool_available"] == stats["pool_size"]
+        assert studio.create("After")["code"]
     finally:
         srv.shutdown()
         srv.server_close()

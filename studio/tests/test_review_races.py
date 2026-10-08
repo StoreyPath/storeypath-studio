@@ -102,7 +102,7 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     """A correction or an item sent while a job works is refused (409, saying why), not
     saved and then lost when the job saves; one sent before or after is kept, and an
     item's number is never given twice."""
-    base, _, ws_path = studio
+    base, s, ws_path = studio
     ws = Workspace.load(ws_path)
     code, f0, hq = ws.id, f"{ws.id}-DEMO-HQ-F00", f"{ws.id}-DEMO-HQ"
     space = max((r for r in ws.floor_objects(f0) if r.kind == "space"), key=lambda r: shape(r.geometry).area)
@@ -134,7 +134,7 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     finally:
         go.set()
     assert finished(base, job)["state"] == "done"
-    saved = Workspace.load(ws_path)
+    saved = s.workspace(code)
     assert saved.items[first["id"]].status == "active"  # as before the job: nothing half kept
     assert space.id not in saved.overrides and saved.next_item_seq == number + 1
     # after the job, kept; and through the next job too
@@ -144,5 +144,5 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     go.set()
     _, job = call(f"{base}/api/projects/{code}/{which}", {} if which == "convert" else {"building": hq})
     assert finished(base, job)["state"] == "done"
-    saved = Workspace.load(ws_path)
+    saved = s.workspace(code)
     assert saved.overrides[space.id].name == "After" and {first["id"], second["id"]} <= set(saved.items)

@@ -57,27 +57,28 @@ def studio(tmp_path):
     s = Studio(tmp_path / "data", model=NoModel(), warm=False)
     srv = admin_server(s, port=0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_port}", ws_path
+    yield f"http://127.0.0.1:{srv.server_port}", s, Workspace.load(ws_path).id
     srv.shutdown()
     srv.server_close()
 
 
-def kept(ws_path: Path) -> list[str]:
-    """What is in the project's exports folder, hidden files too."""
-    folder = ws_path.parent / "exports"
-    return sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
+def kept(s, code: str) -> list[str]:
+    """The packages kept of the project (in the database), and anything a step left in
+    Studio's work folder."""
+    left = sorted(p.name for p in s.work.rglob("*")) if s.work.is_dir() else []
+    return s.store.export_files(code) + left
 
 
 def test_an_invalid_package_is_neither_kept_nor_entered(studio, monkeypatch):
-    base, ws_path = studio
-    ws = Workspace.load(ws_path)
+    base, s, code = studio
+    ws = s.workspace(code)
     hq, before = f"{ws.id}-DEMO-HQ", len(ws.exports)
     monkeypatch.setattr("storeypath.validate.validate_package", lambda path: ["spaces.geojson: broken"])
     _, job = call(f"{base}/api/projects/{ws.id}/export", {"building": hq})
     job = finished(base, job)
     assert job["state"] == "failed" and "not kept" in job["error"]
     assert "invalid: spaces.geojson: broken" in job["log"]
-    assert kept(ws_path) == [] and len(Workspace.load(ws_path).exports) == before
+    assert kept(s, code) == [] and len(s.workspace(code).exports) == before
     _, project = call(f"{base}/api/projects/{ws.id}")
     assert project["exports"] == [] and project["exported"] == before
     monkeypatch.undo()
@@ -86,27 +87,27 @@ def test_an_invalid_package_is_neither_kept_nor_entered(studio, monkeypatch):
     assert job["state"] == "done"
     sequence = before + 1  # its number was not used up
     assert job["result"]["file"] == f"{ws.id}-{sequence:03d}-HQ.storeypath"
-    assert kept(ws_path) == [job["result"]["file"]]
-    last = Workspace.load(ws_path).exports[-1]
+    assert kept(s, code) == [job["result"]["file"]]
+    last = s.workspace(code).exports[-1]
     assert (last.sequence, last.file) == (sequence, job["result"]["file"])
 
 
 def test_a_package_is_kept_only_with_its_record(studio):
     """An item of a type no catalogue here has (a project file of an older format may
     hold one): whether its package is valid or not, the file and the record go together."""
-    base, ws_path = studio
-    ws = Workspace.load(ws_path)
+    base, s, code = studio
+    ws = s.store.load(code)
     f0 = f"{ws.id}-DEMO-HQ-F00"
     room = max((r for r in ws.floor_objects(f0) if r.kind == "space"), key=lambda r: shape(r.geometry).area)
     p = shape(room.geometry).representative_point()
     ws.add_item("OLD-KIOSK", f0, p.x, p.y)
-    ws.save(ws_path)
+    s.store.save_project(ws)
     before = len(ws.exports)
     _, job = call(f"{base}/api/projects/{ws.id}/export", {"building": f"{ws.id}-DEMO-HQ"})
     job = finished(base, job)
-    recorded = len(Workspace.load(ws_path).exports) - before
-    assert (job["state"] == "done") == bool(kept(ws_path)) == (recorded == 1)
-    assert not any(name.startswith(".") for name in kept(ws_path))
+    recorded = len(s.workspace(code).exports) - before
+    assert (job["state"] == "done") == bool(kept(s, code)) == (recorded == 1)
+    assert not any(name.startswith(".") for name in kept(s, code))
 
 
 def _demo_with_a_studio_type(tmp_path):

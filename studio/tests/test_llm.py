@@ -77,7 +77,7 @@ def test_why_the_server_stopped_is_told(tmp_path, monkeypatch):
         LocalModel(model=model_file).ask("system", "question", {"type": "object"})
 
 
-def test_stopping_studio_stops_its_llama_server(tmp_path):
+def test_stopping_studio_stops_its_llama_server(tmp_path, databases):
     # `kill` and `docker stop` send SIGTERM, which skips Python's exit handlers unless
     # Studio handles it: llama-server would be left running with the model in memory.
     program = tmp_path / "llama-server"
@@ -85,7 +85,8 @@ def test_stopping_studio_stops_its_llama_server(tmp_path):
     program.chmod(0o755)
     (tmp_path / "model.gguf").write_bytes(b"")
     pid_file = tmp_path / "server.pid"
-    env = {**os.environ, "STOREYPATH_LLAMA_SERVER": str(program), "STOREYPATH_MODEL": str(tmp_path / "model.gguf"),
+    env = {**databases.env(tmp_path / "data"), "STOREYPATH_LLAMA_SERVER": str(program),
+           "STOREYPATH_MODEL": str(tmp_path / "model.gguf"),
            "FAKE_SERVER_PID": str(pid_file)}
     studio = subprocess.Popen([sys.executable, "-c", "from storeypath.cli import main; main()", "serve",
                                "--data", str(tmp_path / "data"), "--port", "0"],

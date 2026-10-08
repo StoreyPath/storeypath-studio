@@ -55,7 +55,7 @@ each call needs is checked first in route() (the table is in studio/README.md):
     GET  /api/admin/users                      POST /api/admin/users {username, name, role, capabilities}
     POST /api/admin/users/<id> {name?, role?, capabilities?, active?}
     POST /api/admin/users/<id>/password        a temporary password, shown once
-    GET  /api/admin/audit                      GET /api/backup (the data folder, .tar.gz)
+    GET  /api/admin/audit                      GET /api/backup (the database, .sql.gz)
     and the review editor's calls under /api/projects/<code>/ (see review.py)
 
 What changes something (POST, a JSON object; PUT, a file) is sent with the header

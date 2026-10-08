@@ -640,8 +640,9 @@ def test_a_building_of_a_placed_site_does_not_move_when_another_changes(campus, 
     for b in loc.buildings:
         b.placement = None
     ws.save(path)
-    Studio(data, model=NoModel()).place_site(ws.id, f"{ws.id}-{loc.code}", {"lat": 24.7127, "lon": 46.6761})
-    ws = Workspace.load(path)
+    studio = Studio(data, model=NoModel())  # (the folder brought into its database)
+    studio.place_site(ws.id, f"{ws.id}-{loc.code}", {"lat": 24.7127, "lon": 46.6761})
+    ws = studio.store.load(ws.id)
     export_package(ws, tmp_path / "hq-1.storeypath", building=hq)
     before = placements(ws)[hq][0]
     ws.floor(ws.add_floor(annex, 5)).outline = mapping(box(0, 0, 400, 300))
