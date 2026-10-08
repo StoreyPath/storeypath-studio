@@ -1,0 +1,70 @@
+# StoreyPath Studio with Docker Compose, and the GPU helper beside it on a machine
+# with an NVIDIA GPU.
+#
+#   docker compose -f docker/compose.yml up -d                  # Studio alone
+#   docker compose -f docker/compose.yml --profile gpu up -d    # and the GPU helper
+#
+# Studio is then at https://localhost:8080 (admin / admin the first time). All it keeps,
+# its database too, is in one volume, `storeypath`: the same one `docker run -v
+# storeypath:/data` uses. The helper needs a key, which Studio sends it: put one in
+# docker/.env, once (that file is not committed):
+#
+#   echo "STOREYPATH_HELPER_KEY=$(openssl rand -hex 32)" > docker/.env
+#
+# Studio asks the helper at http://gpu-helper:8105/v1, on the compose network alone
+# (the helper's port is not published); without the gpu profile it says the helper
+# does not answer, and works without vision. More settings, in docker/.env too:
+# STOREYPATH_PORT (8080), STOREYPATH_BIND (127.0.0.1; 0.0.0.0 for others on your
+# network), STOREYPATH_ALLOWED_HOSTS, STOREYPATH_HELPER_SLOTS (2: questions the helper
+# answers at once), STOREYPATH_VISION_URL (other helpers, or more: comma-separated),
+# STOREYPATH_VOLUME, STOREYPATH_IMAGE and STOREYPATH_HELPER_IMAGE.
+#
+# The studio image is published (ghcr.io/storeypath/studio); the helper is built here,
+# with its model fetched first (docker/fetch-vision.sh):
+#
+#   docker compose -f docker/compose.yml --profile gpu build gpu-helper
+
+name: storeypath
+
+services:
+  studio:
+    image: ${STOREYPATH_IMAGE:-ghcr.io/storeypath/studio}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "${STOREYPATH_BIND:-127.0.0.1}:${STOREYPATH_PORT:-8080}:8080"
+    volumes:
+      - storeypath:/data
+    environment:
+      STOREYPATH_ALLOWED_HOSTS: ${STOREYPATH_ALLOWED_HOSTS:-}
+      STOREYPATH_VISION_URL: ${STOREYPATH_VISION_URL:-http://gpu-helper:8105/v1}
+      STOREYPATH_VISION_KEY: ${STOREYPATH_HELPER_KEY:-}
+      STOREYPATH_VISION_PARALLEL: ${STOREYPATH_HELPER_SLOTS:-2}
+    # Studio stops first, then its database: give them the time
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+  gpu-helper:
+    profiles: [gpu]
+    image: ${STOREYPATH_HELPER_IMAGE:-storeypath/gpu-helper}
+    build:
+      context: ..
+      dockerfile: docker/gpu-helper/Dockerfile
+    environment:
+      STOREYPATH_HELPER_KEY: ${STOREYPATH_HELPER_KEY:-}
+      STOREYPATH_HELPER_SLOTS: ${STOREYPATH_HELPER_SLOTS:-2}
+    expose:
+      - "8105"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  storeypath:
+    name: ${STOREYPATH_VOLUME:-storeypath}
