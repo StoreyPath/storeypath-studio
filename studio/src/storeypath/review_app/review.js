@@ -7,6 +7,7 @@
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { TYPE_COLORS, typeLabel } from "./theme.js";
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
+import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DRAWING_ORDER = ["other", "outlines", "doors", "walls"]; // bottom to top
@@ -945,6 +946,7 @@ function renderEditor() {
   renderCapacity(s);
   $("ed-area").textContent = `${s.area} m²${s.correction ? " · corrected" : ""}`;
   updateEditorState();
+  vertical.editor(s); // vertical.js: the floors a lift or stairs serves
 }
 
 // ---- capacity: how many people a space or zone is meant to seat --------------------
@@ -1237,6 +1239,7 @@ function closesSpace(p) {
 
 /** The space being drawn, closed and saved; the floor is read again with it. */
 function closeSpace() {
+  if (vertical.drawn(state.corners)) return; // vertical.js: a lift or stairs, drawn typed
   const ring = state.corners;
   if (ring.length < 3) return toast("A space needs at least three corners", true);
   state.corners = [];
@@ -2064,4 +2067,6 @@ async function build3d() {
 setupMap();
 setupPanel();
 setupAssets();
+vertical.setup({ state, BASE, request, followJob, openFloor, fillFloorSelect, saveSpace, toast, el, setTool, snapWall, // vertical.js
+  planPoint, viewOnly, readable, select });
 start();

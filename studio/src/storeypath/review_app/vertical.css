@@ -1,0 +1,36 @@
+/* Lifts and stairs in Review (vertical.js): the toolbar's Stairs, Lift and Escalator
+   buttons, the shape drawn, and the floors a lift or stairs serves in its editor.
+   Its colours are Review's (style.css), light and dark. */
+
+.vertical-tools { display: inline-flex; }
+.vertical-tools button { border: 0; border-radius: 0; }
+.vertical-tools button + button { border-left: 1px solid var(--line); }
+
+.vertical-ghost {
+  fill: var(--accent);
+  fill-opacity: .18;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+#ed-vertical { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+#ed-vertical[hidden] { display: none; }
+#ed-vertical h4 { margin: 0; font-size: 13px; }
+#ed-vertical .vt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+#ed-vertical .vt-floors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+#ed-vertical .vt-floors li {
+  display: grid; grid-template-columns: 7.5em 1fr; gap: 8px; align-items: baseline;
+  padding: 4px 6px; border-radius: 6px; font-size: 13px;
+}
+#ed-vertical .vt-floors li.vt-this { background: var(--hover); font-weight: 600; }
+#ed-vertical .vt-floors li.vt-this .meta { font-weight: 400; }
+#ed-vertical .vt-floors li.vt-none .vt-floor { color: var(--muted); }
+#ed-vertical .vt-floor { overflow-wrap: anywhere; }
+#ed-vertical .vt-spaces { display: flex; flex-direction: column; overflow-wrap: anywhere; }
+#ed-vertical .vt-actions select { font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px;
+  background: var(--panel); color: var(--text); max-width: 100%; }
+#ed-vertical .vt-choose { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+#ed-vertical .vt-choose label { display: flex; gap: 6px; align-items: center; }
