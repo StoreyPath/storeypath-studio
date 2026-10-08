@@ -1,6 +1,12 @@
 // StoreyPath Studio: projects, drawings, plans, floors, placement and export.
 // Everything is served and computed locally (see server.py); nothing is fetched
-// from the internet.
+// from the internet. Each person sees the projects shared with them, and is offered
+// only what their level lets them do (``can``: view, edit or share on the project,
+// each building and each floor); the server checks everything anyway.
+
+import { accountMenu, sentAway, whoami } from "./account.js";
+import { openShare } from "./share.js";
+import { usersPage } from "./users.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const $ = (id) => document.getElementById(id);
@@ -28,9 +34,26 @@ async function api(path, body, { method, raw } = {}) {
   }
   const res = await fetch(`/api/${path}`, init);
   const data = await res.json().catch(() => ({}));
+  if (sentAway(res, data)) throw Object.assign(new Error("log in again"), { status: res.status, data });
   if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status, data });
   return data;
 }
+
+// ---- who may do what ----------------------------------------------------------------
+
+let me = null; // the person logged in (GET /api/me)
+const RANK = { view: 1, edit: 2, share: 3 };
+const atLeast = (level, need) => (RANK[level] || 0) >= RANK[need];
+/** The person's level on the project as a whole, on a building, on a floor (p.can). */
+const onProject = (p, need) => atLeast(p.can?.project, need);
+const onBuilding = (p, id, need) => atLeast(p.can?.buildings?.[id] ?? p.can?.project, need);
+const onFloor = (p, id, need) => atLeast(p.can?.floors?.[id], need);
+const shareButton = (code, label = "Share…", after = () => route()) =>
+  el("button", { type: "button", title: "Who may see and change this project, and how far", onclick: (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openShare(code, me, after);
+  } }, label);
 
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
@@ -45,6 +68,9 @@ function el(tag, attrs = {}, ...children) {
   e.append(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
   return e;
 }
+
+/** The page shown: its parts, those left out (null) not shown. */
+const showPage = (...parts) => $("page").replaceChildren(...parts.filter(Boolean));
 
 let toastTimer;
 function toast(message, error = false, ms = undefined) {
@@ -103,7 +129,10 @@ async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   try {
     if (parts[0] === "p" && parts[1]) await projectPage(decodeURIComponent(parts[1]));
-    else await projectsPage();
+    else if (parts[0] === "users" && me?.role === "admin") {
+      document.title = "Users · StoreyPath Studio";
+      await usersPage($("page"), me, toast);
+    } else await projectsPage();
   } catch (e) {
     $("page").replaceChildren(el("div", { class: "card" }, el("p", {}, e.message), el("a", { href: "#/" }, "All projects")));
   }
@@ -123,20 +152,30 @@ async function projectsPage() {
     }
   } }, name, el("button", { class: "primary", type: "submit" }, "New project"));
 
-  $("page").replaceChildren(
+  document.title = "StoreyPath Studio";
+  const creates = !me || me.create; // admins and engineers make projects, and open files as new ones
+  const whose = (p) => p.can && !p.can.project ? "Parts shared with you"
+    : p.can?.owner ? "Yours" : p.can && !p.can.admin ? `Shared with you: ${p.can.project}` : null;
+  showPage(
     el("section", {},
       el("h1", {}, "Projects"),
-      el("p", { class: "lead" }, "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms.")),
-    el("section", { class: "card" }, form),
-    openCard(),
+      el("p", { class: "lead" }, creates
+        ? "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms."
+        : "The projects shared with you, and how far: some whole, some a building or a floor of them.")),
+    creates ? el("section", { class: "card" }, form) : null,
+    creates ? openCard() : null,
     projects.length
       ? el("section", { class: "projects" }, projects.map((p) =>
-          el("a", { class: "card project-card", href: `#/p/${p.code}` },
+          el("div", { class: "card project-card" },
+            el("a", { class: "card-link", href: `#/p/${p.code}`, "aria-label": p.name }),
             el("h3", {}, p.name),
             el("code", { class: "muted small" }, p.code),
             el("div", { class: "stat" }, el("b", {}, String(p.floors)), " floors · ", el("b", {}, String(p.spaces)), " spaces",
-              p.review ? el("span", { class: "warn" }, ` · ${p.review} to review`) : null))))
-      : el("p", { class: "empty" }, "No projects yet."),
+              p.review ? el("span", { class: "warn" }, ` · ${p.review} to review`) : null),
+            whose(p) || p.can?.share ? el("div", { class: "card-actions" },
+              whose(p) ? el("span", { class: "owner-line grow" }, whose(p)) : el("span", { class: "grow" }),
+              p.can?.share ? shareButton(p.code) : null) : null)))
+      : el("p", { class: "empty" }, creates ? "No projects yet." : "Nothing is shared with you yet: an admin, or a project's owner, shares projects with you."),
   );
 }
 
@@ -146,21 +185,26 @@ async function projectPage(code) {
   const plansArea = el("div", { id: "plans-area" });
 
   const converted = p.locations.some((l) => l.buildings.some((b) => b.floors.some((f) => f.converted)));
-  $("page").replaceChildren(
+  const level = p.can?.project;
+  showPage(
     el("section", {},
       el("a", { class: "back", href: "#/" }, "← Projects"),
       el("div", { class: "row" },
         el("div", { class: "grow" },
           el("h1", {}, p.project.name),
-          el("p", { class: "lead" }, el("code", {}, p.project.id), ` · ${p.file}`)),
+          el("p", { class: "lead" }, el("code", {}, p.project.id), ` · ${p.file}`,
+            p.can && !p.can.admin ? el("span", { class: "muted" }, level
+              ? ` · ${p.can.owner ? "yours" : `you may ${level === "view" ? "view" : level === "edit" ? "change" : "change and share"} it`}`
+              : " · the parts of it shared with you") : null)),
+        p.can?.share ? shareButton(code, "Share…", () => projectPage(code)) : null,
         converted ? el("a", { class: "button primary", href: worldUrl(code), target: "_blank",
           title: "The project as it is now, in 3D: orbit it as a dollhouse or walk through it" }, "Walk in 3D") : null)),
-    drawingsCard(code, p, plansArea),
+    onProject(p, "edit") ? drawingsCard(code, p, plansArea) : null,
     plansArea,
-    ...p.locations.filter((loc) => loc.buildings.some((b) => b.footprint)).map((loc) => siteCard(code, loc)),
+    ...p.locations.filter((loc) => loc.buildings.some((b) => b.footprint)).map((loc) => siteCard(code, loc, p)),
     buildingsCard(code, p),
     exportCard(code, p),
-    deleteCard(code, p),
+    p.can?.delete !== false ? deleteCard(code, p) : null,
   );
 }
 
@@ -583,10 +627,11 @@ function buildingsCard(code, p) {
           : el("span", { class: "muted small" }, f.method === "package" ? "from a package: add its drawing to read it again"
             : f.converted ? "with a layer profile" : "not converted")),
         el("td", { class: "actions" }, f.converted ? [
-          el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` }, "Review"),
+          el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` },
+            onFloor(p, f.id, "edit") ? "Review" : "View"),
           el("a", { href: worldUrl(code, { floor: f.id }), target: "_blank", title: "This floor in 3D" }, "3D"),
-        ] : f.method !== "package" && f.drawing ? readAgain(code, f) : null))))),
-    placementForm(code, b),
+        ] : f.method !== "package" && f.drawing && onFloor(p, f.id, "edit") ? readAgain(code, f) : null))))),
+    onBuilding(p, b.id, "edit") ? placementForm(code, b) : null,
   )));
 }
 
@@ -617,9 +662,13 @@ function readAgain(code, f) {
 
 const SITE_STEP_M = 1;
 
-function siteCard(code, loc) {
-  const buildings = loc.buildings.filter((b) => b.footprint).map((b) => ({ ...b, site: { ...b.site } }));
-  let chosen = buildings.find((b) => !b.placement)?.id ?? null;
+function siteCard(code, loc, p) {
+  // a building is moved by who may change it; the site's arrangement and its place on
+  // the map, by who may change the whole project
+  const buildings = loc.buildings.filter((b) => b.footprint)
+    .map((b) => ({ ...b, site: { ...b.site }, locked: !onBuilding(p, b.id, "edit") }));
+  const whole = onProject(p, "edit");
+  let chosen = buildings.find((b) => !b.placement && !b.locked)?.id ?? null;
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.classList.add("site-plan");
   svg.setAttribute("role", "application");
@@ -668,7 +717,7 @@ function siteCard(code, loc) {
       const d = pts.map((ring) => `M${ring.map(([a, bb]) => `${a.toFixed(2)},${(-bb).toFixed(2)}`).join("L")}Z`).join("");
       const g = document.createElementNS(SVG_NS, "g");
       g.classList.add("building");
-      if (b.placement) g.classList.add("fixed");
+      if (b.placement || b.locked) g.classList.add("fixed");
       if (b.id === chosen) g.classList.add("chosen");
       const path = document.createElementNS(SVG_NS, "path");
       path.setAttribute("d", d);
@@ -683,7 +732,7 @@ function siteCard(code, loc) {
       label.setAttribute("font-size", ((vx1 - vx0) / 45).toFixed(2));
       label.textContent = b.name;
       g.append(path, label);
-      if (!b.placement && b.id === chosen) {
+      if (!b.placement && !b.locked && b.id === chosen) {
         // the turning handle: above its middle, turned with it
         const r = (b.site.rotation * Math.PI) / 180, len = top - cy + Math.max(3, (vx1 - vx0) / 40);
         const hx = cx + len * Math.sin(r), hy = cy + len * Math.cos(r);
@@ -705,8 +754,9 @@ function siteCard(code, loc) {
       y.value = b.site.y.toFixed(2);
       rot.value = b.site.rotation.toFixed(1);
     }
-    for (const input of [x, y, rot]) input.disabled = !b || Boolean(b.placement);
-    note.textContent = b?.placement
+    for (const input of [x, y, rot]) input.disabled = !b || Boolean(b.placement) || b.locked;
+    note.textContent = b?.locked ? `${b.name} is not yours to move: you may look at it.`
+      : b?.placement
       ? `${b.name} is placed on the map by itself: it stands there whatever the site plan says.`
       : "Drag a building to move it; drag its round handle to turn it (Shift: by 15°). Keys: arrows move 1 m (Shift: 10 m), [ and ] turn 1° (Shift: 15°).";
   };
@@ -727,7 +777,7 @@ function siteCard(code, loc) {
     const b = buildings.find((o) => o.id === id);
     if (!b) return;
     chosen = b.id;
-    if (b.placement) return draw();
+    if (b.placement || b.locked) return draw();
     e.preventDefault();
     svg.setPointerCapture(e.pointerId);
     drag = { b, turn: Boolean(e.target.dataset?.turn), from: toSite(e), at: [b.site.x, b.site.y] };
@@ -756,7 +806,7 @@ function siteCard(code, loc) {
   svg.addEventListener("pointercancel", drop);
   svg.addEventListener("keydown", (e) => {
     const b = buildings.find((o) => o.id === (e.target.dataset?.id || chosen));
-    if (!b || b.placement) return;
+    if (!b || b.placement || b.locked) return;
     const step = e.shiftKey ? 10 : SITE_STEP_M, turn = e.shiftKey ? 15 : 1;
     const moves = { ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], ArrowUp: [0, step, 0], ArrowDown: [0, -step, 0],
       "[": [0, 0, -turn], "]": [0, 0, turn], "{": [0, 0, -15], "}": [0, 0, 15] };
@@ -774,7 +824,7 @@ function siteCard(code, loc) {
   for (const [input, key] of [[x, "x"], [y, "y"], [rot, "rotation"]]) {
     input.addEventListener("change", () => {
       const b = buildings.find((o) => o.id === chosen);
-      if (!b || !Number.isFinite(Number(input.value))) return;
+      if (!b || b.locked || !Number.isFinite(Number(input.value))) return;
       b.site[key] = key === "rotation" ? (Number(input.value) % 360 + 360) % 360 : Number(input.value);
       fit();
       draw();
@@ -815,14 +865,17 @@ function siteCard(code, loc) {
   fit();
   draw();
   return el("section", { class: "card site-card" },
-    el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), sideBySide, fitButton),
+    el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), whole ? sideBySide : null, fitButton),
     svg,
-    el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot)),
-    note,
+    buildings.some((b) => !b.locked)
+      ? el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot))
+      : null,
+    buildings.some((b) => !b.locked) ? note : null,
     el("p", { class: "muted small", style: "margin-top: 12px" }, loc.placement
       ? "On the map: the site's centre (the cross) sits at this latitude and longitude; up points to this bearing."
-      : "Not on the map: the buildings stand where the site plan has them, around 0°N 0°E, their shapes and sizes true. Give the latitude and longitude of the centre (the cross), and the compass bearing of up, to put them all on the map."),
-    onMap);
+      : whole ? "Not on the map: the buildings stand where the site plan has them, around 0°N 0°E, their shapes and sizes true. Give the latitude and longitude of the centre (the cross), and the compass bearing of up, to put them all on the map."
+        : "Not on the map yet: the buildings stand where the site plan has them."),
+    whole ? onMap : null);
 }
 
 function placementForm(code, b) {
@@ -891,8 +944,11 @@ function openCard() {
 }
 
 function exportCard(code, p) {
-  // a package holds one building: it lists what changed in that building alone
-  const buildings = p.locations.flatMap((l) => l.buildings.filter((b) => b.floors.some((f) => f.converted)));
+  // a package holds one building: it lists what changed in that building alone (made by
+  // who may change the whole building)
+  const buildings = p.locations.flatMap((l) => l.buildings.filter((b) => b.floors.some((f) => f.converted)
+    && onBuilding(p, b.id, "edit")));
+  if (!buildings.length && !onProject(p, "view") && !p.exports.length) return null;
   const what = el("select", { "aria-label": "Building to export" },
     ...buildings.map((b) => el("option", { value: b.id }, b.name)));
   const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
@@ -914,7 +970,8 @@ function exportCard(code, p) {
     title: "One file for another Studio to continue this project: its drawings, corrections and edits (not a package: other systems read a building's)" },
   "Download project");
   return el("section", { class: "card" },
-    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), send, buildings.length > 1 ? what : null, button),
+    el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
+      buildings.length > 1 ? what : null, buildings.length ? button : null),
     el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("p", { class: "muted small" }, "Saved in ", el("code", {}, p.exports_folder), ", newest first:") : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
@@ -933,4 +990,8 @@ function exportCard(code, p) {
 }
 
 window.addEventListener("hashchange", route);
-showStatus().finally(route); // what Studio can do first: the pages offer only that
+whoami().then((who) => {
+  me = who;
+  $("account").replaceChildren(accountMenu(me));
+  return showStatus(); // what Studio can do first: the pages offer only that
+}).finally(route);

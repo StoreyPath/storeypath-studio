@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · StoreyPath Studio</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body class="studio">
+  <header class="topbar">
+    <a class="brand" href="/">StoreyPath <span>Studio</span></a>
+  </header>
+
+  <main class="page auth-page">
+    <section class="card auth-card" id="login-card" hidden>
+      <h1>Log in</h1>
+      <p class="lead">To your projects, and those shared with you.</p>
+      <form id="login" class="auth-form" autocomplete="on">
+        <label class="field">Username
+          <input id="username" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="field">Password
+          <input id="password" type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button class="primary" type="submit">Log in</button>
+      </form>
+      <p id="setup-note" class="note" hidden>Studio has no users yet. Open the setup link it printed when it started
+        (in its log: <code>docker logs</code> for the container), or ask whoever runs it.</p>
+      <p class="muted small">Forgot your password? An admin of this Studio can give you a new one.</p>
+    </section>
+
+    <section class="card auth-card" id="change-card" hidden>
+      <h1>Change your password</h1>
+      <p class="lead" id="change-why">A new password for your account. Every other session of yours ends.</p>
+      <form id="change" class="auth-form">
+        <input type="text" name="username" autocomplete="username" id="change-username" hidden>
+        <label class="field">Current password
+          <input id="current" type="password" autocomplete="current-password" required>
+        </label>
+        <label class="field"><span>New password <span class="muted">(at least 10 characters)</span></span>
+          <input id="new" type="password" autocomplete="new-password" minlength="10" required>
+        </label>
+        <label class="field">The new password again
+          <input id="again" type="password" autocomplete="new-password" minlength="10" required>
+        </label>
+        <p id="change-error" class="form-error" role="alert" hidden></p>
+        <div class="row">
+          <button class="primary" type="submit">Change password</button>
+          <a class="button" id="change-cancel" href="/">Cancel</a>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script type="module" src="login.js"></script>
+</body>
+</html>

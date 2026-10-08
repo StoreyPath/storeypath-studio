@@ -1,7 +1,10 @@
 // StoreyPath Review: check a converted project floor by floor and correct its spaces.
 // Part of StoreyPath Studio (see server.py); the project is ?p=<code>. Every
-// correction is saved to the workspace file at once.
+// correction is saved to the workspace file at once. A floor the person may only view
+// (its ``can``) is shown with nothing to change it: no drawing tools, no menu, items
+// not dragged, a "View only" badge (the server refuses changes anyway).
 
+import { accountMenu, sentAway, whoami } from "./account.js";
 import { TYPE_COLORS, typeLabel } from "./theme.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -73,9 +76,37 @@ async function request(path, body) {
   };
   const res = await fetch(`/api/${path}`, init);
   const data = await res.json().catch(() => ({}));
+  if (sentAway(res, data)) throw new Error("log in again");
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
   if (body !== undefined) changed3d(); // saved: the 3D view no longer shows it all
   return data;
+}
+
+// ---- view only ------------------------------------------------------------------
+
+/** Whether the person may change the floor shown (else they may only look at it). */
+function editable(floorId = state.floor?.id) {
+  const f = state.project?.floors.find((x) => x.id === floorId);
+  return !f || f.can === undefined || f.can === "edit" || f.can === "share";
+}
+
+/** True (and says so) when the floor shown may only be looked at. */
+function viewOnly() {
+  if (editable()) return false;
+  toast("View only: you may look at this floor, not change it", true);
+  return true;
+}
+
+/** The page as the person may use it on this floor: with a floor they may only view,
+ * nothing that changes it is offered, and every field is read only. */
+function showViewOnly() {
+  const only = !editable();
+  document.body.classList.toggle("view-only", only);
+  $("view-only").hidden = !only;
+  if (only && state.tool) setTool(null);
+  for (const e of document.querySelectorAll("#ed-form input, #ed-form select, #asset-editor input, #asset-editor select, #it-size input")) {
+    e.disabled = only;
+  }
 }
 
 function el(tag, attrs = {}, ...children) {
@@ -152,6 +183,7 @@ async function start() {
     return;
   }
   $("back").href = `/#/p/${encodeURIComponent(CODE)}`;
+  $("account").replaceChildren(accountMenu(await whoami()));
   try {
     state.project = await request(`${BASE}/review`);
   } catch (e) {
@@ -216,6 +248,7 @@ async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   }
   $("floor").value = id;
   renderFloorMeta();
+  showViewOnly();
   renderPlan();
   renderLists();
   renderLegend();
@@ -680,9 +713,10 @@ function bindPane(pane) {
   let drag = null;
   pane.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    const asset = !state.tool && assetOf(e.target);
+    const picked = !state.tool && assetOf(e.target);
+    const asset = picked && editable() ? picked : null; // dragged only by who may change the floor
     drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
-      asset, from: asset ? [asset.x, asset.y] : null };
+      asset, picked, from: asset ? [asset.x, asset.y] : null };
     pane.setPointerCapture(e.pointerId);
   });
   pane.addEventListener("pointermove", (e) => {
@@ -712,14 +746,14 @@ function bindPane(pane) {
   });
   const end = (e) => {
     if (!drag) return;
-    const { moved, target, asset } = drag;
+    const { moved, target, asset, picked } = drag;
     drag = null;
     pane.classList.remove("dragging");
     if (asset && moved) return changeAsset(asset, { x: round4(asset.x), y: round4(asset.y) });
     if (moved) return;
     const p = planPoint(...local(e));
     if (state.tool) return toolClick(p);
-    if (asset) return selectAsset(asset.id);
+    if (picked) return selectAsset(picked.id);
     const door = openingNear(p);
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);
@@ -730,7 +764,7 @@ function bindPane(pane) {
   // A right-click: what can be done there
   pane.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (!state.floor || state.busy) return;
+    if (!state.floor || state.busy || viewOnly()) return;
     openMenu(e.clientX, e.clientY, planPoint(...local(e)));
   });
   pane.addEventListener("pointerup", end);
@@ -765,7 +799,7 @@ function listItem(s, withReasons) {
     el("span", { class: "sub" }, s.ignored ? "deleted" : s.hidden ? "hidden"
       : `${s.kind === "zone" ? "zone · " : ""}${typeLabel(s.type)} · ${code(s.id)}`),
     withReasons ? el("span", { class: "why" }, s.reasons.join("; "),
-      el("span", { class: "quicks" }, quick("Delete", "ignored",
+      el("span", { class: "quicks edit-only" }, quick("Delete", "ignored",
         "Not there, or not worth anything: out of the plan and the package, kept with its ID"))) : null,
   );
   li.classList.toggle("selected", s.id === state.selected);
@@ -953,7 +987,7 @@ function setFlag(id, flag, value) {
 
 async function saveSpace(body, id = state.selected) {
   const s = state.byId.get(id);
-  if (!s) return;
+  if (!s || viewOnly()) return;
   let updated;
   try {
     updated = await request(`${BASE}/objects/${s.id}`, body);
@@ -987,6 +1021,7 @@ function nextToReview() {
 }
 
 async function reconvert() {
+  if (viewOnly()) return;
   const id = state.floor.id;
   const button = $("convert");
   button.disabled = true;
@@ -1044,6 +1079,7 @@ function planPoint(sx, sy) {
 }
 
 function setTool(tool) {
+  if (tool && state.tool !== tool && viewOnly()) return;
   state.tool = tool && state.tool !== tool ? tool : null;
   state.wallStart = null;
   state.corners = [];
@@ -1219,6 +1255,7 @@ function toolClick(p) {
 }
 
 async function submitEdit(body, saying, after = null) {
+  if (viewOnly()) return;
   state.busy = true;
   $("map").classList.add("busy");
   try {
@@ -1514,7 +1551,7 @@ function startLine(tool, p) {
 
 async function deleteItem() {
   const item = state.item;
-  if (!item || state.busy) return;
+  if (!item || state.busy || viewOnly()) return;
   if (item.kind === "wall" || item.kind === "divider") return takeAway(item.kind, item.at, item.line);
   const d = state.floor.doors.find((x) => x.id === item.id);
   if (!d) return;
@@ -1741,7 +1778,7 @@ function assetAt(p) {
 }
 
 async function placeAsset(type, p) {
-  if (!type) return;
+  if (!type || viewOnly()) return;
   try {
     const a = await request(`${BASE}/floors/${state.floor.id}/items`, { type, x: round4(p[0]), y: round4(p[1]), rotation: 0 });
     state.floor.items.push(a);
@@ -1753,6 +1790,7 @@ async function placeAsset(type, p) {
 }
 
 async function changeAsset(a, body) {
+  if (viewOnly()) return;
   try {
     const got = await request(`${BASE}/items/${a.id}`, body);
     const list = state.floor.items;
@@ -1794,7 +1832,9 @@ function renderAssetEditor() {
   $("as-meta").replaceChildren(...(t?.name_ar ? [el("bdi", { dir: "rtl", lang: "ar" }, t.name_ar), el("br")] : []), about);
   $("as-type").value = a.type;
   $("as-rotation").value = Math.round(a.rotation);
-  $("as-floor").replaceChildren(...state.project.floors.map((f) => el("option", { value: f.id }, `${f.building} · ${floorOptionText(f)}`)));
+  // carried only to a floor the person may change
+  $("as-floor").replaceChildren(...state.project.floors.filter((f) => f.id === state.floor.id || editable(f.id))
+    .map((f) => el("option", { value: f.id }, `${f.building} · ${floorOptionText(f)}`)));
   $("as-floor").value = state.floor.id;
   const own = (t?.fields || []).filter((f) => f.owner === "storeypath");
   $("as-fields").replaceChildren(...own.map((f) => {
@@ -1809,6 +1849,7 @@ function renderAssetEditor() {
   if (others.length) $("as-fields").append(el("p", { class: "meta", style: "grid-column: 1 / -1" }, `${others.join(", ")}: entered where the asset is managed (wayfinder)`));
   $("as-delete").textContent = a.retired ? "Restore" : "Delete";
   $("as-flags").textContent = a.retired ? "Deleted" : "";
+  showViewOnly();
 }
 
 /** The keys of a chosen item: R turns it 90°, [ and ] by 15°, the arrows move it

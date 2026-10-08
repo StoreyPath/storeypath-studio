@@ -324,6 +324,9 @@ def test_logging_in_sets_a_strict_cookie_and_out_clears_it(tmp_path):
                     headers={"X-StoreyPath": "0"})[0] == 403
         assert call(port, "POST", "/api/login", {"username": "ali", "password": PASSWORD},
                     headers={"Origin": "https://evil.example"})[0] == 403
+        # the pages themselves need no session: they hold no data
+        for page in ("/", "/login.html", "/setup.html", "/review.html", "/studio.js"):
+            assert call(port, "GET", page)[0] == 200, page
         assert call(port, "GET", "/api/projects")[0] == 401
     finally:
         srv.shutdown()

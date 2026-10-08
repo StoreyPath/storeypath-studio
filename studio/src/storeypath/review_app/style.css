@@ -295,3 +295,33 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 .as-grid .unit { display: flex; align-items: center; gap: 4px; }
 .as-grid input, .as-grid select { width: 100%; }
 
+/* the person's menu (account.js), on every page */
+.account { position: relative; flex: none; }
+.account-button { padding: 4px 10px 4px 4px; border-radius: 999px; gap: 8px; max-width: 220px; }
+.account-button .avatar {
+  width: 24px; height: 24px; border-radius: 50%; flex: none; display: inline-grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font-weight: 700; font-size: 12px;
+}
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 200px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .18); display: flex; flex-direction: column;
+}
+.account-menu a, .account-menu button {
+  display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 6px;
+  background: none; color: var(--text); text-decoration: none; font: inherit; cursor: pointer;
+}
+.account-menu a:hover, .account-menu button:hover, .account-menu a:focus-visible, .account-menu button:focus-visible {
+  background: var(--hover); outline: none;
+}
+
+/* Review of a floor the person may only look at */
+.badge.view-only {
+  display: inline-block; align-self: flex-start; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--text);
+}
+body.view-only .edit-only { display: none !important; }
+#panel header .account { margin-bottom: 8px; }
+#panel header .account-menu { left: 0; right: auto; }
+
