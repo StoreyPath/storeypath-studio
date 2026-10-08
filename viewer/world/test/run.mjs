@@ -62,11 +62,11 @@ test("a package of a newer minor version, or of no version, is refused; older on
     return loadPackage(bytes).then((pkg) => (pkg.manifest.format_version === version ? "read" : "read, another version"),
       (e) => e.message);
   };
-  for (const v of ["0.7.0", "0.7.12", "0.7", "0.6.0", "0.3.1", "0.7.1-rc.1", "0.7.0+build.5"]) {
+  for (const v of ["0.8.0", "0.8.12", "0.8", "0.7.0", "0.6.0", "0.3.1", "0.8.1-rc.1", "0.8.0+build.5"]) {
     truly(await said(v) === "read", `${v}: ${await said(v)}`);
   }
-  for (const v of ["0.8.0", "0.8", "0.99.0", "0.8.0-rc1", "1.0.0", "2.7.0"]) {
-    const want = `This package is format ${v}, newer than this viewer's 0.7: update the viewer.`;
+  for (const v of ["0.9.0", "0.9", "0.99.0", "0.9.0-rc1", "1.0.0", "2.7.0"]) {
+    const want = `This package is format ${v}, newer than this viewer's 0.8: update the viewer.`;
     truly(await said(v) === want, `${v}: ${await said(v)}`);
   }
   for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
@@ -743,6 +743,85 @@ test("pre-built floors are used only as they were built: this export, this build
     return { sized, stale, same, old, furnished, floors: window.world.plan(window.world.package.floors[0].id) !== null };
   });
   truly(r.sized === 0 && r.stale === 0 && r.same >= 2 && r.old === 0 && r.furnished && r.floors, JSON.stringify(r));
+});
+
+// format 0.8: the way through a building (route(), the module both viewers share)
+const routes = JSON.parse(readFileSync(join(root, "../../spec/conformance/routes.json"), "utf8"));
+
+test("the world's module finds the conformance ways as Studio does, on the network its reader reads", async () => {
+  const cases = routes.routes.filter((c) => c.package === "campus-hq.storeypath");
+  const r = await page.run(async (cases) => {
+    const pkg = await window.sp.loadPackage("/campus-hq.storeypath");
+    const old = await window.sp.loadPackage("/campus.storeypath");
+    const sorted = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
+    const wrong = [];
+    for (const c of cases) {
+      const got = window.sp.route(pkg, c.from, c.to, { accessible: c.accessible });
+      for (const key of ["nodes", "legs", "changes", "steps"]) {
+        if (sorted(got?.[key]) !== sorted(c.expect[key])) wrong.push(`${c.name}: its ${key}`);
+      }
+    }
+    const lifts = pkg.spaces.filter((s) => s.properties.type === "elevator");
+    return { wrong, nodes: pkg.navigation?.nodes.length ?? 0, old: old.navigation,
+      stacks: new Set(lifts.map((s) => s.properties.stack)).size, lifts: lifts.length };
+  }, cases);
+  truly(r.wrong.length === 0 && cases.length >= 5, r.wrong.join("; "));
+  truly(r.nodes > 200 && r.old === null, `the network read: ${r.nodes} nodes; an older package's: ${r.old}`);
+  truly(r.lifts === 6 && r.stacks === 2, `two lifts through three floors: ${JSON.stringify(r)}`);
+});
+
+test("a way is drawn over each floor it walks on, through the lift between them, and taken away", async () => {
+  const lifted = routes.routes.find((c) => c.package === "campus-hq.storeypath" && c.accessible && c.expect.changes.length);
+  const r = await page.run(async (c) => {
+    const THREE_Y = (o) => { o.geometry.computeBoundingBox(); return o.geometry.boundingBox; };
+    const world = new window.sp.StoreyPathWorld("#v");
+    const pkg = await world.open("/campus-hq.storeypath");
+    const way = window.sp.route(pkg, c.from, c.to, { accessible: true });
+    await world.showRoute(way);
+    await window.frames();
+    const named = (prefix) => {
+      const out = [];
+      world.scene.traverse((o) => { if (o.name.startsWith(prefix)) out.push(o); });
+      return out;
+    };
+    const legs = named("route:leg:"), links = named("route:link:"), start = named("route:start")[0], end = named("route:end")[0];
+    const floors = pkg.floorsOf(world.building);
+    const elevation = (id) => floors.find((f) => f.id === id).properties.elevation;
+    const first = pkg.navigation.nodes.find((n) => n.id === way.nodes[0]);
+    const firstAt = world.toLocal(first.lonlat);
+    const legOn = legs.map((m) => [m.parent.name, Math.round((THREE_Y(m).min.y - elevation(m.parent.name)) * 100) / 100]);
+    const startFloor = start.parent.name, endFloor = end.parent.name, linkSpan = links[0] ? links[0].scale.y : 0;
+    const seen = () => ({ legs: named("route:leg:").map((m) => m.parent.visible), link: links[0]?.visible,
+      top: floors.map((f) => world.scene.getObjectByName(f.id).visible) });
+    const all = seen();
+    world.setFloor(way.legs[0].floor_id);
+    const one = seen();
+    world.setFloor(null);
+    // the camera along the way
+    const before = world.camera.position.clone();
+    await world.flyRoute({ seconds: 0.4 });
+    const moved = world.camera.position.distanceTo(before);
+    const target = { x: world.camera.position.x, y: world.camera.position.y };
+    world.clearRoute();
+    await window.frames();
+    const left = named("route:").length;
+    const shown = floors.map((f) => world.scene.getObjectByName(f.id).visible);
+    world.destroy();
+    return { legs: legOn, links: links.length, start: [start.position.x - firstAt.x, start.position.z - firstAt.z],
+      startFloor, endFloor, wayFloors: way.legs.map((l) => l.floor_id), all, one, moved, left,
+      shown, linkSpan, rise: elevation(way.legs[1].floor_id) - elevation(way.legs[0].floor_id), target };
+  }, lifted);
+  truly(JSON.stringify(r.legs) === JSON.stringify(r.wayFloors.map((f) => [f, 0.14])), `a ribbon over each floor: ${JSON.stringify(r.legs)}`);
+  truly(r.links === 1 && Math.abs(r.linkSpan - r.rise) < 0.05, `through the lift: ${r.links}, ${r.linkSpan} m of ${r.rise}`);
+  truly(Math.hypot(...r.start) < 0.05 && r.startFloor === r.wayFloors[0] && r.endFloor === r.wayFloors.at(-1),
+    `its start at the kiosk, its end upstairs: ${JSON.stringify(r)}`);
+  truly(JSON.stringify(r.all) === JSON.stringify({ legs: [true, true], link: true, top: [true, true, false] }),
+    `the floors it goes to, not the one above: ${JSON.stringify(r.all)}`);
+  truly(JSON.stringify(r.one) === JSON.stringify({ legs: [true, false], link: false, top: [true, false, false] }),
+    `one floor shown: its leg alone: ${JSON.stringify(r.one)}`);
+  truly(r.moved > 1, `the camera went along it: ${r.moved}`);
+  truly(r.left === 0 && JSON.stringify(r.shown) === "[true,true,true]", `taken away, every floor shown again: ${r.left}, ${r.shown}`);
 });
 
 test("destroy empties the container", async () => {

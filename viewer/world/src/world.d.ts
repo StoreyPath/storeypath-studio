@@ -3,6 +3,11 @@
 // as spec/FORMAT.md describes them.
 
 export { webglSupport, type WebGLSupport } from './support.js';
+// finding the way (format 0.8): the module both viewers share
+export { route, shortest, Graph } from './navigation.js';
+export type { Navigation, NavEdge, NavFloor, NavNode, NavPlace, Route, RouteChange, RouteLeg, RouteStep, RouteOptions,
+	Routable } from './navigation.js';
+import type { Navigation, Route } from './navigation.js';
 
 export declare const FORMAT: 'storeypath-package';
 /** The format version this viewer reads, any patch of it. */
@@ -117,6 +122,7 @@ export declare class StoreyPathPackage {
 			zones?: Feature[];
 			items?: Feature<ItemProperties>[];
 			catalogue?: Catalogue | null;
+			navigation?: Navigation | null;
 		},
 		/** The archive (a JSZip), for the files read only when needed: the pre-built 3D. */
 		zip?: unknown
@@ -136,6 +142,8 @@ export declare class StoreyPathPackage {
 	readonly items: Feature<ItemProperties>[];
 	/** The types of items, or null when the package has none. */
 	readonly catalogue: Catalogue | null;
+	/** The building's walking network (navigation.json, format 0.8), or null: `route(pkg, from, to)` finds the way on it. */
+	readonly navigation: Navigation | null;
 	readonly project: { id: string; name: string };
 	/** The feature with this ID, or null. */
 	get(id: string): Feature | null;
@@ -271,6 +279,18 @@ export declare class StoreyPathWorld extends EventTarget {
 	changeFloor(step: number): boolean;
 	toLocal(lonlat: LonLat): { x: number; z: number };
 	plan(floorId: string): WorldPlan | null;
+	/** The way shown (showRoute), or null. */
+	readonly route: Route | null;
+	/** Draw a way (as `route()` finds it, format 0.8): a ribbon just over each floor it walks on, arrows the way
+	 * it goes, joined through the lift or stairs between floors, its start and end marked; seen through the floors
+	 * above it, which the dollhouse view of the whole building then leaves out. Null: none. With `fly`, the camera
+	 * goes along it; resolves when it is there. */
+	showRoute(route: Route | null, options?: { fly?: boolean }): Promise<void>;
+	/** Take the way away. */
+	clearRoute(): void;
+	/** Take the camera along the way shown, over `seconds` (default 14), in the dollhouse view; resolves when it
+	 * is there, or when the way is taken away. */
+	flyRoute(options?: { seconds?: number }): Promise<void>;
 	/** Stop drawing and free the GPU; the container is emptied. */
 	destroy(): void;
 	addEventListener<K extends keyof WorldEvents>(
