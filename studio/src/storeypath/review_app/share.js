@@ -115,7 +115,7 @@ export async function openShare(code, me, changed = () => {}) {
         }
       } }, el("label", {}, "Owner", pick), el("button", { type: "submit" }, "Make owner"));
     }
-    body.replaceChildren(
+    body.replaceChildren(...[
       el("p", { class: "owner-line" }, a.owner
         ? `Owner: ${who(a.owner)}. The owner may do everything in the project, and delete it.`
         : "No owner yet (it was made before Studio had accounts): admins manage it."),
@@ -130,7 +130,7 @@ export async function openShare(code, me, changed = () => {}) {
       scopes.length ? add : el("p", { class: "muted small" }, "There is nothing here you may share."),
       el("p", { class: "muted small" }, LEVELS.map(([, label, about]) => `${label}: ${about}.`).join(" "),
         " A grant on the project covers its buildings and floors, ones added later too; on a building, all its floors."),
-    );
+    ].filter(Boolean)); // (no owner form but for admins)
   };
 
   dialog.append(
