@@ -53,11 +53,16 @@ makes itself the first time (below); the first start prints a link to set up the
 first admin, and everyone then logs in ([Users, sharing and
 backups](#users-sharing-and-backups)).
 
-Projects are kept in the data folder, one folder each named by the project's code:
-`<data>/<code>/<code>.spproj`, with its `drawings/` and `exports/` beside it. The
-catalogue of item types, `catalogue.json`, is in the data folder itself, for every
-project; so are the accounts, who each project is shared with and the audit log, in
-one SQLite file, `studio.db`, and Studio's certificate, in `tls/`.
+Everything is kept in Studio's own database, PostgreSQL with PostGIS
+(`STOREYPATH_DATABASE_URL`; the studio image runs its own): each project whole — its
+floors, spaces, corrections and items, the drawings as sent and every package as it
+was exported — the catalogue of item types, the accounts, who each project is shared
+with, the audit log and the history of every change. The data folder holds only
+Studio's certificate (`tls/`) and its cache (`cache/`: prints of floors, and drawings
+put in files while a step reads them), both made again when gone. A data folder of an
+older Studio (`<code>/<code>.spproj` with its drawings and exports, `catalogue.json`,
+`studio.db`) is brought into the database at the first start, or with `storeypath db
+import --data <folder>`; nothing in it is changed or deleted.
 
 To reach Studio from other machines, serve on all interfaces (`--host 0.0.0.0`).
 It answers only to its own names: localhost, this machine's name and any address;
@@ -93,8 +98,8 @@ them, and is offered only what they may do there.
 | engineer | creates projects and opens packages and project files as new projects; owns what they make |
 | user | sees only what is shared with them |
 
-An admin may also give anyone a **capability**: `backup` (download the whole data
-folder) or `catalogue` (change the item types). Admins have both. A backup holds the
+An admin may also give anyone a **capability**: `backup` (download the whole
+database) or `catalogue` (change the item types). Admins have both. A backup holds the
 accounts with their passwords' scrypt hashes (a restore needs them) and the audit log:
 `backup` hands those over too, so give it only to whom you would trust with them.
 
@@ -143,7 +148,8 @@ moment, then are answered 503); a wait is written in the audit log once in 15
 minutes. Logging in takes at most 4 KB, and a username of more than 64 characters
 is refused unread. Users are never deleted, only disabled.
 
-**From the command line**, on the data folder (also while Studio runs):
+**From the command line**, on Studio's database (`STOREYPATH_DATABASE_URL`; also while
+Studio runs):
 
 ```sh
 storeypath users add s.ahmed --role engineer --name "Sara Ahmed" --data /data   # asks for the password twice
@@ -151,25 +157,24 @@ storeypath users add ops --role user --capability backup --password-stdin --data
 storeypath users list --data /data
 storeypath users passwd s.ahmed --data /data        # temporary: changed at the next login (--permanent: not)
 storeypath users disable s.ahmed --data /data       # enable, again; role s.ahmed admin
-storeypath backup --data /data --out studio-backup.tar.gz
-storeypath restore studio-backup.tar.gz --data /new/empty/folder
+storeypath backup --data /data --out studio-backup.sql.gz
+storeypath restore studio-backup.sql.gz      # into an empty database
 ```
 
 **Backups.** *Download a backup* in the person menu (admins, and whoever has the
 `backup` capability), `GET /api/backup`, or `storeypath backup`, gives the whole
-data folder as `storeypath-backup-<UTC time>.tar.gz`: every project, the item types,
-and `studio.db` (as a snapshot taken whole, never the file in use): the accounts with
-their passwords' hashes, who each project is shared with, and the audit log, but no
-session (nobody is logged in to a Studio restored from it). Studio's certificate and
-key (`tls/`) never go in: a Studio restored makes a new certificate, and browsers warn
-once about it, as at a first start (or give it yours with `--cert`, `--key`). It
-leaves out work in progress (drawings sent and not yet cleaned of private
-information, packages being written) and the prints Studio draws again when needed;
-no link is followed or kept. It is written as it is sent, and no job starts while it
-is. `storeypath restore` puts one back into an empty folder only, refusing anything
-in it that would land outside. Keep backups as safe as the data folder itself
-(`storeypath backup` writes one readable by its owner alone, as `studio.db` and its
-`-wal` and `-shm` are, whatever the umask; a folder `storeypath restore` makes is 0700).
+database as `storeypath-backup-<UTC time>.sql.gz` (gzip'd SQL, as psql reads it): every
+project with its drawings and packages, the item types, the accounts with their
+passwords' hashes, who each project is shared with, the audit log and the history, as
+one moment saw them (Studio goes on working meanwhile), but no session (nobody is
+logged in to a Studio restored from it) and no drawing sent and not yet cleaned of
+private information. Studio's certificate and key (`tls/`) never go in: a Studio
+restored makes a new certificate, and browsers warn once about it, as at a first start
+(or give it yours with `--cert`, `--key`). It is written as it is sent. `storeypath
+restore` puts one into an empty database only; an older Studio's backup (a `.tar.gz` of
+its data folder) is brought in as that folder would be, refusing anything in it that
+would land outside. Keep backups as safe as the database itself (`storeypath backup`
+writes one readable by its owner alone, whatever the umask).
 
 **The audit log**, on the Users page: logins (and failed and throttled ones),
 logouts, passwords changed and reset, users created, changed and disabled, grants
@@ -188,7 +193,7 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 |---|---|
 | `POST login`, `logout`, `setup` (no users yet) | nobody |
 | `GET me`, `POST me/password` | logged in (with a temporary password: nothing else) |
-| `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder in `status`, a project's `exports_folder`) is told to admins alone |
+| `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder and the database in `status`) is told to admins alone |
 | `POST catalogue` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
@@ -231,12 +236,13 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `convert FILE` | read the drawings, keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor |
 | `list FILE` | objects with their IDs, types and labels; `--review` only the spaces that need a look, and why; `--floor`, `--retired` |
 | `fix FILE ID` | correct a space: `--type`, `--name`, `--number` (`""` removes a wrong one); no options accepts it as it is; `--clear` removes the corrections |
-| `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts) |
+| `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts), in a database of its own made for the while on the PostgreSQL `STOREYPATH_DATABASE_URL` names; the file is written again after every change |
 | `serve` | run the web app, over HTTPS: `--data`, `--host`, `--port`, `--open`, `--allowed-host`; `--cert`, `--key` (your certificate), `--http` (plain HTTP), `--secure-cookies`, `--trusted-proxy` (also `STOREYPATH_TRUSTED_PROXIES`) |
 | `users add USERNAME` | add a user: `--role admin\|engineer\|user`, `--name`, `--capability backup\|catalogue`, `--password-stdin`, `--permanent` (not to be changed at the first login); `--data` |
 | `users list` · `passwd` · `disable` · `enable` · `role` | list the users; set a password (their sessions end); disable or enable one; change a role |
-| `backup` | the whole data folder as one `.tar.gz` (`--data`, `--out`) |
-| `restore FILE --data DIR` | put a backup into an empty folder |
+| `backup` | the whole database as one `.sql.gz` (`--out`) |
+| `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in) |
+| `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
 | `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid |
 | `validate PACKAGE` | check a package against the format |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
@@ -563,14 +569,15 @@ an ID of its own, the project's code and its number (`K7Q2XM-I000142`), which st
 with it wherever it is carried; a deleted item's ID is never issued again.
 
 Their types are the **catalogue** ([catalogue.py](src/storeypath/catalogue.py)):
-`catalogue.json` in Studio's data folder, one for every project, written with the
-default types the first time Studio needs it, and copied into every package. A type
+in Studio's database, one for every project (`catalogue.json` beside workspace files
+on the command line), written with the default types the first time Studio needs it,
+and copied into every package. A type
 has a `code` kept for good, English and Arabic names, a `category` (furniture,
 equipment, appliance), a size, a `mount` (floor, wall, ceiling), a colour,
 `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
 `storeypath` (entered in Studio) or by the `system` that manages the asset (entered
-there, never in a package). Add or change types by editing the file (or `POST
-/api/catalogue`); a type no longer used is marked `retired`, never removed (Studio
+there, never in a package). Add or change types with `POST /api/catalogue` (or, on
+the command line, by editing the file); a type no longer used is marked `retired`, never removed (Studio
 refuses a catalogue sent to it that drops one, and puts back a default type missing
 from the file). `export` on the command line uses the catalogue of
 the data folder the workspace is in, else the built-in types. A package or project

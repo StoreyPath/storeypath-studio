@@ -26,45 +26,65 @@ editor per floor at a time; the GPU model server as a separate, optional image.
 
 ## 2. Data
 
-PostgreSQL is the system of record. Files stay for what is a file: drawings as
-sent (`/data/projects/<code>/drawings/…`), the prints made of them, packages
-exported. Project files (`.spproj` inside `.storeypath-project`) and packages stay
+PostgreSQL is the system of record, and a project is entirely in it (owner, 2026-10-08):
+its tree, objects, corrections and items, the drawings as sent (the bytes; and those
+sent and waiting for a person to say what of them to keep), and each package exported,
+the exact bytes that were sent beside its export record (`GET …/exports/<file>`
+answers the same file, and the next export lists its changes against what was sent).
+A step that needs a drawing as a file (conversion, reading plans, words, prints) is
+given one written from the database for as long as it runs, then removed. On disk
+there is only what is not data: the cache (`<data>/cache/`: rendered prints, files a
+step is working on, model caches), made again when gone, and the server's TLS
+certificate. Project files (`.spproj` inside `.storeypath-project`) and packages stay
 the way projects and buildings go in and out of a Studio.
 
-Schema `storeypath`, geometry in each building's own frame (local metres, SRID 0):
+Schema `storeypath`, geometry in each building's own frame (local metres, SRID 0). The
+GeoJSON is kept exactly as the project has it (JSONB: packages are compared by hashes of
+it), and a PostGIS geometry is made from it beside it (generated, GiST-indexed).
 
 | Table | Holds |
 |---|---|
-| `projects` | code (PK), name, created, owner, `next_item_seq`, `version` (bumped on every change) |
-| `locations`, `buildings` | as the workspace has them (placement, site position, `next_object_seq`) |
-| `floors` | code, name, ordinal, elevation, height, parapet, source drawing (JSONB), outline (geometry), conversion results (method, warnings, layers, walls as drawn, wall thickness, symbols), drawn edits (JSONB), `version` |
-| `objects` | spaces, zones, openings: id (PK), floor, kind, detected type and its source, name, number, label, geometry, the rest (connects, parent, zones, span, swings, sill, height, tag, issues, detected_ignored) as JSONB, status, created/retired |
+| `projects` | code (PK), name, created, `next_item_seq`, `version` (one more at every change) |
+| `locations`, `buildings` | as the workspace has them (placement, site position, `next_object_seq`), in order |
+| `floors` | id, code, name, ordinal, elevation, height, parapet, source drawing (JSONB), outline (JSONB + geometry), conversion results (method, warnings, layers, walls as drawn, wall thickness, symbols), drawn edits (JSONB), `version` (one more at every change of it or of anything on it) |
+| `objects` | spaces, zones, openings: project and id (PK), floor, kind, detected type and its source, name, number, label, geometry, the rest (connects, parent, zones, span, swings, sill, height, tag, issues, detected_ignored) as JSONB, status, created/retired |
 | `overrides` | a person's corrections by object: type, name, number, hidden, ignored, capacity; who and when; `version` |
-| `items` | id (PK), type, floor, x, y, rotation, values (JSONB), status, created/retired, `version` |
+| `items` | id, type, floor, x, y (and a point geometry), rotation, values (JSONB), status, created/retired, who and when, `version` |
 | `readings`, `vision` | the text model's and the vision model's answers, kept by text and by room shape |
-| `exports` | each export record (JSONB), by project and sequence |
-| `catalogue` | the organization's item types |
-| `users`, `project_access`, `grants`, `sessions`, `audit` | accounts, as in studio.db today |
-| `history` | every change: seq, project, floor(s), at, who, kind, targets, before, after, undoes/redoes |
+| `drawings` | project, name, the bytes, size, sha256, the words left in it, who sent it and when; `incoming` for one waiting for a person |
+| `exports` | each export record (JSONB) in order, with the package's bytes as sent; a package kept from before records, on its own |
+| `catalogue`, `settings` | the organization's item types; what else is the whole Studio's |
+| `users`, `project_access`, `grants`, `sessions`, `audit` | accounts, as studio.db had them (a project's owner stays in `project_access`: who a code is shared with is kept before a project is opened and after it is gone) |
+| `history` | every change: seq, project, version, at, who, part, kind, floor(s), targets, before, after, undoes/redoes |
 | `floor_locks` | floor (PK), who, session, since, last seen |
 
 `storeypath.db`: a connection pool (psycopg 3), numbered SQL migrations applied in
-order at start, and `ProjectStore`:
+order at start under an advisory lock (as Studio's own role, which owns its database
+and is no superuser: the image makes PostGIS before Studio starts), and `ProjectStore`:
 
 - `load(code, building=None, floors=None) -> Workspace`: the in-memory project the
   pipeline already works on (conversion, export, bundles stay as they are), cached
-  per project and reloaded when its `version` moved.
+  per project and read again (one statement: the database makes the JSON) when its
+  `version` moved.
 - Review's changes as small transactions on exactly what they touch (one override,
   one item, one floor's edits), each writing its history row in the same
-  transaction and then `NOTIFY storeypath_changes`.
+  transaction and then `NOTIFY storeypath_changes` ({project, floors, seq, version}).
 - `save_floor(ws, floor_id)`: a conversion's result for that floor (its objects,
   the floor row, the building's next ID number, new readings and vision answers)
-  in one transaction; `save_project(ws)` for opening/merging files.
+  in one transaction; `save_project(ws)` for whatever else differs (placing,
+  floors added, an export with its bytes, files opened into a project or in its place).
 
 Moving over: `storeypath db import --data <folder>` brings every project folder
-(`.spproj`, drawings) and `studio.db` (accounts) into the database; the first start
-does it by itself when the database is empty and the folder has projects. Nothing in
-the folder is deleted.
+(`.spproj`, its drawings, its packages), `catalogue.json` and `studio.db` (accounts,
+owners, sharing, audit) into the database, once; the first start does it by itself
+when the database has no projects and the folder has some (or no users and a
+studio.db). Nothing in the folder is deleted.
+
+Backups (`storeypath backup|restore`, `GET /api/backup`, for an admin or whoever has
+`backup`): the database is the whole of it — every table as one moment saw it (one
+REPEATABLE READ transaction), streamed as gzip'd SQL (COPY blocks psql reads), with no
+session and nothing half done; restored only into an empty database. An older Studio's
+backup (a .tar.gz of its data folder) is restored by bringing that folder in.
 
 ## 3. Many people at once
 
