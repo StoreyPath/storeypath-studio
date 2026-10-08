@@ -84,6 +84,12 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def cookie_name(port) -> str:
+    """The session cookie of a Studio reached on ``port`` (sp_session_8080): browsers keep
+    one host's cookies for all its ports, so two Studios on one machine keep their own."""
+    return f"{COOKIE}_{port}"
+
+
 # ---- refusals -------------------------------------------------------------------
 
 class Refused(Exception):

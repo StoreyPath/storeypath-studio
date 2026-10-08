@@ -17,7 +17,7 @@ import pytest
 
 from storeypath import accounts as acc
 from storeypath import server as server_module
-from storeypath.accounts import COOKIE, Accounts, Scope
+from storeypath.accounts import Accounts, Scope, cookie_name
 from storeypath.samples import build_demo
 from storeypath.server import Studio, make_server
 from storeypath.workspace import Workspace
@@ -46,7 +46,7 @@ class Site:
 
     def send(self, method, path, body=None, token=None, raw=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=60)
-        head = {"Cookie": f"{COOKIE}={token}" if token else "none=1", **(headers or {})}
+        head = {"Cookie": f"{cookie_name(self.port)}={token}" if token else "none=1", **(headers or {})}
         data = None
         if raw is not None:
             data = raw

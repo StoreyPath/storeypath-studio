@@ -127,8 +127,11 @@ instead.
 username; Studio keeps only their scrypt hashes. A password an admin sets (a new
 user, a reset) is temporary: it is changed at the next login before anything else.
 A session lasts until it is not used for 8 hours, or a week at most, and survives
-a restart of Studio; logging out, changing one's password, or an admin changing
-someone's role or capabilities or disabling them ends their sessions. After 5 failed
+a restart of Studio. Its cookie (HttpOnly, SameSite=Strict, Secure over HTTPS) is named
+by the port Studio is reached on, `sp_session_8080`: browsers keep one machine's
+cookies for all its ports, and two Studios on one machine keep their own. Logging
+out, changing one's password, or an admin changing someone's role or capabilities or
+disabling them ends their sessions. After 5 failed
 logins for a username from one address, or 20 from one address, within 15 minutes,
 logins from there wait (from 30 seconds, doubling, up to 15 minutes): someone else's
 wrong passwords never lock a person out. A wrong current password, changing one's

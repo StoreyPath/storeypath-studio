@@ -16,7 +16,7 @@ import pytest
 
 from sessions import call
 from storeypath import accounts as acc
-from storeypath.accounts import COOKIE, Accounts, Scope
+from storeypath.accounts import Accounts, Scope
 from storeypath.convert import convert_floor
 from storeypath.samples import build_demo, office_floor, write_sheet_dxf
 from storeypath.server import Studio, make_server
@@ -403,7 +403,8 @@ def test_the_first_admin_is_set_up_once_with_the_printed_link(tmp_path):
         assert call(port, "POST", "/api/setup", {"token": "guess", "username": "boss", "password": PASSWORD})[0] == 403
         status, me, res = call(port, "POST", "/api/setup", {"token": token, "username": "Boss", "name": "The Boss",
                                                             "password": PASSWORD})
-        assert status == 200 and me["user"]["username"] == "boss" and "sp_session=" in res.getheader("Set-Cookie")
+        assert status == 200 and me["user"]["username"] == "boss"
+        assert res.getheader("Set-Cookie").startswith(f"sp_session_{port}=")  # named by its port
         assert call(port, "POST", "/api/setup", {"token": token, "username": "two", "password": PASSWORD})[0] == 404
         assert call(port, "GET", "/api/me")[1]["setup"] is False
     finally:

@@ -16,7 +16,7 @@ a project — the project, a building, a floor — that covers what it reads or 
 nothing shows another floor's content to someone who may see only some floors. What
 each call needs is checked first in route() (the table is in studio/README.md):
 
-    POST /api/login {username, password}       → a session (cookie sp_session)
+    POST /api/login {username, password}       → a session (cookie sp_session_<port>)
     POST /api/logout
     POST /api/setup {token, username, name, password}   the first admin (no users yet)
     GET  /api/me                               POST /api/me/password {current, new}
@@ -91,7 +91,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
-from .accounts import (COOKIE, LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Unauthorized,
+from .accounts import (LOCAL, Accounts, Forbidden, Refused, Scope, Sight, Unauthorized, cookie_name,
                        User, check_username, rank, temporary_password)
 from .assets import asset_dir
 from .backup import backup_name, jobs_paused, write_backup
@@ -2056,8 +2056,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
     secure = secure_cookies or tls is not None
     proxies = trusted_networks(trusted_proxies)
 
-    def cookie(token: str | None) -> str:
-        parts = [f"{COOKIE}={token or ''}", "HttpOnly", "SameSite=Strict", "Path=/"]
+    def cookie(name: str, token: str | None) -> str:
+        parts = [f"{name}={token or ''}", "HttpOnly", "SameSite=Strict", "Path=/"]
         if token is None:
             parts.append("Max-Age=0")
         if secure:
@@ -2259,11 +2259,19 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(400, {"error": "send a JSON object"})
             self._api("POST", parts, body, {})
 
+        def _cookie(self) -> str:
+            """The session cookie's name: by the port the browser reached Studio on (its
+            Host's; else the one Studio listens on), so that another Studio on the same
+            machine (browsers keep one host's cookies for all its ports) keeps its own."""
+            port = re.search(r":(\d{1,5})$", (self.headers.get("Host") or "").strip())
+            return cookie_name(port.group(1) if port else self.server.server_port)
+
         def _token(self) -> str | None:
             """The session's token, from the request's cookie."""
+            name = self._cookie()
             for part in (self.headers.get("Cookie") or "").split(";"):
                 key, _, value = part.strip().partition("=")
-                if key == COOKIE and value:
+                if key == name and value:
                     return value
             return None
 
@@ -2294,9 +2302,10 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return self._json(500, {"error": "something went wrong in Studio: its log says what"})
             if isinstance(data, LoggedIn):
                 return self._send(200, json.dumps(data.data, ensure_ascii=False).encode(), "application/json",
-                                  {"Set-Cookie": cookie(data.token)})
+                                  {"Set-Cookie": cookie(self._cookie(), data.token)})
             if isinstance(data, LoggedOut):
-                return self._send(200, b'{"logged_out": true}', "application/json", {"Set-Cookie": cookie(None)})
+                return self._send(200, b'{"logged_out": true}', "application/json",
+                                  {"Set-Cookie": cookie(self._cookie(), None)})
             if isinstance(data, Stream):
                 return self._stream(data)
             if isinstance(data, Download):  # made on the fly, saved by the browser

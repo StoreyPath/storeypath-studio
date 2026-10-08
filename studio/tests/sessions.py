@@ -2,10 +2,11 @@
 urllib request to that server carries, as a browser's cookie would. (Studio never
 serves without accounts but on this computer, for `storeypath review`.)"""
 
+import re
 import urllib.request
 from urllib.parse import urlsplit
 
-from storeypath.accounts import COOKIE, Accounts
+from storeypath.accounts import Accounts, cookie_name
 from storeypath.server import make_server
 
 ADMIN_PASSWORD = "the admin's password"
@@ -14,12 +15,15 @@ _tokens: dict[int, str] = {}  # a server's port -> the admin's session there
 
 class _Session(urllib.request.BaseHandler):
     """The session of the server a request goes to, as a Cookie header (unless the
-    request has one of its own)."""
+    request has one of its own), named as a browser's would be: by the port of the Host
+    it is sent with (that of the address, unless the request says another)."""
 
     def http_request(self, req):
-        token = _tokens.get(urlsplit(req.full_url).port)
+        port = urlsplit(req.full_url).port
+        token = _tokens.get(port)
         if token and not req.has_header("Cookie"):
-            req.add_unredirected_header("Cookie", f"{COOKIE}={token}")
+            said = re.search(r":(\d{1,5})$", req.get_header("Host") or "")
+            req.add_unredirected_header("Cookie", f"{cookie_name(said.group(1) if said else port)}={token}")
         return req
 
     https_request = http_request
@@ -44,7 +48,7 @@ def admin_server(studio, **kw):
 
 def cookie(port: int) -> str:
     """The Cookie header of the admin's session on the server at ``port``."""
-    return f"{COOKIE}={_tokens[port]}"
+    return f"{cookie_name(port)}={_tokens[port]}"
 
 
 def call(port: int, method: str, path: str, body=None, token: str | None = None, raw: bytes | None = None,
@@ -56,7 +60,7 @@ def call(port: int, method: str, path: str, body=None, token: str | None = None,
 
     conn = http.client.HTTPSConnection("127.0.0.1", port, timeout=60, context=tls) if tls is not None \
         else http.client.HTTPConnection("127.0.0.1", port, timeout=60)
-    head = {"Cookie": f"{COOKIE}={token}" if token else "none=1", **(headers or {})}
+    head = {"Cookie": f"{cookie_name(port)}={token}" if token else "none=1", **(headers or {})}
     data = None
     if raw is not None:
         data = raw

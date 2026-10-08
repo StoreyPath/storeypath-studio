@@ -10,6 +10,7 @@ import socket
 import ssl
 import threading
 import time
+import urllib.error
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
@@ -251,6 +252,36 @@ def test_changing_ones_password_is_throttled_as_logging_in_is(proxied):
     status, said, res = change(PASSWORD)
     assert status == 429 and said["retry_after"] > 0, (status, said)
     assert accounts.login("ali", PASSWORD, "192.0.2.1")[1].username == "ali"  # unchanged, and not locked elsewhere
+
+
+def test_two_studios_on_one_machine_keep_their_own_sessions(tmp_path):
+    """Browsers keep one host's cookies for all its ports: each Studio's is named by its port."""
+    import http.cookiejar
+    import urllib.request
+
+    jar = http.cookiejar.CookieJar()
+    browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    servers = [serve(tmp_path / name) for name in ("one", "two")]
+    try:
+        def send(port, path, body=None):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body else None,
+                                         headers={"X-StoreyPath": "1", "Content-Type": "application/json"})
+            try:
+                with browser.open(req) as res:
+                    return res.status, res.headers.get("Set-Cookie")
+            except urllib.error.HTTPError as e:
+                return e.code, None
+
+        for srv, studio, accounts in servers:
+            accounts.add_user("ali", PASSWORD, must_change_password=False)
+            status, set_cookie = send(srv.server_port, "/api/login", {"username": "ali", "password": PASSWORD})
+            assert status == 200 and set_cookie.startswith(f"sp_session_{srv.server_port}=")
+        for srv, studio, accounts in servers:  # logging in to the second left the first's session be
+            assert send(srv.server_port, "/api/me")[0] == 200
+    finally:
+        for srv, *_ in servers:
+            srv.shutdown()
+            srv.server_close()
 
 
 # ---- what is told ------------------------------------------------------------------------
