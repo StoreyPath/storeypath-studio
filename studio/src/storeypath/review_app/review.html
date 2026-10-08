@@ -187,6 +187,20 @@
       </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
+      <!-- navigate.html: the way between two places of the floor's building (its address follows the floor shown) -->
+      <a id="navigate-link" class="button" href="/navigate.html" title="Find the way in this building: from a kiosk, an entrance or any room, to any room">Navigate</a>
+      <script>
+        (() => {
+          const a = document.getElementById("navigate-link");
+          const aim = () => {
+            const p = new URLSearchParams(location.search).get("p") || "";
+            const floor = new URLSearchParams(location.hash.slice(1)).get("floor");
+            a.href = "/navigate.html?" + new URLSearchParams({ p, ...(floor ? { building: floor.split("-").slice(0, 3).join("-") } : {}) });
+          };
+          aim();
+          for (const e of ["pointerenter", "focus", "pointerdown"]) a.addEventListener(e, aim);
+        })();
+      </script>
       <span class="hint only2d edit-only" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, S space, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
       <span class="hint only3d" title="On a trackpad: hold Shift and drag to move it; pinch or scroll with two fingers to zoom">Drag to turn · Shift-drag or right-drag to move · scroll to zoom</span>
       <span id="status" class="meta"></span>
