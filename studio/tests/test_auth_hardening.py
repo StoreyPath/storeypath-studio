@@ -7,15 +7,18 @@ they may see."""
 import io
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import ssl
 import stat
+import subprocess
 import threading
 import time
 import urllib.error
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -399,6 +402,36 @@ def test_a_job_is_followed_by_who_may_see_what_it_works_on_now(campus):
     accounts.set_grant(ids["demo"], users["bob"].id, annex, None, users["eng"].id)  # no longer shared with bob
     assert call(port, "GET", f"/api/jobs/{job['id']}", token=tokens["bob"])[0] == 404  # though bob started it
     assert call(port, "GET", f"/api/jobs/{job['id']}", token=tokens["eng"])[0] == 200
+
+
+# ---- the pages ---------------------------------------------------------------------------
+
+ACCOUNT_JS = Path(__file__).parent.parent / "src" / "storeypath" / "review_app" / "account.js"
+AFTER_LOGIN = r"""
+globalThis.location = { origin: "http://127.0.0.1:8080" };
+const src = (await import("node:fs")).readFileSync(process.argv[1], "utf8");
+const { safeNext } = await import("data:text/javascript," + encodeURIComponent(src));
+const wrong = [];
+for (const raw of ["/.//evil.example", "/%2e//evil.example", "/a/..//evil.example", "/x/../..//evil.example",
+                   "//evil.example", "/\\evil.example", "/\t/evil.example", "https://evil.example/",
+                   "javascript:alert(1)", "/\n/evil.example", "", null]) {
+  const next = safeNext(raw);
+  // where location.replace(next) goes, from a page of Studio's
+  if (new URL(next, "http://127.0.0.1:8080/login.html").origin !== "http://127.0.0.1:8080") wrong.push([raw, next]);
+}
+for (const [raw, want] of [["/review.html?p=K7Q2XM#f", "/review.html?p=K7Q2XM#f"], ["/#/p/K7Q2XM", "/#/p/K7Q2XM"]]) {
+  if (safeNext(raw) !== want) wrong.push([raw, safeNext(raw)]);
+}
+console.log(JSON.stringify(wrong));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
+def test_after_logging_in_a_page_goes_to_studios_own_pages_alone():
+    out = subprocess.run(["node", "--input-type=module", "-e", AFTER_LOGIN, str(ACCOUNT_JS)],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [], out.stdout  # each: (what ?next= said, where the page went)
 
 
 # ---- connections -------------------------------------------------------------------------

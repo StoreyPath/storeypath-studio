@@ -4,12 +4,14 @@
 
 const $menu = { open: null };
 
-/** A path to come back to after logging in: one of Studio's own, nothing else. */
+/** A path to come back to after logging in: one of Studio's own, nothing else. Its
+ * path is begun with one slash alone: "/.//evil.example" is "//evil.example" once read
+ * (the dot taken out), which a browser takes for another site. */
 export function safeNext(raw) {
   if (typeof raw !== "string" || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return "/";
   try {
     const u = new URL(raw, location.origin);
-    return u.origin === location.origin ? u.pathname + u.search + u.hash : "/";
+    return u.origin === location.origin ? u.pathname.replace(/^\/+/, "/") + u.search + u.hash : "/";
   } catch {
     return "/";
   }
