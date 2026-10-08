@@ -917,11 +917,16 @@ function openCard() {
       toast(`Opening ${file.name}…`);
       const r = await api(`open${replace !== null ? `?replace=${encodeURIComponent(replace)}` : ""}`, undefined, { raw: file });
       const floors = `${r.floors} floor${r.floors === 1 ? "" : "s"}`;
-      toast(r.how === "project"
+      // item types the file brings that this Studio lacks are added only by who may change them
+      const left = (r.item_types_not_added || []).length
+        ? ` Item types it brings were not added (an admin, or who may change the item types, adds them): ${r.item_types_not_added.join(", ")}; their items are drawn as plain items.`
+        : "";
+      toast((r.how === "project"
         ? `${r.name} opened as it was sent: ${floors}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
         : r.how === "building"
           ? `${r.name}: ${r.replaced.length ? "its building put in place of the one here" : "a building added to it"} from the package (${floors}, the same IDs). Its other buildings are as they were.`
-          : `${r.name} rebuilt from the package: ${floors}, the same IDs. To read a floor again, add its drawing to it.`, false, 12000);
+          : `${r.name} rebuilt from the package: ${floors}, the same IDs. To read a floor again, add its drawing to it.`) + left,
+      false, 12000);
       location.hash = `#/p/${r.code}`;
     } catch (e) {
       if (e.status === 409 && replace === null) {

@@ -963,7 +963,7 @@ class Studio:
             export_project(path, buf)
         return Download(buf.getvalue(), f"{Workspace.load(path).id}.storeypath-project")
 
-    def open(self, body: bytes, replace: str | None = None, allow=None) -> dict:
+    def open(self, body: bytes, replace: str | None = None, allow=None, learn_types: bool = True) -> dict:
         """A project from a file (a building's package, or a project file): put in the
         data folder. A package of a project here adds its building to it; when that
         building is here already, or the file is a project file of a project here, it
@@ -975,7 +975,9 @@ class Studio:
         the workspace file of its project here or None) raises when the person may not,
         and may return what undoes what it did (a new project's owner) should the file
         not be opened after all. One file is opened at a time, so what was checked is
-        still so when it is written."""
+        still so when it is written. ``learn_types``: the item types its catalogue has
+        and Studio's lacks are added (by who may change them), else listed as not added
+        (``item_types_not_added``)."""
         from .bundle import ProjectExists, find_project, open_file, read_file
 
         if not isinstance(body, bytes) or not body:
@@ -993,14 +995,16 @@ class Studio:
                         raise ValueError("a job is working on this project: open the file when the job is done")
                     try:
                         try:
-                            opened = open_file(self.data, tmp, incoming=incoming, existing=path)
+                            opened = open_file(self.data, tmp, incoming=incoming, existing=path,
+                                               learn_types=learn_types)
                         except ProjectExists as e:
                             if replace is None:
                                 raise
                             if replace.strip() != e.name.strip():
                                 raise ValueError(f"type the name of the project here, {e.name}, to replace "
                                                  f"{'its building ' + e.building if e.building else 'it'}") from None
-                            opened = open_file(self.data, tmp, replace=True, incoming=incoming, existing=path)
+                            opened = open_file(self.data, tmp, replace=True, incoming=incoming, existing=path,
+                                               learn_types=learn_types)
                     finally:
                         if lock is not None:
                             lock.release()
@@ -2308,7 +2312,8 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return may.made(studio.create(body.get("name", ""), may.kept_codes()))
             case "PUT", ["open"]:
                 allow = may.opening()
-                return may.opened(studio.open(body, (query.get("replace") or [None])[0], allow))
+                return may.opened(studio.open(body, (query.get("replace") or [None])[0], allow,
+                                              learn_types=may.user.can("catalogue")))
             case "GET", ["jobs", job_id]:
                 return may.job(job_id)
             case "GET", ["projects", code]:

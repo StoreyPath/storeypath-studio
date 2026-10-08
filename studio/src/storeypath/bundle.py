@@ -199,7 +199,7 @@ _FIND = object()  # open_file: the project here is found then
 
 
 def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Incoming | None = None,
-              existing=_FIND) -> dict:
+              existing=_FIND, learn_types: bool = True) -> dict:
     """A project from a file, put in ``data/<code>/``. A project file gives the
     project as it was; a package, its building rebuilt from it. Raises
     ProjectExists when the project is here (wherever the Studio keeps it:
@@ -212,7 +212,9 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
     the workspace file of the project here that the caller checked (None: no project
     of its code is here); refused when that is no longer so. A new project never
     takes the place of a folder that is not its own: data/<code> holding anything
-    else, or a project's folder holding another project too, is refused."""
+    else, or a project's folder holding another project too, is refused.
+    ``learn_types``: the item types its catalogue has and this Studio's lacks are
+    added to it (else only listed, as not added: _learn_types)."""
     how, ws, code = incoming or read_file(source)
     found = find_project(data, code)  # wherever the Studio keeps it
     if existing is not _FIND and found != existing:
@@ -228,10 +230,10 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
                 raise ProjectExists(code, here.project.name, there[0])
             _merge(here, ws)
             here.save(existing)
-            learned = _learn_types(data, source)
+            learned, left = _learn_types(data, source, learn_types)
             return {"code": code, "name": here.project.name, "how": "building", "buildings": b_ids,
                     "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
-                    "item_types_added": learned}
+                    "item_types_added": learned, "item_types_not_added": left}
         # in place of the project kept here (its folder), else in data/<code>/
         folder = existing.parent if existing is not None and existing.parent != data else data / code
         _only_its_own(folder, existing, code)
@@ -266,10 +268,10 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
     os.replace(folder / unseen.name, folder / f"{code}.spproj")
     if existing is not None and existing.parent == data:
         existing.unlink(missing_ok=True)  # a project kept as a file of the data folder: replaced
-    learned = _learn_types(data, source)
+    learned, left = _learn_types(data, source, learn_types)
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
-            "item_types_added": learned}
+            "item_types_added": learned, "item_types_not_added": left}
 
 
 def _only_its_own(folder: Path, existing: Path | None, code: str) -> None:
@@ -529,10 +531,12 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
         last.held, last.items_held = held, sorted(known | their_known)
 
 
-def _learn_types(data: Path, source: Path) -> list[str]:
+def _learn_types(data: Path, source: Path, add: bool = True) -> tuple[list[str], list[str]]:
     """The item types a package's (or a project file's) catalogue has and this
-    Studio's lacks, added to it (a type's code is its identity everywhere: one
-    already here is kept as it is)."""
+    Studio's lacks: added to it when ``add`` (by who may change the item types; a
+    type's code is its identity everywhere: one already here is kept as it is), else
+    left out (the catalogue is the organization's: its items open all the same, and
+    are drawn as plain items). The codes added, and those not."""
     from . import catalogue
 
     with zipfile.ZipFile(source) as z:
@@ -543,14 +547,16 @@ def _learn_types(data: Path, source: Path) -> list[str]:
         else:
             name = CATALOGUE_FILE  # a project file
         if not name or name not in names:
-            return []
+            return [], []
         theirs = catalogue.Catalogue.model_validate_json(z.read(name))
     ours = catalogue.load(data)
     new = [t for t in theirs.types if ours.get(t.code) is None]
+    if not add:
+        return [], [t.code for t in new]
     if new:
         ours.types.extend(new)
         catalogue.save(data, ours)
-    return [t.code for t in new]
+    return [t.code for t in new], []
 
 
 def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:

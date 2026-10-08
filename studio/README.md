@@ -528,7 +528,12 @@ there, never in a package). Add or change types by editing the file (or `POST
 /api/catalogue`); a type no longer used is marked `retired`, never removed (Studio
 refuses a catalogue sent to it that drops one, and puts back a default type missing
 from the file). `export` on the command line uses the catalogue of
-the data folder the workspace is in, else the built-in types.
+the data folder the workspace is in, else the built-in types. A package or project
+file opened in Studio adds the types it brings that the catalogue lacks only when an
+admin, or someone with the `catalogue` capability, opens it; anyone else's opens all
+the same, says which types were not added, and their items are drawn as plain items
+until someone who may adds them (until then no package of that building can be made:
+its items' types are not in the catalogue).
 
 A space's or zone's capacity is the number set in review, else the workplaces of the
 items standing in it; its grade is the highest grade among its desks.

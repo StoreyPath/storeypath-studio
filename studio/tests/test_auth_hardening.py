@@ -9,6 +9,7 @@ import json
 import zipfile
 
 from sessions import call
+from storeypath.accounts import Scope
 from storeypath.bundle import export_project
 from storeypath.workspace import Project, Workspace
 from test_auth_flows import PASSWORD, campus, quick_hashes, serve  # noqa: F401 (fixtures)
@@ -105,3 +106,19 @@ def test_a_new_projects_owner_is_never_put_in_place_of_one_kept(campus, tmp_path
     status, opened, _ = call(port, "PUT", "/api/open", raw=buf.getvalue(), token=tokens["boss"])
     assert status == 200 and opened["code"] == "QQQQ2222"
     assert accounts.project_access("QQQQ2222").owner == users["eng"].id
+
+
+def test_a_file_opened_adds_item_types_only_for_who_may_change_them(campus):
+    port, studio, accounts, users, tokens, ids = campus
+    accounts.set_grant(ids["demo"], users["bob"].id, Scope(kind="building", id=ids["hq"]), "edit", users["eng"].id)
+    more = lambda cat: {**cat, "types": [*cat["types"], {"code": "ZEBRA-DESK", "name_en": "Zebra desk"}]}  # noqa: E731
+    blob = rezip(ids["packages"][0].read_bytes(), {"catalogue.json": more})  # HQ's, with a type not here
+    status, opened, _ = call(port, "PUT", "/api/open?replace=Demo%20Campus", raw=blob, token=tokens["bob"])
+    assert status == 200, opened
+    assert opened["item_types_added"] == [] and opened["item_types_not_added"] == ["ZEBRA-DESK"]
+    assert studio.catalogue().get("ZEBRA-DESK") is None  # the organization's catalogue, as it was
+    accounts.update_user(users["bob"].id, capabilities=["catalogue"])  # may change the item types
+    bob = accounts.start_session(accounts.user(users["bob"].id))
+    status, opened, _ = call(port, "PUT", "/api/open?replace=Demo%20Campus", raw=blob, token=bob)
+    assert status == 200 and opened["item_types_added"] == ["ZEBRA-DESK"] and opened["item_types_not_added"] == []
+    assert studio.catalogue().get("ZEBRA-DESK") is not None

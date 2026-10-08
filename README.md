@@ -302,8 +302,9 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
 *Download project* gives one file, `<code>.storeypath-project`: the project with
 every correction, edit and ID, its export history, its drawings and the Studio's
 item types. Another Studio opens it on its Projects page (*Open a project or a
-building's package*) and continues the project where it was. It is not a package:
-other systems read a building's package.
+building's package*) and continues the project where it was (the item types it brings
+are added there when an admin, or someone who may change the item types, opens it).
+It is not a package: other systems read a building's package.
 
 A building's **package** opens the same way: its building is rebuilt with the same
 IDs, into its project when that is here (added, or put in place of that building
