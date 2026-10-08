@@ -76,7 +76,8 @@ export class Walker extends EventTarget {
     this.controls.addEventListener("lock", () => this.dispatchEvent(new Event("lock")));
     this.controls.addEventListener("unlock", () => this.dispatchEvent(new Event("unlock")));
     this._down = (e) => {
-      if (!this.enabled) return;
+      // keys typed into a field of the page are its own, not steps
+      if (!this.enabled || e.target?.closest?.("input, textarea, select, [contenteditable]")) return;
       if (KEYS[e.code]) { this.keys.add(KEYS[e.code]); e.preventDefault(); }
       if (e.code === "ShiftLeft" || e.code === "ShiftRight") this.fast = true;
     };
