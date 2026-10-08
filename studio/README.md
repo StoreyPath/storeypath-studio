@@ -167,7 +167,7 @@ all, 404, as one that is not there; one they see but may not do this to, 403.
 | `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can` |
 | `POST catalogue` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
-| `PUT open` | a new project: admin or engineer, who owns it. A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin |
+| `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
 | `POST …/delete` | its owner or an admin |
 | `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |

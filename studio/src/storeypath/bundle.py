@@ -30,6 +30,7 @@ import shutil
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from pyproj import Transformer
 from shapely.geometry import mapping, shape
@@ -147,30 +148,21 @@ def export_project(ws_path: Path, out) -> None:
 # ---- a project from a file -----------------------------------------------------
 
 
-def project_code(source: Path) -> str | None:
-    """The code of the project a file is of (a package or a project file), or None."""
-    try:
-        with zipfile.ZipFile(source) as z:
-            names = set(z.namelist())
-            if PROJECT_MANIFEST in names:
-                return json.loads(z.read(PROJECT_MANIFEST))["project"]["id"]
-            if "manifest.json" in names:
-                return json.loads(z.read("manifest.json"))["project"]["id"]
-            if WORKSPACE_FILE in names:
-                return json.loads(z.read(WORKSPACE_FILE))["project"]["code"]
-    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
-        return None
-    return None
+class Incoming(NamedTuple):
+    """A file to open, read once: what it is (``how``: "project", a project file;
+    "package", a building's package), the workspace it gives, and its project's code."""
+
+    how: str
+    ws: Workspace
+    code: str
 
 
-def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
-    """A project from a file, put in ``data/<code>/``. A project file gives the
-    project as it was; a package, its building rebuilt from it. Raises
-    ProjectExists when the project is here (wherever the Studio keeps it:
-    find_project) and ``replace`` is not set: a project file is then put in its
-    place, once it has been read through whole (a damaged file leaves the project as
-    it was); a package's building is added to it, or put in place of that building
-    (the project's others are left as they are)."""
+def read_file(source: Path) -> Incoming:
+    """A file to open, read through once: a project file (its workspace) or a building's
+    package (its building rebuilt from it). Every part of it that names its project
+    (project.json, manifest.json, the workspace) names the same one, or it is refused:
+    who may open it is checked on the project it is written into, and no other.
+    ValueError when it is not a file that can be opened."""
     from .validate import validate_package
 
     with zipfile.ZipFile(source) as z:
@@ -178,6 +170,13 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
         if len(infos) > MAX_FILES or sum(i.file_size for i in infos) > MAX_BYTES:
             raise ValueError("the file holds too much to be a StoreyPath package")
         names = {i.filename for i in infos}
+        said = set()  # the project each part names
+        for part in (PROJECT_MANIFEST, "manifest.json"):
+            if part in names:
+                try:
+                    said.add(json.loads(z.read(part))["project"]["id"])
+                except (ValueError, KeyError, TypeError):
+                    raise ValueError(f"not a StoreyPath file: its {part} names no project") from None
         if WORKSPACE_FILE in names:
             ws = Workspace.model_validate_json(z.read(WORKSPACE_FILE))
             _within_project(ws)
@@ -188,10 +187,39 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
                 raise ValueError("not a package that can be opened: " + "; ".join(errors[:3]))
             ws = workspace_from_package(z, source.name)
             how = "package"
-        code = ws.project.code
-        if not re.fullmatch(r"[A-Z0-9]{4,16}", code):
-            raise ValueError(f"not a project code: {code!r}")
-        existing = find_project(data, code)  # wherever the Studio keeps it
+    code = ws.project.code
+    if said - {code}:
+        raise ValueError("the file's parts name different projects: it is not opened")
+    if not re.fullmatch(r"[A-Z0-9]{4,16}", code):
+        raise ValueError(f"not a project code: {code!r}")
+    return Incoming(how, ws, code)
+
+
+_FIND = object()  # open_file: the project here is found then
+
+
+def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Incoming | None = None,
+              existing=_FIND) -> dict:
+    """A project from a file, put in ``data/<code>/``. A project file gives the
+    project as it was; a package, its building rebuilt from it. Raises
+    ProjectExists when the project is here (wherever the Studio keeps it:
+    find_project) and ``replace`` is not set: a project file is then put in its
+    place, once it has been read through whole (a damaged file leaves the project as
+    it was); a package's building is added to it, or put in place of that building
+    (the project's others are left as they are).
+
+    ``incoming``: the file as read_file read it (read now when not given). ``existing``:
+    the workspace file of the project here that the caller checked (None: no project
+    of its code is here); refused when that is no longer so. A new project never
+    takes the place of a folder that is not its own: data/<code> holding anything
+    else, or a project's folder holding another project too, is refused."""
+    how, ws, code = incoming or read_file(source)
+    found = find_project(data, code)  # wherever the Studio keeps it
+    if existing is not _FIND and found != existing:
+        raise ValueError("the project changed while the file was being opened: open it again")
+    existing = found
+    with zipfile.ZipFile(source) as z:
+        infos = z.infolist()
         if how == "package" and existing is not None:
             here = Workspace.load(existing)
             b_ids = [b for b in _building_ids(ws)]
@@ -206,15 +234,14 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
                     "item_types_added": learned}
         # in place of the project kept here (its folder), else in data/<code>/
         folder = existing.parent if existing is not None and existing.parent != data else data / code
-        if existing is not None or folder.exists():
-            if not replace:
-                name = ws.project.name
-                if existing is not None:
-                    try:
-                        name = json.loads(existing.read_text(encoding="utf-8"))["project"]["name"]
-                    except (OSError, ValueError, KeyError):
-                        pass
-                raise ProjectExists(code, name)
+        _only_its_own(folder, existing, code)
+        if existing is not None and not replace:
+            name = ws.project.name
+            try:
+                name = json.loads(existing.read_text(encoding="utf-8"))["project"]["name"]
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            raise ProjectExists(code, name)
         # made whole beside it first: the project here is left as it is until the file has
         # been read through (a damaged one changes nothing)
         staging = data / f".unpacking-{uuid.uuid4().hex}"
@@ -243,6 +270,22 @@ def open_file(data: Path, source: Path, *, replace: bool = False) -> dict:
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
             "item_types_added": learned}
+
+
+def _only_its_own(folder: Path, existing: Path | None, code: str) -> None:
+    """ValueError unless ``folder`` is the project's to fill or replace: not there yet,
+    or the folder of the project here (``existing``) holding no other project. Never a
+    folder of the data folder that only bears its code's name (another project moved
+    there by hand, or the same name in another case where names ignore case)."""
+    if existing is None or existing.parent != folder:
+        if folder.exists() or folder.is_symlink():
+            raise ValueError(f"the data folder has a folder {folder.name} that is not this project's: "
+                             "move it out of the data folder, then open the file")
+        return
+    for other in folder.glob("*.spproj"):
+        if other != existing:
+            raise ValueError(f"this project's folder ({folder.name}) holds another project too: "
+                             "move one of them to a folder of its own, then open the file")
 
 
 def _bare_name(path: str) -> str:

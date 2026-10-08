@@ -201,6 +201,7 @@ class Studio:
         # (minutes, with vision) never holds up another, and pages only read files.
         self._lock = threading.Lock()  # the tables below
         self._project_locks: dict[Path, threading.RLock] = {}
+        self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
         for left in self.data.glob(f"*/drawings/{INCOMING}*"):  # sent, never cleaned: not kept
             left.unlink(missing_ok=True)
@@ -212,11 +213,15 @@ class Studio:
     # ---- projects ---------------------------------------------------------------
 
     def _workspaces(self) -> dict[str, Path]:
+        """Every project here, by its code: as bundle.find_project finds one (a folder
+        being unpacked or put aside, hidden, holds none)."""
         found = {}
         for path in sorted(self.data.glob("*.spproj")) + sorted(self.data.glob("*/*.spproj")):
+            if any(part.startswith(".") for part in path.relative_to(self.data).parts):
+                continue
             try:
                 code = json.loads(path.read_text(encoding="utf-8"))["project"]["code"]
-            except (OSError, ValueError, KeyError):
+            except (OSError, ValueError, KeyError, TypeError):
                 continue
             found.setdefault(code, path)
         return found
@@ -297,13 +302,15 @@ class Studio:
             out.append(entry)
         return sorted(out, key=lambda p: p["name"].lower())
 
-    def create(self, name: str) -> dict:
+    def create(self, name: str, kept=()) -> dict:
+        """A new project, its code one no project here has, nor one ``kept`` (codes
+        whose sharing is kept, accounts.py)."""
         name = (name or "").strip()
         if not name:
             raise ValueError("a project needs a name")
         # The folder is named by the project's code, which never changes, not by its
         # name, which people type (and retype, repeat, or write in Arabic).
-        taken = self._workspaces()
+        taken = {*self._workspaces(), *kept}
         ws = Workspace.new(name)
         while ws.id in taken or (self.data / ws.id).exists():
             ws = Workspace.new(name)
@@ -961,39 +968,50 @@ class Studio:
         data folder. A package of a project here adds its building to it; when that
         building is here already, or the file is a project file of a project here, it
         is put in its place only when the project's name is typed (``replace``). No
-        job may be working on the project meanwhile. ``allow`` (its code, the workspace
-        file of the project here or None, the file) raises when the person may not."""
-        from .bundle import ProjectExists, open_file, project_code
+        job may be working on the project meanwhile.
 
-        if not body:
+        The file is read once (bundle.read_file: its parts name one project), and that
+        project is the one checked and the one written: ``allow`` (the file as read,
+        the workspace file of its project here or None) raises when the person may not,
+        and may return what undoes what it did (a new project's owner) should the file
+        not be opened after all. One file is opened at a time, so what was checked is
+        still so when it is written."""
+        from .bundle import ProjectExists, find_project, open_file, read_file
+
+        if not isinstance(body, bytes) or not body:
             raise ValueError("the file is empty")
         tmp = self.data / f".opening-{uuid.uuid4().hex}.storeypath"
         tmp.write_bytes(body)
         try:
-            code = project_code(tmp)
-            path = self._workspaces().get(code) if code else None
-            if allow is not None:
-                allow(code, path, tmp)
-            lock = self._changing(path) if path else None
-            if lock is not None and not lock.acquire(blocking=False):
-                raise ValueError("a job is working on this project: open the file when the job is done")
-            try:
+            incoming = read_file(tmp)
+            with self._opening:
+                path = find_project(self.data, incoming.code)
+                undo = allow(incoming, path) if allow is not None else None
                 try:
-                    opened = open_file(self.data, tmp)
-                except ProjectExists as e:
-                    if replace is None:
-                        raise
-                    if replace.strip() != e.name.strip():
-                        raise ValueError(f"type the name of the project here, {e.name}, to replace "
-                                         f"{'its building ' + e.building if e.building else 'it'}") from None
-                    opened = open_file(self.data, tmp, replace=True)
+                    lock = self._changing(path) if path else None
+                    if lock is not None and not lock.acquire(blocking=False):
+                        raise ValueError("a job is working on this project: open the file when the job is done")
+                    try:
+                        try:
+                            opened = open_file(self.data, tmp, incoming=incoming, existing=path)
+                        except ProjectExists as e:
+                            if replace is None:
+                                raise
+                            if replace.strip() != e.name.strip():
+                                raise ValueError(f"type the name of the project here, {e.name}, to replace "
+                                                 f"{'its building ' + e.building if e.building else 'it'}") from None
+                            opened = open_file(self.data, tmp, replace=True, incoming=incoming, existing=path)
+                    finally:
+                        if lock is not None:
+                            lock.release()
+                except BaseException:
+                    if undo is not None:
+                        undo()
+                    raise
                 if path is not None:
                     with self._lock:
                         self._reviews.pop(path, None)
                 return opened
-            finally:
-                if lock is not None:
-                    lock.release()
         except zipfile.BadZipFile:
             raise ValueError("not a StoreyPath file (.storeypath or .storeypath-project)") from None
         finally:
@@ -1313,7 +1331,6 @@ class Gate:
                  token: str | None = None):
         self.studio, self.accounts, self.address, self.token = studio, accounts, address, token
         self.user = LOCAL if accounts is None else user
-        self._new_project = False
 
     # ---- who is asking ------------------------------------------------------------
 
@@ -1530,34 +1547,44 @@ class Gate:
         return job
 
     def opening(self):
-        """Who may open a file: a new project, an admin or an engineer (who then owns it);
-        a package into a project here, edit on each building it brings (on the project, for
-        a new one) and on each floor an item it holds is carried from; a project file in
-        place of the one here, its owner or an admin. Checked once the file is read (what
-        it holds says what it changes): the check is returned, Studio.open calls it."""
+        """Who may open a file: a new project, an admin or an engineer, who owns it (made
+        its owner now, only when nothing is kept of a project of that code: an admin
+        opens one that is, and it keeps who it is shared with); a package into a project
+        here, edit on each building it brings (on the project, for a new one) and on each
+        floor an item it holds is carried from; a project file in place of the one here,
+        its owner or an admin. Someone who may not see the project here is answered as
+        for a new project they may not open, never told its name. Checked once the file
+        is read (what it holds says what it changes, bundle.read_file): the check is
+        returned, Studio.open calls it."""
         user = self._who()
+        new = Forbidden("only admins and engineers open files as new projects")
+        if user.role not in ("admin", "engineer") and self.accounts is not None \
+                and not self.accounts.edits_somewhere(user):
+            raise new  # nothing they could open: the file is not even read
 
-        def allow(code, path, source) -> None:
-            from .bundle import WORKSPACE_FILE, workspace_from_package
-
+        def allow(incoming, path):
+            code = incoming.code
             if path is None:
                 if user.role not in ("admin", "engineer"):
-                    raise Forbidden("only admins and engineers open files as new projects")
-                self._new_project = True
-                return
+                    raise new
+                if self.accounts is None or not self.uid:
+                    return None
+                if self.accounts.claim(code, self.uid):
+                    return lambda: self.accounts.unclaim(code, self.uid)
+                if user.role != "admin":
+                    raise Forbidden("who a project of this code was shared with is kept from before: "
+                                    "an admin may open it")
+                return None
             sight = self.sight_of(code, self._workspace(code))
             if not sight.any():
-                raise Forbidden("this file's project is here already, and is not shared with you")
-            with zipfile.ZipFile(source) as z:
-                if WORKSPACE_FILE in z.namelist():
-                    if not (sight.owner or sight.admin):
-                        raise Forbidden("only the project's owner or an admin may put a project file in its place")
-                    return
-                try:
-                    pkg = workspace_from_package(z, source.name)
-                except Exception:
-                    return  # not a package: Studio.open says so
-            here = self._workspace(code)
+                if user.role not in ("admin", "engineer"):
+                    raise new
+                raise Forbidden("this file's project cannot be opened here: ask an admin")
+            if incoming.how == "project":
+                if not (sight.owner or sight.admin):
+                    raise Forbidden("only the project's owner or an admin may put a project file in its place")
+                return None
+            pkg, here = incoming.ws, self._workspace(code)
             from .export import building_ids
 
             known = set(building_ids(here))
@@ -1576,18 +1603,21 @@ class Gate:
 
     # ---- what follows what was done --------------------------------------------------
 
+    def kept_codes(self) -> set[str]:
+        """The codes whose sharing is kept: a new project is given none of them."""
+        return set(self.accounts.all_access()) if self.accounts is not None else set()
+
     def made(self, made: dict) -> dict:
-        """A project created: its maker owns it."""
+        """A project created (its code one nothing is kept of): its maker owns it."""
         if self.accounts is not None:
             if self.uid:
-                self.accounts.set_owner(made["code"], self.uid)
+                self.accounts.claim(made["code"], self.uid)
             self.audit("project created", made["code"])
         return made
 
     def opened(self, opened: dict) -> dict:
+        """A file opened (a new project's owner was made when it was let through)."""
         if self.accounts is not None:
-            if self._new_project and self.uid:
-                self.accounts.set_owner(opened["code"], self.uid)
             self.audit("project opened", opened["code"], how=opened.get("how"),
                        buildings=opened.get("buildings"))
         return opened
@@ -2275,7 +2305,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 return studio.projects(may.sight_of)
             case "POST", ["projects"]:
                 may.create()
-                return may.made(studio.create(body.get("name", "")))
+                return may.made(studio.create(body.get("name", ""), may.kept_codes()))
             case "PUT", ["open"]:
                 allow = may.opening()
                 return may.opened(studio.open(body, (query.get("replace") or [None])[0], allow))

@@ -602,6 +602,19 @@ class Accounts:
             db.execute("INSERT INTO project_access (code, owner) VALUES (?, ?) "
                        "ON CONFLICT (code) DO UPDATE SET owner = excluded.owner", (code, user_id))
 
+    def claim(self, code: str, user_id: str) -> bool:
+        """A new project's owner: only when nothing is kept of a project of that code (no
+        owner, no grants), never in place of what is. Whether it was."""
+        with self._write() as db:
+            return db.execute("INSERT OR IGNORE INTO project_access (code, owner) VALUES (?, ?)",
+                              (code, user_id)).rowcount == 1
+
+    def unclaim(self, code: str, user_id: str) -> None:
+        """A claim undone (the project was not made after all): when it is still only that."""
+        with self._write() as db:
+            db.execute("DELETE FROM project_access WHERE code = ? AND owner = ? AND NOT EXISTS "
+                       "(SELECT 1 FROM grants WHERE project = ?)", (code, user_id, code))
+
     def set_grant(self, code: str, user_id: str, scope: Scope, level: str | None, by: str | None) -> str:
         """``user_id``'s grant on ``scope`` of a project set to ``level`` (None: taken
         away): one grant a person a scope. What was done: added, changed, removed or
@@ -632,6 +645,13 @@ class Accounts:
         """A project deleted: who it was shared with, gone with it."""
         with self._write() as db:
             db.execute("DELETE FROM project_access WHERE code = ?", (code,))
+
+    def edits_somewhere(self, user: User) -> bool:
+        """Whether a person may change anything of any project (to open a package into it)."""
+        if user.role == "admin":
+            return True
+        return bool(self._read("SELECT 1 FROM project_access WHERE owner = ? UNION ALL SELECT 1 FROM grants "
+                               "WHERE user = ? AND level IN ('edit', 'share') LIMIT 1", (user.id, user.id)))
 
     def shares_somewhere(self, user: User) -> bool:
         """Whether a person may share anything (to be shown the users to share with)."""

@@ -156,8 +156,9 @@ ROWS = [
     Row("POST", "/api/catalogue", {"types": "nope"}, ok=400, passes={"admin"}),
     Row("GET", "/api/projects", ok=200, passes=ALL),
     Row("POST", "/api/projects", {"name": ""}, ok=(400, "needs a name"), passes={"admin", "owner", "engineer"}),
+    # (who may change something somewhere may open a package into it: the file is read)
     Row("PUT", "/api/open", raw=b"not a zip file", ok=(400, "not a StoreyPath file"),
-        passes={"admin", "owner", "engineer"}),
+        passes={"admin", "owner", "engineer", "building_editor"}),
     Row("GET", "/api/jobs/{job}", ok=200, passes={"admin", "owner", "building_editor"},
         hidden={"floor_viewer", "engineer", "nobody"}),
     Row("GET", C, ok=200, passes=PROJECT, hidden=OUTSIDE),

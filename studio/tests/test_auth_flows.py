@@ -276,7 +276,7 @@ def test_opening_a_file_needs_the_right_to_what_it_changes(campus, tmp_path):
     status, said, _ = call(port, "PUT", "/api/open", raw=hq_pkg, token=tokens["vera"])
     assert status == 403
     status, said, _ = call(port, "PUT", "/api/open", raw=hq_pkg, token=tokens["other"])
-    assert status == 403 and "not shared with you" in said["error"]
+    assert status == 403 and "Demo Campus" not in said["error"]  # as for a new project: never named
     accounts.set_grant(ids["demo"], users["other"].id, Scope(kind="building", id=ids["hq"]), "edit", users["eng"].id)
     status, said, _ = call(port, "PUT", "/api/open", raw=hq_pkg, token=tokens["other"])
     assert status == 409 and said["building"] == ids["hq"]  # theirs to replace, when they type its name
