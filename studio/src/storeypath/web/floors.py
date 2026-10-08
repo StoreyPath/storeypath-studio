@@ -99,7 +99,8 @@ def add_vertical(code: str, floor_id: str, request: Request, may: May, studio: T
 @calls.get("/api/projects/{code}/objects/{object_id}/stack")
 def stack(code: str, object_id: str, request: Request, may: May, studio: TheStudio):
     sight = may.stack(code, object_id)
-    return answer(request, vertical.serves(studio.workspace(code), object_id, sight))
+    return answer(request, vertical.serves(studio.workspace(code), object_id, sight, studio.store.locks(code),
+                                           may.user.id if may.user is not None else None))
 
 
 @calls.post("/api/projects/{code}/objects/{object_id}/copy")

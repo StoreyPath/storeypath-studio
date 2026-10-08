@@ -33,4 +33,6 @@
 #ed-vertical .vt-actions select { font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px;
   background: var(--panel); color: var(--text); max-width: 100%; }
 #ed-vertical .vt-choose { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-#ed-vertical .vt-choose label { display: flex; gap: 6px; align-items: center; }
+#ed-vertical .vt-choose label { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: center; }
+/* why a floor is not offered (no drawing, view only, someone else editing it): under its name */
+#ed-vertical .vt-choose label .meta { flex-basis: 100%; padding-left: 22px; }

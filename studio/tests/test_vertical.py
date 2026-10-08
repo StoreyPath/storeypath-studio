@@ -184,3 +184,86 @@ def test_a_lift_drawn_short_of_a_wall_opens_onto_the_room_not_onto_the_strip_lef
     assert way.connects == [0, 1]
     (x0, y0), (x1, y1) = way.span.coords
     assert not (y0 == y1 == pytest.approx(7.9)) and way.span.length == pytest.approx(2.5)
+
+
+# ---- many people at once: one editor a floor (floor locks), and each one's undo ------------
+
+@pytest.fixture
+def team(tmp_path, monkeypatch):
+    from people import Team
+    from storeypath import accounts as acc
+
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    monkeypatch.setattr("storeypath.review.BUSY_WAIT_S", 0.2)
+    monkeypatch.delenv("STOREYPATH_ALLOWED_HOSTS", raising=False)
+    t = Team(tmp_path / "data")
+    yield t
+    t.close()
+
+
+def drawn_by(team, who, floor, ring=CORNER, kind="elevator"):
+    """A lift drawn on a floor by someone, from their page: the space found there."""
+    status, job = team(who, "POST", f"floors/{floor}/vertical", {"type": kind, "space": ring})
+    assert status == 200, job
+    return team.finished(who, job)["result"]["space"]
+
+
+def hold(team, who, floor):
+    """Someone editing a floor: a change of theirs on it (an office renamed) takes its lock."""
+    office = next(r for r in team.spaces(floor) if r.name == "OFFICE")
+    assert team(who, "POST", f"objects/{office.id}", {"correction": {"name": f"{who}'s"}})[0] == 200
+
+
+def test_a_lift_is_not_drawn_on_a_floor_someone_else_is_editing(team):
+    hold(team, "khalid", team.hq0)
+    status, refused = team("sara", "POST", f"floors/{team.hq0}/vertical", {"type": "elevator", "space": CORNER})
+    assert status == 423 and refused["locked"]["who"]["username"] == "khalid"
+    assert refused["error"].startswith("Khalid Engineer is editing this floor")
+    assert team.studio.workspace(team.code).floor(team.hq0).edits.spaces == []  # nothing drawn
+    lift = drawn_by(team, "khalid", team.hq0)  # his to draw on
+    assert team.studio.workspace(team.code).overrides[lift].type == "elevator"
+    # what it serves says who edits the other floors (not oneself)
+    hold(team, "sara", f"{team.hq}-F02")
+    status, info = team("khalid", "GET", f"objects/{lift}/stack")
+    assert status == 200
+    locked = {f["id"]: f["locked"] for f in info["floors"]}
+    assert locked[f"{team.hq}-F02"]["who"]["name"] == "Sara Ahmed"
+    assert locked[team.hq0] is None and locked[team.hq1] is None
+
+
+def test_added_on_floors_the_one_someone_else_edits_is_left_out_and_named(team):
+    lift = drawn_by(team, "khalid", team.hq0)
+    f2 = f"{team.hq}-F02"
+    hold(team, "sara", f2)
+    status, job = team("khalid", "POST", f"objects/{lift}/copy", {"floors": [team.hq1, f2]})
+    assert status == 200, job
+    result = team.finished("khalid", job)["result"]
+    assert list(result["spaces"]) == [team.hq1] and not result["missed"]
+    (refused,) = result["refused"]
+    assert refused["floor"] == f2 and refused["holder"]["who"]["name"] == "Sara Ahmed"
+    assert "Sara Ahmed is editing this floor" in refused["error"]
+    ws = team.studio.workspace(team.code)
+    assert ws.floor(f2).edits.spaces == [] and ws.overrides[result["spaces"][team.hq1]].stack == lift
+    # every floor asked for taken by someone else: refused as a change is (423), nothing drawn
+    status, refused = team("khalid", "POST", f"objects/{lift}/copy", {"floors": [f2]})
+    assert status == 423 and refused["locked"]["who"]["username"] == "sara"
+
+
+def test_a_lift_drawn_is_undone_by_who_drew_it_its_type_then_its_shape(team):
+    # Drawing a lift is two changes of its author's: the space drawn (an edit of the
+    # floor) and its type (a correction). Undo takes them back one at a time, the latest
+    # first: the type, then the drawing (the floor read again: the space is gone).
+    before = {r.id for r in team.spaces(team.hq0)}
+    lift = drawn_by(team, "khalid", team.hq0)
+    status, done = team("khalid", "POST", "undo", {"floor": team.hq0})
+    assert status == 200 and done["job"] is None, done
+    ws = team.studio.workspace(team.code)
+    assert ws.effective(ws.objects[lift])["type"] != "elevator"
+    status, done = team("khalid", "POST", "undo", {"floor": team.hq0})
+    assert status == 200 and done["job"] is not None and done["line"] == "drew a space", done
+    team.finished("khalid", done["job"])
+    ws = team.studio.workspace(team.code)
+    assert ws.floor(team.hq0).edits.spaces == [] and ws.objects[lift].status == "retired"
+    assert {r.id for r in team.spaces(team.hq0)} == before
+    # sara has nothing of hers to undo there
+    assert team("sara", "POST", "undo", {"floor": team.hq0})[0] == 409

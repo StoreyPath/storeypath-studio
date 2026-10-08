@@ -184,12 +184,13 @@ def _label(ws, r) -> str:
     return f"{said} ({words})" if said else f"{words[:1].upper()}{words[1:]} {r.id.rsplit('-', 1)[1]}"
 
 
-def serves(ws, object_id: str, sight=None) -> dict:
+def serves(ws, object_id: str, sight=None, locks=None, me: str | None = None) -> dict:
     """The floors of its building a lift, stairs, escalator or ramp is on, each with its
     spaces there and how they are linked (``how``: "code", "overlap" (found so),
     "person" (linked by hand), "alone"; ``setting``: the person's, null for as found);
     the lifts and stairs of other floors it may be linked with; only the floors
-    ``sight`` lets its person see."""
+    ``sight`` lets its person see. ``locks``: who is editing which floor (store.locks);
+    a floor someone other than ``me`` (a user's ID) edits says who (``locked``)."""
     r = _vertical(ws, object_id)
     building = floor_of(floor_of(object_id))
     seen = (lambda f: True) if sight is None else (lambda f: bool(sight.floor(f)))
@@ -215,8 +216,11 @@ def serves(ws, object_id: str, sight=None) -> dict:
                     here.append(entry)
                 elif fid != floor_of(object_id):
                     candidates.append({**entry, "floor_id": fid, "floor": f.name})
+        lock = (locks or {}).get(fid)
+        other = lock and lock["who"]["id"] != me and {k: v for k, v in lock.items() if k != "session"}
         floors.append({"id": fid, "name": f.name, "ordinal": f.ordinal, "this": fid == floor_of(object_id),
-                       "spaces": here, "drawing": f.source is not None, "edit": may_edit(fid)})
+                       "spaces": here, "drawing": f.source is not None, "edit": may_edit(fid),
+                       "locked": other or None})
     o = ws.overrides.get(object_id)
     return {"id": object_id, "type": ws.effective(r)["type"], "label": _label(ws, r),
             "stack": mine.key if mine else None, "setting": o.stack if o else None,

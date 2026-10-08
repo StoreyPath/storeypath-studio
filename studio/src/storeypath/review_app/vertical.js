@@ -187,6 +187,8 @@ export function editor(s) {
   if (box.dataset.id !== s.id) {
     box.dataset.id = s.id;
     box.replaceChildren(api.el("h4", {}, "Floors it serves"), api.el("p", { class: "meta" }, "…"));
+  } else if (box.querySelector(".vt-choose")) {
+    return; // the floors to add it on being chosen: kept while the floor is refreshed (others' changes)
   }
   const mine = ++asked;
   api.request(`${api.BASE}/objects/${s.id}/stack`).then((info) => {
@@ -204,6 +206,7 @@ function render(s, info) {
     const spaces = f.spaces.length ? f.spaces.map((m) => el("span", { class: "vt-space" }, m.label,
       el("span", { class: "meta" }, m.id === s.id ? " · this one" : ` · ${HOW[m.how] || m.how}`)))
       : [el("span", { class: "meta" }, "none")];
+    if (f.locked && !f.this) spaces.push(el("span", { class: "meta vt-locked" }, editing(f)));
     return el("li", { class: f.this ? "vt-this" : f.spaces.length ? "vt-linked" : "vt-none", "data-floor": f.id },
       el("span", { class: "vt-floor" }, f.name), el("span", { class: "vt-spaces" }, ...spaces));
   });
@@ -241,16 +244,24 @@ function render(s, info) {
   box.replaceChildren(...parts);
 }
 
-/** The floors to add it on, ticked; then each drawn, read again, typed and linked. */
+/** Who else is editing a floor (Studio's floor locks): their name, since when. */
+function editing(f) {
+  const since = new Date(f.locked.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${f.locked.who?.name || "Someone"} is editing it (since ${since})`;
+}
+
+/** The floors to add it on, ticked; then each drawn, read again, typed and linked. A
+ * floor someone else is editing is not offered; one taken meanwhile is left out by
+ * Studio, and named when it is done. */
 function chooseFloors(s, info, missing) {
   const el = api.el;
   const form = el("form", { class: "vt-choose" });
   for (const f of missing) {
-    const why = !f.drawing ? "no drawing" : !f.edit ? "view only" : "";
+    const why = !f.drawing ? "no drawing" : !f.edit ? "view only" : f.locked ? editing(f) : "";
     const tick = el("input", { type: "checkbox", value: f.id });
     if (why) tick.disabled = true;
     else tick.checked = true;
-    form.append(el("label", {}, tick, ` ${f.name}`, why ? el("span", { class: "meta" }, ` · ${why}`) : null));
+    form.append(el("label", {}, tick, f.name, why ? el("span", { class: "meta" }, why) : null));
   }
   const go = el("button", { type: "submit", class: "primary" }, "Add");
   const cancel = el("button", { type: "button" }, "Cancel");
@@ -267,6 +278,8 @@ function chooseFloors(s, info, missing) {
     try {
       const job = await api.followJob(await api.request(`${api.BASE}/objects/${s.id}/copy`, { floors }),
         `Adding the ${word(s.type)} on ${floors.length} floor${floors.length > 1 ? "s" : ""}…`);
+      form.remove(); // chosen: the floors it serves shown again, as they are now
+      box.dataset.id = "";
       await reload(s.id);
       const name = (id) => info.floors.find((f) => f.id === id)?.name || id;
       const left = [...job.result.missed.map((id) => `not found on ${name(id)}`),
