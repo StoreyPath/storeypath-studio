@@ -73,11 +73,14 @@ give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 | Behind a proxy that speaks HTTPS | `--http --secure-cookies --trusted-proxy <the proxy's address>`: plain HTTP from the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host`. The proxy must say who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`; else `X-Forwarded-For`, its nearest address not the proxy's; when both come they must agree, or the call is refused: a proxy that sets one passes the other on as the client sent it): the limits on failed logins and the audit go by it, and a call through the proxy without it is refused (400), so a proxy left unset shows at once rather than putting everyone behind one address. From any other address those headers are not heard |
 | On this computer, for development | `--http` |
 
-Plain `http://` sent to the HTTPS port is redirected to the same address over
-HTTPS. A connection that sends nothing for 60 seconds is closed (a large drawing on a
-slow link uploads for as long as it keeps sending), and Studio serves 128 connections
-at once: one more is closed as it comes. The review editor alone (`storeypath review`) and `storeypath view` serve
-plain HTTP on 127.0.0.1, for this computer only.
+Studio is a FastAPI app served by uvicorn (`storeypath.web`), in one process, its
+calls run in a pool of 64 threads. Plain `http://` sent to the HTTPS port is redirected
+to the same address over HTTPS. A connection that sends nothing for 60 seconds is
+closed (a large drawing on a slow link uploads for as long as it keeps sending), as is
+one that takes more than 30 seconds to send a request's headers; headers are at most
+64 KB. Studio serves 128 connections at once: one more is closed as it comes. The
+review editor alone (`storeypath review`) and `storeypath view` serve plain HTTP on
+127.0.0.1, for this computer only.
 
 ## Users, sharing and backups
 
@@ -173,8 +176,9 @@ logouts, passwords changed and reset, users created, changed and disabled, grant
 added, changed and removed, owners changed, projects created, opened and deleted,
 exports, backups and the setup: when, who, from what address.
 
-What each call of the API needs (`route()` in `server.py` asks first, in every case;
-a test fails for a call without a rule). Logged out, every call but logging in, out
+What each call of the API needs (each call in `storeypath/web/` asks `server.Gate`
+first; a test fails for a call without a rule, and for a route outside `/api/` that is
+not a page). Logged out, every call but logging in, out
 and the setup is answered 401; a project, building or floor someone may not see at
 all, 404, as one that is not there; one they see but may not do this to, 403. A
 request Studio cannot make sense of is answered 400 saying why; one that fails in
@@ -189,6 +193,7 @@ Studio itself, 500 with nothing of what went wrong (that goes to its log).
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
+| `GET projects/<code>/events` | any access: a stream (Server-Sent Events) of what happens in the project that they may see: jobs' progress (as `GET jobs/<id>`), a heartbeat; it ends when they may no longer see the project |
 | `POST …/delete` | its owner or an admin |
 | `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |
 | `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
