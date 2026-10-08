@@ -113,7 +113,7 @@ def asked_names(host: str, allowed=()) -> set[str]:
     STOREYPATH_ALLOWED_HOSTS)."""
     import re
 
-    from .server import ALLOWED_HOSTS_ENV
+    from .web.guard import ALLOWED_HOSTS_ENV
 
     given = list(allowed or []) + re.split(r"[,\s]+", os.environ.get(ALLOWED_HOSTS_ENV, ""))
     return {"localhost", "127.0.0.1", "::1", host or ""} | {g for g in given if g}

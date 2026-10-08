@@ -1,13 +1,14 @@
-"""Studio's server in the tests, with accounts: an admin logged in, whose session every
-urllib request to that server carries, as a browser's cookie would. (Studio never
-serves without accounts but on this computer, for `storeypath review`.)"""
+"""Studio's server in the tests (storeypath.web, on uvicorn), with accounts: an admin
+logged in, whose session every urllib request to that server carries, as a browser's
+cookie would. (Studio never serves without accounts but on this computer, for
+`storeypath review`.)"""
 
 import re
 import urllib.request
 from urllib.parse import urlsplit
 
 from storeypath.accounts import Accounts, cookie_name
-from storeypath.server import make_server
+from storeypath.web import make_server
 
 ADMIN_PASSWORD = "the admin's password"
 _tokens: dict[int, str] = {}  # a server's port -> the admin's session there

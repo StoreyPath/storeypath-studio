@@ -1,6 +1,6 @@
 """Studio over HTTPS (tls.py): a certificate it makes itself, for the names it is reached
 by, made again only when it must be; plain HTTP to the same port sent on to https://;
-the TLS handshake made in each connection's own thread; `storeypath serve` HTTPS by
+a slow TLS handshake holding up no other connection; `storeypath serve` HTTPS by
 default."""
 
 import datetime as dt
@@ -21,7 +21,8 @@ from cryptography import x509
 from sessions import call
 from storeypath import accounts as acc
 from storeypath.accounts import Accounts
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from storeypath.web import make_server
 from storeypath.tls import RENEW_DAYS, VALID_DAYS, context, studio_certificate
 
 PASSWORD = "everyone's password"

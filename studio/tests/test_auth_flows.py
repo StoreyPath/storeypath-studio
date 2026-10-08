@@ -19,7 +19,8 @@ from storeypath import accounts as acc
 from storeypath.accounts import Accounts, Scope
 from storeypath.convert import convert_floor
 from storeypath.samples import build_demo, office_floor, write_sheet_dxf
-from storeypath.server import Studio, make_server
+from storeypath.server import Studio
+from storeypath.web import make_server
 from storeypath.workspace import SourceDrawing, Workspace
 
 PASSWORD = "everyone's password"
@@ -481,7 +482,7 @@ def test_accounts_must_be_given_and_none_only_serves_this_computer(tmp_path):
 def test_behind_a_trusted_proxy_who_is_asking_is_its_x_real_ip():
     from email.message import Message
 
-    from storeypath.server import client_address, trusted_networks
+    from storeypath.web.guard import client_address, trusted_networks
 
     def headers(**h):
         m = Message()
