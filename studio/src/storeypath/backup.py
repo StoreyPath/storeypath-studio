@@ -204,7 +204,9 @@ def restore(archive: Path, data: Path) -> dict:
     if data.exists() and (not data.is_dir() or any(data.iterdir())):
         raise ValueError(f"{data} is not empty: restore into an empty folder")
     wanted = check_backup(archive)
-    data.mkdir(parents=True, exist_ok=True)
+    if not data.exists():  # made here: its owner's alone, as the accounts in it are
+        data.mkdir(parents=True)
+        os.chmod(data, 0o700)
     files = 0
     with tarfile.open(archive, "r:*") as tar:
         chosen = []

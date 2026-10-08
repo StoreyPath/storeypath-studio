@@ -2,8 +2,9 @@
 
 ``storeypath serve`` speaks HTTPS unless told ``--http``. With ``--cert`` and ``--key``
 it uses the organization's certificate; without them it makes one the first time, in
-``<data>/tls/`` (the key mode 0600): an EC P-256 key and a self-signed certificate valid
-for VALID_DAYS, for the names Studio is reached by — localhost and the loopback
+``<data>/tls/`` (its owner's alone: the folder 0700, its files 0600): an EC P-256 key
+and a self-signed certificate valid for VALID_DAYS, for the names Studio is reached
+by — localhost and the loopback
 addresses, the address it is bound to, every name and address given with
 --allowed-host or STOREYPATH_ALLOWED_HOSTS, and, as found when it is made, this
 machine's name and addresses. Browsers warn once about a certificate nobody vouches
@@ -137,6 +138,9 @@ def studio_certificate(data: str | Path, host: str = "127.0.0.1", allowed=(), *,
     now = now or dt.datetime.now(dt.timezone.utc)
     folder = Path(data) / FOLDER
     cert_path, key_path = folder / CERT_FILE, folder / KEY_FILE
+    _owners_alone(folder, 0o700)  # opened up by hand: closed again
+    for path in (cert_path, key_path):
+        _owners_alone(path, 0o600)
     asked_dns, asked_ips = _split(asked_names(host, allowed))
     had = (set(), set())
     if cert_path.is_file() and key_path.is_file():
@@ -166,6 +170,7 @@ def _make(folder: Path, cert_path: Path, key_path: Path, dns: set[str], ips: set
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _owners_alone(folder, 0o700)  # (whatever the umask)
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, ISSUER),
                       x509.NameAttribute(NameOID.ORGANIZATION_NAME, ISSUER)])
@@ -188,7 +193,16 @@ def _make(folder: Path, cert_path: Path, key_path: Path, dns: set[str], ips: set
             .sign(key, hashes.SHA256()))
     _write(key_path, key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                        serialization.NoEncryption()), 0o600)
-    _write(cert_path, cert.public_bytes(serialization.Encoding.PEM), 0o644)
+    _write(cert_path, cert.public_bytes(serialization.Encoding.PEM), 0o600)
+
+
+def _owners_alone(path: Path, mode: int) -> None:
+    """``path`` (when there, and its owner's) given ``mode`` when it is more open."""
+    try:
+        if os.stat(path).st_mode & 0o777 & ~mode:
+            os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def _write(path: Path, data: bytes, mode: int) -> None:

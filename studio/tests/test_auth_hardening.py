@@ -6,8 +6,11 @@ they may see."""
 
 import io
 import json
+import os
 import socket
+import sqlite3
 import ssl
+import stat
 import threading
 import time
 import urllib.error
@@ -294,6 +297,58 @@ def test_two_studios_on_one_machine_keep_their_own_sessions(tmp_path):
         for srv, *_ in servers:
             srv.shutdown()
             srv.server_close()
+
+
+# ---- files ---------------------------------------------------------------------------------
+
+def mode(path) -> int:
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+@pytest.fixture
+def lax_umask():
+    """Files made as a lax umask would make them (readable by all), as on many servers."""
+    old = os.umask(0o022)
+    yield
+    os.umask(old)
+
+
+def test_the_accounts_and_studios_key_are_the_owners_alone(tmp_path, lax_umask):
+    data = tmp_path / "data"
+    a = Accounts(data)
+    a.add_user("ali", PASSWORD, must_change_password=False)
+    files = ("studio.db", "studio.db-wal", "studio.db-shm")
+    reading = sqlite3.connect(data / "studio.db")  # (the -wal and -shm are there while it is open)
+    try:
+        reading.execute("SELECT COUNT(*) FROM users").fetchone()
+        assert {name: mode(data / name) for name in files} == dict.fromkeys(files, 0o600)
+        for name in files:  # put there by hand, or by an older Studio
+            os.chmod(data / name, 0o644)
+        Accounts(data)
+        assert {name: mode(data / name) for name in files} == dict.fromkeys(files, 0o600)
+    finally:
+        reading.close()
+    made = studio_certificate(data, "127.0.0.1", [], machine=set())
+    assert (mode(data / "tls"), mode(made.key), mode(made.cert)) == (0o700, 0o600, 0o600)
+    os.chmod(data / "tls", 0o755)  # opened up by hand: closed again when Studio starts
+    studio_certificate(data, "127.0.0.1", [], machine=set())
+    assert mode(data / "tls") == 0o700
+
+
+def test_what_the_command_line_writes_is_the_owners_alone(tmp_path, lax_umask):
+    from typer.testing import CliRunner
+
+    from storeypath.cli import app
+
+    data = tmp_path / "data"
+    Accounts(data).add_user("boss", PASSWORD, role="admin", must_change_password=False)
+    out = tmp_path / "copy.tar.gz"
+    r = CliRunner().invoke(app, ["backup", "--data", str(data), "--out", str(out)])
+    assert r.exit_code == 0, r.output
+    assert mode(out) == 0o600  # every password's hash is in it
+    r = CliRunner().invoke(app, ["restore", str(out), "--data", str(tmp_path / "new")])
+    assert r.exit_code == 0, r.output
+    assert mode(tmp_path / "new") == 0o700 and mode(tmp_path / "new" / "studio.db") == 0o600
 
 
 # ---- what is told ------------------------------------------------------------------------

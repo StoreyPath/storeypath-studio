@@ -825,7 +825,10 @@ def backup(
         _fail("write the backup outside the data folder")
     part = out.with_name(out.name + ".part")
     try:
-        with jobs_paused(data), open(part, "wb") as f:
+        # its owner's alone, whatever the umask: every password's hash is in it
+        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with jobs_paused(data), os.fdopen(fd, "wb") as f:
             counts = write_backup(data, f)
         part.replace(out)
     except BaseException:

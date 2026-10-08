@@ -42,6 +42,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import threading
 import time
 from contextlib import contextmanager
@@ -326,7 +327,19 @@ class Accounts:
             os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            self._owners_alone()  # (its -wal and -shm are there while it is open)
         self._migrate()
+
+    def _owners_alone(self) -> None:
+        """studio.db, its -wal and -shm, readable and writable by their owner alone (SQLite
+        makes the -wal and -shm with the database's mode; one put there by hand, or by an
+        older Studio, may be more open)."""
+        for path in (self.path, *(self.path.with_name(self.path.name + s) for s in ("-wal", "-shm", "-journal"))):
+            try:
+                if stat.S_IMODE(path.stat().st_mode) != 0o600:
+                    os.chmod(path, 0o600)
+            except OSError:
+                pass  # not there (or not ours to change)
 
     @contextmanager
     def _connect(self):
