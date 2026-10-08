@@ -5,12 +5,22 @@
 #
 #   docker/fetch-models.sh                                  # once, before building
 #   docker build -f docker/Dockerfile -t storeypath/studio .
-#   docker run -p 8080:8080 -v storeypath:/data storeypath/studio
+#   docker run -d --name storeypath -p 8080:8080 -v storeypath:/data storeypath/studio
+#   docker logs storeypath                                  # the setup link, the first time
 #
-# then open http://localhost:8080 (or the machine's address). To reach it by a host
-# name other than localhost, allow that name: -e STOREYPATH_ALLOWED_HOSTS=gpu-server,studio.example
-# (Studio refuses requests addressed to other names, against DNS rebinding). Air-gapped: build (or `docker save`) on a
-# connected machine, `docker load` on the isolated one:
+# The first start prints a one-time link, https://127.0.0.1:8080/setup.html#…, to make
+# the first admin (or set -e STOREYPATH_ADMIN_PASSWORD=… and STOREYPATH_ADMIN_USER, default
+# admin, to have it made); then open https://localhost:8080 (or the machine's address)
+# and log in. Studio serves HTTPS with a certificate it makes in /data/tls the first
+# time: browsers warn once about it (the log prints its SHA-256 fingerprint, to
+# compare). To reach it by a host name other than localhost, give that name:
+# -e STOREYPATH_ALLOWED_HOSTS=gpu-server,studio.example; it goes on the certificate (and
+# Studio refuses requests addressed to other names, against DNS rebinding). Your own
+# certificate: mount it and end the run line with `serve --host 0.0.0.0 --port 8080
+# --data /data --cert /tls/cert.pem --key /tls/key.pem`; behind a proxy that speaks
+# HTTPS, `serve … --http --secure-cookies`. Users, sharing and backups: README.md.
+# Air-gapped: build (or `docker save`) on a connected machine, `docker load` on the
+# isolated one:
 #
 #   docker save storeypath/studio | gzip > storeypath-studio.tar.gz
 #   docker load -i storeypath-studio.tar.gz
@@ -26,7 +36,8 @@
 # without it the image is built as before. The release workflow fetches it only when
 # the repository variable STOREYPATH_SYMBOLS is "research".
 #
-# Inside: StoreyPath Studio (Apache-2.0); LibreDWG's dwg2dxf for reading DWG
+# Inside: StoreyPath Studio (Apache-2.0), with pyca/cryptography (Apache-2.0 or BSD) to
+# make its certificate; LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in
 # /usr/share/storeypath/source); llama.cpp's llama-server (MIT); a Qwen3.5 model
 # (Apache-2.0) for reading the text in drawings; three.js (MIT), MapLibre GL JS
@@ -148,8 +159,11 @@ USER storeypath
 WORKDIR /data
 VOLUME /data
 EXPOSE 8080
+# a check from inside, of Studio's own page (no login needed): over HTTPS, its own
+# certificate not checked; over plain HTTP when it was started with --http
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/status', timeout=4)"
+    CMD python3 -c "import ssl, urllib.request as u; u.urlopen('https://127.0.0.1:8080/login.html', timeout=4, context=ssl._create_unverified_context())" \
+     || python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/login.html', timeout=4)"
 LABEL org.opencontainers.image.title="StoreyPath Studio" \
       org.opencontainers.image.description="Turn DWG/DXF floor plans into portable indoor maps with stable IDs; runs offline" \
       org.opencontainers.image.source="https://github.com/StoreyPath/storeypath" \

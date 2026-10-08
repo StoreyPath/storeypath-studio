@@ -12,9 +12,14 @@
 #   docker run -d --name storeypath --gpus all -p 8080:8080 -v storeypath:/data storeypath/studio:gpu
 #
 # (to reach it by a host name, add -e STOREYPATH_ALLOWED_HOSTS=<that name>; addresses
-# and localhost always work)
-# then open http://localhost:8080 once `docker logs storeypath` says Studio is
-# serving (loading the vision model takes a minute or two). One GPU with 32 GB free is
+# and localhost always work, and the names go on Studio's certificate)
+# then, once `docker logs storeypath` says Studio is serving (loading the vision model
+# takes a minute or two), open the setup link it printed the first time, to make the
+# first admin (or set -e STOREYPATH_ADMIN_PASSWORD=…), and then https://localhost:8080.
+# Studio serves HTTPS with a certificate it makes in /data/tls: browsers warn once (the
+# log prints its fingerprint). Arguments after the image go to `storeypath serve`:
+# --cert /tls/cert.pem --key /tls/key.pem (your own, mounted), or --http
+# --secure-cookies behind a proxy that speaks HTTPS. One GPU with 32 GB free is
 # enough: the vision model, two rooms looked at at once, and the language model, all on
 # the GPU; pick one with --gpus '"device=1"'. NVIDIA driver 525 or newer (CUDA 12).
 # docker/start-gpu.sh starts the vision model, then Studio; its settings:
@@ -22,7 +27,8 @@
 # memory), STOREYPATH_VISION=off (no vision), STOREYPATH_VISION_URL (a vision model
 # served elsewhere instead). For the command-line tool: --entrypoint storeypath.
 #
-# Inside: StoreyPath Studio (Apache-2.0); LibreDWG's dwg2dxf for reading DWG
+# Inside: StoreyPath Studio (Apache-2.0), with pyca/cryptography (Apache-2.0 or BSD) to
+# make its certificate; LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in
 # /usr/share/storeypath/source); llama.cpp's llama-server built for CUDA (MIT) with
 # NVIDIA's CUDA runtime and cuBLAS (CUDA Toolkit EULA, redistributable); Gemma 4 31B, 4-bit
@@ -151,8 +157,11 @@ USER storeypath
 WORKDIR /data
 VOLUME /data
 EXPOSE 8080
+# a check from inside, of Studio's own page (no login needed): over HTTPS, its own
+# certificate not checked; over plain HTTP when it was started with --http
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15m \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/status', timeout=4)"
+    CMD python3 -c "import ssl, urllib.request as u; u.urlopen('https://127.0.0.1:8080/login.html', timeout=4, context=ssl._create_unverified_context())" \
+     || python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/login.html', timeout=4)"
 LABEL org.opencontainers.image.title="StoreyPath Studio (GPU, with vision)" \
       org.opencontainers.image.description="Turn DWG/DXF floor plans into portable indoor maps with stable IDs; reads the plans with a vision model on the GPU; runs offline" \
       org.opencontainers.image.source="https://github.com/StoreyPath/storeypath" \

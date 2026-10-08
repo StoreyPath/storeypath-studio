@@ -641,7 +641,7 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
     token = accounts.setup_token() if accounts is not None else None
     if token is not None:
-        typer.echo("no users yet: set up the first admin at this link (it works once, until Studio stops)\n"
+        typer.echo("no users yet: make the first admin at this link (it works once; a new one is printed at each start until then)\n"
                    f"  {scheme}://{shown}:{server.server_port}/setup.html#{token}"
                    + ("\n  (or by this machine's name or address instead of 127.0.0.1)" if shown != host else ""))
     typer.echo(f"projects in {studio.data.resolve()}; language model: {status['model'] or 'none'}; "

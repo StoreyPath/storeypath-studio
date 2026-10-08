@@ -5,7 +5,8 @@ converts DWG/DXF floor plans into StoreyPath packages, lets you review, correct 
 complete the result (walls, doors, furniture and equipment), and exports packages
 that keep the same object IDs every time.
 
-- [Install](#install) · [In the browser](#in-the-browser) · [Commands](#commands)
+- [Install](#install) · [In the browser](#in-the-browser) ·
+  [Users, sharing and backups](#users-sharing-and-backups) · [Commands](#commands)
 - [Workflow](#workflow) · [Several floors in one drawing](#several-floors-in-one-drawing)
 - [Reading a drawing without being told its layers](#reading-a-drawing-without-being-told-its-layers)
 - [Private information](#private-information) · [The language model](#the-language-model) ·
@@ -47,16 +48,145 @@ step. Everything is computed on this machine (and on the vision model's, when on
 is set elsewhere). [What you can do in Studio](../README.md#what-you-can-do-in-studio)
 goes through it.
 
+It is served over **HTTPS**, at `https://127.0.0.1:8080`, with a certificate Studio
+makes itself the first time (below); the first start prints a link to set up the
+first admin, and everyone then logs in ([Users, sharing and
+backups](#users-sharing-and-backups)).
+
 Projects are kept in the data folder, one folder each named by the project's code:
 `<data>/<code>/<code>.spproj`, with its `drawings/` and `exports/` beside it. The
 catalogue of item types, `catalogue.json`, is in the data folder itself, for every
-project.
+project; so are the accounts, who each project is shared with and the audit log, in
+one SQLite file, `studio.db`, and Studio's certificate, in `tls/`.
 
 To reach Studio from other machines, serve on all interfaces (`--host 0.0.0.0`).
 It answers only to its own names: localhost, this machine's name and any address;
 give another name it is reached by (a server's, a proxy's) with `--allowed-host`
-(again for more) or `STOREYPATH_ALLOWED_HOSTS`. There are no user accounts yet:
-trusted networks only.
+(again for more) or `STOREYPATH_ALLOWED_HOSTS`: it goes on the certificate too.
+
+### HTTPS
+
+| | |
+|---|---|
+| By default | Studio makes an EC P-256 key and a self-signed certificate in `<data>/tls/` (the key readable by its owner alone), valid 825 days, for `localhost`, `127.0.0.1`, `::1`, the address it is bound to, every `--allowed-host` / `STOREYPATH_ALLOWED_HOSTS` name or address, and this machine's name and addresses as found when it is made. It prints the certificate's SHA-256 fingerprint as it starts: browsers warn once about a certificate nobody vouches for, and the fingerprint they show should be that one. It is made again (browsers then warn again) only when it is within 30 days of its end, or lacks a name you give with `--allowed-host`; to reach Studio by another name or address, give it so |
+| Your own certificate | `--cert cert.pem --key key.pem` (PEM, the chain after the certificate); Studio never changes it |
+| Behind a proxy that speaks HTTPS | `--http --secure-cookies`: plain HTTP to the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host` |
+| On this computer, for development | `--http` |
+
+Plain `http://` sent to the HTTPS port is redirected to the same address over
+HTTPS. The review editor alone (`storeypath review`) and `storeypath view` serve
+plain HTTP on 127.0.0.1, for this computer only.
+
+## Users, sharing and backups
+
+Everyone logs in; each person sees the projects they own or that are shared with
+them, and is offered only what they may do there.
+
+| Role | |
+|---|---|
+| admin | manages users (add, change role and capabilities, disable, reset a password), sees and does everything, gives a project another owner |
+| engineer | creates projects and opens packages and project files as new projects; owns what they make |
+| user | sees only what is shared with them |
+
+An admin may also give anyone a **capability**: `backup` (download the whole data
+folder) or `catalogue` (change the item types). Admins have both.
+
+**Sharing.** A project's owner (and anyone they let) gives a person a **level** on a
+**scope**: *view* (see it: plans, review, 3D, its packages), *edit* (change it as
+well: corrections, items, walls and doors, drawings read again, placement) or
+*share* (give others access within it, up to share); on the whole project, one of
+its buildings, or one of its floors. A grant on the project covers all its buildings
+and floors, ones added later too; on a building, all its floors. A person's level on
+a floor is the highest of theirs on the floor, its building and its project; the
+owner has share on the whole project, an admin everywhere. Someone with share on a
+building shares that building and its floors, nothing wider; nobody changes their
+own access, nor the owner's. Only the owner or an admin deletes a project. Projects
+made before Studio had accounts have no owner: admins manage them, and may give them
+one. A project file or package never carries users or access.
+
+Someone who may see only some floors sees only those: the project page lists them
+(and the drawings of those floors), Review offers only them, read only where they
+may only view (a *View only* badge, no tools), and the 3D view is built with those
+floors alone. A floor's drawing and print are its plan's part of the sheet; a floor
+read from a whole sheet that other floors are read from too shows theirs, so it
+needs view on each of them. A building's package holds every floor of it: making
+one needs edit on the whole building, downloading one view on it.
+
+**First start.** With no users yet, `storeypath serve` prints a link with a one-time
+token, `https://<host>:8080/setup.html#<token>` (in a container: `docker logs`), to
+make the first admin; it works until Studio stops, and once only. Unattended (a
+container started by a script): set `STOREYPATH_ADMIN_PASSWORD` (and
+`STOREYPATH_ADMIN_USER`, default `admin`), and that admin is made at the first start
+instead.
+
+**Passwords and sessions.** Passwords have at least 10 characters and are not the
+username; Studio keeps only their scrypt hashes. A password an admin sets (a new
+user, a reset) is temporary: it is changed at the next login before anything else.
+A session lasts until it is not used for 8 hours, or a week at most, and survives
+a restart of Studio; logging out, changing one's password, or an admin changing
+someone's role or capabilities or disabling them ends their sessions. After 5 failed
+logins for a username, or 20 from one address, within 15 minutes, logins wait (from
+30 seconds, doubling, up to 15 minutes). Users are never deleted, only disabled.
+
+**From the command line**, on the data folder (also while Studio runs):
+
+```sh
+storeypath users add s.ahmed --role engineer --name "Sara Ahmed" --data /data   # asks for the password twice
+storeypath users add ops --role user --capability backup --password-stdin --data /data < pw.txt
+storeypath users list --data /data
+storeypath users passwd s.ahmed --data /data        # temporary: changed at the next login (--permanent: not)
+storeypath users disable s.ahmed --data /data       # enable, again; role s.ahmed admin
+storeypath backup --data /data --out studio-backup.tar.gz
+storeypath restore studio-backup.tar.gz --data /new/empty/folder
+```
+
+**Backups.** *Download a backup* in the person menu (admins, and whoever has the
+`backup` capability), `GET /api/backup`, or `storeypath backup`, gives the whole
+data folder as `storeypath-backup-<UTC time>.tar.gz`: every project, the item types,
+Studio's certificate and `studio.db` (as a snapshot taken whole, never the file in
+use). It leaves out work in progress (drawings sent and not yet cleaned of private
+information, packages being written) and the prints Studio draws again when needed;
+no link is followed or kept. It is written as it is sent, and no job starts while it
+is. `storeypath restore` puts one back into an empty folder only, refusing anything
+in it that would land outside.
+
+**The audit log**, on the Users page: logins (and failed and throttled ones),
+logouts, passwords changed and reset, users created, changed and disabled, grants
+added, changed and removed, owners changed, projects created, opened and deleted,
+exports, backups and the setup: when, who, from what address.
+
+What each call of the API needs (`route()` in `server.py` asks first, in every case;
+a test fails for a call without a rule). Logged out, every call but logging in, out
+and the setup is answered 401; a project, building or floor someone may not see at
+all, 404, as one that is not there; one they see but may not do this to, 403.
+
+| Call | Needs |
+|---|---|
+| `POST login`, `logout`, `setup` (no users yet) | nobody |
+| `GET me`, `POST me/password` | logged in (with a temporary password: nothing else) |
+| `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can` |
+| `POST catalogue` | admin, or `catalogue` |
+| `POST projects` | admin or engineer, who owns it |
+| `PUT open` | a new project: admin or engineer, who owns it. A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin |
+| `GET projects/<code>`, `…/review` | any access; cut to what they see |
+| `POST …/delete` | its owner or an admin |
+| `GET …/access`, `POST …/access {user, scope, level}` | share on some part of it; changes within the parts they have share on |
+| `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin |
+| `GET users` | someone who may share something, or an admin: active users' id, username and name |
+| `PUT …/drawings/<name>`, `POST …/incoming/…`, `GET …/drawings/<name>/words`, `POST …/drawings/<name>/plans` | edit on the project (a drawing is the project's, and may hold several floors) |
+| `POST …/floors` (add floors) | view on the project (the drawing is the project's) and edit on each building they go into (on the project for a new building) |
+| `POST …/convert` | edit on the project; with `floor`, edit on that floor |
+| `POST …/buildings/<id>/site`, `…/placement` | edit on the building |
+| `POST …/locations/<id>/arrange`, `…/placement` | edit on the project |
+| `POST …/export {building}` | edit on that building |
+| `GET …/exports/<file>` | view on the building it holds (on the project, for one no export entered) |
+| `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
+| `GET …/project.storeypath-project` | view on the project |
+| `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
+| `POST …/floors/<id>/edits`, `…/items`, `…/convert`, `POST …/objects/<id>` | edit on the floor |
+| `POST …/items/<id>` | edit on its floor, and on the floor it is carried to |
+| `GET jobs/<id>` | who started it, an admin, or view on what it works on (its project, building or floor) |
+| `GET backup` | admin, or `backup` |
 
 ## Commands
 
@@ -76,8 +206,12 @@ trusted networks only.
 | `convert FILE` | read the drawings, keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor |
 | `list FILE` | objects with their IDs, types and labels; `--review` only the spaces that need a look, and why; `--floor`, `--retired` |
 | `fix FILE ID` | correct a space: `--type`, `--name`, `--number` (`""` removes a wrong one); no options accepts it as it is; `--clear` removes the corrections |
-| `review FILE` | open the review editor on this project (on this machine, port 8766) |
-| `serve` | run the web app: `--data`, `--host`, `--port`, `--open`, `--allowed-host` |
+| `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts) |
+| `serve` | run the web app, over HTTPS: `--data`, `--host`, `--port`, `--open`, `--allowed-host`; `--cert`, `--key` (your certificate), `--http` (plain HTTP), `--secure-cookies` |
+| `users add USERNAME` | add a user: `--role admin\|engineer\|user`, `--name`, `--capability backup\|catalogue`, `--password-stdin`, `--permanent` (not to be changed at the first login); `--data` |
+| `users list` · `passwd` · `disable` · `enable` · `role` | list the users; set a password (their sessions end); disable or enable one; change a role |
+| `backup` | the whole data folder as one `.tar.gz` (`--data`, `--out`) |
+| `restore FILE --data DIR` | put a backup into an empty folder |
 | `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid |
 | `validate PACKAGE` | check a package against the format |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
@@ -403,7 +537,9 @@ items standing in it; its grade is the highest grade among its desks.
 
 | Environment | |
 |---|---|
-| `STOREYPATH_ALLOWED_HOSTS` | more names Studio may be reached by, separated by commas or spaces (`*`: any); as `serve --allowed-host` |
+| `STOREYPATH_ALLOWED_HOSTS` | more names Studio may be reached by, separated by commas or spaces (`*`: any); as `serve --allowed-host` (each goes on Studio's certificate) |
+| `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin is made at start with this password (no setup link) |
+| `STOREYPATH_ADMIN_USER` | that admin's username (default `admin`) |
 | `STOREYPATH_NODE` | Node.js for building the floors' 3D at export (default: `node` on the `PATH`; empty: never) |
 | `STOREYPATH_SYMBOLS` | the SymPoint-V2 folder (default `/opt/storeypath/symbols`) |
 

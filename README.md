@@ -13,9 +13,13 @@ One container, with or without a GPU. Works with no network at all.
 docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.io/storeypath/studio
 ```
 
-Then open **http://localhost:8080**. This image needs no GPU and runs on amd64 and
-arm64: Linux, macOS and Windows with Docker. On a machine with an NVIDIA GPU, a
-second image adds a vision model that looks at the plans:
+Then open the setup link `docker logs storeypath` prints, to make the first admin,
+and afterwards **https://localhost:8080**. Studio serves HTTPS with a certificate it
+makes itself, so the browser warns once (the log shows the certificate's
+fingerprint to compare); everyone logs in and sees what is shared with them
+([Users, sharing and backups](#users-sharing-and-backups)). This image needs no GPU
+and runs on amd64 and arm64: Linux, macOS and Windows with Docker. On a machine with
+an NVIDIA GPU, a second image adds a vision model that looks at the plans:
 [Offline images, CPU and GPU](#offline-images-cpu-and-gpu).
 
 ![Walking through a converted floor: down the corridor, into an office](docs/images/walk.gif)
@@ -36,7 +40,8 @@ second image adds a vision model that looks at the plans:
   site plan, review, walls and doors, furniture and equipment, capacity, export
 - [Walk through it](#walk-through-it)
 - [With a GPU or without](#with-a-gpu-or-without)
-- [Run it](#run-it) · [Offline images, CPU and GPU](#offline-images-cpu-and-gpu) ·
+- [Run it](#run-it) · [Users, sharing and backups](#users-sharing-and-backups) ·
+  [Offline images, CPU and GPU](#offline-images-cpu-and-gpu) ·
   [Without Docker](#without-docker) · [Requirements](#requirements)
 - [The language model](#the-language-model) · [The vision model](#the-vision-model)
 - [The command line](#the-command-line)
@@ -365,20 +370,66 @@ uses which.
 docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.io/storeypath/studio
 ```
 
-Open http://localhost:8080, create a project and drop in a drawing. Projects live
-in the `storeypath` volume, so they survive restarts and upgrades:
+The first time, `docker logs storeypath` prints a link,
+`https://127.0.0.1:8080/setup.html#…`: open it to make the first admin (it works
+once). Then open https://localhost:8080 and log in, create a project and drop in a
+drawing. The browser warns once about Studio's own certificate: the log prints its
+SHA-256 fingerprint, to compare with the one the browser shows. Projects, accounts
+and the certificate live in the `storeypath` volume, so they survive restarts and
+upgrades:
 
 | | |
 |---|---|
 | Stop, start again | `docker stop storeypath` · `docker start storeypath` |
 | Upgrade | `docker pull ghcr.io/storeypath/studio && docker rm -f storeypath`, then the `run` line again |
-| Let others on your network use it | publish the port on all interfaces: `-p 8080:8080` (there are no user accounts yet: trusted networks only). They reach it by the machine's address; to use a host name instead, allow it: `-e STOREYPATH_ALLOWED_HOSTS=studio.example` (Studio refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
+| The first admin without the link | `-e STOREYPATH_ADMIN_PASSWORD=…` (and `-e STOREYPATH_ADMIN_USER=…`, default `admin`): made at the first start, when there are no users |
+| Let others on your network use it | publish the port on all interfaces: `-p 8080:8080`, and add them on the Users page. They reach it by the machine's address or name: give it with `-e STOREYPATH_ALLOWED_HOSTS=studio.example,192.168.1.20` so it is on the certificate (Studio also refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
+| Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
+| Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example` |
+| Users, backups | the person menu (top right): *Users* for admins, *Download a backup*; or `docker exec storeypath storeypath users list`, `docker exec storeypath storeypath backup --out /tmp/b.tar.gz` |
 | Use a vision model served elsewhere | `-e STOREYPATH_VISION_URL=http://gpu-server:8105/v1` (any OpenAI-compatible endpoint that takes images) |
 | Logs | `docker logs -f storeypath` |
 
 The same image is the command-line tool: `docker run --rm -v "$PWD:/data"
 ghcr.io/storeypath/studio views house.dwg`. [The command line](#the-command-line)
 lists the commands.
+
+## Users, sharing and backups
+
+Studio keeps who may use it in one SQLite file of its data folder, `studio.db`, beside
+the projects (which stay files): the accounts, who each project is shared with, the
+sessions and an audit log. Everyone logs in.
+
+- **Roles.** An *admin* adds users, sets their role, disables them or gives a new
+  temporary password, sees and does everything, and may give a project another owner.
+  An *engineer* creates projects and opens packages and project files as new ones,
+  and owns what they make. A *user* sees only what is shared with them. An admin may
+  let anyone download backups (`backup`) or change the item types (`catalogue`).
+- **Sharing.** A project's owner shares it from its page (*Share…*): a person gets
+  *view*, *edit* or *share* on the whole project, one of its buildings or one of its
+  floors. A grant on the project covers its buildings and floors, ones added later
+  too; on a building, its floors. Someone with *share* on a building shares within
+  that building only. A person who may see only some floors sees those alone: on the
+  project page, in Review (read only with *view*: no tools, a *View only* badge), in
+  3D, and in the drawing (only their floor's part of a sheet).
+- **First start.** With no users, Studio prints a one-time setup link to make the
+  first admin (`docker logs` in a container), or makes it from
+  `STOREYPATH_ADMIN_PASSWORD` (and `STOREYPATH_ADMIN_USER`) when that is set.
+- **HTTPS.** `storeypath serve` speaks HTTPS: with a certificate it makes itself in
+  `<data>/tls/` for the names it is reached by (browsers warn once; it prints the
+  fingerprint), or the organization's (`--cert`, `--key`); `--http --secure-cookies`
+  behind a proxy that does the HTTPS. Plain `http://` to its port is redirected.
+- **Command line**, on the data folder, also while Studio runs: `storeypath users add
+  NAME --role admin|engineer|user [--capability backup]` (asks for the password
+  twice; `--password-stdin` for scripts), `users list`, `users passwd`, `users disable`
+  / `enable`, `users role`.
+- **Backups.** *Download a backup* (admins, and whoever may) or `storeypath backup`
+  gives the whole data folder as one `.tar.gz`: projects, item types, certificate, and
+  a snapshot of `studio.db`. `storeypath restore FILE --data DIR` puts it back into
+  an empty folder.
+
+Every setting, the audit log, and what each call of Studio's API needs:
+[studio/README.md](studio/README.md#users-sharing-and-backups).
 
 ## Offline images, CPU and GPU
 
@@ -449,7 +500,7 @@ newer):
 ```sh
 docker load -i storeypath-studio-gpu.tar.gz
 docker run -d --name storeypath --gpus all -p 8080:8080 -v storeypath:/data storeypath/studio:gpu
-docker logs -f storeypath        # "vision model ready", then Studio's address
+docker logs -f storeypath        # "vision model ready", then Studio's address (and the first time, the setup link)
 ```
 
 | | |
@@ -459,7 +510,8 @@ docker logs -f storeypath        # "vision model ready", then Studio's address
 | Rooms looked at at once | `-e STOREYPATH_VISION_PARALLEL=2` (the default); each more needs more GPU memory. `STOREYPATH_VISION_CONTEXT` (default 8192) is the context each one gets |
 | Without vision | `-e STOREYPATH_VISION=off`: rules and the language model only |
 | A vision model served elsewhere | `-e STOREYPATH_VISION_URL=…`: the image's own is then not started |
-| Reach it by a host name | `-e STOREYPATH_ALLOWED_HOSTS=<that name>` (addresses and localhost always work) |
+| Reach it by a host name | `-e STOREYPATH_ALLOWED_HOSTS=<that name>` (addresses and localhost always work); the name goes on Studio's certificate too |
+| The first admin | the setup link in `docker logs storeypath`, or `-e STOREYPATH_ADMIN_PASSWORD=…` |
 | The model server's log | `docker exec storeypath cat /tmp/vision.log` |
 
 Loading the vision model takes a minute or two after each start; if it does not
@@ -537,7 +589,10 @@ uv run storeypath serve --data ~/storeypath --open
 ```
 
 Studio says what it found as it starts: `language model: Qwen3.5-4B-Q4_K_M; DWG:
-yes` (and the vision model, when one is set). Add the `export` lines to your shell
+yes` (and the vision model, when one is set), its address (`https://127.0.0.1:8080`,
+with a certificate it made itself: the browser warns once) and, the first time, the
+link to make the first admin. `--http` serves plain HTTP, for development on this
+computer. Add the `export` lines to your shell
 profile to keep them. To update, `git pull`, then `uv sync`. `uv run storeypath demo
 demo/` builds a sample project to try; [studio/](studio) has every command and
 setting. Also, as you need them:
@@ -618,8 +673,9 @@ Everything the web app does to a drawing can be done from the command line too, 
 a workspace file (`*.spproj`): `new`, `add-location`, `add-building`, `add-floor`
 (`--view`, `--units`), `views`, `align`, `levels`, `convert` (`--force`,
 `--no-model`, `--no-vision`), `list --review`, `fix`, `place`, `export --building`,
-`validate`, `review` (the review editor), `serve` (the web app, `--allowed-host`),
-`private` and `words` (privacy), `demo`. Each, one line apiece:
+`validate`, `review` (the review editor), `serve` (the web app: `--allowed-host`,
+`--cert`/`--key`, `--http`), `users` (`add`, `list`, `passwd`, `disable`, `enable`,
+`role`), `backup` and `restore`, `private` and `words` (privacy), `demo`. Each, one line apiece:
 [studio/README.md](studio/README.md#commands).
 
 ```sh
