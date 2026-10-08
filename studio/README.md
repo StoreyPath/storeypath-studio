@@ -70,7 +70,7 @@ give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 |---|---|
 | By default | Studio makes an EC P-256 key and a self-signed certificate in `<data>/tls/` (the key readable by its owner alone), valid 825 days, for `localhost`, `127.0.0.1`, `::1`, the address it is bound to, every `--allowed-host` / `STOREYPATH_ALLOWED_HOSTS` name or address, and this machine's name and addresses as found when it is made. It prints the certificate's SHA-256 fingerprint as it starts: browsers warn once about a certificate nobody vouches for, and the fingerprint they show should be that one. It is made again (browsers then warn again) only when it is within 30 days of its end, or lacks a name you give with `--allowed-host`; to reach Studio by another name or address, give it so |
 | Your own certificate | `--cert cert.pem --key key.pem` (PEM, the chain after the certificate); Studio never changes it |
-| Behind a proxy that speaks HTTPS | `--http --secure-cookies`: plain HTTP to the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host` |
+| Behind a proxy that speaks HTTPS | `--http --secure-cookies --trusted-proxy <the proxy's address>`: plain HTTP from the proxy, the session cookie sent over HTTPS only; give the name people use with `--allowed-host`. The proxy must say who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`; `X-Forwarded-For` is taken when it sends no `X-Real-IP`): the limits on failed logins and the audit go by it, and a call through the proxy without it is refused (400), so a proxy left unset shows at once rather than putting everyone behind one address. From any other address those headers are not heard |
 | On this computer, for development | `--http` |
 
 Plain `http://` sent to the HTTPS port is redirected to the same address over
@@ -207,7 +207,7 @@ all, 404, as one that is not there; one they see but may not do this to, 403.
 | `list FILE` | objects with their IDs, types and labels; `--review` only the spaces that need a look, and why; `--floor`, `--retired` |
 | `fix FILE ID` | correct a space: `--type`, `--name`, `--number` (`""` removes a wrong one); no options accepts it as it is; `--clear` removes the corrections |
 | `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts) |
-| `serve` | run the web app, over HTTPS: `--data`, `--host`, `--port`, `--open`, `--allowed-host`; `--cert`, `--key` (your certificate), `--http` (plain HTTP), `--secure-cookies` |
+| `serve` | run the web app, over HTTPS: `--data`, `--host`, `--port`, `--open`, `--allowed-host`; `--cert`, `--key` (your certificate), `--http` (plain HTTP), `--secure-cookies`, `--trusted-proxy` (also `STOREYPATH_TRUSTED_PROXIES`) |
 | `users add USERNAME` | add a user: `--role admin\|engineer\|user`, `--name`, `--capability backup\|catalogue`, `--password-stdin`, `--permanent` (not to be changed at the first login); `--data` |
 | `users list` · `passwd` · `disable` · `enable` · `role` | list the users; set a password (their sessions end); disable or enable one; change a role |
 | `backup` | the whole data folder as one `.tar.gz` (`--data`, `--out`) |

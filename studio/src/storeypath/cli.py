@@ -567,6 +567,11 @@ def serve(
         "--http", help="plain HTTP, not HTTPS: for development, or behind a proxy that speaks HTTPS")] = False,
     secure_cookies: Annotated[bool, typer.Option(
         "--secure-cookies", help="with --http behind an HTTPS proxy: the session cookie is sent over HTTPS only")] = False,
+    trusted_proxy: Annotated[Optional[list[str]], typer.Option(
+        "--trusted-proxy",
+        help="a proxy in front of Studio (an address or a network); again for more; also "
+             "STOREYPATH_TRUSTED_PROXIES. Who is asking is then taken from the X-Real-IP it sets (else "
+             "X-Forwarded-For), and a call through it without them is refused")] = None,
 ):
     """Run StoreyPath Studio in the browser: projects, drawings, review, export. Over
     HTTPS, with a certificate Studio makes in <data>/tls/ (browsers warn once: compare
@@ -600,6 +605,14 @@ def serve(
                    f"{', '.join(made.names)}\n  SHA-256 {made.fingerprint}\n"
                    "  browsers warn once about it: check the fingerprint they show is this one; to be reached "
                    "by another name or address, give it with --allowed-host")
+    from .server import trusted_networks
+
+    try:
+        proxies = trusted_networks(trusted_proxy or [])
+    except ValueError as e:
+        _fail(str(e))
+    if proxies:
+        typer.echo(f"behind {', '.join(map(str, proxies))}: who is asking is taken from the X-Real-IP they set")
     accounts = Accounts(data)
     try:
         made = accounts.bootstrap()
@@ -608,7 +621,7 @@ def serve(
     if made is not None:
         typer.echo(f"the first admin, {made.username}, made from STOREYPATH_ADMIN_PASSWORD")
     _serve(data, host, port, "/", open_browser, allowed=allowed_host or [], accounts=accounts,
-           tls=tls, secure_cookies=secure_cookies)
+           tls=tls, secure_cookies=secure_cookies, trusted_proxies=trusted_proxy or [])
 
 
 @app.command()
@@ -625,13 +638,14 @@ def review(
 
 
 def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
-           allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False) -> None:
+           allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False,
+           trusted_proxies=()) -> None:
     from .server import Studio, make_server
 
     studio = Studio(data)
     try:
         server = make_server(studio, host, port, allowed=allowed or [], accounts=accounts, tls=tls,
-                             secure_cookies=secure_cookies)
+                             secure_cookies=secure_cookies, trusted_proxies=trusted_proxies)
     except OSError as e:
         _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host

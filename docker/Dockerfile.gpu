@@ -19,7 +19,8 @@
 # Studio serves HTTPS with a certificate it makes in /data/tls: browsers warn once (the
 # log prints its fingerprint). Arguments after the image go to `storeypath serve`:
 # --cert /tls/cert.pem --key /tls/key.pem (your own, mounted), or --http
-# --secure-cookies behind a proxy that speaks HTTPS. One GPU with 32 GB free is
+# --secure-cookies --trusted-proxy <its address> behind a proxy that speaks HTTPS (it
+# must set X-Real-IP). One GPU with 32 GB free is
 # enough: the vision model, two rooms looked at at once, and the language model, all on
 # the GPU; pick one with --gpus '"device=1"'. NVIDIA driver 525 or newer (CUDA 12).
 # docker/start-gpu.sh starts the vision model, then Studio; its settings:

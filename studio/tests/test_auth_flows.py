@@ -470,3 +470,51 @@ def test_accounts_must_be_given_and_none_only_serves_this_computer(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_behind_a_trusted_proxy_who_is_asking_is_its_x_real_ip():
+    from email.message import Message
+
+    from storeypath.server import client_address, trusted_networks
+
+    def headers(**h):
+        m = Message()
+        for k, v in h.items():
+            for one in v if isinstance(v, list) else [v]:
+                m[k.replace("_", "-")] = one
+        return m
+
+    proxy = trusted_networks(["10.0.0.5", "10.1.0.0/24"])
+    assert client_address("192.0.2.9", headers(X_Real_IP="203.0.113.7"), proxy) == "192.0.2.9"  # not a proxy: not heard
+    assert client_address("10.0.0.5", headers(X_Real_IP="203.0.113.7"), proxy) == "203.0.113.7"
+    assert client_address("10.0.0.5", headers(X_Real_IP=" 2001:db8::1 "), proxy) == "2001:db8::1"
+    assert client_address("10.0.0.5", headers(), proxy) is None  # the proxy did not say: refused
+    assert client_address("10.0.0.5", headers(X_Real_IP="not an address"), proxy) is None
+    assert client_address("10.0.0.5", headers(X_Real_IP=["203.0.113.7", "198.51.100.1"]), proxy) is None  # said twice
+    # X-Forwarded-For when it sets no X-Real-IP: the nearest that is not a proxy (a
+    # client's own claims are further left), through proxies in a row
+    assert client_address("10.0.0.5", headers(X_Forwarded_For="6.6.6.6, 203.0.113.7"), proxy) == "203.0.113.7"
+    assert client_address("10.0.0.5", headers(X_Forwarded_For="203.0.113.7, 10.1.0.4"), proxy) == "203.0.113.7"
+    assert client_address("10.0.0.5", headers(X_Forwarded_For="10.1.0.4"), proxy) is None
+    assert client_address("10.0.0.5", headers(X_Forwarded_For="203.0.113.7, junk"), proxy) is None
+    assert client_address("10.0.0.5", headers(X_Real_IP="203.0.113.7"), []) == "10.0.0.5"  # no proxies named
+    with pytest.raises(ValueError, match="trusted proxy"):
+        trusted_networks(["proxy.example"])
+
+
+def test_failed_logins_through_a_proxy_count_against_each_person(tmp_path):
+    # Studio behind a proxy on this computer: every connection is the proxy's
+    srv, studio, accounts = serve(tmp_path / "data", trusted_proxies=["127.0.0.1"])
+    try:
+        port = srv.server_port
+        status, said, _ = call(port, "POST", "/api/login", {"username": "x", "password": "nope nope"})
+        assert status == 400 and "X-Real-IP" in said["error"]  # the proxy does not say who: refused, not counted
+        one, other = {"X-Real-IP": "203.0.113.7"}, {"X-Real-IP": "203.0.113.8"}
+        for i in range(acc.ADDRESS_FAILURES):  # another name each time: the address is what waits
+            assert call(port, "POST", "/api/login", {"username": f"u{i}", "password": "nope nope"}, headers=one)[0] == 401
+        assert call(port, "POST", "/api/login", {"username": "z", "password": "nope nope"}, headers=one)[0] == 429
+        assert call(port, "POST", "/api/login", {"username": "z", "password": "nope nope"}, headers=other)[0] == 401
+        assert {e["address"] for e in accounts.audit_tail(50) if e["action"] == "login"} == {"203.0.113.7", "203.0.113.8"}
+    finally:
+        srv.shutdown()
+        srv.server_close()

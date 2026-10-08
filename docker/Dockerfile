@@ -18,7 +18,8 @@
 # Studio refuses requests addressed to other names, against DNS rebinding). Your own
 # certificate: mount it and end the run line with `serve --host 0.0.0.0 --port 8080
 # --data /data --cert /tls/cert.pem --key /tls/key.pem`; behind a proxy that speaks
-# HTTPS, `serve … --http --secure-cookies`. Users, sharing and backups: README.md.
+# HTTPS, `serve … --http --secure-cookies --trusted-proxy <its address>` (it must set
+# X-Real-IP). Users, sharing and backups: README.md.
 # Air-gapped: build (or `docker save`) on a connected machine, `docker load` on the
 # isolated one:
 #

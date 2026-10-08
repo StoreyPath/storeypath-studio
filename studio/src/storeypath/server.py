@@ -1880,9 +1880,65 @@ class StudioServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def trusted_networks(more=()) -> list:
+    """The proxies Studio takes the client's address from: ``more`` and
+    STOREYPATH_TRUSTED_PROXIES (addresses or networks, separated by commas or spaces)."""
+    import ipaddress
+    import os
+
+    given = [*more, *re.split(r"[,\s]+", os.environ.get("STOREYPATH_TRUSTED_PROXIES", ""))]
+    out = []
+    for g in (x.strip() for x in given):
+        if not g:
+            continue
+        try:
+            out.append(ipaddress.ip_network(g, strict=False))
+        except ValueError:
+            raise ValueError(f"a trusted proxy is an address or a network (10.0.0.5, 10.0.0.0/24): {g!r}") from None
+    return out
+
+
+def client_address(peer: str, headers, trusted: list) -> str | None:
+    """Who is asking: the connection's address, unless it is a trusted proxy's, then the
+    address that proxy says it serves: X-Real-IP (nginx: proxy_set_header X-Real-IP
+    $remote_addr), else the nearest address in X-Forwarded-For that is not a trusted
+    proxy's (read from the right: what a client puts there itself is further left).
+    None when a trusted proxy says neither, or says something that is not an address:
+    refused, never taken as the proxy's own (every person would share one address, and
+    one person's failed logins would make everyone wait)."""
+    import ipaddress
+
+    def ip(text):
+        try:
+            return ipaddress.ip_address(text.strip().strip("[]"))
+        except ValueError:
+            return None
+
+    if not trusted or not peer:
+        return peer
+    at = ip(peer)
+    if at is None or not any(at in n for n in trusted):
+        return peer  # not a proxy we trust: what it says of others is not heard
+    real = headers.get_all("X-Real-IP") or []
+    if len(real) == 1:
+        got = ip(real[0])
+        return str(got) if got is not None else None
+    if len(real) > 1:
+        return None
+    chain = [x for h in (headers.get_all("X-Forwarded-For") or []) for x in h.split(",") if x.strip()]
+    for hop in reversed(chain):
+        got = ip(hop)
+        if got is None:
+            return None
+        if not any(got in n for n in trusted):
+            return str(got)
+    return None
+
+
 def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
                 allowed: set[str] | list[str] | tuple = (), *, accounts: Accounts | None,
-                secure_cookies: bool = False, tls: ssl.SSLContext | None = None) -> ThreadingHTTPServer:
+                secure_cookies: bool = False, tls: ssl.SSLContext | None = None,
+                trusted_proxies=()) -> ThreadingHTTPServer:
     """Studio's pages and API on ``host``:``port``. Reached by names other than those
     of allowed_hosts (``allowed``: more of them), it answers 403.
 
@@ -1894,7 +1950,12 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
     ``tls``: served over HTTPS with that context (tls.py), and plain HTTP sent to the
     same port is answered with a redirect to its https:// address (what a connection
     speaks is told by its first byte, 0x16 for TLS). The session cookie is Secure over
-    HTTPS, or with ``secure_cookies`` (plain HTTP behind a proxy that speaks HTTPS)."""
+    HTTPS, or with ``secure_cookies`` (plain HTTP behind a proxy that speaks HTTPS).
+
+    ``trusted_proxies``: the proxies (addresses or networks; and those of
+    STOREYPATH_TRUSTED_PROXIES) whose X-Real-IP (or X-Forwarded-For) says who is asking,
+    for the limits on failed logins and the audit; a call through one that does not say
+    is refused (client_address)."""
     if accounts is None and host not in LOOPBACK:
         raise ValueError(f"without accounts Studio serves this computer alone (127.0.0.1), not {host}")
     app_dir = Path(str(resources.files("storeypath") / "review_app")).resolve()
@@ -1903,6 +1964,7 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
     names = allowed_hosts(host, allowed)
     any_name = "*" in names
     secure = secure_cookies or tls is not None
+    proxies = trusted_networks(trusted_proxies)
 
     def cookie(token: str | None) -> str:
         parts = [f"{COOKIE}={token or ''}", "HttpOnly", "SameSite=Strict", "Path=/"]
@@ -2112,9 +2174,13 @@ def make_server(studio: Studio, host: str = "127.0.0.1", port: int = 8080,
             return None
 
         def _api(self, method: str, parts: list[str], body, query) -> None:
+            address = client_address(self.client_address[0] if self.client_address else "", self.headers, proxies)
+            if address is None:
+                return self._refuse(400, "Studio is reached through a trusted proxy that does not say who is asking: "
+                                         "set X-Real-IP there (nginx: proxy_set_header X-Real-IP $remote_addr;)")
             token = self._token()
             user = accounts.session(token) if accounts is not None else LOCAL
-            may = Gate(studio, accounts, user, self.client_address[0] if self.client_address else "", token)
+            may = Gate(studio, accounts, user, address, token)
             try:
                 data = route(method, parts, body, query, may)
             except Refused as e:
