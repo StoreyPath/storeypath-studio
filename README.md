@@ -39,6 +39,7 @@ serves a vision model that looks at the plans:
   [How Studio reads a drawing, step by step](docs/HOW-STUDIO-READS-A-DRAWING.md)
 - [What you can do in Studio](#what-you-can-do-in-studio): projects, drawings, the
   site plan, review, walls and doors, furniture and equipment, capacity, export
+- [Navigation: from the kiosk to your office](#navigation-from-the-kiosk-to-your-office)
 - [Walk through it](#walk-through-it)
 - [With a GPU or without](#with-a-gpu-or-without)
 - [Run it](#run-it) · [Users, sharing and backups](#users-sharing-and-backups) ·
@@ -285,9 +286,10 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.7](spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.8](spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
-openings, its items and their catalogue, with every ID. It is checked against the
+openings, its items and their catalogue, with every ID, and its walking network
+([Navigation](#navigation-from-the-kiosk-to-your-office)). It is checked against the
 format before it is kept, downloaded, and listed on the project page (newest first),
 with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
 
@@ -320,6 +322,40 @@ then they are read again, lined up on the walls they had, and keep their IDs.
   their swings, items.
 - **Rooms by type**: each room as a block coloured by its type, floors stacked, with
   search: a check of the rooms rather than of the walls.
+
+## Navigation: from the kiosk to your office
+
+A person at a kiosk in the lobby types their employee number and is shown the way to
+their office: StoreyPath works out where people can walk in each building, and the
+way from any place in it to any other, the same in Studio, in the Go module and in
+the viewers, so that a system that guides people (wayfinder) gives the answer Studio
+gives.
+
+- **The walking network** goes into every package (`navigation.json`, format 0.8):
+  every door and opening, a point in each room and zone, the lifts and stairs on each
+  floor, the entrances and the wayfinding kiosks, and the walks between them — across
+  each room along the shortest way that keeps off its walls, through its doors, and
+  from floor to floor by the lifts and stairs that are one (their *stack*). Plant
+  rooms, shafts and voids are not walked; a way through someone's office costs a
+  minute more than its time, so the corridor is taken.
+- **The way** from a kiosk, an entrance or any room to a room, a zone or a desk: the
+  quickest (walking at 1.3 m/s, a lift's wait, 12 s a flight of stairs), or without
+  stairs (lifts and ramps alone). It comes as the line to draw on each floor, the
+  changes of floor, and short steps ready to show — "Walk 48 m along CORRIDOR to the
+  lift", "Take the lift up to Floor 1", "OFFICE 112 is on your left" — each also a
+  kind and values, for a system to word in its own language (Arabic).
+- **Navigate** in Studio (from a project's buildings, and from Review's toolbar):
+  choose a start (a kiosk, an entrance, any room) and a destination, avoid stairs if
+  need be, and see the steps, the route on each floor's plan and in 3D.
+- **Stairs and lifts the drawing missed** are drawn in Review with its *Stairs* and
+  *Lift* tools, already typed, and added to the other floors they serve in one go;
+  each lift's or staircase's floors are linked by their code or where they overlap,
+  and a person may link or unlink them by hand.
+- **For other systems**: `Package.Navigation()` and `Route(from, to, opts)` in
+  [Go](go), `route(pkg, from, to, { accessible })` in the [viewers](viewer), with
+  `showRoute(route)` on the 2D plan and in the 3D world;
+  [spec/conformance/routes.json](spec/conformance) holds ways every reader must find
+  the same.
 
 ## Walk through it
 
@@ -721,16 +757,19 @@ storeypath export house.spproj --building VILLA -o villa.storeypath
 
 ## For other systems
 
-- **The package format**: [spec/FORMAT.md](spec/FORMAT.md) (format 0.7) and JSON
+- **The package format**: [spec/FORMAT.md](spec/FORMAT.md) (format 0.8) and JSON
   Schemas in [spec/schema](spec/schema): one building per package, plain JSON,
   GeoJSON and CSV in a ZIP, readable without our code. Each export says what was
-  added, changed and retired; `objects.csv` lists every ID with its parents.
-- **Go**: [go/](go) reads and validates packages, standard library only.
+  added, changed and retired; `objects.csv` lists every ID with its parents;
+  `navigation.json` is the building's walking network, with the rule every reader
+  finds the same way by.
+- **Go**: [go/](go) reads and validates packages, and finds the way in a building,
+  standard library only.
 - **Viewers** to embed: [viewer/](viewer) (the 3D world, a map view) and
   [viewer/svg](viewer/svg) (a 2D plan with no WebGL, for any machine).
 - **Conformance**: [spec/conformance](spec/conformance) holds packages that every
   reader must read the same way, with items, a building moved on the map and a desk
-  carried to another building.
+  carried to another building, and ways on them that every reader must find the same.
 - **Items are for asset management**: where things are, and where they have been,
   never who holds them. An inventory system keys its records to the items' IDs, as
   every system keys its own to StoreyPath's.
@@ -764,7 +803,8 @@ PROJECT-LOCATION-BUILDING-FLOOR-OBJECT        K7Q2XM-RUH-HQ-F02-0142
 Systems store our ID as the key of their own mapping (to employees, desks,
 bookings…). Each export carries a list of IDs added, changed and retired since
 the previous one, and a retired ID is never issued again. Lifts and stairs keep one
-object code on every floor they serve. Items are the exception that proves the
+object code on every floor they serve when Studio finds them, and share one *stack*
+however they were drawn. Items are the exception that proves the
 rule: their ID (`K7Q2XM-I000142`) is the project's and their own number, so it does
 not change when they move.
 
@@ -776,7 +816,7 @@ not change when they move.
 | 2 | One floor from a DXF with room outlines → package → viewer | done |
 | 3 | Spaces from walls when there are no room outlines; review editor | done |
 | 4 | Several floors and buildings aligned; placement | done: floors on one sheet found and stacked; placement by anchor + bearing; site plans |
-| 5 | Navigation graph and routing | next |
+| 5 | Navigation graph and routing | done (format 0.8): the walking network in every package, the same way in Studio, Go and the viewers |
 | 6 | DWG and real-world samples | done for a first real sheet set; a wider sample collection next |
 | 7 | Hardening: change reports, docs, releases | done: change lists; releases with a multi-arch image on ghcr.io |
 | 8 | Reading drawings like a person: layers, plans, units, room names | done |
