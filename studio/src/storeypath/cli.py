@@ -659,6 +659,8 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
                f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
                + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
                + (f"; vision: {status['vision']}" if status["vision"] else ""))
+    for line in studio.vision.describe():  # the GPU helpers, and how each is
+        typer.echo(line)
     if note:
         typer.echo(note)
     if open_browser:
