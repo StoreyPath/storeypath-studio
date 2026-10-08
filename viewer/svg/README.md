@@ -59,6 +59,12 @@ folder: `npm run build && python3 -m http.server`, and open `/example/`).
   (`at`), the way its front faces (`front`, a direction in the plan's
   coordinates), `width`, `depth`, `type`, `mount` and `color`.
 - A **pin** (`setPin`) on a space's label point, for "you are here".
+- A **way** through the building (`showRoute`, format 0.8): its walking on the floor
+  shown as a line with arrows the way it goes, its start and its end, and where it
+  changes floor a tag ("Lift to First floor", "Stairs from Ground floor"); over the
+  walls and doors, under the labels. The end and the tags are set beside the labels
+  where they would cover one, with a short leader to their point. Kept when another
+  floor is shown: that floor's part is drawn then.
 
 Hidden spaces (set in review) are left out unless `showHidden`; ignored ones always.
 
@@ -73,6 +79,8 @@ Hidden spaces (set in review) are left out unless `showHidden`; ignored ones alw
 | `select(id, { focus })` / `selected` | choose a space or an item (`focus: "pan"` brings it to the middle at the same zoom, `"zoom"` zooms to it) |
 | `highlight(ids, { dim })` | bring some spaces out, dim the rest; `null` for none |
 | `setPin(id)` / `markerOf(id)` | a pin in a space; a space's label point |
+| `showRoute(route, { floorName, fit })` / `clearRoute()` / `route` | draw a way (`route()` below, or any `PlanRoute`: `legs` of `{ floor_id, points }`, `changes` of `{ by, from_floor_id, to_floor_id }`) over the floor shown, each floor's part when it is shown; `floorName(id)` names floors in its tags; `fit` brings it into view |
+| `fitRoute()` | the way on the floor shown in view |
 | `fit()`, `fitTo(ids)`, `focus(id, { zoom })`, `zoomBy(f, at)` | move the view |
 | `camera()` / `setCamera(c)` | the view: screen = (x·k + tx, ∓y·k + ty) |
 | `toScreen(p)` / `toPlan(s)` | between plan metres and the element's CSS pixels |
@@ -88,13 +96,39 @@ motion. Resizing keeps the middle of the view where it was.
 
 Theme with CSS variables on any ancestor (`--sp-wall`, `--sp-door`, `--sp-window`,
 `--sp-select`, `--sp-highlight`, `--sp-dim-opacity`, `--sp-label`, `--sp-pin`, …: see
-`src/plan.css`), or style the classes (`.sp-unit`, `.sp-zone`, `.sp-selected`,
+`src/plan.css`; a way's: `--sp-route`, `--sp-route-width`, `--sp-route-casing`,
+`--sp-route-casing-width`, `--sp-route-arrow`, `--sp-route-start`, `--sp-route-end`,
+`--sp-route-marker-ring`, `--sp-route-change`, `--sp-route-change-text`, with dark
+values under `prefers-color-scheme: dark`), or style the classes (`.sp-unit`, `.sp-zone`, `.sp-selected`,
 `.sp-highlight`, `.sp-dim`, `.sp-type-office`, …). Space colours follow their type
 unless `styleOf` or `colors` says otherwise.
 
 For tests: the `<svg>` carries `data-cam="k,tx,ty"`, each unit `data-sp-id` and each
 item `data-sp-item` (and `data-selected` when chosen), the pin `data-sp-pin` with
+`data-plan-x`/`data-plan-y`; a way's lines `.sp-route[data-sp-route]` (how many legs
+on this floor) and its markers `data-sp-route-start`, `data-sp-route-end` and
+`data-sp-route-change` (`to` or `from`, with `data-floor`), each with
 `data-plan-x`/`data-plan-y`.
+
+## Finding the way
+
+A package of format 0.8 carries its building's walking network: `readPackage` reads
+it (`navigation`, null in older packages), and spaces of lifts and stairs their
+`stack`. `route(pkg, from, to, { accessible })` — the module both viewers share
+(`../src/navigation.js`, copied into `dist/` by the build, with its declarations) —
+finds the way on it as Studio and the Go module do, and `showRoute` draws it:
+
+```js
+import { FloorPlanEngine, floorFromPackage, readPackage, route } from "@storeypath/viewer-svg";
+
+const way = route(pkg, kioskItemId, officeId, { accessible: true });   // null: no way
+const names = Object.fromEntries(pkg.floors.map((f) => [f.id, f.properties.name]));
+engine.setFloor(floorFromPackage(pkg, way.legs[0].floor_id));
+engine.showRoute(way, { floorName: (id) => names[id], fit: true });
+list.replaceChildren(...way.steps.map((s) => Object.assign(document.createElement("li"), { textContent: s.text })));
+// another floor of the way: its part of the way is drawn
+engine.setFloor(floorFromPackage(pkg, way.legs[1].floor_id));
+```
 
 ## Coordinates
 
@@ -108,8 +142,8 @@ Older packages' items are placed by their point and heading on the map.
 
 ## Tests
 
-`npm test` builds, then checks the frame and the package reader against
-`spec/conformance/`, and the engine in headless Chrome with real input: clicks,
+`npm test` builds, then checks the frame, the package reader and the way every reader
+finds (`routes.json`) against `spec/conformance/`, and the engine in headless Chrome with real input: clicks,
 drags, the wheel, two-finger pinches, the keyboard, resizing, reduced motion, both
 y directions. Positions must hold to a pixel. Set `CHROME` to a Chrome or Chromium
 if it is not in the usual place.
