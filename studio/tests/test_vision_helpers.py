@@ -254,23 +254,78 @@ def test_a_question_that_cannot_be_answered_leaves_its_helper_in(helpers):
     assert model.ask(b"png", "?", FIELDS) == ANSWER
 
 
-def test_tls_to_a_helper_is_checked_unless_said_otherwise(helpers, tmp_path, monkeypatch):
+@pytest.fixture
+def tls_env(monkeypatch):
+    """Neither STOREYPATH_VISION_CA nor STOREYPATH_VISION_INSECURE, unless a test sets it."""
+    monkeypatch.delenv("STOREYPATH_VISION_CA", raising=False)
+    monkeypatch.delenv("STOREYPATH_VISION_INSECURE", raising=False)
+    return monkeypatch
+
+
+def _https(helpers, folder, **kw):
+    """A helper over HTTPS with a self-signed certificate (for 127.0.0.1 and localhost),
+    as the GPU helper makes when given none; and the certificate."""
     from storeypath.tls import context, studio_certificate
 
-    made = studio_certificate(tmp_path, machine=set())  # self-signed, for 127.0.0.1 and localhost
-    a = helpers(tls=context(made.cert, made.key))
+    made = studio_certificate(folder, machine=set(), **kw)
+    return helpers(tls=context(made.cert, made.key)), made
+
+
+def test_a_helper_with_its_own_certificate_is_used_encrypted_and_said_not_checked(helpers, tmp_path, tls_env):
+    a, _ = _https(helpers, tmp_path)
     assert a.url.startswith("https://")
+    model = VisionModel(url=a.url, key="k" * 32)
+    assert model.helper_states()[0]["tls"] is None  # not reached yet
+    assert model.available() and model.ask(b"png", "?", FIELDS) == ANSWER  # (the fake speaks TLS alone)
+    assert model.helper_states()[0]["tls"] == vision.TLS_OWN == "HTTPS, its own certificate (not checked)"
+    assert model.describe()[1] == f"  {a.url} (HTTPS, its own certificate (not checked)): answers ({a.model})"
+    # known now: its questions go straight to it, the checked try not made each time
+    checked = []
+    real = model._tls_context
+    tls_env.setattr(model, "_tls_context", lambda: checked.append(1) or real())
+    assert model.ask(b"png", "?", FIELDS) == ANSWER and checked == []
 
+
+def test_with_an_authority_given_only_a_certificate_it_vouches_for_is_used(helpers, tmp_path, tls_env):
+    from storeypath.tls import studio_certificate
+
+    a, made = _https(helpers, tmp_path / "helper")
+    impostor = studio_certificate(tmp_path / "other", machine=set())  # another self-signed one
+    tls_env.setenv("STOREYPATH_VISION_CA", str(impostor.cert))
+    refused = VisionModel(url=a.url, key="k" * 32)
+    assert not refused.available() and "CERTIFICATE_VERIFY_FAILED" in refused.failed
+    assert refused.helper_states()[0]["tls"] is None and a.keys == []  # no fallback: the key never sent
+
+    tls_env.setenv("STOREYPATH_VISION_CA", str(made.cert))  # the authority that made it
     checked = VisionModel(url=a.url)
-    assert not checked.available() and "CERTIFICATE_VERIFY_FAILED" in checked.failed
+    assert checked.available() and checked.ask(b"png", "?", FIELDS) == ANSWER
+    assert checked.helper_states()[0]["tls"] == vision.TLS_CHECKED == "HTTPS, certificate checked"
+    assert isinstance(checked._tls, ssl.SSLContext) and checked._tls.verify_mode == ssl.CERT_REQUIRED
 
-    monkeypatch.setenv("STOREYPATH_VISION_INSECURE", "1")
-    insecure = VisionModel(url=a.url)
-    assert insecure.available() and insecure.ask(b"png", "?", FIELDS) == ANSWER
-    assert "its certificate not checked" in insecure.describe()[1]
-    monkeypatch.delenv("STOREYPATH_VISION_INSECURE")
 
-    monkeypatch.setenv("STOREYPATH_VISION_CA", str(made.cert))  # that certificate trusted
-    pinned = VisionModel(url=a.url)
-    assert pinned.available() and pinned.ask(b"png", "?", FIELDS) == ANSWER
-    assert isinstance(pinned._tls, ssl.SSLContext) and pinned._tls.verify_mode == ssl.CERT_REQUIRED
+def test_a_certificate_failing_otherwise_is_refused_not_taken_for_a_helpers_own(helpers, tmp_path, tls_env):
+    import datetime as dt
+
+    long_ago = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3 * 365)
+    a, made = _https(helpers, tmp_path, now=long_ago)  # expired
+    model = VisionModel(url=a.url)
+    trusted = ssl.create_default_context(cafile=str(made.cert))  # as if the system's authorities vouched for it
+    tls_env.setattr(model, "_tls_context", lambda: trusted)
+    assert not model.available() and "expired" in model.failed and a.keys == []
+
+
+def test_insecure_never_checks(helpers, tmp_path, tls_env):
+    a, _ = _https(helpers, tmp_path)
+    tls_env.setenv("STOREYPATH_VISION_INSECURE", "1")
+    model = VisionModel(url=a.url)
+    assert model.available() and model.ask(b"png", "?", FIELDS) == ANSWER
+    assert model.helper_states()[0]["tls"] == vision.TLS_INSECURE
+    assert "not checked (STOREYPATH_VISION_INSECURE)" in model.describe()[1]
+
+
+def test_plain_http_is_said_plain(helpers, tls_env):
+    a = helpers()
+    model = VisionModel(url=a.url)
+    assert model.helper_states()[0]["tls"] == vision.TLS_PLAIN == "plain HTTP"  # known before it is reached
+    assert model.available() and model.ask(b"png", "?", FIELDS) == ANSWER
+    assert model.describe()[1] == f"  {a.url} (plain HTTP): answers ({a.model})"

@@ -1247,7 +1247,10 @@ class Studio:
     def helpers(self) -> dict:
         """The GPU helpers, as the admin page shows them: each one's address, whether it
         has a key (never the key), whether it is used, the questions it takes at once, how
-        it is (answers, left out, not answering) and the model it serves."""
+        it is (answers, left out, not answering), the model it serves and how it is reached
+        (``tls``: plain HTTP, HTTPS with its certificate checked or not)."""
+        from .vision import TLS_PLAIN
+
         self.reload_helpers()
         stored = self._stored_helpers()
         said = stored if stored is not None else self._helpers_from_env
@@ -1260,7 +1263,8 @@ class Studio:
             out.append({"url": h["url"], "key": bool(h.get("key")), "enabled": h.get("enabled", True),
                         "parallel": h.get("parallel") or 2, "state": s.get("state", "off" if not h.get("enabled", True)
                                                                          else "not asked yet"),
-                        "error": s.get("error"), "models": s.get("models"), "busy": s.get("busy", 0)})
+                        "error": s.get("error"), "models": s.get("models"), "busy": s.get("busy", 0),
+                        "tls": s.get("tls") or (TLS_PLAIN if h["url"].lower().startswith("http://") else None)})
         return {"helpers": out, "model": self.vision.model or None, "from": "database" if stored is not None
                 else "environment" if said else "none"}
 
@@ -1306,7 +1310,8 @@ class Studio:
 
     def test_helper(self, body: dict) -> dict:
         """A sample room sent to one helper (``url``; its key as kept, or ``key``), as a
-        conversion would ask it: what it answered, its model, how long it took."""
+        conversion would ask it: what it answered, its model, how long it took, and how
+        it was reached (``tls``, as ``helpers`` says it)."""
         from .vision import VisionModel, sample_question
 
         url = body.get("url")
@@ -1319,14 +1324,18 @@ class Studio:
         for h in one.helpers:
             h.key = key
         started = datetime.now(timezone.utc)
+
+        def tls():
+            return one.helpers[0].tls if one.helpers else None
+
         if not one.available():
-            return {"ok": False, "error": one.failed, "model": None}
+            return {"ok": False, "error": one.failed, "model": None, "tls": tls()}
         try:
             answer = sample_question(one)
         except Exception as e:  # noqa: BLE001 (said on the page)
-            return {"ok": False, "error": str(e), "model": one.model}
+            return {"ok": False, "error": str(e), "model": one.model, "tls": tls()}
         took = (datetime.now(timezone.utc) - started).total_seconds()
-        return {"ok": True, "model": one.model, "answer": answer, "seconds": round(took, 2)}
+        return {"ok": True, "model": one.model, "answer": answer, "seconds": round(took, 2), "tls": tls()}
 
 
 def _uid(by) -> str | None:

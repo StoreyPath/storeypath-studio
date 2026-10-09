@@ -570,12 +570,23 @@ to the others; it is tried again after that, and one that was not answering when
 Studio started joins once it answers. `serve` prints each helper as it starts, and
 whether it answers.
 
+**HTTPS to a helper.** The GPU helper speaks HTTPS by default, with a certificate it
+makes itself. Studio first checks a helper's certificate against the system's
+authorities; when none of them vouches for it (self-signed, or from an authority Studio
+does not know), Studio still uses the helper, encrypted, but cannot check *who* it is
+talking to: someone on the network posing as the helper could collect the key. Each
+helper is shown with how it is reached, in `serve`'s log and on the GPU helpers page:
+*plain HTTP*, *HTTPS, certificate checked* or *HTTPS, its own certificate (not
+checked)*. To check it, give the helper a certificate from your organisation's CA and
+Studio that CA (`STOREYPATH_VISION_CA`): then only a certificate it vouches for is
+used, and any other is an error. Or keep the helpers on a network only Studio reaches.
+
 **The GPU helpers page** (*GPU helpers* in an admin's person menu) sets them while
 Studio runs: each helper's address, its own key (never shown again once saved), whether
 it is used and how many rooms it is asked about at once; how each one is (answers, not
-answering and why, left out because it serves another model) and the models it lists;
-*Test* sends one a sample room, as a conversion asks, and shows its answer and how long
-it took. What is saved there is kept in the database and used at once (by every Studio
+answering and why, left out because it serves another model), how it is reached (as
+above) and the models it lists; *Test* sends one a sample room, as a conversion asks,
+and shows its answer, how long it took and how it was reached. What is saved there is kept in the database and used at once (by every Studio
 on that database, from its next conversion): the environment below is only where
 Studio starts from while the database has none.
 
@@ -585,19 +596,20 @@ Studio starts from while the database has none.
 | `STOREYPATH_VISION_MODEL` | the model name, when the server serves several (else the first one listed) |
 | `STOREYPATH_VISION_KEY` | the key sent to each helper (`Authorization: Bearer`): the helpers' `STOREYPATH_HELPER_KEY`, or a hosted service's |
 | `STOREYPATH_VISION_PARALLEL` | questions in flight at once, per helper (default 2): the helper's slots |
-| `STOREYPATH_VISION_INSECURE` | `1`: a helper's HTTPS certificate is not checked (a self-signed one on a trusted network) |
-| `STOREYPATH_VISION_CA` | a certificate (PEM) helpers' certificates are checked against, in place of the system's authorities |
+| `STOREYPATH_VISION_CA` | a CA certificate (PEM) helpers' certificates are checked against, in place of the system's authorities: only a helper whose certificate it vouches for is used. Without it, a helper whose certificate no authority vouches for (its own) is used, encrypted but not checked |
+| `STOREYPATH_VISION_INSECURE` | `1`: a helper's HTTPS certificate is never checked |
 
 The GPU helper serves on port 8105 and is set by its own environment
 ([its start.sh](https://github.com/StoreyPath/storeypath-gpu-helper/blob/main/start.sh)):
 
 | Environment | |
 |---|---|
-| `STOREYPATH_HELPER_KEY` | the key every call but `/health` must carry; without one it does not start |
+| `STOREYPATH_HELPER_KEY` | the key every call but `/health` must carry, at least 32 characters (`openssl rand -hex 32`); without one, or with a shorter one, it does not start |
 | `STOREYPATH_HELPER_OPEN` | `1`: serve without a key (a network nothing else can reach) |
 | `STOREYPATH_HELPER_SLOTS` | questions answered at once (default 2) |
 | `STOREYPATH_HELPER_CONTEXT` | tokens of context per question (default 8192) |
-| `STOREYPATH_HELPER_CERT`, `STOREYPATH_HELPER_CERT_KEY` | HTTPS with this certificate and key (PEM files mounted in); without, plain HTTP |
+| `STOREYPATH_HELPER_CERT`, `STOREYPATH_HELPER_CERT_KEY` | optional: HTTPS with this certificate and key (PEM files mounted in), e.g. from your organisation's CA; without them, HTTPS with a certificate it makes as it starts (not checkable by Studio) |
+| `STOREYPATH_HELPER_PLAIN_HTTP` | `1`: plain HTTP, for an SSH tunnel or a proxy that speaks HTTPS |
 | `STOREYPATH_HELPER_NAME` | the name the model is served under (default `gemma-4-31B-it-Q4_K_M`): answers are filed by it |
 | `STOREYPATH_HELPER_ENGINE` | `llama.cpp` (default); `vllm` is the place for vLLM, in an image of its own |
 
