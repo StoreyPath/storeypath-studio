@@ -8,6 +8,7 @@
 
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { TYPE_COLORS, typeLabel } from "./theme.js";
+import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
 import { PAGE, followJob as followOnStream, heardLocked, lockedByOther, onFloor, setupTogether } from "./together.js";
@@ -1625,14 +1626,7 @@ function setupPanel() {
   $("convert").addEventListener("click", reconvert);
   $("next").addEventListener("click", nextToReview);
   $("ed-close").addEventListener("click", () => select(null));
-  $("ed-copy").addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(state.selected);
-      toast("ID copied");
-    } catch {
-      toast("Could not copy; select the ID and copy it", true);
-    }
-  });
+  $("ed-copy").addEventListener("click", () => copyId(state.selected));
   $("ed-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const s = state.byId.get(state.selected);
@@ -1669,10 +1663,9 @@ function setupPanel() {
   $("ed-capacity").addEventListener("change", saveCapacity);
   $("ed-type").addEventListener("change", (e) => (e.target.style.borderLeft = `6px solid ${color(e.target.value)}`));
   $("search").addEventListener("input", (e) => {
-    state.filter = e.target.value.trim().toLowerCase();
-    state.floor.spaces.forEach(styleSpace);
-    placeLabels();
-    renderLists();
+    filterSpaces(e.target.value.trim().toLowerCase());
+    const tag = normalizeItemId(e.target.value); // an item's ID, as typed (7k2q xm9f 4dp): that item
+    if (tag) findAsset(tag, e.target.value);
   });
 
   document.addEventListener("keydown", (e) => {
@@ -1964,7 +1957,49 @@ function placeItemMenu(cx, cy, p) {
   $("menu").querySelector("button")?.focus();
 }
 
+async function copyId(id) {
+  try {
+    await navigator.clipboard.writeText(id);
+    toast(`${id} copied`);
+  } catch {
+    toast("Could not copy; select the ID and copy it", true);
+  }
+}
+
+function filterSpaces(text) {
+  state.filter = text;
+  state.floor.spaces.forEach(styleSpace);
+  placeLabels();
+  renderLists();
+}
+
+/** An item by its ID, typed in the search box: chosen, on its floor (that floor opened
+ * when it is another), and brought into view, the spaces no longer filtered by it. A
+ * room's name may read as an ID too: one no item has filters the spaces, as it did. */
+async function findAsset(tag, typed) {
+  let a = (state.floor?.items || []).find((x) => x.id === tag);
+  if (!a) {
+    let found;
+    try {
+      found = await request(`${BASE}/items/${encodeURIComponent(tag)}`);
+    } catch (e) {
+      if ($("search").value !== typed || units().some((s) => matches(s, state.filter))) return;
+      return toast(/no item/i.test(e.message) ? `No item ${tag} on a floor of this project you may see` : e.message, true);
+    }
+    if ($("search").value !== typed) return; // typed on since
+    if (found.floor_id !== state.floor?.id) await openFloor(found.floor_id);
+    a = (state.floor?.items || []).find((x) => x.id === found.id);
+    if (!a) return;
+  }
+  filterSpaces("");
+  if (a.retired && !state.showHidden) toast(`${a.id} is deleted: Show deleted to see it`);
+  selectAsset(a.id);
+  const floor = floorBounds();
+  if (floor) centerOn([a.x, a.y, a.x, a.y], Math.max(scaleFor(floor), scaleFor([a.x - 4, a.y - 4, a.x + 4, a.y + 4], 20)));
+}
+
 function setupAssets() {
+  $("as-copy").addEventListener("click", () => copyId(state.asset));
   $("place-type").addEventListener("change", (e) => {
     if (!e.target.value) return setTool(null);
     if (state.tool !== "place") setTool("place");

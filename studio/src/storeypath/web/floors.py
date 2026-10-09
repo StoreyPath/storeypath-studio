@@ -53,6 +53,12 @@ def add_item(code: str, floor_id: str, request: Request, may: May, studio: TheSt
     return answer(request, studio.review(code).add_item(floor_id, body, by=may.user, editor=may.editor))
 
 
+@calls.get("/api/projects/{code}/items/{item_id}")
+def find_item(code: str, item_id: str, request: Request, may: May, studio: TheStudio):
+    may.find_item(code, item_id)  # (as a person typed it: 7k2q xm9f 4dp)
+    return answer(request, studio.review(code).find_item(item_id))
+
+
 @calls.post("/api/projects/{code}/items/{item_id}")
 def change_item(code: str, item_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.item(code, item_id, body)

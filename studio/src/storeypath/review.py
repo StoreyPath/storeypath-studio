@@ -57,6 +57,7 @@ from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
+from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .stacks import NOT_LINKED, STACK_TYPES
 from .types import SpaceType
@@ -505,6 +506,14 @@ class Review:
             return ch, it
 
         return self._item(self._change(fn, by, editor), cat)
+
+    def find_item(self, text: str) -> dict:
+        """An item by its ID as a person typed it (7k2q xm9f 4dp: either case, O for 0, I
+        and L for 1, with or without its hyphens): what it is, and where (its floor)."""
+        it = self.workspace().items.get(normalize_item_id(text) or text)
+        if it is None:
+            raise NotFound(f"no item {text}")
+        return self._item(it)
 
     def change_item(self, item_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """An item moved, turned, given another type or details, carried to another floor

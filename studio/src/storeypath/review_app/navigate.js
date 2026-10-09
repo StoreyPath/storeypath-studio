@@ -11,6 +11,7 @@
 // may find the way in it; the server checks.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search); // (none in a test)
@@ -91,9 +92,10 @@ export function duration(seconds) {
 
 // ---- what a way may start or end at ------------------------------------------------
 
-/** The network's places to choose from: its kiosks, then its entrances (ways in from
- * outside), then every room a person arrives in, each with its floor; ``id`` is what
- * the API is asked with (a kiosk's item, an entrance's node, a space's or zone's ID). */
+/** The network's places to choose from: its kiosks (each with its item's ID, the tag
+ * on it), then its entrances (ways in from outside), then every room a person arrives
+ * in, each with its floor; ``id`` is what the API is asked with (a kiosk's item, an
+ * entrance's node, a space's or zone's ID). */
 export function choicesOf(network) {
   const floors = new Map(network.floors.map((f) => [f.id, f.name]));
   const places = new Map(network.places.map((p) => [p.id, p]));
@@ -103,7 +105,7 @@ export function choicesOf(network) {
   for (const n of nodes) {
     if (n.kind === "kiosk" && n.item_id) {
       out.push({ id: n.item_id, node: n.id, group: "kiosk", floor: n.floor_id,
-        label: `Kiosk in ${labelOf(n.zone_id || n.space_id)}`, sub: floors.get(n.floor_id) ?? n.floor_id });
+        label: `Kiosk in ${labelOf(n.zone_id || n.space_id)}`, sub: `${floors.get(n.floor_id) ?? n.floor_id} · ${n.item_id}` });
     }
   }
   for (const n of nodes) {
@@ -133,8 +135,13 @@ export function choicesOf(network) {
   return [...out, ...rooms];
 }
 
-/** The choices a search finds: every word of it in the label, the floor, the type or the ID. */
+/** The choices a search finds: a kiosk's item's ID as typed (7k2q xm9f 4dp), that
+ * kiosk; else every word of it in the label, the floor, the type or the ID (a room's
+ * name may read as an item's ID too). */
 export function search(choices, query) {
+  const tag = normalizeItemId(query);
+  const kiosk = tag ? choices.filter((c) => c.id === tag) : [];
+  if (kiosk.length) return kiosk;
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return choices;
   return choices.filter((c) => {
@@ -219,9 +226,10 @@ class Picker {
     if (!quiet) this.onChoose(c);
   }
 
-  /** Choose by ID (a kiosk's item or node, an entrance's node, a place), quietly. */
+  /** Choose by ID (a kiosk's item, as typed too, or node, an entrance's node, a place), quietly. */
   set(id) {
-    const c = id ? state.choices.find((x) => x.id === id || x.node === id) : null;
+    const tag = normalizeItemId(id);
+    const c = id ? state.choices.find((x) => x.id === id || x.node === id || x.id === tag) : null;
     this.choose(c ?? null, { quiet: true });
     return Boolean(c);
   }

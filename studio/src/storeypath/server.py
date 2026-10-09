@@ -94,7 +94,7 @@ from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
 from .db.store import Editor, StepLock, drawing_name
-from .ids import make_id
+from .ids import make_id, normalize_item_id
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import read_title
@@ -1109,8 +1109,9 @@ class Studio:
                    accessible: bool = False) -> dict:
         """A building's walking network as it is now (navigation.build_network: what its
         next package will hold), or the way on it from ``start`` to ``end`` (a node's,
-        space's, zone's or item's ID; on lifts and ramps alone when ``accessible``).
-        Worked out once a version of the project."""
+        space's, zone's or item's ID; on lifts and ramps alone when ``accessible``). An
+        item's ID may be as a person typed it (7k2q xm9f 4dp). Worked out once a version
+        of the project."""
         from .navigation import NoRoute, route
 
         if (start is None) != (end is None):
@@ -1118,6 +1119,13 @@ class Studio:
         graph, items = self._network(code, building_id)
         if start is None:
             return {"building_id": building_id, **graph.nav}
+
+        def known(ref: str) -> str:  # as given when the network has it, else an item's ID as typed
+            if ref in graph.nodes or ref in graph.places or ref in items:
+                return ref
+            return normalize_item_id(ref) or ref
+
+        start, end = known(start), known(end)
         try:
             return {"building_id": building_id, "route": route(graph, start, end, accessible=accessible, items=items)}
         except NoRoute as e:
@@ -1840,6 +1848,14 @@ class Gate:
             if not sight.floor(f):
                 raise NotFound(f"no floor {f}")
             _need(sight.floor(f), "edit", f"the floor {f}")
+        return sight
+
+    def find_item(self, code: str, item_id: str) -> Sight:
+        """An item looked up by its ID (as a person typed it): view on its floor."""
+        sight = self.see(code)
+        it = self._workspace(code).items.get(normalize_item_id(item_id) or item_id)
+        if it is None or not sight.floor(it.floor_id):
+            raise NotFound(f"no item {item_id}")
         return sight
 
     def item(self, code: str, item_id: str, body: dict) -> Sight:

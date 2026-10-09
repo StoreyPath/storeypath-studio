@@ -245,3 +245,34 @@ def test_items_come_back_when_a_package_opens_as_a_project(converted, tmp_path, 
     symbols = iter(gone.id.replace("-", "")[:10] + "Z" * 10)  # the retired one's drawn first
     monkeypatch.setattr(ids.secrets, "choice", lambda alphabet: next(symbols))
     assert again.add_item("COPIER", f_id, 0, 0).id == "ZZZZ-ZZZZ-ZZA"  # not given again
+
+
+def test_an_item_is_found_by_its_id_as_a_person_types_it(tmp_path, monkeypatch):
+    # Review's search box and the Navigate page take an item's ID as typed: either case,
+    # O for 0, I and L for 1, with or without its hyphens; of a floor the person sees.
+    from urllib.parse import quote
+
+    from shapely.geometry import shape
+
+    from people import Team
+    from storeypath import accounts as acc
+
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    monkeypatch.delenv("STOREYPATH_ALLOWED_HOSTS", raising=False)
+    team = Team(tmp_path / "data")
+    try:
+        office = next(r for r in team.spaces(team.hq0) if r.name == "OFFICE")
+        p = shape(office.geometry).representative_point()
+        status, desk = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
+        assert status == 200
+        typed = desk["id"].lower().replace("-", " ").replace("0", "o").replace("1", "l")
+        status, found = team("vera", "GET", f"items/{quote(typed)}")  # vera sees the ground floor
+        assert status == 200 and found["id"] == desk["id"] and found["floor_id"] == team.hq0
+        assert team("bob", "GET", f"items/{quote(typed)}")[0] == 404  # bob sees the Annex alone
+        wrong = typed[:-1] + ("x" if typed[-1] != "x" else "y")  # its check symbol wrong: not an ID
+        assert team("khalid", "GET", f"items/{quote(wrong)}")[0] == 404
+        # the way from it, asked with it as typed
+        status, way = team("khalid", "GET", f"buildings/{team.hq}/navigation?from={quote(typed)}&to={office.id}")
+        assert status == 200 and way["route"]["from"] == desk["id"], way
+    finally:
+        team.close()
