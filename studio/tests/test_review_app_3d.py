@@ -2,7 +2,7 @@
 while one is being built, it builds it once that one is done (no request dropped); a
 floor changed meanwhile (walls drawn, the floor read again) is read again afterwards,
 that floor alone, never taken as shown; a building moved is built again whole. Runs
-review.js's refresh3d and build3d in Node, with the page and the 3D world stood in for."""
+Review's refresh3d and build3d (review/view3d.js) in Node, with the page and the 3D world stood in for."""
 
 import re
 import shutil
@@ -11,12 +11,14 @@ from pathlib import Path
 
 import pytest
 
-REVIEW_JS = Path(__file__).parent.parent / "src" / "storeypath" / "review_app" / "review.js"
+VIEW3D_JS = Path(__file__).parent.parent / "src" / "storeypath" / "review_app" / "review" / "view3d.js"
 
 
 def function(src: str, name: str) -> str:
-    """A top-level function's source, by its braces."""
-    start = re.search(rf"^(async )?function {name}\(", src, re.M).start()
+    """A top-level function's source, by its braces (an export as a plain function)."""
+    start = re.search(rf"^(export )?(async )?function {name}\(", src, re.M).start()
+    if src.startswith("export ", start):
+        start += len("export ")
     depth, i = 0, src.index("{", start)
     while True:
         depth += {"{": 1, "}": -1}.get(src[i], 0)
@@ -45,6 +47,7 @@ view3d.world = {
   setFloor(id) { floors.push(id); },
 };
 const toast = (m) => { said.push(m); };
+const say = () => {};
 const setView = (mode) => { view3d.shown = mode !== "2d"; };
 const pick3d = () => {};
 let updated = 0, modes = 0;
@@ -108,7 +111,7 @@ console.log("ok");
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
 def test_3d_refresh_asked_while_busy_is_not_dropped(tmp_path):
-    src = REVIEW_JS.read_text(encoding="utf-8")
+    src = VIEW3D_JS.read_text(encoding="utf-8")
     script = SCENARIO.replace("__FUNCTIONS__", function(src, "refresh3d") + "\n" + function(src, "build3d"))
     (tmp_path / "scenario.mjs").write_text(script, encoding="utf-8")
     run = subprocess.run(["node", str(tmp_path / "scenario.mjs")], capture_output=True, text=True, timeout=60)

@@ -33,7 +33,7 @@ export function setup(given) {
   api = given;
   const css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "vertical.css";
+  css.href = "review/vertical.css";
   document.head.append(css);
 
   const group = api.el("span", { class: "segmented vertical-tools only2d edit-only", role: "group",

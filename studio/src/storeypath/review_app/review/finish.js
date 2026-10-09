@@ -316,7 +316,7 @@ export function setup(given) {
   api = given;
   const css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "finish.css";
+  css.href = "review/finish.css";
   document.head.append(css);
   const el = api.el;
   const button = el("button", { type: "button", id: "paint", class: "edit-only only3dwalk",

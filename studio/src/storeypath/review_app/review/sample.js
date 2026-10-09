@@ -12,8 +12,8 @@
 //   down(p), move(p), up(p)  the pointer on the plan, in the plan's metres;
 //   stop()           another tool, the 3D view, another floor: the rectangle goes.
 
-import { sentAway } from "./account.js";
-import { PAGE } from "./together.js";
+import { sentAway } from "../account.js";
+import { PAGE } from "../together.js";
 
 const MAX_SIDE = 50; // metres: as the server (areasample.frame.MAX_SIDE_M)
 const MIN_SIDE = 0.5;
@@ -43,7 +43,7 @@ export function setup(given) {
   api = given;
   const css = document.createElement("link");
   css.rel = "stylesheet";
-  css.href = "sample.css";
+  css.href = "review/sample.css";
   document.head.append(css);
   const b = el("button", { type: "button", id: "share-area", class: "only2d",
     title: `Share an area: drag a rectangle over the plan (at most ${MAX_SIDE} × ${MAX_SIDE} m) to download a small ` +

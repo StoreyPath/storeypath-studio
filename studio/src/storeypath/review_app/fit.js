@@ -3,8 +3,8 @@
 // is part of), and, near a wall or another item, turns square to it and moves up
 // against it. Everything here is in the plan's metres (the drawing's, y up), an
 // item's turn counter-clockwise, its front (where its user sits) its own -y.
-// Pure functions, no page: review.js uses them as an item is placed, dragged,
-// nudged or turned, and the tests run them in Node.
+// Pure functions, no page: Review (review/items.js, pointer.js, view3d.js) uses them
+// as an item is placed, dragged, nudged or turned, and the tests run them in Node.
 
 /** What goes with a desk, by the grade it is for, as the viewers draw it: visitors'
  * chairs across it (armchairs for the president's), a return at its side (an
