@@ -1585,3 +1585,40 @@ func TestWhatStudiosValidatorRefusesIsRefusedHereToo(t *testing.T) {
 		t.Error("moved away and retired: not a problem")
 	}
 }
+
+func TestAnItemOfTwoProjectsIsRefusedInTheLaterPackage(t *testing.T) {
+	// An asset is one project's: the same item ID in packages of two projects is a
+	// clash. In packages of one project it is one item, carried from building to
+	// building (campus: the desk in the HQ's first package, then in the Annex's second).
+	var held []*Package
+	for _, name := range []string{"campus-hq", "campus-annex", "campus-hq-2", "campus-annex-2"} {
+		held = append(held, open(t, name+".storeypath"))
+	}
+	for i, problems := range ValidateAcross(held...) {
+		if len(problems) != 0 {
+			t.Errorf("package %d of one project: %v", i+1, problems)
+		}
+	}
+	hq := held[0]
+	item, theirs := hq.Items[0].ID, held[1].Items[0].ID
+	other := rewriteFrom(t, "campus-annex.storeypath", func(name string, data []byte) []byte {
+		switch name {
+		case FileManifest:
+			return bytes.Replace(data, []byte(`"id": "`+hq.Manifest.Project.ID+`"`), []byte(`"id": "ZZZZZZ"`), 1)
+		case FileItems:
+			return bytes.ReplaceAll(data, []byte(theirs), []byte(item))
+		}
+		return data
+	})
+	if other.Manifest.Project.ID != "ZZZZZZ" || other.Item(item) == nil {
+		t.Fatalf("not rewritten: %s, %v", other.Manifest.Project.ID, other.Item(item))
+	}
+	got := ValidateAcross(hq, other)
+	if len(got[0]) != 0 || len(got[1]) != 1 || got[1][0].Code != ProblemItemElsewhere || got[1][0].ID != item ||
+		!strings.Contains(got[1][0].Message, "project "+hq.Manifest.Project.ID) {
+		t.Errorf("the later package's item: %v", got)
+	}
+	if got := ValidateAcross(other, hq); len(got[0]) != 0 || len(got[1]) != 1 {
+		t.Errorf("the other way round: %v", got)
+	}
+}

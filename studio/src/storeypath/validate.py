@@ -290,6 +290,34 @@ def validate_package(path: str | Path) -> list[str]:
     return errors
 
 
+def validate_across(paths) -> list[str]:
+    """Packages held together (each checked by validate_package): an asset is one
+    project's, so the same item ID in packages of two projects is a clash, not one
+    item. Each is a problem of the later package (in the order given), which a reader
+    refuses. In packages of one project the same ID is the same item, carried from
+    building to building."""
+    seen: dict[str, tuple[str, str]] = {}  # item ID -> its project, and the package it was first in
+    errors: list[str] = []
+    for path in paths:
+        name = Path(path).name
+        try:
+            with zipfile.ZipFile(path) as z:
+                manifest = json.loads(z.read("manifest.json"))
+                project, items = manifest["project"]["id"], manifest.get("files", {}).get("items")
+                features = json.loads(z.read(items))["features"] if items in z.namelist() else []
+        except (OSError, zipfile.BadZipFile, KeyError, ValueError, TypeError, AttributeError):
+            continue  # not read: validate_package says why
+        for f in features:
+            i = f.get("id") if isinstance(f, dict) else None
+            if not isinstance(i, str):
+                continue
+            project_first, where = seen.setdefault(i, (project, name))
+            if project_first != project:
+                errors.append(f"{name}: item {i[:MAX_ID_LENGTH]} is an item of project {project_first} too "
+                              f"({where}): an item's ID is one project's")
+    return errors
+
+
 def _lonlat(p, x: float, y: float) -> tuple[float, float]:
     """A point of a building's own frame on the map, by its placement."""
     from .georef import Georeferencer

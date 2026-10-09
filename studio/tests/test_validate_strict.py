@@ -371,6 +371,26 @@ def test_an_id_retired_since_the_last_export_is_not_in_the_package(tmp_path):
     assert validate_package(out) == [f"changes.json: retired ID {space} is still in the package"]
 
 
+def test_an_item_of_two_projects_is_refused_in_the_later_package(tmp_path):
+    # An asset is one project's: the same item ID in packages of two projects is a clash.
+    # In packages of one project it is one item, carried from building to building
+    # (campus: the desk in the HQ's first package, then in the Annex's second).
+    from storeypath.validate import validate_across
+
+    names = ("campus-hq", "campus-annex", "campus-hq-2", "campus-annex-2")
+    assert validate_across([PACKAGES / f"{n}.storeypath" for n in names]) == []
+    item = first("items.geojson")["id"]
+    theirs = json.loads(zipfile.ZipFile(PACKAGES / "campus-annex.storeypath").read("items.geojson"))["features"][0]["id"]
+
+    def other_project(doc):
+        doc["project"]["id"] = "ZZZZZZ"
+    other = rewritten(tmp_path, PACKAGES / "campus-annex.storeypath", **{
+        "manifest.json": edited(other_project), "items.geojson": lambda t: t.replace(theirs, item)})
+    assert validate_across([HQ, other]) == [
+        f"{other.name}: item {item} is an item of project {_project()} too ({HQ.name}): an item's ID is one project's"]
+    assert validate_across([other, HQ])[0].startswith(f"{HQ.name}: item {item} is an item of project ZZZZZZ too")
+
+
 def test_an_item_moved_away_is_not_retired(tmp_path):
     item = "7K2Q-XM9F-4DP"
 

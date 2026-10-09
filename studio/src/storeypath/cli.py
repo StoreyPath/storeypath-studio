@@ -18,11 +18,11 @@ from .assets import asset_dir
 from .cad import DrawingError
 from .convert import convert_floor
 from .export import ExportError
-from .ids import make_id
+from .ids import make_id, normalize_item_id
 from .package import json_schemas
 from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
 from .types import SpaceType
-from .validate import validate_package
+from .validate import validate_across, validate_package
 from .workspace import Override, Placement, SourceDrawing, Workspace
 
 app = typer.Typer(no_args_is_help=True, help="Convert DWG/DXF floor plans into indoor map packages.")
@@ -1035,12 +1035,30 @@ def export(
 
 
 @app.command()
-def validate(package: Path):
-    """Check a package against the format."""
-    errors = validate_package(package)
+def validate(packages: Annotated[list[Path], typer.Argument(help="a package, or several held together")]):
+    """Check packages against the format: each, and several together (an item's ID is one
+    project's: the same in packages of two projects is refused, in the later one)."""
+    several = len(packages) > 1
+    errors = [f"{p.name}: {e}" if several else e for p in packages for e in validate_package(p)]
+    if several:
+        errors += validate_across(packages)
     if errors:
         _fail("\n".join(errors))
-    typer.echo(f"{package}: valid")
+    for p in packages:
+        typer.echo(f"{p}: valid")
+
+
+@app.command("item-id")
+def item_id(text: Annotated[list[str], typer.Argument(help="as written on its tag, in either case, with or "
+                                                            "without its hyphens: 7k2q xm9f 4dp")]):
+    """An item's ID as a person typed it, as it is written (7K2Q-XM9F-4DP): O is read as
+    0, I and L as 1. Fails when it is not an item's ID (a symbol wrong, two swapped)."""
+    given = " ".join(text)
+    found = normalize_item_id(given)
+    if found is None:
+        _fail(f"{given!r} is not an item's ID: four, four and three letters and digits (no I, L, O or U), "
+              "the last of them its check")
+    typer.echo(found)
 
 
 @app.command()

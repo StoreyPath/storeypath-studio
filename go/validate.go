@@ -40,27 +40,28 @@ func clip(s string) string {
 
 // Problem codes. They never change meaning; new ones may be added.
 const (
-	ProblemMissingFile  = "MISSING_FILE"  // a file of the package is not in it
-	ProblemBadFile      = "BAD_FILE"      // a file cannot be read as its kind
-	ProblemFormat       = "FORMAT"        // not a StoreyPath package
-	ProblemVersion      = "VERSION"       // a format major version this reader does not read
-	ProblemCount        = "COUNT"         // the manifest's count of a file's features is wrong
-	ProblemBadID        = "BAD_ID"        // an ID is not a StoreyPath ID
-	ProblemDuplicateID  = "DUPLICATE_ID"  // two features share an ID
-	ProblemWrongProject = "WRONG_PROJECT" // an ID is not of the package's project
-	ProblemIDLevel      = "ID_LEVEL"      // an ID has the wrong number of segments for its kind
-	ProblemParent       = "PARENT"        // a feature's parent is missing, or its ID does not start with it
-	ProblemZone         = "ZONE"          // a zone and its space do not list each other, or a space lists another's zone (or one twice)
-	ProblemOpening      = "OPENING"       // an opening joins a space that is not there, or on another floor
-	ProblemObjects      = "OBJECTS"       // objects.csv does not list exactly the features
-	ProblemChanges      = "CHANGES"       // changes.json does not agree with the package
-	ProblemGeometry     = "GEOMETRY"      // a feature's geometry is not the kind its file holds
-	ProblemScope        = "SCOPE"         // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
-	ProblemItem         = "ITEM"          // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
-	ProblemItemType     = "ITEM_TYPE"     // an item's type is not in the package's catalogue
-	ProblemPlacement    = "PLACEMENT"     // a building of the package, or one an item stands in, has no placement in the manifest
-	ProblemValue        = "VALUE"         // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
-	ProblemNavigation   = "NAVIGATION"    // (0.8) the walking network names a building, floor, space or zone not in the package, holds a node twice, or an edge joins a node it does not have (or two nodes another edge joins), or has no line
+	ProblemMissingFile   = "MISSING_FILE"   // a file of the package is not in it
+	ProblemBadFile       = "BAD_FILE"       // a file cannot be read as its kind
+	ProblemFormat        = "FORMAT"         // not a StoreyPath package
+	ProblemVersion       = "VERSION"        // a format major version this reader does not read
+	ProblemCount         = "COUNT"          // the manifest's count of a file's features is wrong
+	ProblemBadID         = "BAD_ID"         // an ID is not a StoreyPath ID
+	ProblemDuplicateID   = "DUPLICATE_ID"   // two features share an ID
+	ProblemWrongProject  = "WRONG_PROJECT"  // an ID is not of the package's project
+	ProblemIDLevel       = "ID_LEVEL"       // an ID has the wrong number of segments for its kind
+	ProblemParent        = "PARENT"         // a feature's parent is missing, or its ID does not start with it
+	ProblemZone          = "ZONE"           // a zone and its space do not list each other, or a space lists another's zone (or one twice)
+	ProblemOpening       = "OPENING"        // an opening joins a space that is not there, or on another floor
+	ProblemObjects       = "OBJECTS"        // objects.csv does not list exactly the features
+	ProblemChanges       = "CHANGES"        // changes.json does not agree with the package
+	ProblemGeometry      = "GEOMETRY"       // a feature's geometry is not the kind its file holds
+	ProblemScope         = "SCOPE"          // a package holds a building its scope does not list, or lacks one it does; from 0.7, not exactly one
+	ProblemItem          = "ITEM"           // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
+	ProblemItemType      = "ITEM_TYPE"      // an item's type is not in the package's catalogue
+	ProblemPlacement     = "PLACEMENT"      // a building of the package, or one an item stands in, has no placement in the manifest
+	ProblemValue         = "VALUE"          // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
+	ProblemNavigation    = "NAVIGATION"     // (0.8) the walking network names a building, floor, space or zone not in the package, holds a node twice, or an edge joins a node it does not have (or two nodes another edge joins), or has no line
+	ProblemItemElsewhere = "ITEM_ELSEWHERE" // (ValidateAcross) an item's ID is an item of another project, in another package
 )
 
 var kindLevel = map[string]string{
@@ -572,6 +573,32 @@ func CheckVersion(version string) error {
 		return fmt.Errorf("format version %s is newer than this reader's %s: update the reader to read it", clip(version), FormatVersion)
 	}
 	return nil
+}
+
+// ValidateAcross checks packages a system holds together (each is checked by
+// Validate): an asset is one project's, so the same item ID in packages of two
+// projects is a clash, not one item. Each is a problem (ITEM_ELSEWHERE) of the later
+// package, in the order given: out[i] are pkgs[i]'s, and a package with any is to be
+// refused. In packages of one project the same ID is the same item, carried from
+// building to building.
+func ValidateAcross(pkgs ...*Package) [][]Problem {
+	type first struct{ project, at string }
+	seen := map[string]first{}
+	out := make([][]Problem, len(pkgs))
+	for i, p := range pkgs {
+		project := p.Manifest.Project.ID
+		for _, it := range p.Items {
+			f, ok := seen[it.ID]
+			if !ok {
+				seen[it.ID] = first{project, fmt.Sprintf("package %d", i+1)}
+			} else if f.project != project {
+				out[i] = append(out[i], Problem{Code: ProblemItemElsewhere, File: p.file("items"), ID: it.ID,
+					Message: fmt.Sprintf("%s: an item of project %s too (%s): an item's ID is one project's",
+						clip(it.ID), clip(f.project), f.at)})
+			}
+		}
+	}
+	return out
 }
 
 // minor is a format version's minor number ("0.7.0" → 7). What is not a format
