@@ -211,8 +211,14 @@ def test_choices_in_the_preview_keep_or_take_out_texts(project):
     view = first.privacy.view()
     khalid = next(f for f in view["found"] if "KHALID" in f["text"])
     store = next(o for o in view["others"] if o["text"] == "STORAGE 210")
+    corridor = next(o for o in view["others"] if o["text"] == "CORRIDOR")
     assert khalid["removed"] and not khalid["always"]
-    s = build(review, f_id, AREA, keep=[khalid["id"]], remove=[store["id"]], note="STORAGE 210 is fine")
+    s = build(review, f_id, AREA, keep=[khalid["id"]], remove=[store["id"], corridor["id"]],
+              note="STORAGE 210 is fine")
+    hall = next(x for x in s.reading["spaces"] if x["type"] == "corridor")  # a type is Studio's word, kept
+    assert hall["name"] == "[TEXT]" and hall["decided_by"] == "rules"
+    assert any(t["read_as"]["rules"] == {"type": "corridor", "rule": hall["type_source"]} for t in s.reading["texts"]
+               if t["text"] == "[TEXT]")
     texts = [t["text"] for t in s.reading["texts"]]
     assert "DR. KHALID AL-ALI" in texts  # kept, as the person chose
     assert "STORAGE 210" not in texts and "[TEXT]" in json.dumps(s.reading)

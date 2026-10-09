@@ -32,6 +32,12 @@ PLACEHOLDERS = {
 }
 ALWAYS = ("project", "site", "building", "floor", "address")  # never kept, whatever is chosen
 NAMED = ("name", "phone", "email", "web", "extension", "id number", "contact")  # taken out of layers' names too
+# what the JSON files hold of Studio's own words (types, who decided, rules, units, local IDs)
+# or of names already scrubbed as names (layers): never scrubbed as texts
+STUDIO_KEYS = {"type", "kind", "decided_by", "type_source", "found_as", "outline", "a", "b", "source", "category",
+               "units", "header_units", "units_chosen", "profile", "method", "rule", "id", "parent", "zones", "in",
+               "label_of", "room", "connects", "layer", "roles", "read_as", "rooms_only", "asked", "model",
+               "origin", "replayed_with"}
 
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 WEB = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b[\w-]+\.(?:com|net|org|gov|edu|info|biz|qa|ae|sa|kw|om|bh|uk|eu)"
@@ -324,13 +330,16 @@ class Privacy:
         return sorted({p.pattern for p, _, _ in self._patterns for s in strings if isinstance(s, str) and p.search(s)})
 
     def scrub_all(self, value):
-        """Every string in a JSON value scrubbed (the keys too)."""
+        """Every string in a JSON value scrubbed (the keys too), but Studio's own words:
+        a type, who decided it, a rule… (STUDIO_KEYS), which a text taken out (CORRIDOR)
+        must not change, and names already scrubbed as names (layers)."""
         if isinstance(value, str):
             return self.scrub(value)
         if isinstance(value, list):
             return [self.scrub_all(v) for v in value]
         if isinstance(value, dict):
-            return {self.scrub(k) if isinstance(k, str) else k: self.scrub_all(v) for k, v in value.items()}
+            return {self.scrub(k) if isinstance(k, str) else k: v if k in STUDIO_KEYS else self.scrub_all(v)
+                    for k, v in value.items()}
         return value
 
     def view(self) -> dict:

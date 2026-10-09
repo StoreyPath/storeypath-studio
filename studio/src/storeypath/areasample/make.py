@@ -268,6 +268,8 @@ def build(review, floor_id: str, area, *, note: str = "", keep=(), remove=(), mo
         x["layer"] = privacy.scrub_name(x["layer"])
     for t in reading["texts"]:
         t["layer"] = privacy.scrub_name(t["layer"])
+    for it in corrections["items"]:  # an organization's own type codes, without its names
+        it["type"] = privacy.scrub_name(it["type"])
     reading = privacy.scrub_all(reading)
     corrections = privacy.scrub_all(corrections)
     note = privacy.scrub_note(note)
