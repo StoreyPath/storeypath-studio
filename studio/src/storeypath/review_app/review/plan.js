@@ -14,8 +14,20 @@ const DRAWING_ORDER = ["other", "outlines", "doors", "walls"]; // bottom to top
 // ---- the drawing under the spaces ------------------------------------------------------
 
 // The drawing under the spaces: as printed (an image Studio draws once per drawing),
-// or its lines; each loaded when first shown.
-// Side by side, the print is on the left and the spaces alone on the right.
+// or its lines; each loaded when first shown. Side by side, the print is on the left and
+// the spaces alone on the right.
+//
+// A room is labelled once. As printed with Studio's labels on, the print is the one drawn
+// without the drawing's texts (Studio's labels are written in their place: what Studio
+// read, and what a person corrected); with the labels off, the print with its texts: the
+// drawing's own words (Labels, T, goes from one to the other: what Studio read against
+// what the drawing says). Side by side, the print beside the rooms has its texts. Over the
+// drawing's lines, its room labels (on its label layers) are hidden while Studio's are
+// shown (CSS: #map.lined.labels-on).
+
+/** Whether the print shown now has the drawing's texts. */
+const printWithText = () => state.side || !state.showLabels;
+
 export function showUnderlay() {
   const mode = state.side ? "off" : state.drawingMode;
   $("print").classList.toggle("hidden", mode !== "print");
@@ -27,7 +39,7 @@ export function showUnderlay() {
   placeLabels();
   const id = state.floor?.id;
   if (!id || !state.floor.source) return;
-  if ((mode === "print" || state.side) && state.underlay.print !== id) loadPrint(id);
+  if (mode === "print" || state.side) showPrint(id, printWithText());
   if (mode === "lines" && state.underlay.lines !== id) loadDrawing(id);
 }
 
@@ -37,31 +49,51 @@ export function clearUnderlay() {
   $("drawing").replaceChildren();
   $("print").replaceChildren();
   $("print-copy").replaceChildren();
-  state.underlay = { lines: null, print: null };
+  state.underlay = { lines: null, print: null, prints: new Map() };
 }
 
-async function loadPrint(id) {
-  state.underlay.print = id;
+/** The print of floor ``id`` (with its texts, or without them) under the spaces and on the
+ * left side by side: at once when it was shown before, else asked for. */
+function showPrint(id, text) {
+  const key = `${id}:${text ? "text" : "plain"}`;
+  if (state.underlay.print === key) return;
+  state.underlay.prints ??= new Map();
+  const made = state.underlay.prints.get(key);
+  if (made) {
+    state.underlay.print = key;
+    $("print").replaceChildren(made);
+    $("print-copy").replaceChildren(made.cloneNode(true));
+    return;
+  }
+  loadPrint(id, text, key);
+}
+
+async function loadPrint(id, text, key) {
+  state.underlay.print = key;
   say("Drawing the print… (the first time for a floor can take a minute)");
+  const q = text ? "" : "?text=0";
   try {
-    const info = await request(`${BASE}/floors/${id}/print`);
+    const info = await request(`${BASE}/floors/${id}/print${q}`);
     if (state.floor?.id !== id) return;
     const [x0, y0, x1, y1] = info.bounds;
     const image = svg("image", {
       x: x0, y: y0, width: x1 - x0, height: y1 - y0, preserveAspectRatio: "none",
-      href: `/api/${BASE}/floors/${encodeURIComponent(id)}/print.png?k=${info.key}`,
+      href: `/api/${BASE}/floors/${encodeURIComponent(id)}/print.png?k=${info.key}${text ? "" : "&text=0"}`,
     });
     // The world is drawn with y up; an image is drawn with y down: flip it about its middle.
     const g = svg("g", { transform: `matrix(1 0 0 -1 0 ${y0 + y1})` });
     g.append(image);
     image.addEventListener("load", () => { if (state.floor?.id === id) say(""); });
     image.addEventListener("error", () => { if (state.floor?.id === id) say("The print could not be shown"); });
-    $("print").replaceChildren(g);
-    $("print-copy").replaceChildren(g.cloneNode(true));
+    state.underlay.prints.set(key, g);
+    if (state.underlay.print === key) { // (still the one wanted)
+      $("print").replaceChildren(g);
+      $("print-copy").replaceChildren(g.cloneNode(true));
+    }
     if (!state.drawingBounds) state.drawingBounds = info.bounds;
     if (!state.floor.spaces.length && !state.floor.outline) fit();
   } catch (e) {
-    state.underlay.print = null;
+    if (state.underlay.print === key) state.underlay.print = null;
     if (state.floor?.id === id) say(`Print not shown: ${e.message}`);
   }
 }
@@ -300,39 +332,16 @@ export function showCursor(pane, sx, sy) {
   );
 }
 
-// Over the drawing as printed, the drawing's own text is under the labels: a room's label
-// is not written again where the print already says it (its name and number are in the
-// text drawn in it); where Studio reads it otherwise (a person corrected it, or it was
-// read from a short form), Studio's is written on a tag that covers the print's; where the
-// drawing has no text, Studio's is written as everywhere else. Over the drawing's lines,
-// its room labels are hidden while Studio's are shown (CSS: #map.lined).
-
-const words = (text) => (text || "").toUpperCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean);
-
-/** How a room's label shows over the print: "same" (the print says it), "differs", "none"
- * (the print has no text in it). */
-export function asPrinted(s) {
-  const drawn = words(s.drawing_label);
-  if (!drawn.length) return "none";
-  const ours = [...words(s.name), ...words(s.number)];
-  if (!ours.length) return "same"; // nothing of ours to add over its text
-  const have = new Set(drawn);
-  return ours.every((w) => have.has(w)) ? "same" : "differs";
-}
-
 let labelFrame = 0;
 export function placeLabels() {
   if (labelFrame) return;
   labelFrame = requestAnimationFrame(() => {
     labelFrame = 0;
     const { k, tx, ty } = state.view;
-    const printed = state.drawingMode === "print" && !state.side && Boolean(state.underlay.print);
     for (const s of units()) {
       const label = state.labels.get(s.id);
       if (!label) continue;
-      const how = printed ? asPrinted(s) : "none";
-      label.classList.toggle("tag", how === "differs");
-      if (!visible(s) || how === "same") {
+      if (!visible(s)) {
         label.replaceChildren();
         continue;
       }

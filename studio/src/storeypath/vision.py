@@ -527,25 +527,27 @@ class RoomView:
     type: str
 
 
-def _print_config():
-    from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration
+def _print_config(text: bool = True):
+    from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration, TextPolicy
 
     return Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.BLACK,
-                         lineweight_scaling=0.6, min_lineweight=0.25)
+                         lineweight_scaling=0.6, min_lineweight=0.25,
+                         text_policy=TextPolicy.FILLING if text else TextPolicy.IGNORE)
 
 
 _DRAWING = threading.RLock()  # ezdxf's drawing caches are not thread-safe: one drawing at a time
 
 
-def print_png(doc, bbox, width: int, height: int) -> bytes:
+def print_png(doc, bbox, width: int, height: int, text: bool = True) -> bytes:
     """A part of the drawing as printed, black on white: ``bbox`` (drawing units)
     filling ``width`` × ``height`` pixels (the same shape). PNG. Drawn one at a
-    time with vision's views (the review's prints are drawn while a floor is looked at)."""
+    time with vision's views (the review's prints are drawn while a floor is looked at).
+    Without ``text``, its texts are left out (Review writes its own labels over it)."""
     with _DRAWING:
-        return _print_png(doc, bbox, width, height)
+        return _print_png(doc, bbox, width, height, text)
 
 
-def _print_png(doc, bbox, width: int, height: int) -> bytes:
+def _print_png(doc, bbox, width: int, height: int, text: bool = True) -> bytes:
     from ezdxf.addons.drawing import Frontend, RenderContext
     from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -557,7 +559,7 @@ def _print_png(doc, bbox, width: int, height: int) -> bytes:
     ax = fig.add_axes((0, 0, 1, 1))
     pad = max(x1 - x0, y1 - y0) * 0.1  # blocks placed just outside reach in
     entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
-    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
+    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config(text)).draw_entities(entities)
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.axis("off")

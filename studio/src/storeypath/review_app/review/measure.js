@@ -158,12 +158,12 @@ export function setupMeasure() {
       dblclick: finish,
     },
     keys: {
-      enter: finish,
-      backspace: () => {
+      enter: [finish, "finish the measure"],
+      backspace: [() => {
         if (m.done) m.done = false;
         m.points.pop();
         draw();
-      },
+      }, "take back the last point"],
     },
     escape: () => {
       if (!m.points.length) return false;

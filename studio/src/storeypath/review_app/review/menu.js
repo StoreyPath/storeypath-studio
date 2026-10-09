@@ -111,7 +111,13 @@ export function openMenu(cx, cy, p) {
   }
   $("menu").replaceChildren(...items.filter(Boolean));
   placeMenu(cx, cy);
-  $("menu").querySelector("button:not(:disabled)")?.focus();
+  focusFirst();
+}
+
+/** The keys on the menu's first choice that deletes nothing. */
+function focusFirst() {
+  const m = $("menu");
+  (m.querySelector("button:not(:disabled):not(.danger)") || m.querySelector("button:not(:disabled)"))?.focus();
 }
 
 function sizeMenu(cx, cy, d) {
@@ -169,7 +175,7 @@ export function menu3d(cx, cy) {
   if (may && here) items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, here), { ico: "armchair" }));
   $("menu").replaceChildren(...items.filter(Boolean));
   placeMenu(cx, cy);
-  $("menu").querySelector("button:not(:disabled)")?.focus();
+  focusFirst();
 }
 
 /** The menu's own keys: up and down through what it offers; it closes on a click

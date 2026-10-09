@@ -50,7 +50,7 @@
 .group-head-row { display: flex; align-items: center; gap: 2px; }
 .group-head-row .group-head { flex: 1; }
 .group-head {
-  width: 100%; justify-content: flex-start; gap: var(--sp-2); min-height: 30px; padding: 0 var(--sp-2);
+  width: 100%; justify-content: flex-start; gap: var(--sp-2); min-height: var(--hit); padding: 0 var(--sp-2);
   background: transparent; border: 0; color: var(--text); font-weight: var(--fw-medium); text-align: left;
 }
 .group-head:hover:not(:disabled) { background: var(--surface-3); border: 0; }
@@ -64,7 +64,7 @@
 .group-rows { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 var(--sp-1) 22px; }
 .group-rows .more { color: var(--text-faint); font-size: var(--fs-xs); padding: var(--sp-1) var(--sp-2); }
 .room-row {
-  width: 100%; justify-content: flex-start; gap: var(--sp-2); min-height: 28px; padding: 0 var(--sp-2);
+  width: 100%; justify-content: flex-start; gap: var(--sp-2); min-height: var(--hit); padding: 0 var(--sp-2);
   background: transparent; border: 0; color: var(--text-muted); font-weight: 400; text-align: left; border-radius: var(--r-sm);
 }
 .room-row:hover:not(:disabled) { background: var(--surface-3); color: var(--text); border: 0; }
@@ -160,7 +160,7 @@
 .shortlist-type span:last-child { overflow: hidden; text-overflow: ellipsis; }
 
 .content-list { display: flex; flex-direction: column; gap: 2px; }
-.content-row { justify-content: flex-start; gap: var(--sp-2); min-height: 28px; padding: 0 var(--sp-2); background: transparent; border: 0; font-weight: 400; }
+.content-row { justify-content: flex-start; gap: var(--sp-2); min-height: var(--hit); padding: 0 var(--sp-2); background: transparent; border: 0; font-weight: 400; }
 .content-row:hover:not(:disabled) { background: var(--surface-3); border: 0; }
 .cr-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
 .cr-id { color: var(--text-faint); font-size: var(--fs-xs); }
@@ -248,7 +248,7 @@ dialog.keys-help[open] { display: flex; flex-direction: column; }
 .kh-body dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 6px var(--sp-3); align-items: center; }
 .kh-body dt { color: var(--text); font-size: var(--fs-md); }
 .kh-body dd { margin: 0; display: flex; gap: 2px; justify-content: flex-end; flex-wrap: wrap; }
-.kh-body .or { width: 4px; }
+.kh-body .or { color: var(--text-faint); font-size: var(--fs-xs); margin: 0 3px; }
 .kh-foot { padding: var(--sp-2) var(--sp-5) var(--sp-4); margin: 0; font-size: var(--fs-sm); }
 
 /* the right-click menu's own pieces */

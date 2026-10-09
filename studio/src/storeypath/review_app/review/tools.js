@@ -16,7 +16,7 @@
 //     start(), stop(),                  when it starts and stops being the tool
 //     escape: () => bool,               Esc: undo what is under way (true), else the tool stops
 //     plan: { hover, click, dblclick, down, move, up },   the pointer on the plan (plan metres)
-//     keys: { enter: fn, backspace: fn },                 its own keys while in use
+//     keys: { enter: [fn, "what it does"], … },          its own keys while in use
 //     action: () => {},                 a tool that does something at once (not a mode)
 //   })
 
@@ -35,8 +35,9 @@ let starting = false;
 export function tool(spec) {
   const t = { group: "draw", views: ["2d"], edits: false, drawing: false, keepsSelection: false, ...spec };
   tools.set(t.id, t);
-  for (const [chord, fn] of Object.entries(t.keys || {})) {
-    command({ id: `tool.${t.id}.${chord}`, title: `${t.label}: ${chord}`, group: "Tools", palette: false,
+  for (const [chord, spec] of Object.entries(t.keys || {})) {
+    const [fn, what] = Array.isArray(spec) ? spec : [spec, chord];
+    command({ id: `tool.${t.id}.${chord}`, title: `${t.label}: ${what}`, group: "While drawing", palette: false,
       scope: `tool:${t.id}`, keys: [chord], run: fn });
   }
   command({

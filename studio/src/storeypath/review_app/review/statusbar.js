@@ -11,6 +11,7 @@ import { reviewing } from "./reviewmode.js";
 import { chosenSpaces, sel } from "./selection.js";
 import { state, view3d } from "./state.js";
 import { activeTool, blocked } from "./tools.js";
+import { doors } from "./view3d.js";
 import { doneEditing, presence, takeOver } from "../together.js";
 
 const VIEW_HINTS = {
@@ -18,6 +19,12 @@ const VIEW_HINTS = {
   "3d": "Click a room or an item · drag to turn · Shift-drag to move · scroll to zoom · right-click: draw here in 2D",
   walk: "Click the view to look · W A S D to move · Esc frees the mouse · right-click: this place in 2D",
 };
+
+/** Walking: what the person can do there now (a door aimed at, in a world that opens them). */
+function walkHint() {
+  if (view3d.doorAim) return `${view3d.doorAim.open ? "Close" : "Open"} the door: E or click`;
+  return VIEW_HINTS.walk + (doors() ? " · E or click: open / close a door" : "");
+}
 
 let refused = "";
 let refusedTimer = 0;
@@ -42,7 +49,7 @@ function renderHint() {
   }
   if (!state.floor) return box.replaceChildren();
   if (state.converting) return box.replaceChildren(el("span", {}, "The floor's drawing is being read again…"));
-  box.replaceChildren(el("span", {}, VIEW_HINTS[view3d.mode] || ""));
+  box.replaceChildren(el("span", {}, view3d.mode === "walk" ? walkHint() : VIEW_HINTS[view3d.mode] || ""));
 }
 
 function renderSelection() {
@@ -126,7 +133,7 @@ export function setupStatusbar() {
     }, 8000);
     renderHint();
   });
-  for (const e of ["tool", "view", "floor", "access", "tool-progress", "review", "converting"]) on(e, renderHint);
+  for (const e of ["tool", "view", "floor", "access", "tool-progress", "review", "converting", "walk"]) on(e, renderHint);
   on("tool-refused", (why) => {
     refused = why;
     clearTimeout(refusedTimer);

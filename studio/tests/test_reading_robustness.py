@@ -911,7 +911,7 @@ def test_a_review_print_is_never_drawn_while_vision_draws(monkeypatch):
 
     others_could_draw = []
 
-    def drawing(doc, bbox, width, height):  # meanwhile, another thread tries to draw a view
+    def drawing(doc, bbox, width, height, text=True):  # meanwhile, another thread tries to draw a view
         t = threading.Thread(target=lambda: others_could_draw.append(vision._DRAWING.acquire(blocking=False)))
         t.start()
         t.join()

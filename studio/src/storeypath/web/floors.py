@@ -11,7 +11,7 @@ from fastapi import Request
 from .. import areasample, vertical
 from ..review import floor_print, floor_print_png
 from ..server import Download
-from .calls import Body, Calls, May, TheStudio, answer
+from .calls import Body, Calls, May, Query, TheStudio, answer
 
 calls = Calls()
 F = "/api/projects/{code}/floors/{floor_id}"
@@ -29,16 +29,21 @@ def drawing(code: str, floor_id: str, request: Request, may: May, studio: TheStu
     return answer(request, studio.review(code).drawing(floor_id))
 
 
+def _with_text(query: dict) -> bool:
+    """Whether a print is asked for with the drawing's texts (?text=0: without them)."""
+    return (query.get("text") or ["1"])[0] not in ("0", "false", "no")
+
+
 @calls.get(F + "/print")
-def print_info(code: str, floor_id: str, request: Request, may: May, studio: TheStudio):
+def print_info(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, query: Query):
     may.drawing(code, floor_id)
-    return answer(request, floor_print(studio.review(code), floor_id))
+    return answer(request, floor_print(studio.review(code), floor_id, _with_text(query)))
 
 
 @calls.get(F + "/print.png")
-def print_png(code: str, floor_id: str, request: Request, may: May, studio: TheStudio):
+def print_png(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, query: Query):
     may.drawing(code, floor_id)
-    return answer(request, floor_print_png(studio.review(code), floor_id))
+    return answer(request, floor_print_png(studio.review(code), floor_id, _with_text(query)))
 
 
 def _models(studio) -> dict:

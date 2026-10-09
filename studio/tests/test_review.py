@@ -172,6 +172,28 @@ def test_a_floor_as_printed_lies_under_its_spaces(review):
     assert len(kept) == 1 and floor_print(r, f_id)["key"] == info["key"]  # drawn once, then kept
 
 
+def test_a_print_without_its_texts_lies_where_the_print_does(review):
+    # Review writes its own labels over the print: a room is labelled once, so the print
+    # under them is drawn without the drawing's texts; it is kept beside the other.
+    from PIL import Image
+
+    from storeypath.review import floor_print, floor_print_png
+
+    r, path, f_id = review
+    full, plain = floor_print(r, f_id), floor_print(r, f_id, text=False)
+    assert plain["bounds"] == full["bounds"] and (plain["width"], plain["height"]) == (full["width"], full["height"])
+    assert plain["key"] != full["key"]
+
+    def dark(png):
+        return sum(1 for p in Image.open(io.BytesIO(png.data)).convert("L").tobytes() if p < 128)
+
+    with_text, without = dark(floor_print_png(r, f_id)), dark(floor_print_png(r, f_id, text=False))
+    assert 0 < without < with_text  # its walls, without its words
+    prints = path.parent / ".storeypath-cache" / "prints"
+    assert len(list(prints.glob(f"{f_id}-*.png"))) == 1 and len(list(prints.glob(f"{f_id}~notext-*.png"))) == 1
+    assert floor_print(r, f_id)["key"] == full["key"]  # each kept: drawing one does not take the other away
+
+
 # ---- over HTTP --------------------------------------------------------------------
 
 @pytest.fixture

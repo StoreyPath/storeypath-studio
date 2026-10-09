@@ -15,7 +15,7 @@
 
 import { editable } from "./access.js";
 import { emit, on } from "./bus.js";
-import { $, svg } from "./dom.js";
+import { $, save, saved, svg } from "./dom.js";
 import { clearPreview } from "./drawing.js";
 import * as finish from "./finish.js";
 import { changeAsset, drawGuides, placeAsset, placing, renderAssets } from "./items.js";
@@ -31,6 +31,19 @@ import { setTool } from "./tools.js";
 
 const REACH_3D = 0.3; // m: how near a wall or an item the magnet takes an item in 3D (fit.js)
 view3d.allFloors = false; // in 3D, the building's floors all shown (not walking)
+view3d.doorAim = null; // walking: the door aimed at ({id, open}), when the world opens doors
+
+/** Walking, doors open as you walk into them ("auto"), or only with E or a click
+ * ("manual"): remembered in this browser, for a world that opens doors. */
+export function doorsMode() {
+  return saved("storeypath.world.doors") === "manual" ? "manual" : "auto";
+}
+
+export function setDoorsMode(mode) {
+  save("storeypath.world.doors", mode);
+  if (typeof view3d.world?.setDoors === "function") view3d.world.setDoors(mode);
+  emit("settings");
+}
 
 /** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
 export function pick3d(id, { go = false } = {}) {
@@ -110,7 +123,7 @@ export async function build3d() {
   try {
     if (!view3d.world) {
       const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
-      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden, ...lookOptions() });
+      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden, ...lookOptions(), doors: doorsMode() });
       view3d.look.attach(view3d.world);
       setup3d(view3d.world);
     }
@@ -274,7 +287,12 @@ function setup3d(world) {
   world.addEventListener("itemdragend", ({ detail }) => carryEnd(detail));
   world.addEventListener("roomchange", ({ detail }) => showRoom(detail));
   world.addEventListener("walklock", () => showWalk());
-  world.addEventListener("doorchange", () => showWalk()); // (a world that opens doors: E is its key)
+  // a world that opens doors: E (or a click) at a door is its own; the door aimed at is said
+  world.addEventListener("doorchange", () => showWalk());
+  world.addEventListener("dooraim", ({ detail }) => {
+    view3d.doorAim = detail?.id ? detail : null;
+    showWalk();
+  });
   world.addEventListener("floorchange", () => { // up or down the stairs: that floor, here too
     if (view3d.mode === "walk" && world.walkFloor && world.walkFloor !== state.floor?.id) openFloor(world.walkFloor);
   });
@@ -367,20 +385,21 @@ export function showWalk() {
   $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
   $("walk-keys").textContent = !locked ? "" : state.tool === "place" ? "Click: place it at the cross · Alt: as it is · Esc: free the mouse"
     : finish.painting() ? "Click: paint the floor or wall at the cross · Alt-click: take up its finish · Esc: free the mouse"
-    : editable() ? `Click: choose · R , . turn · Del delete · 2: here in 2D${doors() ? " · E: a door" : ""} · Esc: free the mouse`
-      : `Click: choose · 2: here in 2D${doors() ? " · E: a door" : ""} · Esc: free the mouse`;
+    : view3d.doorAim ? `E or click: ${view3d.doorAim.open ? "close" : "open"} the door · Esc: free the mouse`
+      : editable() ? `Click: choose · R , . turn · Del delete · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`
+        : `Click: choose · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`;
   $("walk-doors").hidden = !doors();
   if (locked && state.tool === "place") followCross();
   else if (walking) w?.ghost(null);
   emit("walk");
 }
 
-/** Whether the world opens and closes doors (E is then its key, walking). */
-const doors = () => Boolean(view3d.world && ("doors" in view3d.world || typeof view3d.world.toggleDoor === "function"));
+/** Whether the world opens and closes doors (E is then its key, walking, at a door). */
+export const doors = () => Boolean(view3d.world && ("doors" in view3d.world || typeof view3d.world.toggleDoor === "function"));
 
 function showRoom(r) {
   $("walk-room").textContent = r.id ? r.name || typeLabel(r.type) : "Outside";
-  $("walk-meta").textContent = [r.id && r.name ? typeLabel(r.type) : "", r.number, r.stairs ? "PgUp up · PgDn down" : ""].filter(Boolean).join(" · ");
+  $("walk-meta").textContent = [r.id && r.name ? typeLabel(r.type) : "", r.number, r.stairs ? "E or PgUp up · Q or PgDn down" : ""].filter(Boolean).join(" · ");
 }
 
 /** The place under the pointer in 3D (walking: at the cross), on this floor: plan metres, or null. */

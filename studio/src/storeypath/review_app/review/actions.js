@@ -24,7 +24,7 @@ import { reviewing, stopReview } from "./reviewmode.js";
 import { chosenSpaces, clearSelection, sel, selectSpaces } from "./selection.js";
 import { readable, state, units, view3d, visible } from "./state.js";
 import { escapeTool, tool } from "./tools.js";
-import { pointerPlace, drawHere, setAllFloors, setView, walkFloor } from "./view3d.js";
+import { doorsMode, drawHere, pointerPlace, setAllFloors, setDoorsMode, setView, walkFloor } from "./view3d.js";
 import { historyOpen, showHistory, step } from "../together.js";
 import { navigateUrl } from "./topbar.js";
 
@@ -94,16 +94,26 @@ function floorStep(dir) {
   openFloor(next.id);
 }
 
+// rows of the list of keys said as one (the arrows), by the commands' IDs they stand for
+const AS_ONE = [
+  { ids: /^item\.move-\w+$/, title: "Move the item (Shift: 1 m)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
+  { ids: /^item\.move-\w+-far$/, title: null },
+  { ids: /^view\.pan-\w+$/, title: "Move the plan (Shift: further)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
+  { ids: /^review\.type-\d$/, title: "Set one of the likely types", keys: ["1", "9"], range: true },
+];
+
 function keysHelp() {
   const groups = new Map();
   for (const c of allCommands()) {
     const keys = allBindings().filter((b) => b.id === c.id);
     if (!keys.length) continue;
-    const g = c.scope === "review" ? "Review mode" : c.scope === "item" ? "An item chosen" : c.scope.startsWith("tool:") ? "While drawing" : c.group;
+    const g = c.scope === "review" ? "Review mode" : c.scope === "item" ? "An item chosen" : c.group;
     if (!groups.has(g)) groups.set(g, []);
-    const title = c.scope.startsWith("tool:") ? c.title.replace(/: \w+$/, keys[0].chord === "enter" ? ": close it, finish" : ": take back the last point") : c.title;
+    const one = AS_ONE.find((a) => a.ids.test(c.id));
+    if (one && !one.title) continue;
+    const title = one ? one.title : c.title;
     if (groups.get(g).some((r) => r.title === title)) continue;
-    groups.get(g).push({ title, keys: keys.map((k) => k.chord) });
+    groups.get(g).push({ title, keys: one ? one.keys : keys.map((k) => k.chord), range: one?.range });
   }
   groups.set("Walking", [{ title: "Move, run", keys: ["w", "a", "s", "d", "shift"] }, { title: "Up or down at stairs and lifts", keys: ["pageup", "pagedown"] },
     { title: "Free the mouse", keys: ["escape"] }]);
@@ -114,7 +124,7 @@ function keysHelp() {
     el("div", { class: "kh-head" }, el("h2", {}, "Keyboard shortcuts"), el("button", { type: "button", class: "btn-ghost btn-icon", "aria-label": "Close", onclick: () => box.close() }, icon("x", { size: 16 }))),
     el("div", { class: "kh-body" }, ...[...groups].sort((a, b) => (order.indexOf(a[0]) + 99) % 99 - (order.indexOf(b[0]) + 99) % 99).map(([g, rows]) =>
       el("section", {}, el("h3", {}, g), el("dl", {}, ...rows.flatMap((r) => [el("dt", {}, r.title),
-        el("dd", {}, ...r.keys.flatMap((k, i) => [i ? el("span", { class: "or" }, " ") : null, ...kbd(k)]))]))))),
+        el("dd", {}, ...r.keys.flatMap((k, i) => [i ? el("span", { class: "or" }, r.range ? "–" : r.keys.length > 2 ? "" : "or") : null, ...kbd(k)]))]))))),
     el("p", { class: "kh-foot muted" }, "Keys typed in a field are the field's. In review mode 1–9 set a type; with an item chosen R and the arrows are the item's."));
   box.addEventListener("close", () => box.remove());
   box.addEventListener("click", (e) => { if (e.target === box) box.close(); });
@@ -148,13 +158,15 @@ export function setupActions() {
     command({ id: `view.pan-${key.slice(5)}`, title: `Move the plan ${key.slice(5)}`, group: "View", keys: [key, `shift+${key}`], palette: false,
       repeat: true, when: in2d, run: (e) => panBy(dx * (e?.shiftKey ? 240 : 60), dy * (e?.shiftKey ? 240 : 60)) });
   }
-  command({ id: "view.labels", title: "Show the rooms' labels", group: "View", icon: "type-outline", words: "names numbers text",
+  command({ id: "view.labels", title: "Studio's labels, or the drawing's texts", group: "View", icon: "type-outline", keys: ["t"],
+    words: "names numbers text labels print drawing compare",
     run: () => {
       state.showLabels = !state.showLabels;
       $("labels").classList.toggle("hidden", !state.showLabels);
       $("map").classList.toggle("labels-on", state.showLabels);
       view3d.world?.setLabels(state.showLabels);
       save("storeypath.labels", state.showLabels ? "1" : "0");
+      showUnderlay(); // (as printed: the print with its texts, or without them)
       emit("settings");
     } });
   command({ id: "view.side", title: "Side by side with the print", group: "View", icon: "printer", words: "compare print split",
@@ -246,8 +258,9 @@ export function setupActions() {
     run: () => floorStep(1) });
   command({ id: "floor.down", title: "The floor below", group: "Floors", icon: "arrow-down", keys: ["pagedown"], when: () => Boolean(state.floor),
     run: () => floorStep(-1) });
-  command({ id: "walk.up", title: "Up the stairs", group: "Floors", keys: ["pageup"], scope: "walk", palette: false, run: () => walkFloor(1) });
-  command({ id: "walk.down", title: "Down the stairs", group: "Floors", keys: ["pagedown"], scope: "walk", palette: false, run: () => walkFloor(-1) });
+  // walking, at stairs or a lift: E (unless a door took it: the world's, first) and Q, or PgUp and PgDn
+  command({ id: "walk.up", title: "Up the stairs", group: "Floors", keys: ["pageup", "e"], scope: "walk", palette: false, run: () => walkFloor(1) });
+  command({ id: "walk.down", title: "Down the stairs", group: "Floors", keys: ["pagedown", "q"], scope: "walk", palette: false, run: () => walkFloor(-1) });
   command({ id: "floor.reconvert", title: "Re-read the floor's drawing", group: "Floors", icon: "refresh-cw", words: "convert read again revised",
     when: () => readable() && editable() && !state.converting, why: () => (readable() ? whyNotEditable() || "Being read" : "This floor has no drawing"),
     run: reconvert });
@@ -257,10 +270,13 @@ export function setupActions() {
   command({ id: "help.keys", title: "Keyboard shortcuts", group: "Help", icon: "keyboard", keys: ["?"], run: keysHelp });
   on("keys-help", keysHelp);
 
-  // walking: the walker's keys are its own (W A S D, the arrows, Shift), and E is the
-  // world's (a door opened and closed): nothing of Review hears them there
+  // walking: the walker's keys are its own (W A S D, the arrows, Shift): nothing of Review
+  // hears them there. E at a door is the world's: it takes it first (a key it took is not
+  // Review's: keys.js), else E goes up stairs as before.
   reserve(["w", "a", "s", "d", "shift+w", "shift+a", "shift+s", "shift+d", "arrowup", "arrowdown", "arrowleft", "arrowright",
-    "shift+arrowup", "shift+arrowdown", "shift+arrowleft", "shift+arrowright", "e", "shift+e"], "walk");
+    "shift+arrowup", "shift+arrowdown", "shift+arrowleft", "shift+arrowright"], "walk");
+  command({ id: "view.doors-auto", title: "Doors open as you walk into them", group: "View", icon: "door-open", words: "walk doors open close manual",
+    run: () => setDoorsMode(doorsMode() === "auto" ? "manual" : "auto") });
 
   const runner = (id, e) => {
     const c = getCommand(id);

@@ -102,8 +102,6 @@
   paint-order: stroke; stroke: var(--plan-label-halo); stroke-width: 3px; stroke-linejoin: round;
 }
 #labels text .num { font-weight: 400; }
-/* over the print, where Studio reads a room otherwise than its text: on a tag over it */
-#labels text.tag { fill: #0b4a9c; stroke: #fff; stroke-width: 6px; filter: url(#label-tag); }
 #labels.hidden { display: none; }
 
 /* ---- items (furniture and equipment) ---------------------------------------------------- */
@@ -151,6 +149,8 @@
   border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
 }
 #map.placing #crosshair { border-color: #0ca678; }
+/* a door aimed at (a world that opens doors): the cross says so */
+#world3d.sp3d-door-aim + #crosshair { border-color: #ffb347; width: 28px; height: 28px; margin: -14px 0 0 -14px; }
 .walk-hud {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px; max-width: min(400px, calc(100% - 24px));
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); background: rgba(18, 19, 22, .82); color: #f1f2f4;

@@ -68,11 +68,11 @@ export function setup(given) {
       dblclick: () => { if (api.state.corners.length >= 2) drawn(api.state.corners); },
     },
     keys: {
-      enter: () => drawn(api.state.corners),
-      backspace: () => {
+      enter: [() => drawn(api.state.corners), "close the shape (two corners: a rectangle)"],
+      backspace: [() => {
         api.backCorner();
         preview(null);
-      },
+      }, "take back the last corner"],
     },
     escape: () => {
       if (!api.state.corners.length) return false;

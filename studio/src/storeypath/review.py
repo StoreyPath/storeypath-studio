@@ -1112,9 +1112,11 @@ def _round_box(box) -> list[float]:
     return [round(v, 3) for v in box]
 
 
-def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
+def _print_of(review: "Review", floor_id: str, text: bool = True) -> tuple[Path, Path]:
     """Where a floor's print and its placement are kept, drawing them first when the
-    drawing, the part of it read or the floor's spaces changed."""
+    drawing, the part of it read or the floor's spaces changed. Without ``text``: the
+    print with the drawing's texts left out (Review's labels are written over it, so a
+    room is not labelled twice), kept beside the other."""
     ws = review.workspace()
     f = review._floor(ws, floor_id)
     if f.source is None:
@@ -1131,10 +1133,11 @@ def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
             xs0, ys0, xs1, ys1 = zip(*(g.bounds for g in geoms))
             extent = _round_box((min(xs0) - PRINT_MARGIN_M, min(ys0) - PRINT_MARGIN_M,
                                  max(xs1) + PRINT_MARGIN_M, max(ys1) + PRINT_MARGIN_M))
-    raw = json.dumps([PRINT_VERSION, *stamp, src.units, src.region, src.offset, extent])
+    raw = json.dumps([PRINT_VERSION, *stamp, src.units, src.region, src.offset, extent, *([] if text else ["no text"])])
     key = hashlib.sha1(raw.encode()).hexdigest()[:16]
     folder = review.source.prints()
-    png, info = folder / f"{floor_id}-{key}.png", folder / f"{floor_id}-{key}.json"
+    stem = floor_id if text else f"{floor_id}~notext"  # (a floor's ID has no ~: the two kept apart)
+    png, info = folder / f"{stem}-{key}.png", folder / f"{stem}-{key}.json"
     if png.exists() and info.exists():
         return png, info
     with _PRINTING:
@@ -1163,10 +1166,10 @@ def _print_of(review: "Review", floor_id: str) -> tuple[Path, Path]:
         width, height = max(1, round(w * per_m)), max(1, round(h * per_m))
         drawing_box = (x0 / scale + ox, y0 / scale + oy, x1 / scale + ox, y1 / scale + oy)
         folder.mkdir(parents=True, exist_ok=True)
-        for old in folder.glob(f"{floor_id}-*"):  # an earlier print of this floor
+        for old in folder.glob(f"{stem}-*"):  # an earlier print of this floor
             old.unlink(missing_ok=True)
         part = png.with_suffix(".part")
-        part.write_bytes(print_png(doc, drawing_box, width, height))
+        part.write_bytes(print_png(doc, drawing_box, width, height, text=text))
         part.replace(png)
         info.write_text(json.dumps({"bounds": _round_box(local), "width": width, "height": height,
                                     "px_per_m": round(per_m, 2), "key": key}))
@@ -1186,13 +1189,14 @@ def _room_at(geom, x: float, y: float) -> tuple[float, float]:
     return out[0], out[1]
 
 
-def floor_print(review: "Review", floor_id: str) -> dict:
-    """A floor's drawing as printed: where it lies (local meters) and its size."""
-    return json.loads(_print_of(review, floor_id)[1].read_text())
+def floor_print(review: "Review", floor_id: str, text: bool = True) -> dict:
+    """A floor's drawing as printed: where it lies (local meters) and its size (without
+    ``text``: of the print with its texts left out)."""
+    return json.loads(_print_of(review, floor_id, text)[1].read_text())
 
 
-def floor_print_png(review: "Review", floor_id: str) -> File:
-    return File(_print_of(review, floor_id)[0].read_bytes(), "image/png")
+def floor_print_png(review: "Review", floor_id: str, text: bool = True) -> File:
+    return File(_print_of(review, floor_id, text)[0].read_bytes(), "image/png")
 
 
 def drawing_linework(doc, profile: Profile, scale: float, region=None, offset=None) -> dict:

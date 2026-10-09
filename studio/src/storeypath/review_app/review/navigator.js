@@ -21,6 +21,7 @@ import { keysOf, keyText } from "./keys.js";
 import { toast } from "./notify.js";
 import { placeLabels, styleSpace } from "./plan.js";
 import { reviewing } from "./reviewmode.js";
+import { doorsMode } from "./view3d.js";
 import { isChosen, select, selectAsset } from "./selection.js";
 import { code, color, matches, reviewSpaces, state, title, tucked, typeName, typeOf, units, view3d, visible, within } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
@@ -311,7 +312,7 @@ function renderView() {
       (v) => run(`view.drawing-${v}`)),
       toggle("Side by side with the print", state.side, () => run("view.side"), { tip: "The print on one side, the rooms on the other, moving together", key: k("view.side") })),
     section("The plan",
-      toggle("Labels", state.showLabels, () => run("view.labels"), { tip: "Rooms' names and numbers (over the print, only where it does not say them)", key: k("view.labels") }),
+      toggle("Studio's labels", state.showLabels, () => run("view.labels"), { tip: "Rooms' names and numbers as Studio has them; off, the drawing's own texts (as printed)", key: k("view.labels") }),
       el("div", { class: "view-row" }, el("span", { class: "view-label" }, "Colour rooms by"),
         segmented("Colour the rooms by", [["type", "Type"], ["finish", "Floor finish"]], finish.colouredBy(), (v) => run(`view.colour-${v}`))),
       toggle("Show deleted", state.showHidden, () => run("view.deleted"), { tip: "What was deleted (and hidden), to restore it", key: k("view.deleted") })),
@@ -320,7 +321,9 @@ function renderView() {
         segmented("Look of the 3D view", [["real", "Real", "Floors finished by what each room is, plaster walls, soft shadows"],
           ["model", "Model", "White, like an architect's model, its edges drawn"]], look.style, (v) => run(`view.look-${v}`))),
       el("label", { class: "view-row" }, el("span", { class: "view-label" }, "Quality"), quality),
-      toggle("Every floor of the building", view3d.allFloors, () => run("view.all-floors"), { tip: "In 3D: the building's floors all shown (as the floor stack's All)" })),
+      toggle("Every floor of the building", view3d.allFloors, () => run("view.all-floors"), { tip: "In 3D: the building's floors all shown (as the floor stack's All)" }),
+      toggle("Doors open as you walk into them", doorsMode() === "auto", () => run("view.doors-auto"),
+        { tip: "Walking: off, a door opens and closes only with E or a click at it" })),
     section("Interface",
       segmented("Theme", [["dark", "Dark"], ["light", "Light"]], theme, (v) => run(`view.theme-${v}`), { id: "theme-switch" })),
   );

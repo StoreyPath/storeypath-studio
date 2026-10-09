@@ -20,7 +20,7 @@ export const state = {
   side: saved("storeypath.side") === "1", // the print beside the spaces, not under them
   layout: "single", // "single", or side by side in "cols" (left | right) or "rows" (top / bottom)
   refit: false, // the layout changed: fit the floor again
-  underlay: { lines: null, print: null }, // the floor whose drawing each layer holds
+  underlay: { lines: null, print: null, prints: new Map() }, // what each layer holds (the print: "<floor>:text" or ":plain")
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
   showHidden: false, // show what was deleted (or hidden)

@@ -423,7 +423,7 @@ export function setupDrawing() {
     hint: () => (state.corners.length >= 3 ? "Click the next corner · click the first, double-click or Enter to close it · Backspace takes a corner back"
       : state.corners.length ? "Click the next corner (corners snap to walls) · Backspace takes it back"
         : "Click its corners: they snap to walls · for an area the drawing encloses nowhere"),
-    keys: { enter: () => closeSpace(), backspace: () => backCorner() } });
+    keys: { enter: [() => closeSpace(), "close the shape"], backspace: [() => backCorner(), "take back the last corner"] } });
   tool({ id: "divide", label: "Divide", icon: "square-split-horizontal", key: "d", group: "draw", edits: true, drawing: true,
     words: "split zone dividing line", wrongView: ON_PLAN("A dividing line"), hint: lineHint("Divide", "line"), escape: giveUp,
     plan: drawingPlan, stop: clearPreview });
