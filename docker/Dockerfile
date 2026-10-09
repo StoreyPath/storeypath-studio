@@ -51,8 +51,8 @@
 # /usr/share/doc); tini (MIT); LibreDWG's dwg2dxf for reading DWG
 # (GPL-3.0-or-later, a separate program; its exact source is in
 # /usr/share/storeypath/source); llama.cpp's llama-server (MIT); a Qwen3.5 model
-# (Apache-2.0) for reading the text in drawings; three.js (MIT), MapLibre GL JS
-# (BSD-3-Clause) and JSZip (MIT) for the viewer; Node.js (MIT), the program alone, to
+# (Apache-2.0) for reading the text in drawings; three.js (MIT), N8AO (CC0-1.0), MapLibre
+# GL JS (BSD-3-Clause) and JSZip (MIT) for the viewer; Node.js (MIT), the program alone, to
 # build the floors' 3D ahead of time when exporting. Licences: /usr/share/storeypath/licenses.
 
 ARG DEBIAN=trixie
@@ -159,6 +159,7 @@ COPY --from=plan /usr/local/LICENSE /usr/share/storeypath/licenses/LICENSE-node.
 COPY docker/models/${MODEL} /opt/storeypath/models/${MODEL}
 COPY viewer/vendor/LICENSE-maplibre-gl.txt viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
 COPY viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
+COPY viewer/vendor/n8ao/LICENSE /usr/share/storeypath/licenses/LICENSE-n8ao.txt
 COPY docker/start.sh /usr/local/bin/storeypath-start
 RUN cp /opt/llama/LICENSE /usr/share/storeypath/licenses/LICENSE-llama.cpp.txt \
     && cp /opt/storeypath/lib/python3*/site-packages/storeypath-*.dist-info/licenses/LICENSE \

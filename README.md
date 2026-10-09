@@ -856,7 +856,7 @@ licence (all in `/usr/share/storeypath/licenses`): PostgreSQL (PostgreSQL Licenc
 and PostGIS (GPL-2.0-or-later), as Debian packages, run as separate programs;
 LibreDWG's `dwg2dxf` (GPL-3.0-or-later, run as a separate program; its exact source
 is in the image), llama.cpp (MIT), the Qwen3.5 model weights (Apache-2.0), three.js
-(MIT), MapLibre GL JS (BSD-3-Clause), JSZip (MIT) and Node.js (MIT). The GPU helper
+(MIT), N8AO (CC0-1.0), MapLibre GL JS (BSD-3-Clause), JSZip (MIT) and Node.js (MIT). The GPU helper
 holds llama.cpp (MIT) with OpenSSL (Apache-2.0), the Gemma 4 model weights
 (Apache-2.0) and NVIDIA's CUDA runtime and cuBLAS (CUDA Toolkit EULA,
 redistributable). SymPoint-V2 is never in an image unless you fetch it yourself
