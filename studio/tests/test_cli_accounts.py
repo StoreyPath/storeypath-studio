@@ -102,3 +102,18 @@ def test_the_command_line_backs_up_and_restores(tmp_path):
         tar.addfile(info, io.BytesIO(b"x"))
     r = run("restore", evil, "--data", tmp_path / "n2")
     assert r.exit_code == 1 and "outside" in r.output
+
+
+def test_serve_says_when_the_2d_viewer_was_built_for_another_format(tmp_path, monkeypatch):
+    from storeypath import cli
+    from storeypath.package import FORMAT_VERSION
+
+    root = tmp_path / "viewer"
+    built = root / "svg" / "dist" / "read.js"
+    monkeypatch.setattr("storeypath.assets.asset_dir", lambda name: root)
+    assert "not built" in cli.viewer_out_of_date()
+    built.parent.mkdir(parents=True)
+    built.write_text('export const FORMAT_VERSION = "0.7";\n')
+    assert "built for format 0.7" in cli.viewer_out_of_date()
+    built.write_text(f'export const FORMAT_VERSION = "{".".join(FORMAT_VERSION.split(".")[:2])}";\n')
+    assert cli.viewer_out_of_date() is None

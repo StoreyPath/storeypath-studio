@@ -722,12 +722,36 @@ def review(
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def viewer_out_of_date() -> str | None:
+    """What to say when the 2D viewer Studio serves was built for another format than
+    Studio writes (a checkout whose viewer/svg was not built again after a change; the
+    images build it with Studio), else None."""
+    import re
+
+    from .assets import asset_dir
+    from .package import FORMAT_VERSION
+
+    built = asset_dir("viewer") / "svg" / "dist" / "read.js"
+    wanted = ".".join(FORMAT_VERSION.split(".")[:2])
+    if not built.is_file():
+        return f"the 2D viewer is not built ({built}): run `npm run build` in viewer/svg"
+    found = re.search(r'FORMAT_VERSION = "([0-9.]+)"', built.read_text(encoding="utf-8"))
+    have = ".".join(found.group(1).split(".")[:2]) if found else "unknown"
+    if have != wanted:
+        return (f"the 2D viewer was built for format {have}, Studio writes {wanted}: pages would refuse "
+                "Studio's own packages; run `npm run build` in viewer/svg (and viewer/world)")
+    return None
+
+
 def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note: str = "",
            allowed: list[str] | None = None, *, accounts, tls=None, secure_cookies: bool = False,
            trusted_proxies=(), db=None, store=None) -> None:
     from .server import Studio
     from .web import make_server
 
+    stale = viewer_out_of_date()
+    if stale:
+        typer.echo(f"WARNING: {stale}", err=True)
     studio = Studio(data, db=db)
     if store is not None:
         studio.store = store
