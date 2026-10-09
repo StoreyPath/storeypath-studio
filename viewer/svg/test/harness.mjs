@@ -234,10 +234,12 @@ export async function launch({ webgl = false, timeout = 600 } = {}) {
     },
     mouse: (type, x, y, extra = {}) => send("Input.dispatchMouseEvent", { type, x, y, button: "left",
       buttons: type === "mouseReleased" ? 0 : extra.down ? 1 : 0, clickCount: type === "mouseMoved" ? 0 : 1, ...extra.params }),
-    async click(x, y) {
-      await page.mouse("mouseMoved", x, y);
-      await page.mouse("mousePressed", x, y, { down: true });
-      await page.mouse("mouseReleased", x, y);
+    /** A click; ``altKey``, ``shiftKey``: with the key held. */
+    async click(x, y, { altKey = false, shiftKey = false } = {}) {
+      const params = { modifiers: (altKey ? 1 : 0) | (shiftKey ? 8 : 0) };
+      await page.mouse("mouseMoved", x, y, { params });
+      await page.mouse("mousePressed", x, y, { down: true, params });
+      await page.mouse("mouseReleased", x, y, { params });
     },
     async drag(from, to, steps = 8) {
       await page.mouse("mouseMoved", from[0], from[1]);

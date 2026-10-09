@@ -7,7 +7,10 @@
 // faces, the floor finishes of offices, the door leaves, …), so a floor of 800
 // rooms is drawn in a few dozen draw calls. The floor finishes and the x-ray
 // volumes carry their room's index (`_room`; `rooms` lists the IDs), to pick a room
-// by its triangles. Boxes (door frames, skirting, …) and furniture are written
+// by its triangles; the walls' faces carry the room each faces (`_room`, past the end of
+// `rooms` for a face outside every room), so that each side of a wall is finished as its
+// room is (the world draws a piece's triangles a finish at a time: groupByFinish). Boxes
+// (door frames, skirting, …) and furniture are written
 // straight into arrays, the furniture from one template a kind and size: a floor of
 // a thousand rooms and desks is built in tens of milliseconds.
 //
@@ -25,8 +28,9 @@ import { toLonLat, wrapLongitude } from "./frame.js";
 
 /** This builder's version: a floor pre-built by another (before 2, without its
  * items; before 3, without skirting, architraves, handles, window boards, ceiling
- * panels and the finer furniture) is built again. */
-export const BUILDER = 3;
+ * panels and the finer furniture; before 4, without the room each wall's face faces)
+ * is built again. */
+export const BUILDER = 4;
 
 /** What shapes the geometry; a world built with others builds its floors itself. */
 export const GEOMETRY = {
@@ -70,9 +74,9 @@ export const PIECES = {
   parapetTop: { material: "wallTop", view: "full" },
   parapetLow: { material: "wall", view: "cut" },
   parapetCut: { material: "wallCut", view: "cut" },
-  heads: { material: "wallPlain", view: "full" }, // over doors and windows
+  heads: { material: "wallPlain", view: "full" }, // over doors and windows: under it, and its ends (its faces are the wall's)
   headTop: { material: "wallTop", view: "full" }, // their tops, as the walls' tops
-  sills: { material: "wallPlain" },
+  sills: { material: "wallPlain" }, // under windows: its ends (its faces are the wall's)
   glass: { material: "glass", view: "full" },
   frame: { material: "frame", view: "full" }, // round the glass
   doorFrame: { material: "doorFrame", view: "full" },
@@ -393,13 +397,30 @@ export function buildPieces(plan, options = {}) {
     if (s.edges) boxEdges(s.edges, e, p, q, y0, y1, depth);
   };
   const rooms = [], indices = new Map();
-  const Index = plan.rooms.length + plan.units.length > 65535 ? Uint32Array : Uint16Array;
+  const Index = plan.rooms.length + plan.units.length > 65534 ? Uint32Array : Uint16Array;
+  const NONE = Index === Uint16Array ? 0xffff : 0xffffffff; // a wall's face outside every room
+  const indexOf = (id) => {
+    if (!indices.has(id)) indices.set(id, rooms.push(id) - 1);
+    return indices.get(id);
+  };
   const room = (geometry, id) => { // each vertex says whose it is
     if (!geometry.attributes.position) return geometry;
-    if (!indices.has(id)) indices.set(id, rooms.push(id) - 1);
-    geometry.setAttribute("_room", new THREE.BufferAttribute(new Index(geometry.attributes.position.count).fill(indices.get(id)), 1));
+    geometry.setAttribute("_room", new THREE.BufferAttribute(new Index(geometry.attributes.position.count).fill(indexOf(id)), 1));
     return geometry;
   };
+  // the room a wall's face faces: the space a little off it (5 cm; 25 cm where the room's
+  // outline stands back from the wall), by a grid of the spaces' boxes
+  const findRoom = solid ? roomFinder(plan.rooms) : null;
+  const facing = (x, n, nx, nn) => {
+    const l = Math.hypot(nx, nn) || 1;
+    for (const d of [0.05, 0.25]) {
+      const r = findRoom(x + (nx / l) * d, n + (nn / l) * d);
+      if (r) return indexOf(r.id);
+    }
+    return NONE;
+  };
+  // the faces of the wall over and under openings, as the walls' own (wallFace)
+  const faces = { position: [], normal: [], uv: [], room: [] };
 
   // the slab
   if (solid) {
@@ -462,6 +483,7 @@ export function buildPieces(plan, options = {}) {
   const extruded = (polys, height, key, top) => {
     if (solid) {
       const [caps, sides] = capsAndSides(extrude(polys, height, e));
+      if (sides?.attributes.position?.count) faceRooms(sides, facing, Index);
       put(key, sides);
       put(top, caps);
       skirting(polys, box);
@@ -484,9 +506,19 @@ export function buildPieces(plan, options = {}) {
     // (the wall over and under it a little into the wall each side: no slit at its jambs;
     // the top of the wall over it as the walls' tops)
     const a = at(0), b = at(len), a2 = at(-0.02), b2 = at(len + 0.02);
+    // its faces each side the walls' (the finish of the room each faces); under it and its
+    // ends plain, its top as the walls' tops
+    const sides = (y0, y1) => {
+      if (!solid) return;
+      for (const side of [-1, 1]) {
+        wallFace(faces, at(-0.02, (side * thickness) / 2), at(len + 0.02, (side * thickness) / 2), e, y0, y1,
+          [-un * side, ux * side], facing);
+      }
+    };
     const over = (from) => {
-      box("heads", a2, b2, from, wallHeight, thickness, FACE.all & ~FACE.top);
+      box("heads", a2, b2, from, wallHeight, thickness, FACE.all & ~FACE.top & ~FACE.left & ~FACE.right);
       box("headTop", a2, b2, from, wallHeight, thickness, FACE.top);
+      sides(from, wallHeight);
     };
     // the lines along the wall go on over it, and under a window: along each face, from
     // a jamb's corner at one end to the other jamb's in line with it
@@ -503,7 +535,8 @@ export function buildPieces(plan, options = {}) {
     if (type === "window") {
       const { lo: sill, hi: head } = range;
       if (sill > 0.01) {
-        box("sills", a2, b2, 0, sill, thickness);
+        box("sills", a2, b2, 0, sill, thickness, FACE.all & ~FACE.left & ~FACE.right);
+        sides(0, sill);
         // a board on the sill, a little proud of the wall each side; skirting along the sill
         box("sillBoard", at(-0.04), at(len + 0.04), sill - 0.025, sill + 0.002, thickness + 0.07, FACE.all & ~FACE.bottom);
         if (solid) {
@@ -571,6 +604,15 @@ export function buildPieces(plan, options = {}) {
     } else if (range) { // a doorway: a way through with no door
       over(range.hi);
     }
+  }
+
+  if (faces.position.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(faces.position, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(faces.normal, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(faces.uv, 2));
+    g.setAttribute("_room", new THREE.BufferAttribute(new Index(faces.room), 1));
+    put("wall", g);
   }
 
   // one geometry per piece; texture coordinates only where there is a texture
@@ -656,6 +698,138 @@ function jambs(plan) {
     const middle = (v) => v.sort((x, y) => x - y)[v.length >> 1];
     return { depth: middle(depths), shift: middle(shifts), corners };
   };
+}
+
+// ---- the room each wall's face faces, and finishes ---------------------------------------
+
+/** The space a plan point is in, of ``rooms`` (each { rings }), found through a grid of
+ * their boxes: a function of (x, n) → the room, or null. */
+export function roomFinder(rooms, cell = 3) {
+  const grid = new Map(), key = (i, j) => i * 100003 + j;
+  for (const r of rooms) {
+    let x0 = Infinity, n0 = Infinity, x1 = -Infinity, n1 = -Infinity;
+    for (const polygon of r.rings) {
+      for (const [x, n] of polygon[0]) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (n < n0) n0 = n;
+        if (n > n1) n1 = n;
+      }
+    }
+    if (!Number.isFinite(x0)) continue;
+    const entry = { r, x0, n0, x1, n1 };
+    for (let i = Math.floor(x0 / cell); i <= Math.floor(x1 / cell); i++) {
+      for (let j = Math.floor(n0 / cell); j <= Math.floor(n1 / cell); j++) {
+        const k = key(i, j);
+        const list = grid.get(k);
+        if (list) list.push(entry);
+        else grid.set(k, [entry]);
+      }
+    }
+  }
+  return (x, n) => {
+    const list = grid.get(key(Math.floor(x / cell), Math.floor(n / cell)));
+    if (!list) return null;
+    for (const { r, x0, n0, x1, n1 } of list) {
+      if (x < x0 || x > x1 || n < n0 || n > n1) continue;
+      for (const polygon of r.rings) {
+        if (!inside(polygon[0], x, n)) continue;
+        let hole = false;
+        for (let h = 1; h < polygon.length && !hole; h++) hole = inside(polygon[h], x, n);
+        if (!hole) return r;
+      }
+    }
+    return null;
+  };
+}
+
+/** An extrusion's sides (six vertices a face, as ExtrudeGeometry makes them), each face
+ * given the room it faces (``facing(x, n, nx, nn)``: from its middle, the way it faces) as
+ * `_room`. */
+function faceRooms(sides, facing, Index) {
+  const pos = sides.getAttribute("position").array, nor = sides.getAttribute("normal").array, count = pos.length / 3;
+  const out = new Index(count);
+  for (let v = 0; v + 5 < count; v += 6) {
+    let x = 0, z = 0;
+    for (let k = v * 3; k < (v + 6) * 3; k += 3) {
+      x += pos[k];
+      z += pos[k + 2];
+    }
+    out.fill(facing(x / 6, -z / 6, nor[v * 3], -nor[v * 3 + 2]), v, v + 6);
+  }
+  sides.setAttribute("_room", new THREE.BufferAttribute(out, 1));
+}
+
+/** A face of a wall, from plan point p to q, y0 to y1 above a floor at e, facing ``dir``
+ * (plan), into ``faces``: as the walls' faces are (normals; texture coordinates u along
+ * the plan's x, or n for a face running more north than east, and v = 1 − the height) and
+ * the room it faces. */
+function wallFace(faces, p, q, e, y0, y1, [dx, dn], facing) {
+  if (y1 - y0 < 1e-4 || Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-4) return;
+  const alongX = Math.abs(q[1] - p[1]) < Math.abs(q[0] - p[0]);
+  const corners = [[p, y0], [q, y0], [q, y1], [p, y1]].map(([[x, n], h]) => ({ x, n, h }));
+  // counter-clockwise seen from where it faces
+  const [a, b, c] = corners, u = [b.x - a.x, b.h - a.h, -(b.n - a.n)], w = [c.x - a.x, c.h - a.h, -(c.n - a.n)];
+  const cross = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+  const order = cross[0] * dx + cross[2] * -dn > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2];
+  const l = Math.hypot(dx, dn) || 1;
+  const room = facing((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, dx, dn);
+  for (const k of order) {
+    const { x, n, h } = corners[k];
+    faces.position.push(x, e + h, -n);
+    faces.normal.push(dx / l, 0, -dn / l);
+    faces.uv.push(alongX ? x : n, 1 - h);
+    faces.room.push(room);
+  }
+}
+
+/** A piece's triangles drawn a finish at a time: ordered by the finish of the room each
+ * is of (``finishAt(room)``, from its `_room`: a room past the end of the list for a
+ * wall's face outside every room), in groups, one a finish (the geometry given an index
+ * the first time; its triangles moved, never built again). The finishes, in the order of
+ * the groups (one: no groups); null for a piece without rooms. */
+export function groupByFinish(geometry, finishAt) {
+  const room = geometry.getAttribute("_room"), position = geometry.getAttribute("position");
+  if (!room || !position) return null;
+  const index = geometry.index, tris = Math.floor((index ? index.count : position.count) / 3);
+  const codes = [], slot = new Map(), of = new Uint32Array(tris), counts = [];
+  const src = index ? index.array.slice() : null;
+  for (let t = 0; t < tris; t++) {
+    const code = finishAt(room.getX(src ? src[t * 3] : t * 3));
+    let s = slot.get(code);
+    if (s === undefined) {
+      s = codes.push(code) - 1;
+      slot.set(code, s);
+      counts.push(0);
+    }
+    of[t] = s;
+    counts[s]++;
+  }
+  geometry.clearGroups();
+  if (codes.length <= 1) return codes;
+  const starts = [], n = tris * 3;
+  counts.reduce((at, c) => (starts.push(at), at + c), 0);
+  const out = index && index.count === n ? index.array : new (position.count > 65535 ? Uint32Array : Uint16Array)(n);
+  for (let t = 0; t < tris; t++) {
+    const o = starts[of[t]]++ * 3;
+    if (src) {
+      out[o] = src[t * 3];
+      out[o + 1] = src[t * 3 + 1];
+      out[o + 2] = src[t * 3 + 2];
+    } else {
+      out[o] = t * 3;
+      out[o + 1] = t * 3 + 1;
+      out[o + 2] = t * 3 + 2;
+    }
+  }
+  if (index && index.array === out) index.needsUpdate = true;
+  else geometry.setIndex(new THREE.BufferAttribute(out, 1));
+  let at = 0;
+  counts.forEach((c, s) => {
+    geometry.addGroup(at * 3, c * 3, s);
+    at += c;
+  });
+  return codes;
 }
 
 // ---- boxes, and the lines along edges --------------------------------------------------

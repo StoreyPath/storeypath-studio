@@ -10,6 +10,40 @@ export type { Navigation, NavEdge, NavFloor, NavNode, NavPlace, Route, RouteChan
 	Routable } from './navigation.js';
 import type { Navigation, Route } from './navigation.js';
 
+/** One of StoreyPath's finishes (format 0.9, spec/finishes.json). */
+export interface Finish {
+	code: string;
+	applies: 'floor' | 'wall';
+	group: string;
+	name: string;
+	name_ar: string;
+	/** Its colour on the whole, #rrggbb. */
+	tone: string;
+	roughness: number;
+	/** The metres its painted image covers a side, and what the viewer paints it with. */
+	size_m: number;
+	paint: { kind: string } & Record<string, unknown>;
+}
+
+/** StoreyPath's finishes: the floors and walls a room may be given, with each type's defaults. */
+export declare const FINISHES: {
+	version: number;
+	exterior: string;
+	groups: { code: string; applies: 'floor' | 'wall'; name: string; name_ar: string }[];
+	finishes: Finish[];
+	defaults: { floor: Record<string, string>; wall: Record<string, string> };
+};
+/** A finish by its code, or null. */
+export declare function finishOf(code: string | null | undefined): Finish | null;
+/** The finish a type of room has when it is given none (an unknown type: as `unspecified`). */
+export declare function defaultFinish(applies: 'floor' | 'wall', type: string | null | undefined): string;
+/** The floor finish a space or zone shows (its own, else its space's, else its type's), from properties. */
+export declare function floorFinish(props: Record<string, unknown> | null, space?: Record<string, unknown> | null): string;
+/** The finish of a space's walls (its own, else its type's), from its properties. */
+export declare function wallFinish(props: Record<string, unknown> | null): string;
+/** The finish of walls' faces outside every room. */
+export declare const EXTERIOR: string;
+
 export declare const FORMAT: 'storeypath-package';
 /** The format version this viewer reads, any patch of it. */
 export declare const FORMAT_VERSION: string;
@@ -264,8 +298,12 @@ export interface WorldPoint {
 	local: [number, number] | null;
 	/** The space or zone it is in. */
 	space: string | null;
+	/** The space it is in (a zone's space): aimed at a wall, the room on that side of it. */
+	room: string | null;
 	/** The item in the way, if any. */
 	item: string | null;
+	/** Whether a wall (or the wall over or under an opening) was met first. */
+	wall: boolean;
 }
 
 export interface ItemDrag {
@@ -376,9 +414,13 @@ export declare class StoreyPathWorld extends EventTarget {
 	/** Items carried across their floor by a drag in the dollhouse view (itemdrag… events). */
 	setDraggable(on: boolean): void;
 	readonly draggable: boolean;
-	/** A space or zone corrected: its label at once, its floor built again when its type or
-	 * whether it is shown changed. */
-	updateSpace(id: string, props: { name?: string | null; number?: string | null; type?: string; hidden?: boolean; ignored?: boolean }): boolean;
+	/** A space or zone corrected: its label at once, its finishes in place (format 0.9: its
+	 * floor's triangles, its walls' faces, in their finishes before the next frame; nothing
+	 * built again), its floor built again when its type or whether it is shown changed. */
+	updateSpace(id: string, props: { name?: string | null; number?: string | null; type?: string; hidden?: boolean; ignored?: boolean;
+		floor_finish?: string | null; wall_finish?: string | null }): boolean;
+	/** What a space's or zone's floor and walls are in, as shown (codes of FINISHES), or null. */
+	finishOf(id: string): { floor: string; wall: string } | null;
 	setXray(on: boolean): void;
 	setCutaway(on: boolean): void;
 	setLabels(on: boolean): void;

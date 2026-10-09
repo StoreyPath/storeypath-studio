@@ -3,19 +3,17 @@
 // nothing is downloaded and the world works offline. A world makes a set the first
 // time it is shown and swaps sets without building anything again.
 //
-//   real:  finishes by room type (High: with normal and roughness maps, and a far larger
-//          tint so that nothing visibly repeats), plaster walls, painted joinery,
-//          metal handles; furniture rough or metallic part by part (its `_finish`)
-//   model: white clay, floors lightly tinted by room type, the furniture white with a
-//          hint of its colour, dark lines along edges (`edges`)
+//   real:  each room's floor and walls in their finishes (finish(code): painted, with,
+//          at High, normal and roughness maps, and a far larger tint so that nothing
+//          visibly repeats), painted joinery, metal handles; furniture rough or metallic
+//          part by part (its `_finish`)
+//   model: white clay, floors and walls lightly tinted by their finishes' tones, the
+//          furniture white with a hint of its colour, dark lines along edges (`edges`)
 
 import * as THREE from "three";
-import { TYPE_COLORS } from "../theme.js";
-import { FINISH_OF, finishes } from "./finishes.js";
+import { EXTERIOR, defaultFinish, finishOf } from "../finishes.js";
+import { finishes } from "./finishes.js";
 
-// how rough each finish is when it has no map of it (Low)
-const ROUGH = { carpet: 1, carpetWarm: 1, terrazzo: 0.22, polished: 0.32, porcelain: 0.25, porcelainWarm: 0.25,
-  concrete: 0.88, oak: 0.5, plaster: 0.9 };
 const MACRO_EVERY = 7.3; // m: the tint against repetition (not a multiple of any finish's size)
 
 /** A seeded random number generator, for the canvases' noise. */
@@ -46,7 +44,7 @@ export class Materials {
     this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
     this.#quality = quality;
     this.#painter = painter;
-    this.#floors = new Map();
+    this.#finishes = new Map();
     this.#volumes = new Map();
     this.highlight = new THREE.MeshStandardMaterial({
       color: 0xff8a00, emissive: 0xff8a00, emissiveIntensity: 0.35, transparent: true, opacity: 0.35, depthWrite: false,
@@ -60,15 +58,17 @@ export class Materials {
         "#include <project_vertex>\nmvPosition.xyz *= 0.997;\ngl_Position = projectionMatrix * mvPosition;");
     };
     this.edges.customProgramCacheKey = () => "storeypath-edges";
+    this.#clay = style === "model";
     if (style === "model") this.#model();
     else this.#real();
   }
 
   #quality;
   #painter;
-  #floors;
+  #finishes; // code → its material, made the first time a surface shows it
   #volumes;
   #pending = new Set(); // finishes being painted
+  #clay = false; // the "model" look
   #textures = [];
   #disposed = false;
 
@@ -78,7 +78,7 @@ export class Materials {
     // (boxes — over and under openings, frames, doors, skirting, boards, handles, panels —
     // have no normals: their materials are flat-shaded)
     const flat = { flatShading: true };
-    this.wall = this.#finish("plaster");
+    this.wall = this.finish(EXTERIOR); // (a wall's face outside every room)
     this.wallPlain = new THREE.MeshStandardMaterial({ color: 0xeae7e1, roughness: 0.9, ...flat }); // no texture coordinates
     this.wallTop = new THREE.MeshStandardMaterial({ color: 0xd9d5cd, roughness: 0.9, ...flat }); // (and over openings: boxes)
     this.wallCut = new THREE.MeshStandardMaterial({ color: 0x3a3a3f, roughness: 0.8 });
@@ -116,12 +116,14 @@ export class Materials {
     this.item.customProgramCacheKey = () => "storeypath-item-finish";
   }
 
-  /** A material in a finish (finishes.js): its colour on the whole at once, its image
-   * (and, High, its normal and roughness map and the far larger tint) once painted. */
-  #finish(name) {
-    const fine = this.#quality.fine, px = name === "plaster" ? Math.min(512, this.#quality.finish) : this.#quality.finish;
-    const tone = new THREE.Color().setRGB(...finishTone(name).map((v) => v / 255), THREE.SRGBColorSpace);
-    const m = new THREE.MeshStandardMaterial({ color: tone, roughness: ROUGH[name] ?? 0.9 });
+  /** A material in a finish (finishes.js): its tone on the whole at once, its image (and,
+   * High, its normal and roughness map and the far larger tint) once painted. A wall's
+   * finish of a metre or less is painted at 512 px at most. */
+  #painted(f) {
+    const fine = this.#quality.fine;
+    const px = f.applies === "wall" && f.size_m <= 1 ? Math.min(512, this.#quality.finish) : this.#quality.finish;
+    const m = new THREE.MeshStandardMaterial({ color: toneOf(f), roughness: f.roughness ?? 0.9 });
+    const name = f.code;
     const job = this.#painter.paint(name, px, fine).then((f) => {
       if (this.#disposed) return;
       m.color.set(0xffffff);
@@ -189,7 +191,7 @@ export class Materials {
   #model() {
     // flat-shaded (boxes have no normals)
     const clay = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.92, flatShading: true, ...extra });
-    this.wall = clay(0xedece8);
+    this.wall = this.finish(EXTERIOR);
     this.wallPlain = clay(0xedece8);
     this.wallTop = clay(0xdddbd6);
     this.wallCut = clay(0x34363b);
@@ -215,23 +217,35 @@ export class Materials {
     this.item.customProgramCacheKey = () => "storeypath-item-clay";
   }
 
-  // ---- by room type, and the rest ----------------------------------------------------
+  // ---- by finish, and the rest ------------------------------------------------------
 
-  /** The floor material for a type of space. */
-  floor(type) {
-    if (this.style === "model") {
-      if (!this.#floors.has(type)) {
-        // the type's colour, mostly washed out to white
-        const c = new THREE.Color(TYPE_COLORS[type] || TYPE_COLORS.unspecified);
-        const hsl = c.getHSL({});
-        c.setHSL(hsl.h, hsl.s * 0.55, 0.74 + hsl.l * 0.14);
-        this.#floors.set(type, new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 }));
-      }
-      return this.#floors.get(type);
+  /** The material of a finish (a code of ../finishes.js; one it does not have: the
+   * exterior's): real, painted; model, clay lightly tinted by its tone (a floor's more
+   * than a wall's). Made the first time it is asked for. */
+  finish(code) {
+    const f = finishOf(code) ?? finishOf(EXTERIOR);
+    if (!this.#finishes.has(f.code)) {
+      let m;
+      if (this.#clay) {
+        const c = toneOf(f), hsl = c.getHSL({});
+        if (f.applies === "floor") c.setHSL(hsl.h, hsl.s * 0.55, 0.74 + hsl.l * 0.14);
+        else c.setHSL(hsl.h, hsl.s * 0.4, 0.86 + hsl.l * 0.08);
+        m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.92, flatShading: f.applies === "wall" });
+      } else m = this.#painted(f);
+      m.userData.finish = f.code;
+      this.#finishes.set(f.code, m);
     }
-    const name = FINISH_OF[type] || "concrete";
-    if (!this.#floors.has(name)) this.#floors.set(name, this.#finish(name));
-    return this.#floors.get(name);
+    return this.#finishes.get(f.code);
+  }
+
+  /** The floor material of a type of space, as it is when given no finish. */
+  floor(type) {
+    return this.finish(defaultFinish("floor", type));
+  }
+
+  /** The materials of walls' finishes made so far (to see through them: x-ray). */
+  walls() {
+    return [...this.#finishes.values()].filter((m) => finishOf(m.userData.finish)?.applies === "wall");
   }
 
   /** A see-through volume tinted by a space's type (x-ray view). */
@@ -291,7 +305,7 @@ export class Materials {
   dispose() {
     this.#disposed = true;
     const seen = new Set();
-    for (const v of [...Object.values(this), ...this.#floors.values(), ...this.#volumes.values()]) {
+    for (const v of [...Object.values(this), ...this.#finishes.values(), ...this.#volumes.values()]) {
       if (v?.isMaterial && !seen.has(v)) {
         seen.add(v);
         v.dispose();
@@ -301,5 +315,7 @@ export class Materials {
   }
 }
 
-// a finish's colour on the whole, shown until its image is painted
-const { tone: finishTone } = finishes();
+/** A finish's colour on the whole (its tone), shown until its image is painted. */
+function toneOf(f) {
+  return new THREE.Color().setStyle(f.tone, THREE.SRGBColorSpace);
+}

@@ -7,8 +7,10 @@
 //
 // Walls, door and window openings come from the package (the floor's `walls`, the
 // openings' `span`, and a door's `swings`: its leaves, open as the plan draws them),
-// floor finishes follow each space's type, and everything is drawn here: no
-// textures or models are downloaded. A floor's geometry is built by build.js, here,
+// each room's floor and walls are in their finishes (format 0.9: a space's or zone's
+// `floor_finish` and a space's `wall_finish`, else its type's: ../finishes.js; each side
+// of a wall as the room it faces), and everything is drawn here: no textures or models
+// are downloaded. A floor's geometry is built by build.js, here,
 // or comes pre-built in the package (format 0.5: world/<floor-id>.glb, baked by
 // the same build.js in Node), which is quicker to show on a slow machine.
 //
@@ -19,10 +21,13 @@
 // shown, a box each when more are.
 //
 // A page may edit on top of it (Studio's Review does): pointAt says what is under the
-// pointer or the crosshair, ghost shows where an item would go, setFloorItems draws a
-// floor's items again (nothing else), items are dragged (setDraggable, itemdrag…), a
-// click says what it is on first (pick, cancelable), updateSpace and reload show
-// corrections and a floor read again. The world itself changes nothing.
+// pointer or the crosshair (a wall, and the room on that side of it), ghost shows where
+// an item would go, setFloorItems draws a floor's items again (nothing else), items are
+// dragged (setDraggable, itemdrag…), a click says what it is on first (pick,
+// cancelable), updateSpace shows a room corrected (a finish at once, in place: its
+// triangles drawn in another material, nothing built again) and reload a floor read
+// again; finishOf says what a room's floor and walls are in. The world itself changes
+// nothing.
 //
 // A way through the building (format 0.8: route() in ../navigation.js) is drawn with
 // showRoute: a ribbon just over each floor it walks on, through the lift or stairs
@@ -41,9 +46,10 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 import { loadPackage } from "../package.js";
 import { TYPE_COLORS } from "../theme.js";
+import { EXTERIOR, defaultFinish, floorFinish, wallFinish } from "../finishes.js";
 import {
-  BUILDER, GEOMETRY, buildItems, buildPieces, ceilingPanels, cutPieces, flat, inside, itemBox, itemExtent, itemPoint,
-  occluders, originOf, planFloor, planItem, setItems, toLocal as localOf,
+  BUILDER, GEOMETRY, buildItems, buildPieces, ceilingPanels, cutPieces, flat, groupByFinish, inside, itemBox, itemExtent,
+  itemPoint, occluders, originOf, planFloor, planItem, setItems, toLocal as localOf,
 } from "./build.js";
 import { Painter } from "./finishes.js";
 import { toLonLat } from "./frame.js";
@@ -141,6 +147,7 @@ export class StoreyPathWorld extends EventTarget {
   #labelsMoved = true; // what is shown changed: the labels placed again
   #route = null; // the way shown: { route, legs, links, marks, materials }
   #tour = null; // the camera going along it
+  #toDress = new Map(); // floor → the kinds ("floor", "wall") whose finishes changed, dressed before the next frame
 
   constructor(container, options = {}) {
     super();
@@ -626,7 +633,9 @@ export class StoreyPathWorld extends EventTarget {
    * the way counts: aimed at a wall, the point is on the floor just before it; at an item,
    * the point under where it was met. Null when nothing is in the way and no floor is
    * there. Quick whatever the floor (no triangles: the plan's walls and the items' boxes),
-   * so it can follow the pointer, or the crosshair every frame. */
+   * so it can follow the pointer, or the crosshair every frame. ``wall``: whether a wall
+   * (or the wall over or under an opening) was met first; ``room``: the space the point
+   * is in (``space``, or the space a zone is part of): on a wall, the room on its side. */
   pointAt(clientX, clientY) {
     if (!this.#pkg) return null;
     this.#camera.updateMatrixWorld(); // (moved since the last frame, maybe)
@@ -649,8 +658,10 @@ export class StoreyPathWorld extends EventTarget {
     }
     best ??= plane;
     if (!best) return null;
-    const { f, x, z, item = null } = best;
-    return { floor: f.id, x, z, local: this.buildingPoint({ x, z }), space: this.#spaceAt(f, x, z)?.id ?? null, item };
+    const { f, x, z, item = null, wall = false } = best;
+    const unit = this.#spaceAt(f, x, z);
+    return { floor: f.id, x, z, local: this.buildingPoint({ x, z }), space: unit?.id ?? null, room: unit?.space ?? null, item,
+      wall: Boolean(wall) && !item };
   }
 
   /** The point of the view under a point of the screen, as three.js has it (-1 to 1); the
@@ -842,23 +853,32 @@ export class StoreyPathWorld extends EventTarget {
   get draggable() { return this.#draggable; }
 
   /** A space or zone corrected (any of ``name``, ``number``, ``type``, ``hidden``,
-   * ``ignored``, as the package's properties): its label changed at once; its floor built
-   * again when its type (its floor's finish) or whether it is shown changed. Whether it is
-   * in the world. */
+   * ``ignored``, ``floor_finish``, ``wall_finish``, as the package's properties): its label
+   * changed at once; its finishes at once, in place (its floor's triangles, or its walls'
+   * faces, drawn in the finish's material: nothing built again); its floor built again
+   * when its type or whether it is shown changed. Whether it is in the world. */
   updateSpace(id, props) {
     const feature = this.#pkg?.get(id);
     const f = feature ? this.#floors.get(feature.properties.floor_id) : null;
     if (!f) return false;
     const p = feature.properties;
     const tucked = () => Boolean(p.hidden || p.ignored);
-    const was = { type: p.type, tucked: tucked() };
-    for (const k of ["name", "number", "type", "hidden", "ignored"]) if (k in props) p[k] = props[k];
+    const was = { type: p.type, tucked: tucked(), floor: p.floor_finish ?? null, wall: p.wall_finish ?? null, name: p.name,
+      number: p.number };
+    for (const k of ["name", "number", "type", "hidden", "ignored", "floor_finish", "wall_finish"]) {
+      if (k in props) p[k] = props[k] ?? (k.endsWith("_finish") ? null : props[k]);
+    }
     if (p.type !== was.type || tucked() !== was.tucked) {
       this.#rebuildFloor(f.id);
       return true;
     }
+    // its finishes before the next frame (many rooms changed at once: their floor dressed once)
+    const kinds = this.#toDress.get(f) ?? new Set();
+    if ((p.floor_finish ?? null) !== was.floor) kinds.add("floor");
+    if ((p.wall_finish ?? null) !== was.wall) kinds.add("wall");
+    if (kinds.size) this.#toDress.set(f, kinds);
     const s = f.spaces.find((u) => u.id === id);
-    if (s) {
+    if (s && (p.name !== was.name || p.number !== was.number)) {
       Object.assign(s, { name: p.name, number: p.number });
       const label = this.#label(s);
       label.position.copy(s.label.position);
@@ -868,6 +888,15 @@ export class StoreyPathWorld extends EventTarget {
       this.#applyVisibility();
     }
     return true;
+  }
+
+  /** What a space's or zone's floor and walls are in, as shown: { floor, wall } (codes of
+   * ../finishes.js; a zone's walls are its space's), or null for an ID not in the world. */
+  finishOf(id) {
+    const p = this.#pkg?.get(id)?.properties;
+    if (!p || (p.kind !== "space" && p.kind !== "zone")) return null;
+    const space = p.kind === "zone" ? this.#pkg.get(p.space_id)?.properties ?? null : null;
+    return { floor: floorFinish(p, space), wall: wallFinish(space ?? p) };
   }
 
   /** See-through walls and rooms coloured by type. */
@@ -1274,9 +1303,11 @@ export class StoreyPathWorld extends EventTarget {
     return { pieces, rooms: x.rooms, obstacles, items: { ids: x.items ?? [], ...items } };
   }
 
-  /** The material a piece is drawn with. */
-  #material({ material, type }) {
+  /** The material a piece is drawn with: its finishes' (one a group of its triangles), or
+   * by what it is. */
+  #material({ material, type, finishes }) {
     const m = this.#materials;
+    if (finishes?.length) return finishes.length === 1 ? m.finish(finishes[0]) : finishes.map((code) => m.finish(code));
     if (material === "floor") return m.floor(type);
     if (material === "volume") return m.volume(TYPE_COLORS[type] || TYPE_COLORS.unspecified);
     return m[material] instanceof THREE.Material ? m[material] : m.wallPlain;
@@ -1299,21 +1330,23 @@ export class StoreyPathWorld extends EventTarget {
       plan, items: plan.items, itemIds: items?.ids ?? plan.items.map((i) => i.id), bakedItems: items ?? null,
       itemMeshes: {}, itemObstacles: null };
 
-    // slab, walls, floors, doors and windows: one mesh a piece
+    // slab, walls, floors, doors and windows: one mesh a piece, its floors and walls drawn
+    // a finish at a time
     for (const p of pieces) {
       const mesh = this.#mesh(p);
       mesh.visible = p.view !== "walk" && p.view !== "xray";
       group.add(mesh);
       built.pieces.push(mesh);
     }
+    this.#dress(built);
 
     // the label of each space and zone in use
     for (const u of plan.units) {
       const label = this.#label(u);
       label.position.set(u.label[0], e + 0.25, -u.label[1]);
       if (label.element.textContent) group.add(label);
-      built.spaces.push({ id: u.id, type: u.type, name: u.name, number: u.number, tucked: u.tucked, rings: u.rings,
-        label, centre: u.centre, size: u.size });
+      built.spaces.push({ id: u.id, space: u.space, type: u.type, name: u.name, number: u.number, tucked: u.tucked,
+        rings: u.rings, label, centre: u.centre, size: u.size });
     }
     built.obstacles = new Obstacles(obstacles);
 
@@ -1322,6 +1355,51 @@ export class StoreyPathWorld extends EventTarget {
         new THREE.Vector3(plan.bounds[2], e + plan.wallHeight, plan.bounds[3]));
     }
     return built;
+  }
+
+  /** A floor's floors and walls (or ``which``: "floor" or "wall") drawn a finish at a time:
+   * each triangle in the finish of the room it is of (a floor, its space's or zone's; a
+   * wall's face, the room it faces, else the exterior's), in groups, each a material. */
+  #dress(f, which = null) {
+    const memo = (of) => {
+      const known = new Map();
+      return (i) => {
+        if (!known.has(i)) known.set(i, of(f.rooms[i]));
+        return known.get(i);
+      };
+    };
+    const at = { floor: memo((id) => this.#floorFinishOf(id)), wall: memo((id) => this.#wallFinishOf(id)) };
+    for (const mesh of f.pieces) {
+      const kind = mesh.userData.material;
+      if ((kind !== "floor" && kind !== "wall") || (which && which !== kind)) continue;
+      const codes = groupByFinish(mesh.geometry, at[kind]);
+      if (!codes) continue;
+      mesh.userData.finishes = codes;
+      mesh.material = this.#material(mesh.userData);
+    }
+  }
+
+  /** The floors whose rooms' finishes changed (updateSpace), dressed again. */
+  #dressChanged() {
+    if (!this.#toDress.size) return;
+    for (const [f, kinds] of this.#toDress) {
+      if (this.#floors.get(f.id) === f) this.#dress(f, kinds.size === 2 ? null : [...kinds][0]);
+    }
+    this.#toDress.clear();
+  }
+
+  /** The finish a space's or zone's floor shows (its own, its space's, else its type's). */
+  #floorFinishOf(id) {
+    const p = id ? this.#pkg?.get(id)?.properties : null;
+    if (!p) return defaultFinish("floor", "unspecified");
+    return floorFinish(p, p.kind === "zone" ? this.#pkg.get(p.space_id)?.properties ?? null : null);
+  }
+
+  /** The finish of the walls of a space (a wall's face facing it); none: the exterior's. */
+  #wallFinishOf(id) {
+    const p = id ? this.#pkg?.get(id)?.properties : null;
+    if (!p) return EXTERIOR;
+    return wallFinish(p.kind === "zone" ? this.#pkg.get(p.space_id)?.properties ?? p : p);
   }
 
   /** A piece as a mesh, drawn with the world's material for it. */
@@ -1452,8 +1530,8 @@ export class StoreyPathWorld extends EventTarget {
     this.#placeRoute();
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
-    for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door, m8.skirting, m8.handle,
-      m8.sillBoard]) {
+    for (const m of [m8.wall, ...m8.walls(), m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door, m8.skirting,
+      m8.handle, m8.sillBoard]) {
       m.transparent = this.#xray;
       m.opacity = see;
       m.depthWrite = !this.#xray;
@@ -1656,6 +1734,7 @@ export class StoreyPathWorld extends EventTarget {
   // ---- loop and input ----------------------------------------------------------------
 
   #frame() {
+    this.#dressChanged();
     this.#timer.update();
     const dt = this.#timer.getDelta();
     if (this.#tour) { // along the way: from behind and above where it has got to, looking ahead

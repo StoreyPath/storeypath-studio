@@ -1,7 +1,7 @@
 // Type-checked by `npm run check`: the declarations describe the module as a
 // strict TypeScript application uses it.
-import { StoreyPathWorld, isItemId, loadPackage, normalizeItemId, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents,
-	type WorldLook, type WorldPoint, type WorldQuality } from '@storeypath/viewer-world';
+import { FINISHES, StoreyPathWorld, finishOf, floorFinish, isItemId, loadPackage, normalizeItemId, route, webglSupport, type Feature,
+	type Finish, type GivenItem, type Route, type WorldEvents, type WorldLook, type WorldPoint, type WorldQuality } from '@storeypath/viewer-world';
 import { webglSupport as check } from '@storeypath/viewer-world/support';
 
 export async function show(element: HTMLElement, data: ArrayBuffer): Promise<string | null> {
@@ -32,8 +32,15 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 	world.setFloor(floor);
 	world.select(office?.id ?? null, { go: true });
 	// editing on top of it: what is under the pointer, a ghost, a floor's items replaced
+	// a room's finishes (format 0.9): painted where the pointer is, a wall on the side aimed at
+	const navy: Finish | null = finishOf('FLOOR-CARPET-NAVY');
+	const walls: string = FINISHES.defaults.wall['office'] ?? FINISHES.exterior;
 	world.addEventListener('pick', (e) => {
 		const p: WorldPoint = e.detail;
+		if (p.wall && p.room) world.updateSpace(p.room, { wall_finish: walls });
+		else if (p.space && navy) world.updateSpace(p.space, { floor_finish: navy.code });
+		const shown: string = floorFinish(office?.properties ?? null);
+		console.log(shown, world.finishOf(p.space ?? '')?.wall);
 		if (p.local && floor) {
 			e.preventDefault();
 			const tag: string | null = normalizeItemId('7k2q xm9f 4dp'); // as typed: 7K2Q-XM9F-4DP

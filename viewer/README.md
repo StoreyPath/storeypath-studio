@@ -88,12 +88,13 @@ changes nothing by itself — the page decides, saves, and tells it):
 
 | Method | |
 |---|---|
-| `pointAt(clientX, clientY)` | what is under a point of the screen — walking with the mouse taken, or given no point, under the crosshair: `{ floor, x, z, local, space, item }` (`x`, `z`: local metres; `local`: `[x, y]` in the building's own frame, the metres of its drawings, as Studio and an item's `local` have them; the space or zone it is in; the item in the way). The first thing in the way counts: aimed at a wall, the point is on the floor just before it. From the plan's walls and the items' boxes, not triangles: well under a millisecond on a floor of a thousand rooms, so it can follow the pointer, or the crosshair every frame |
+| `pointAt(clientX, clientY)` | what is under a point of the screen — walking with the mouse taken, or given no point, under the crosshair: `{ floor, x, z, local, space, room, item, wall }` (`x`, `z`: local metres; `local`: `[x, y]` in the building's own frame, the metres of its drawings, as Studio and an item's `local` have them; the space or zone it is in, and `room`, the space (a zone's space); the item in the way; `wall`: whether a wall was met first). The first thing in the way counts: aimed at a wall, the point is on the floor just before it, so `room` is the room on the side aimed at. From the plan's walls and the items' boxes, not triangles: well under a millisecond on a floor of a thousand rooms, so it can follow the pointer, or the crosshair every frame |
 | `worldPoint([x, y])`, `buildingPoint({ x, z })` | the building's own frame into the world and back (through its placement, format 0.7; null without one) |
 | `setFloorItems(floorId, items)` | replace one floor's furniture and equipment without building anything else again (a thousand desks in milliseconds): each `{ id, type, x, y, rotation }` in the building's own frame (rotation: degrees counter-clockwise, its front its own −y), with `width`, `depth`, `height`, `mount`, `elevation`, `color`, `grade` where they are not its type's in the package's catalogue |
 | `ghost(item \| null)` | where an item would go: see-through over its floor, green, or red with `ok: false`, its footprint outlined, with the magnet's `guides` (`[[x, y], [x, y]]` each); `null` takes it away |
 | `setDraggable(on)` | items carried across their floor by a drag in the dollhouse view: `itemdragstart`, `itemdrag`, `itemdragend` say where (`{ id, floor, x, z, local, altKey, shiftKey }`; a press that does not move stays a click) |
-| `updateSpace(id, { name, number, type, hidden, ignored })` | a room corrected: its label at once; its floor built again when its type (its finish) or whether it shows changed |
+| `updateSpace(id, { name, number, type, hidden, ignored, floor_finish, wall_finish })` | a room corrected: its label at once; its finishes in place, before the next frame (its floor's triangles and its walls' faces drawn in the finishes' materials: nothing built again, however many rooms change at once); its floor built again when its type or whether it shows changed |
+| `finishOf(id)` | what a space's or zone's floor and walls are in, as shown: `{ floor, wall }`, codes of `FINISHES` (its own, a zone's space's, else its type's) |
 
 Properties: `target` (where the dollhouse view looks, `{ x, z }`), `paused`, `draggable`.
 
@@ -118,7 +119,10 @@ it: on a wall, under the ceiling). A click on one chooses it, as on a room
 
 A floor is built from the package's features by
 [src/world/build.js](src/world/build.js), merged into a few dozen meshes (one for
-the walls, one for each type of floor finish, …) whatever its number of rooms. A
+the walls, one for each type of space's floors, …) whatever its number of rooms. Each
+floor's and wall's triangle carries the room it is of (a wall's face, the room it
+faces), so the world draws each mesh a finish at a time (format 0.9: a draw call a
+finish, the triangles sorted, not built again when a room's finish changes). A
 package exported by Studio with Node.js at hand carries each floor already built
 (format 0.5, `world/<floor-id>.glb`, made by the same build.js:
 [world/bake.mjs](world/bake.mjs)); the world shows those as they are, unless they
@@ -141,14 +145,32 @@ materials, lights and passes on what is built, and builds nothing again.
 
 | Look (`style`) | |
 |---|---|
-| `"real"` (default) | real but clean: floors finished by what each room is — carpet tiles in offices and meeting rooms, terrazzo in lobbies, polished concrete with its joints in corridors, porcelain tiles in restrooms and kitchens, concrete in plant rooms and stores, oak in homes — painted here (High: with normal and roughness maps, and a far larger tint so nothing visibly repeats) off the page's thread; plaster walls, painted joinery, metal handles; furniture rough or metallic part by part |
-| `"model"` | an architectural model: white clay, floors lightly tinted by room type, dark lines along the edges of walls, frames, doors and furniture |
+| `"real"` (default) | real but clean: each room's floor and walls in its finishes ([Finishes](#finishes)) — by default carpet tiles in offices and meeting rooms, marble in lobbies, porcelain in corridors, restrooms and kitchens (white wall tiles in restrooms), terrazzo on stairs and at lifts, concrete in plant rooms and stores, oak in homes, white paint on walls — painted here (High: with normal and roughness maps, and a far larger tint so nothing visibly repeats) off the page's thread, only those shown; painted joinery, metal handles; furniture rough or metallic part by part |
+| `"model"` | an architectural model: white clay, floors (and, faintly, walls) tinted by their finishes' tones, dark lines along the edges of walls, frames, doors and furniture |
 
 | Quality (`quality`) | |
 |---|---|
 | `"high"` | ambient occlusion where surfaces meet ([N8AO](https://github.com/N8python/n8ao), at half resolution), multisampled edges, a 4096 px shadow map, finer finishes; the screen's pixels up to 1.5 a CSS pixel (3.6 million at most) |
 | `"low"` | none of these: a 2048 px shadow map, plain finishes, a pixel a CSS pixel; for integrated graphics, virtual desktops and software renderers |
 | `"auto"` (default) | Low on a software, virtual or integrated renderer (as the browser names it), or when High's frames take over 40 ms once the building has been shown; else High. `look.drawn` says which, `look.why` why Low (`"software"`, `"virtual"`, `"integrated"`, `"slow"`) |
+
+### Finishes
+
+What a room's floor and walls are finished in (format 0.9, spec/FORMAT.md
+"Finishes"): a fixed set of 50 — carpet tiles in eight colours, patterned and prayer
+carpet, sheet vinyl and vinyl planks, porcelain tiles, marble, terrazzo, oak and walnut
+planks, herringbone, polished concrete, epoxy, studded rubber, raised access floor; nine
+paints, linen, striped, geometric and damask wallpaper, wall tiles, mosaic, oak slats,
+walnut panels, stone cladding. [src/finishes.js](src/finishes.js) has them
+(`FINISHES`: each finish's code, names in English and Arabic, tone, and what it is
+painted with; the defaults by type; made from `spec/finishes.json`), with `finishOf`,
+`floorFinish(props, space)`, `wallFinish(props)` and `defaultFinish`: what a room
+shows, from its properties (`floor_finish`, `wall_finish`; none, or a code a later
+version adds, its type's). Each is painted here by its kind
+([src/world/finishes.js](src/world/finishes.js): a square image that tiles, in a
+worker), nothing downloaded; a surface shows its finish's tone until its image comes.
+Each face of a wall is the finish of the room it faces (the outside, white paint),
+the wall over and under openings too.
 
 Either way: soft shadows from the sun, fitted round what is shown (on a big floor,
 round what is looked at, and walking round the walker) and drawn again only when
