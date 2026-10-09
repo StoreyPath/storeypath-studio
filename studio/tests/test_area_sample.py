@@ -36,7 +36,7 @@ def _bait(path):
     def mm(x, y):
         return (ORIGIN[0] + x) * 1000, (ORIGIN[1] + y) * 1000
 
-    for text, at in (("DR. KHALID AL-ALI", (10, 5.5)), ("TEL +974 4412 9087", (14, 5.5)), ("EXT 7731", (14, 4.5)),
+    for text, at in (("DR. KHALID AL-ALI", (10, 5.5)), ("TEL +44 20 7946 0958", (14, 5.5)), ("EXT 7731", (14, 4.5)),
                      ("j.smith@example.com", (18, 5.5)), ("NOURA BINT SAAD", (10, 2.5))):
         msp.add_text(text, height=200, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(mm(*at))
     doc.layers.add("ACME-NOTES")
@@ -119,7 +119,7 @@ def test_private_parts_of_texts():
     assert parts_of("MEETING ROOM 204") == [] and parts_of("RM-GF-33") == [] and parts_of("+0.45 FFL") == []
     assert parts_of("MR. JOHN SMITH OFFICE") == [("MR. JOHN SMITH", "name")]
     assert parts_of("OFFICE - KHALID AL SULAITI") == [("KHALID AL SULAITI", "maybe a name")]
-    assert parts_of("TEL: +974 4412 9087") == [("TEL: +974 4412 9087", "phone")]
+    assert parts_of("TEL: +44 20 7946 0958") == [("TEL: +44 20 7946 0958", "phone")]
     assert parts_of("EXT. 2345") == [("EXT. 2345", "extension")]
     assert parts_of("a.b@x.org") == [("a.b@x.org", "email")]
     assert parts_of("مكتب السيد أحمد") == [("السيد أحمد", "name")]
