@@ -12,6 +12,7 @@ import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people ty
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
 import * as finish from "./finish.js"; // finish.js: floors and walls finished (pickers, Paint in 3D, colour by finish)
+import * as sample from "./sample.js"; // sample.js: an area of the floor shared as a sample (Share an area)
 import { lookOptions, setupLook } from "./look.js";
 import { PAGE, followJob as followOnStream, heardLocked, lockedByOther, onFloor, setupTogether } from "./together.js";
 
@@ -741,6 +742,12 @@ function bindPane(pane) {
   let drag = null;
   pane.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    if (sample.sharing()) { // sample.js: the area to share, dragged out
+      e.preventDefault(); // no text chosen on the way
+      sample.down(planPoint(...local(e)));
+      pane.setPointerCapture(e.pointerId);
+      return;
+    }
     const picked = !state.tool && assetOf(e.target);
     const asset = picked && editable() ? picked : null; // dragged only by who may change the floor
     drag = { x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
@@ -755,6 +762,7 @@ function bindPane(pane) {
     const [sx, sy] = local(e);
     state.alt = e.altKey;
     showCursor(pane, sx, sy);
+    if (sample.sharing()) return sample.move(planPoint(sx, sy));
     if (state.tool && !drag?.moved) preview(planPoint(sx, sy));
     if (!drag) return;
     const dx = e.clientX - drag.x;
@@ -785,6 +793,7 @@ function bindPane(pane) {
     }
   });
   const end = (e) => {
+    if (sample.sharing()) return sample.up(planPoint(...local(e)));
     if (!drag) return;
     const { moved, target, asset, picked, fit } = drag;
     drag = null;
@@ -808,7 +817,7 @@ function bindPane(pane) {
   // A right-click: what can be done there
   pane.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    if (!state.floor || state.busy || viewOnly()) return;
+    if (sample.sharing() || !state.floor || state.busy || viewOnly()) return;
     openMenu(e.clientX, e.clientY, planPoint(...local(e)));
   });
   pane.addEventListener("pointerup", end);
@@ -1142,6 +1151,7 @@ function planPoint(sx, sy) {
 }
 
 function setTool(tool) {
+  if (tool) sample.stop(); // sample.js: a tool instead of the area to share
   if (tool && state.tool !== tool && viewOnly()) return;
   state.tool = tool && state.tool !== tool ? tool : null;
   if (state.tool && finish.painting()) finish.setPaint(false); // a tool instead of painting
@@ -1646,7 +1656,10 @@ async function deleteItem() {
 }
 
 function setupPanel() {
-  $("floor").addEventListener("change", (e) => openFloor(e.target.value));
+  $("floor").addEventListener("change", (e) => {
+    sample.stop(); // sample.js: an area of the floor shown
+    openFloor(e.target.value);
+  });
   $("convert").addEventListener("click", reconvert);
   $("next").addEventListener("click", nextToReview);
   $("ed-close").addEventListener("click", () => select(null));
@@ -1698,6 +1711,7 @@ function setupPanel() {
       if (!$("menu").hidden) closeMenu();
       else if (typing) e.target.blur();
       else if (finish.escape()) return; // the finish picker, or painting, put away
+      else if (sample.escape()) return; // sample.js: no area to share after all
       else if (state.tool) setTool(null);
       else if (state.asset) selectAsset(null);
       else if (state.item) selectItem(null);
@@ -2088,6 +2102,7 @@ function pick3d(id, { go = false } = {}) {
 /** The plan (2D), the floor in 3D, or walking through it ("2d", "3d", "walk"), in one view. */
 async function setView(mode) {
   if (mode === view3d.mode) return;
+  sample.stop(); // sample.js: an area is shared from the plan
   if (mode !== "2d" && !state.floor?.converted_at) return toast("This floor is not converted yet: there is nothing to show in 3D", true);
   const was = view3d.mode;
   if (was === "2d") {
@@ -2654,5 +2669,6 @@ finish.setup({ state, BASE, request, toast, el, saveSpace, viewOnly, units, titl
     draggable3d();
   },
   showWalk: () => showWalk() });
+sample.setup({ state, BASE, toast, setTool }); // sample.js
 window.storeypathReview = { state, view3d }; // for the console (and the browser checks)
 start();

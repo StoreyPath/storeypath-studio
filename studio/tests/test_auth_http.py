@@ -217,6 +217,11 @@ ROWS = [
         hidden=OUTSIDE | {"building_editor"}),
     Row("GET", C + "/floors/{hq0}/print.png", ok=200, passes={"admin", "owner", "floor_viewer"},
         hidden=OUTSIDE | {"building_editor"}),
+    # an area sample of a floor: whoever may see its drawing (view is enough)
+    Row("POST", C + "/floors/{hq0}/sample/preview", {}, ok=(400, "area"), passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/floors/{hq0}/sample", {}, ok=(400, "area"), passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/floors/{hq0}/edits", {}, ok=(400, "send"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/floors/{hq0}/items", {"type": "NOPE", "x": 1, "y": 1}, ok=(400, "no item type"),
@@ -375,3 +380,32 @@ def test_a_route_without_a_rule_fails_here(app):
         assert ("GET", "projects/*/careless") not in {row.case for row in ROWS}
     finally:
         app.router.routes.pop()
+
+
+def test_whoever_may_see_a_floor_shares_an_area_of_it(site):
+    """Review's Share an area (areasample/): someone who may only view a floor previews a
+    sample of an area of it and downloads it, recorded in the audit log; someone who may
+    not see the floor is refused, as for any of its calls; too large an area is refused."""
+    import io
+    import zipfile
+
+    path = fill(C + "/floors/{hq0}/sample", site.ids)
+    area = [131, 48, 150, 60]  # local metres: a part of the demo's HQ ground floor
+    status, got, _ = site.as_("floor_viewer", "POST", path + "/preview", {"area": area})
+    assert status == 200, got
+    assert got["images"]["drawing"].startswith("data:image/png;base64,") and got["images"]["reading"]
+    assert got["counts"]["spaces"] > 3 and {"found", "others", "chosen"} <= set(got["privacy"])
+    status, blob, res = site.as_("floor_viewer", "POST", path, {"area": area, "note": "a test"})
+    assert status == 200 and res.getheader("Content-Type") == "application/zip"
+    name = re.search(r'filename="([a-z2-7]{8}\.spsample)"', res.getheader("Content-Disposition")).group(1)
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        manifest = json.loads(z.read("manifest.json"))
+        everything = b"".join(z.read(n) for n in z.namelist() if not n.endswith(".png"))
+    assert manifest["note"] == "a test" and name == manifest["sample_id"] + ".spsample"
+    assert site.ids["code"].encode() not in everything  # Studio's IDs: S1, D1… instead
+    said = [e for e in site.accounts.audit_tail(20) if e["action"] == "area sample"]
+    assert said and said[0]["target"] == site.ids["hq0"]
+    for role, want in (("building_editor", 404), ("nobody", 404), ("anon", 401)):
+        assert site.as_(role, "POST", path, {"area": area})[0] == want, role
+    status, got, _ = site.as_("floor_viewer", "POST", path, {"area": [100, 40, 160, 60]})
+    assert status == 400 and "at most 50" in got["error"]

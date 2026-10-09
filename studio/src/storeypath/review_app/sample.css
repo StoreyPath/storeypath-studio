@@ -1,0 +1,43 @@
+/* Share an area (sample.js): the rectangle on the plan, and the dialog. */
+#map.sharing svg.pane { cursor: crosshair; }
+.share-preview { pointer-events: none; }
+.share-preview .share-rect { fill: rgba(11, 107, 203, .12); stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 4;
+  vector-effect: non-scaling-stroke; }
+.share-preview .share-rect.too-big { fill: rgba(198, 40, 69, .12); stroke: var(--danger); }
+
+dialog.sample { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 18px 22px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); overflow: auto; }
+dialog.sample[open] { display: flex; flex-direction: column; gap: 10px; }
+dialog.sample::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.sample p { margin: 0; }
+dialog.sample .sample-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+dialog.sample h2 { margin: 0; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }
+dialog.sample h3 { margin: 4px 0 0; font-size: 14px; }
+dialog.sample textarea { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; }
+dialog.sample .sample-status { font-size: 13px; }
+dialog.sample .sample-status.error { color: var(--danger); }
+dialog.sample.busy .sample-pictures { opacity: .55; }
+.sample-pictures { display: grid; grid-template-columns: 1fr 1.3fr; gap: 10px; align-items: start; }
+.sample-pictures figure { margin: 0; min-width: 0; }
+.sample-pictures figure.zoomed { grid-column: 1 / -1; }
+.sample-pictures img { display: block; width: 100%; height: auto; max-height: 52vh; object-fit: contain; background: #fff;
+  border: 1px solid var(--line); border-radius: 4px; cursor: zoom-in; }
+.sample-pictures figure.zoomed img { max-height: none; cursor: zoom-out; }
+.sample-pictures figcaption { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.sample-list { list-style: none; margin: 4px 0 0; padding: 0; max-height: 220px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 6px; }
+.sample-list li { display: grid; grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr); gap: 10px; align-items: center;
+  padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.sample-list li:last-child { border-bottom: 0; }
+.sample-list label { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.sample-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-list li.out .sample-text { text-decoration: line-through; color: var(--muted); }
+.sample-kind { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.sample-list .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog.sample details summary { cursor: pointer; font-size: 13px; margin-top: 6px; }
+.sample-buttons { justify-content: flex-end; gap: 8px; }
+@media (max-width: 700px) {
+  .sample-pictures { grid-template-columns: 1fr; }
+  .sample-list li { grid-template-columns: 1fr auto; }
+  .sample-list li .meta { display: none; }
+}

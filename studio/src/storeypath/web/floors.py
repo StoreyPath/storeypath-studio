@@ -2,14 +2,15 @@
 items, its spaces, zones and openings corrected, the floor read again, its lifts and
 stairs drawn and linked through the floors (vertical.py); who edits it (one person at a
 time: the first change takes its lock, Done editing lets it go, an admin may take it
-over)."""
+over); an area of it shared as a sample (areasample/: previewed, then downloaded)."""
 
 from __future__ import annotations
 
 from fastapi import Request
 
-from .. import vertical
+from .. import areasample, vertical
 from ..review import floor_print, floor_print_png
+from ..server import Download
 from .calls import Body, Calls, May, TheStudio, answer
 
 calls = Calls()
@@ -38,6 +39,39 @@ def print_info(code: str, floor_id: str, request: Request, may: May, studio: The
 def print_png(code: str, floor_id: str, request: Request, may: May, studio: TheStudio):
     may.drawing(code, floor_id)
     return answer(request, floor_print_png(studio.review(code), floor_id))
+
+
+def _models(studio) -> dict:
+    """The models this Studio reads with, by name (an area sample says them; a vision
+    helper known only by its address is not named)."""
+    def name(model, attr="name"):
+        try:
+            return getattr(model, attr, None) if model is not None and model.available() else None
+        except Exception:
+            return None
+
+    vision = name(studio.vision, "model") or ("a vision model" if name(studio.vision) else None)
+    return {"language": name(studio.model), "vision": vision, "symbols": name(studio.symbols)}
+
+
+@calls.post(F + "/sample/preview")
+def sample_preview(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """What an area sample of the floor would hold (its pictures, what is taken out):
+    anyone who may see the floor's drawing."""
+    may.drawing(code, floor_id)
+    return answer(request, areasample.preview(studio.review(code), floor_id, body, models=_models(studio),
+                                              catalogue=studio.catalogue()))
+
+
+@calls.post(F + "/sample")
+def sample(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """An area sample of the floor, to download (<id>.spsample): anyone who may see the
+    floor's drawing. Recorded in the audit log."""
+    may.drawing(code, floor_id)
+    made = areasample.make(studio.review(code), floor_id, body, models=_models(studio), catalogue=studio.catalogue())
+    size = made.manifest["area"]
+    may.audit("area sample", floor_id, project=code, sample=made.id, area=f"{size['width_m']:g} x {size['height_m']:g} m")
+    return answer(request, Download(made.zipped(), made.name))
 
 
 @calls.post(F + "/edits")

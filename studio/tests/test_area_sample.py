@@ -99,7 +99,8 @@ def test_nothing_private_is_in_a_sample(project):
     assert not doc.modelspace().query("IMAGE OLE2FRAME") and not list(doc.objects.query("IMAGEDEF"))
     assert all(len(layout) == 0 for layout in doc.layouts if layout.name != "Model")  # nothing on paper
     assert not any(e.xdata for e in doc.modelspace())
-    assert "PROJECT-NOTES" in doc.layers  # the layer named for the project, renamed
+    assert "PROJECT-NOTES" in doc.layers  # the layer named for the project, renamed…
+    assert "PROJECT-NOTES" in [x["layer"] for x in s.reading["layers"]["in_sample"]]  # …and so said
     # moved: the area's lower-left corner at 0, 0 (the drawing in mm, 1 m margin; a text whose middle is
     # in the margin is kept whole)
     box = ezdxf.bbox.extents(doc.modelspace())
@@ -211,11 +212,12 @@ def test_choices_in_the_preview_keep_or_take_out_texts(project):
     khalid = next(f for f in view["found"] if "KHALID" in f["text"])
     store = next(o for o in view["others"] if o["text"] == "STORAGE 210")
     assert khalid["removed"] and not khalid["always"]
-    s = build(review, f_id, AREA, keep=[khalid["id"]], remove=[store["id"]])
+    s = build(review, f_id, AREA, keep=[khalid["id"]], remove=[store["id"]], note="STORAGE 210 is fine")
     texts = [t["text"] for t in s.reading["texts"]]
     assert "DR. KHALID AL-ALI" in texts  # kept, as the person chose
     assert "STORAGE 210" not in texts and "[TEXT]" in json.dumps(s.reading)
     assert s.manifest["privacy"]["texts"]["kept_by_person"] == {"name": 1}
+    assert s.manifest["note"] == "STORAGE 210 is fine"  # a drawing's text taken out, not the person's words
 
 
 def test_a_sample_never_holds_another_floors_plan(tmp_path):

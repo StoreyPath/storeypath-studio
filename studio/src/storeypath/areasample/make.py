@@ -264,9 +264,13 @@ def build(review, floor_id: str, area, *, note: str = "", keep=(), remove=(), mo
         strings += [o.get("name"), o.get("number")]
     privacy = Privacy([s for s in strings if s], names_and_codes(ws, floor_id), keep, remove)
     scrub_drawing(doc, privacy)
+    for x in reading["layers"]["in_sample"]:  # named as drawing.dxf names them
+        x["layer"] = privacy.scrub_name(x["layer"])
+    for t in reading["texts"]:
+        t["layer"] = privacy.scrub_name(t["layer"])
     reading = privacy.scrub_all(reading)
     corrections = privacy.scrub_all(corrections)
-    note = privacy.scrub(note)
+    note = privacy.scrub_note(note)
     drawing_png, reading_png = draw(doc, scale, reading, corrections, preview=preview)
 
     sample_id = new_id()

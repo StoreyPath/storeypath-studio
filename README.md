@@ -238,6 +238,15 @@ building.
   corrections are kept. A reading that would retire most of the floor's rooms is
   held back, the floor unchanged, and Studio asks before applying it (*Read
   anyway*).
+- **Share an area** (toolbar, on the plan; anyone who may see the floor): drag a
+  rectangle over a part of the floor Studio read wrong (at most 50 × 50 m), write
+  what went wrong, look at the preview and download `<id>.spsample`, a small file to
+  send to the StoreyPath team: the drawing in the area, the area as drawn and as
+  Studio read it, what Studio decided there and why, and what people corrected.
+  People's names, phone numbers, emails, the project's, site's, building's and floor's
+  names and codes, Studio's IDs and where the area is are taken out; the preview lists
+  every text taken out, each to keep or take out. Nothing is sent: the file is
+  downloaded ([Area samples](docs/AREA-SAMPLES.md)).
 
 Every change is saved to the project at once.
 
@@ -779,7 +788,8 @@ a workspace file (`*.spproj`): `new`, `add-location`, `add-building`, `add-floor
 `--no-model`, `--no-vision`), `list --review`, `fix`, `place`, `export --building`,
 `validate`, `review` (the review editor), `serve` (the web app: `--allowed-host`,
 `--cert`/`--key`, `--http`), `users` (`add`, `list`, `passwd`, `disable`, `enable`,
-`role`), `backup` and `restore`, `private` and `words` (privacy), `demo`. Each, one line apiece:
+`role`), `backup` and `restore`, `private` and `words` (privacy), `sample` (`make`,
+`inspect`, `replay`: [area samples](docs/AREA-SAMPLES.md)), `demo`. Each, one line apiece:
 [studio/README.md](studio/README.md#commands).
 
 ```sh

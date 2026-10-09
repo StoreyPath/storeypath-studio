@@ -160,11 +160,13 @@ def parts_of(text: str, known=None) -> list[tuple[str, str]]:
     take(EXTENSION, "extension")
     take(PHONE, "phone")
     take(ID_NUMBER, "id number")
-    for m in TITLED_NAME.finditer(text):  # the name, without the room words after it (MR. JOHN SMITH OFFICE)
+    for m in TITLED_NAME.finditer(text):  # the name, up to the first room word after it (MR. JOHN SMITH OFFICE)
         a, b = m.span()
         words = list(WORD.finditer(text, a, b))
-        while len(words) > 2 and words[-1].group(0).lower() in known:
-            b = words.pop().start()
+        for i, w in enumerate(words[2:], start=2):
+            if w.group(0).lower() in known:
+                b = w.start()
+                break
         b = a + len(text[a:b].rstrip(" -,."))
         if b - a >= 2 and not any(a < y and x < b for x, y, _ in found):
             found.append((a, b, "name"))
@@ -299,6 +301,14 @@ class Privacy:
         for pattern, placeholder, _ in self._patterns:
             text = pattern.sub(lambda _m, p=placeholder: p, text)
         return text
+
+    def scrub_note(self, note: str) -> str:
+        """The person's note without names, contacts and the project's names: a drawing
+        text they chose to take out is not taken out of their own words."""
+        for pattern, placeholder, kind in self._patterns:
+            if kind != "chosen":
+                note = pattern.sub(lambda _m, p=placeholder: p, note)
+        return note
 
     def scrub_name(self, name: str) -> str:
         """A layer's or block's name without the project's names and codes, a person's
