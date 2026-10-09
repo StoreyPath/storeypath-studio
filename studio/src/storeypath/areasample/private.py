@@ -7,7 +7,7 @@ kept something; a sample is looked through again, more strictly, because it leav
 organization:
 
 - people's names with a title (Mr, Dr, Eng, Sheikh, السيد…), as privacy.py finds them;
-- phone numbers (+974…, 00…, eight digits in two fours), extensions, emails, web
+- phone numbers (a country code with + or 00, eight digits in two fours), extensions, emails, web
   addresses, permit, plot, licence and ID numbers;
 - words Studio does not know as a room's or a plan's word (a name without a title, a
   company, a place): *maybe a name*, taken out unless the person keeps it;

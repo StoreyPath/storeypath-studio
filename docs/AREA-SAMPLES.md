@@ -155,7 +155,7 @@ Always, whatever is chosen (`areasample/private.py`, extending `privacy.py`'s ru
   and the note alike, replaced by a placeholder:
   - people's names with a title (Mr, Mrs, Ms, Dr, Eng, Sheikh, السيد, الدكتور…) → `[NAME]`;
     the name stops at the first room word (*MR. JOHN SMITH OFFICE* → *[NAME] OFFICE*);
-  - phone numbers (+974…, 00…, eight digits as two fours, TEL/MOB/FAX …) → `[PHONE]`,
+  - phone numbers (a country code with + or 00, eight digits as two fours, TEL/MOB/FAX …) → `[PHONE]`,
     extensions → `[EXT]`, emails → `[EMAIL]`, web addresses → `[WEB]`, permit, plot,
     licence, registration and ID numbers → `[ID-NO]`, other contacts → `[CONTACT]`;
   - words Studio does not know as a room's or a plan's word (a name without a title, a
