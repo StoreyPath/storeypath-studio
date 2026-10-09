@@ -745,6 +745,98 @@ test("pre-built floors are used only as they were built: this export, this build
   truly(r.sized === 0 && r.stale === 0 && r.same >= 2 && r.old === 0 && r.furnished && r.floors, JSON.stringify(r));
 });
 
+// format 0.8: the way through a building (route(), the module both viewers share)
+const routes = JSON.parse(readFileSync(join(root, "../../spec/conformance/routes.json"), "utf8"));
+
+test("the world's module finds the conformance ways as Studio does, on the network its reader reads", async () => {
+  const cases = routes.routes.filter((c) => c.package === "campus-hq.storeypath");
+  const r = await page.run(async (cases) => {
+    const pkg = await window.sp.loadPackage("/campus-hq.storeypath");
+    const old = await window.sp.loadPackage("/campus.storeypath");
+    const sorted = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
+    const wrong = [];
+    for (const c of cases) {
+      const got = window.sp.route(pkg, c.from, c.to, { accessible: c.accessible });
+      for (const key of ["nodes", "legs", "changes", "steps"]) {
+        if (sorted(got?.[key]) !== sorted(c.expect[key])) wrong.push(`${c.name}: its ${key}`);
+      }
+    }
+    const lifts = pkg.spaces.filter((s) => s.properties.type === "elevator");
+    return { wrong, nodes: pkg.navigation?.nodes.length ?? 0, old: old.navigation,
+      stacks: new Set(lifts.map((s) => s.properties.stack)).size, lifts: lifts.length };
+  }, cases);
+  truly(r.wrong.length === 0 && cases.length >= 5, r.wrong.join("; "));
+  truly(r.nodes > 200 && r.old === null, `the network read: ${r.nodes} nodes; an older package's: ${r.old}`);
+  truly(r.lifts === 6 && r.stacks === 2, `two lifts through three floors: ${JSON.stringify(r)}`);
+});
+
+test("a way is drawn over each floor it walks on, through the lift between them, and taken away", async () => {
+  const lifted = routes.routes.find((c) => c.package === "campus-hq.storeypath" && c.accessible && c.expect.changes.length);
+  const r = await page.run(async (c) => {
+    const THREE_Y = (o) => { o.geometry.computeBoundingBox(); return o.geometry.boundingBox; };
+    const world = new window.sp.StoreyPathWorld("#v");
+    const pkg = await world.open("/campus-hq.storeypath");
+    const way = window.sp.route(pkg, c.from, c.to, { accessible: true });
+    await world.showRoute(way);
+    await window.frames();
+    const named = (prefix) => {
+      const out = [];
+      world.scene.traverse((o) => { if (o.name.startsWith(prefix)) out.push(o); });
+      return out;
+    };
+    const legs = named("route:leg:"), links = named("route:link:"), start = named("route:start")[0], end = named("route:end")[0];
+    const floors = pkg.floorsOf(world.building);
+    const elevation = (id) => floors.find((f) => f.id === id).properties.elevation;
+    const first = pkg.navigation.nodes.find((n) => n.id === way.nodes[0]);
+    const firstAt = world.toLocal(first.lonlat);
+    const legOn = legs.map((m) => [m.parent.name, Math.round((THREE_Y(m).min.y - elevation(m.parent.name)) * 100) / 100]);
+    const startFloor = start.parent.name, endFloor = end.parent.name, linkSpan = links[0] ? links[0].scale.y : 0;
+    const seen = () => ({ legs: named("route:leg:").map((m) => m.parent.visible), link: links[0]?.visible,
+      top: floors.map((f) => world.scene.getObjectByName(f.id).visible) });
+    const all = seen();
+    world.setFloor(way.legs[0].floor_id);
+    const one = seen();
+    world.setFloor(null);
+    // the camera along the way: the floor it is not on faded meanwhile, clear again after
+    const opacity = () => named("route:leg:").map((m) => m.material.opacity);
+    const flying = world.flyRoute({ seconds: 3 });
+    await window.frames(6);
+    const during = opacity();
+    await flying;
+    const after = opacity();
+    const before = world.camera.position.clone();
+    await world.flyRoute({ seconds: 2 }); // (longer than a frame drawn in software, however busy the machine)
+    const moved = world.camera.position.distanceTo(before);
+    const target = { x: world.camera.position.x, y: world.camera.position.y };
+    world.clearRoute();
+    await window.frames();
+    const left = named("route:").length;
+    // the page's colours
+    await world.showRoute(way, { color: "#ff0000", casing: "rgb(0, 0, 255)", end: "nonsense" });
+    const colours = ["route:leg:0", "route:casing:0", "route:end"].map((n) => named(n)[0].material.color.getHexString());
+    world.clearRoute();
+    const shown = floors.map((f) => world.scene.getObjectByName(f.id).visible);
+    world.destroy();
+    return { legs: legOn, links: links.length, start: [start.position.x - firstAt.x, start.position.z - firstAt.z],
+      startFloor, endFloor, wayFloors: way.legs.map((l) => l.floor_id), all, one, moved, left, during, after, colours,
+      shown, linkSpan, rise: elevation(way.legs[1].floor_id) - elevation(way.legs[0].floor_id), target };
+  }, lifted);
+  truly(JSON.stringify(r.legs) === JSON.stringify(r.wayFloors.map((f) => [f, 0.14])), `a ribbon over each floor: ${JSON.stringify(r.legs)}`);
+  truly(r.links === 1 && Math.abs(r.linkSpan - r.rise) < 0.05, `through the lift: ${r.links}, ${r.linkSpan} m of ${r.rise}`);
+  truly(Math.hypot(...r.start) < 0.05 && r.startFloor === r.wayFloors[0] && r.endFloor === r.wayFloors.at(-1),
+    `its start at the kiosk, its end upstairs: ${JSON.stringify(r)}`);
+  truly(JSON.stringify(r.all) === JSON.stringify({ legs: [true, true], link: true, top: [true, true, false] }),
+    `the floors it goes to, not the one above: ${JSON.stringify(r.all)}`);
+  truly(JSON.stringify(r.one) === JSON.stringify({ legs: [true, false], link: false, top: [true, false, false] }),
+    `one floor shown: its leg alone: ${JSON.stringify(r.one)}`);
+  truly(r.moved > 1, `the camera went along it: ${r.moved}`);
+  truly(r.during.length === 2 && Math.min(...r.during) < 0.5 && Math.max(...r.during) > 0.9
+    && r.after.every((o) => o > 0.9), `the floor it is not on faded as it goes: ${r.during} then ${r.after}`);
+  truly(JSON.stringify(r.colours) === JSON.stringify(["ff0000", "0000ff", "d62d50"]), `the page's colours: ${r.colours}`);
+  truly(r.left === 0 && JSON.stringify(r.shown) === "[true,true,true]", `taken away, every floor shown again: ${r.left}, ${r.shown}`);
+});
+
 // ---- editing on top of the world: what is aimed at, items given, a ghost, items carried ----
 
 /** Open a package as the world of the page (#w), its lowest floor shown on its own; with
@@ -1028,98 +1120,6 @@ test("walking from a point of a floor, then back to the dollhouse view as it was
   truly(Math.hypot(r.at[0] - r.want[0], r.at[1] - r.want[1]) < 1e-6 && r.rooms.includes(r.id), JSON.stringify(r));
   truly(r.outside !== null && r.back, `outside: in a room ${r.outside}; back: ${r.back}`);
   truly(r.paused === 0 && r.drawn >= 2, `paused: ${r.paused} frames; resumed: ${r.drawn}`);
-});
-
-// format 0.8: the way through a building (route(), the module both viewers share)
-const routes = JSON.parse(readFileSync(join(root, "../../spec/conformance/routes.json"), "utf8"));
-
-test("the world's module finds the conformance ways as Studio does, on the network its reader reads", async () => {
-  const cases = routes.routes.filter((c) => c.package === "campus-hq.storeypath");
-  const r = await page.run(async (cases) => {
-    const pkg = await window.sp.loadPackage("/campus-hq.storeypath");
-    const old = await window.sp.loadPackage("/campus.storeypath");
-    const sorted = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)
-      ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
-    const wrong = [];
-    for (const c of cases) {
-      const got = window.sp.route(pkg, c.from, c.to, { accessible: c.accessible });
-      for (const key of ["nodes", "legs", "changes", "steps"]) {
-        if (sorted(got?.[key]) !== sorted(c.expect[key])) wrong.push(`${c.name}: its ${key}`);
-      }
-    }
-    const lifts = pkg.spaces.filter((s) => s.properties.type === "elevator");
-    return { wrong, nodes: pkg.navigation?.nodes.length ?? 0, old: old.navigation,
-      stacks: new Set(lifts.map((s) => s.properties.stack)).size, lifts: lifts.length };
-  }, cases);
-  truly(r.wrong.length === 0 && cases.length >= 5, r.wrong.join("; "));
-  truly(r.nodes > 200 && r.old === null, `the network read: ${r.nodes} nodes; an older package's: ${r.old}`);
-  truly(r.lifts === 6 && r.stacks === 2, `two lifts through three floors: ${JSON.stringify(r)}`);
-});
-
-test("a way is drawn over each floor it walks on, through the lift between them, and taken away", async () => {
-  const lifted = routes.routes.find((c) => c.package === "campus-hq.storeypath" && c.accessible && c.expect.changes.length);
-  const r = await page.run(async (c) => {
-    const THREE_Y = (o) => { o.geometry.computeBoundingBox(); return o.geometry.boundingBox; };
-    const world = new window.sp.StoreyPathWorld("#v");
-    const pkg = await world.open("/campus-hq.storeypath");
-    const way = window.sp.route(pkg, c.from, c.to, { accessible: true });
-    await world.showRoute(way);
-    await window.frames();
-    const named = (prefix) => {
-      const out = [];
-      world.scene.traverse((o) => { if (o.name.startsWith(prefix)) out.push(o); });
-      return out;
-    };
-    const legs = named("route:leg:"), links = named("route:link:"), start = named("route:start")[0], end = named("route:end")[0];
-    const floors = pkg.floorsOf(world.building);
-    const elevation = (id) => floors.find((f) => f.id === id).properties.elevation;
-    const first = pkg.navigation.nodes.find((n) => n.id === way.nodes[0]);
-    const firstAt = world.toLocal(first.lonlat);
-    const legOn = legs.map((m) => [m.parent.name, Math.round((THREE_Y(m).min.y - elevation(m.parent.name)) * 100) / 100]);
-    const startFloor = start.parent.name, endFloor = end.parent.name, linkSpan = links[0] ? links[0].scale.y : 0;
-    const seen = () => ({ legs: named("route:leg:").map((m) => m.parent.visible), link: links[0]?.visible,
-      top: floors.map((f) => world.scene.getObjectByName(f.id).visible) });
-    const all = seen();
-    world.setFloor(way.legs[0].floor_id);
-    const one = seen();
-    world.setFloor(null);
-    // the camera along the way: the floor it is not on faded meanwhile, clear again after
-    const opacity = () => named("route:leg:").map((m) => m.material.opacity);
-    const flying = world.flyRoute({ seconds: 3 });
-    await window.frames(6);
-    const during = opacity();
-    await flying;
-    const after = opacity();
-    const before = world.camera.position.clone();
-    await world.flyRoute({ seconds: 0.4 });
-    const moved = world.camera.position.distanceTo(before);
-    const target = { x: world.camera.position.x, y: world.camera.position.y };
-    world.clearRoute();
-    await window.frames();
-    const left = named("route:").length;
-    // the page's colours
-    await world.showRoute(way, { color: "#ff0000", casing: "rgb(0, 0, 255)", end: "nonsense" });
-    const colours = ["route:leg:0", "route:casing:0", "route:end"].map((n) => named(n)[0].material.color.getHexString());
-    world.clearRoute();
-    const shown = floors.map((f) => world.scene.getObjectByName(f.id).visible);
-    world.destroy();
-    return { legs: legOn, links: links.length, start: [start.position.x - firstAt.x, start.position.z - firstAt.z],
-      startFloor, endFloor, wayFloors: way.legs.map((l) => l.floor_id), all, one, moved, left, during, after, colours,
-      shown, linkSpan, rise: elevation(way.legs[1].floor_id) - elevation(way.legs[0].floor_id), target };
-  }, lifted);
-  truly(JSON.stringify(r.legs) === JSON.stringify(r.wayFloors.map((f) => [f, 0.14])), `a ribbon over each floor: ${JSON.stringify(r.legs)}`);
-  truly(r.links === 1 && Math.abs(r.linkSpan - r.rise) < 0.05, `through the lift: ${r.links}, ${r.linkSpan} m of ${r.rise}`);
-  truly(Math.hypot(...r.start) < 0.05 && r.startFloor === r.wayFloors[0] && r.endFloor === r.wayFloors.at(-1),
-    `its start at the kiosk, its end upstairs: ${JSON.stringify(r)}`);
-  truly(JSON.stringify(r.all) === JSON.stringify({ legs: [true, true], link: true, top: [true, true, false] }),
-    `the floors it goes to, not the one above: ${JSON.stringify(r.all)}`);
-  truly(JSON.stringify(r.one) === JSON.stringify({ legs: [true, false], link: false, top: [true, false, false] }),
-    `one floor shown: its leg alone: ${JSON.stringify(r.one)}`);
-  truly(r.moved > 1, `the camera went along it: ${r.moved}`);
-  truly(r.during.length === 2 && Math.min(...r.during) < 0.5 && Math.max(...r.during) > 0.9
-    && r.after.every((o) => o > 0.9), `the floor it is not on faded as it goes: ${r.during} then ${r.after}`);
-  truly(JSON.stringify(r.colours) === JSON.stringify(["ff0000", "0000ff", "d62d50"]), `the page's colours: ${r.colours}`);
-  truly(r.left === 0 && JSON.stringify(r.shown) === "[true,true,true]", `taken away, every floor shown again: ${r.left}, ${r.shown}`);
 });
 
 test("a way shown stays shown when a floor it walks on is built again (a room's new type, reload)", async () => {
