@@ -51,8 +51,9 @@ for _, b := range pkg.Buildings {
   `SpacesOn`, `ZonesOf`, `OpeningsOn`, and `UnitsOn`: the zones of a divided space
   and every space with none, which is what a system placing people should use.
 - Items (format 0.6): `Items`, `Item`, `ItemsOn`, the `Catalogue` of their types
-  and `ItemType`. An item's ID is the project's and its own number
-  (`K7Q2XM-I000142`, `IsItemID`), not its place: where it stands is its `Floor`,
+  and `ItemType`. An item's ID is an asset's tag (format 0.8: `7K2Q-XM9F-4DP`,
+  `IsItemID`; the project's code and its number, `K7Q2XM-I000142`, before), not its
+  place nor its project's: where it stands is its `Floor`,
   `Space` and `Zone`, and (0.7) its `Local` position in its building, which moving
   the building on the map never changes: keep that, not the map position, for the
   history of where an item has been (`ItemLocal` gives it for older packages too,
@@ -76,7 +77,14 @@ for _, b := range pkg.Buildings {
   Studio drew it in, and back (azimuthal equidistant on WGS84, Vincenty), within a
   millimetre of Studio; positions read from a package are within about a
   centimetre (it keeps 7 decimals of a degree).
-- `ParseID`: an ID's project, parent, code and the prefix at any level.
+- `ParseID`: a place's ID's project, parent, code and the prefix at any level (an
+  item's ID is refused: it is not a place's).
+- Items' IDs (format 0.8): `IsItemID` (as a package writes it, its check symbol
+  right), `NormalizeItemID` (as a person typed it: either case, O for 0, I and L for 1,
+  hyphens and spaces left out; for a kiosk's search box, never for an ID read from a
+  package) and `ItemCheckSymbol`. `ValidateAcross` checks packages held together: the
+  same item ID in packages of two projects is a clash (`ITEM_ELSEWHERE`), reported
+  against the later one, which a system refuses.
 
 Each file is found through the manifest's `files`, as the format asks (at its usual
 name when a manifest does not list a file every package has; items and their

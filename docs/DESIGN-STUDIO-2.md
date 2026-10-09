@@ -44,12 +44,12 @@ it), and a PostGIS geometry is made from it beside it (generated, GiST-indexed).
 
 | Table | Holds |
 |---|---|
-| `projects` | code (PK), name, created, `next_item_seq`, `version` (one more at every change) |
+| `projects` | code (PK), name, created, `version` (one more at every change) |
 | `locations`, `buildings` | as the workspace has them (placement, site position, `next_object_seq`), in order |
 | `floors` | id, code, name, ordinal, elevation, height, parapet, source drawing (JSONB), outline (JSONB + geometry), conversion results (method, warnings, layers, walls as drawn, wall thickness, symbols), drawn edits (JSONB), `version` (one more at every change of it or of anything on it) |
 | `objects` | spaces, zones, openings: project and id (PK), floor, kind, detected type and its source, name, number, label, geometry, the rest (connects, parent, zones, span, swings, sill, height, tag, issues, detected_ignored) as JSONB, status, created/retired |
 | `overrides` | a person's corrections by object: type, name, number, hidden, ignored, capacity; who and when; `version` |
-| `items` | id, type, floor, x, y (and a point geometry), rotation, values (JSONB), status, created/retired, who and when, `version` |
+| `items` | id (PK: an asset's tag, one project's in the whole Studio; migration 0003), project, type, floor, x, y (and a point geometry), rotation, values (JSONB), status, created/retired, who and when, `version` |
 | `readings`, `vision` | the text model's and the vision model's answers, kept by text and by room shape |
 | `drawings` | project, name, the bytes, size, sha256, the words left in it, who sent it and when; `incoming` for one waiting for a person |
 | `exports` | each export record (JSONB) in order, with the package's bytes as sent; a package kept from before records, on its own |

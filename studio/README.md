@@ -267,7 +267,7 @@ again gives them). A file opened in place of the project, or of a building, is a
 no undo goes back over.
 
 **History.** *History* in Review lists who changed what on the floor, newest first, in
-words (*moved Manager's desk …-I000004*, *drew a wall*), what was undone marked, and
+words (*moved Manager's desk 7K2Q-XM9F-4DP*, *drew a wall*), what was undone marked, and
 what ⌘Z would undo; it follows changes as they come. Each person sees the history of
 what they may see.
 
@@ -297,7 +297,8 @@ what they may see.
 | `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in) |
 | `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
 | `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid |
-| `validate PACKAGE` | check a package against the format |
+| `validate PACKAGE…` | check a package against the format; several, together too (the same item ID in packages of two projects is refused) |
+| `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
 | `words DRAWING` | every word and string in a drawing, to look through for anything private |
 | `view PACKAGE` | open a package in the viewer's example app |
@@ -664,8 +665,17 @@ gives, at every conversion.
 
 Items (desks by grade, central photocopiers, wireless access points, sofas, TVs,
 beds, wayfinding kiosks) are placed on floors in the review editor, and kept in the workspace. Each has
-an ID of its own, the project's code and its number (`K7Q2XM-I000142`), which stays
-with it wherever it is carried; a deleted item's ID is never issued again.
+an ID of its own, an asset's tag (`7K2Q-XM9F-4DP`: ten random symbols and a check
+symbol, [spec/FORMAT.md](../spec/FORMAT.md), Asset IDs), which stays with it wherever
+it is carried, to another building too; a deleted item's ID is never issued again. It
+is no project's: a new one is drawn again while an item of any project in the Studio's
+database has it (the items' key), and a project saved as new gives its items new ones.
+The item editor shows it whole, with *Copy*; the search box finds an item by its ID as
+a person types it (either case, with or without its hyphens, O for 0, I and L for 1),
+opening its floor; `storeypath item-id 7k2q xm9f 4dp` prints it as written, or says it
+is not one (a symbol wrong, two swapped). An item of a package of format 0.6 or 0.7
+(numbered by the project then, `K7Q2XM-I000142`) is given an asset's ID made from that
+one when the package is opened.
 
 Their types are the **catalogue** ([catalogue.py](src/storeypath/catalogue.py)):
 in Studio's database, one for every project (`catalogue.json` beside workspace files
