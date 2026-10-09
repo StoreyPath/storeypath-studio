@@ -434,20 +434,6 @@ export function buildPieces(plan, options = {}) {
     }
   }
 
-  // the walls and parapets, full height (cut low by cutPieces), with skirting along
-  // every face
-  const extruded = (polys, height, key, top) => {
-    if (solid) {
-      const [caps, sides] = capsAndSides(extrude(polys, height, e));
-      put(key, sides);
-      put(top, caps);
-      skirting(polys, box);
-    }
-    if (lined) outlineEdges(set(key).edges, polys, e, e + height);
-  };
-  extruded(walls, wallHeight, "wall", "wallTop");
-  extruded(parapets, parapetHeight, "parapet", "parapetTop");
-
   // Openings in a parapet (no full wall at either side) get no head, sill or glass:
   // a full wall ends at one of its jambs (its middle is far from any wall when wide).
   const fullSegments = [];
@@ -456,6 +442,33 @@ export function buildPieces(plan, options = {}) {
   }
   const inFullWall = ({ a, b }) => !parapets.length || [a, b].some((jamb) => fullSegments.some(([p, q]) =>
     distanceToSegment(jamb, p, q) <= thickness + 0.3));
+  // the openings in full walls: each in the wall it is in, as thick as its jambs, its
+  // middle where theirs are (the span may be on a face, and outer walls thicker than the
+  // floor's own); how high it is open (heights)
+  const wallAt = jambs(plan);
+  const openings = [];
+  for (const way of plan.ways) {
+    const len = Math.hypot(way.b[0] - way.a[0], way.b[1] - way.a[1]);
+    if (len < 0.3 || !inFullWall(way)) continue;
+    const ux = (way.b[0] - way.a[0]) / len, un = (way.b[1] - way.a[1]) / len;
+    const { depth, shift, corners } = wallAt(way, ux, un);
+    const at = (t, across = 0) => [way.a[0] + ux * t - un * (across + shift), way.a[1] + un * t + ux * (across + shift)];
+    openings.push({ way, len, ux, un, depth, at, corners, open: heights(way, len, o, wallHeight) });
+  }
+
+  // the walls and parapets, full height (cut low by cutPieces), with skirting along
+  // every face; their lines up the jambs of openings only as high as each is open
+  const extruded = (polys, height, key, top) => {
+    if (solid) {
+      const [caps, sides] = capsAndSides(extrude(polys, height, e));
+      put(key, sides);
+      put(top, caps);
+      skirting(polys, box);
+    }
+    if (lined) outlineEdges(set(key).edges, polys, e, e + height, jambLines(openings, height));
+  };
+  extruded(walls, wallHeight, "wall", "wallTop");
+  extruded(parapets, parapetHeight, "parapet", "parapetTop");
 
   // door heads, frames, architraves, leaves and handles; window sills, boards, heads,
   // frames and glass
@@ -465,24 +478,21 @@ export function buildPieces(plan, options = {}) {
       obstacles.push([ring[i][0], -ring[i][1], ring[i + 1][0], -ring[i + 1][1]]);
     }
   }
-  const wallAt = jambs(plan);
-  for (const way of plan.ways) {
+  for (const { way, len, ux, un, depth: thickness, at, open: range } of openings) {
     const { type } = way;
-    const len = Math.hypot(way.b[0] - way.a[0], way.b[1] - way.a[1]);
-    if (len < 0.3 || !inFullWall(way)) continue;
-    const ux = (way.b[0] - way.a[0]) / len, un = (way.b[1] - way.a[1]) / len;
-    // the wall it is in: as thick as its jambs, its middle where theirs are (the span may
-    // be on a face, and outer walls thicker than the floor's own)
-    const { depth: thickness, shift } = wallAt(way, ux, un);
-    const at = (t, across = 0) => [way.a[0] + ux * t - un * (across + shift), way.a[1] + un * t + ux * (across + shift)];
     // (the wall over and under it a little into the wall each side: no slit at its jambs)
     const a = at(0), b = at(len), a2 = at(-0.02), b2 = at(len + 0.02);
-    // sizes from the drawing's schedule where it gives them; a window taller than the
-    // floor (through two storeys) stops at this floor's ceiling
-    const ceiling = wallHeight - 0.02;
+    // the lines along the wall go on over it, and under a window, along both its faces
+    const lines = range && set("wall").edges;
+    if (lines) {
+      for (const side of [-1, 1]) {
+        const [p, q] = [at(0, (side * thickness) / 2), at(len, (side * thickness) / 2)];
+        if (range.hi < wallHeight - 0.03) lines.push(p[0], e + wallHeight, -p[1], q[0], e + wallHeight, -q[1]);
+        if (range.lo > 0.01) lines.push(p[0], e, -p[1], q[0], e, -q[1]);
+      }
+    }
     if (type === "window") {
-      const sill = Math.min(Math.max(way.sill ?? o.windowSill, 0), ceiling - 0.2);
-      const head = Math.min(way.height !== null && way.height !== undefined ? sill + way.height : o.windowHead, ceiling);
+      const { lo: sill, hi: head } = range;
       if (sill > 0.01) {
         box("sills", a2, b2, 0, sill, thickness);
         // a board on the sill, a little proud of the wall each side; skirting along the sill
@@ -509,7 +519,7 @@ export function buildPieces(plan, options = {}) {
       }
       obstacles.push([way.a[0], -way.a[1], way.b[0], -way.b[1]]); // you cannot walk through a window
     } else if (type === "door") {
-      const top = Math.min(way.height ?? o.doorHead, ceiling);
+      const top = range.hi;
       if (top < wallHeight - 0.01) box("heads", a2, b2, top, wallHeight, thickness);
       // the frame: a jamb each side and a head, standing a little proud of the wall
       const c = Math.min(CASING, len / 4), depth = thickness + 0.03;
@@ -549,8 +559,8 @@ export function buildPieces(plan, options = {}) {
         obstacles.push([from[0], -from[1], to[0], -to[1]]); // an open leaf stands in the way
         if (solid) leverHandles(from, [dx, dn], w, box);
       }
-    } else if (len <= OPEN_SPAN) { // a doorway: a way through with no door
-      box("heads", a2, b2, o.doorHead, wallHeight, thickness);
+    } else if (range) { // a doorway: a way through with no door
+      box("heads", a2, b2, range.hi, wallHeight, thickness);
     }
   }
 
@@ -572,6 +582,33 @@ export function buildPieces(plan, options = {}) {
   return { pieces, rooms, obstacles };
 }
 
+/** How high an opening is open, above the floor: ``lo`` to ``hi`` (a window from its sill
+ * to its head, from the drawing's schedule where it gives them, a door or a doorway from
+ * the floor to its head; one taller than the floor, through two storeys, stops at this
+ * floor's ceiling); null for an open-plan join, open to the ceiling. */
+function heights(way, len, o, wallHeight) {
+  const ceiling = wallHeight - 0.02;
+  if (way.type === "window") {
+    const sill = Math.min(Math.max(way.sill ?? o.windowSill, 0), ceiling - 0.2);
+    return { lo: sill, hi: Math.min(way.height !== null && way.height !== undefined ? sill + way.height : o.windowHead, ceiling) };
+  }
+  if (way.type === "door") return { lo: 0, hi: Math.min(way.height ?? o.doorHead, ceiling) };
+  return len <= OPEN_SPAN ? { lo: 0, hi: o.doorHead } : null;
+}
+
+/** The corners of openings' jambs (the ends of the jambs' edges, jambs found them), for
+ * the lines along walls (outlineEdges): a function of a wall's corner, [x, n], giving how
+ * high the wall is open there ({ lo, hi }), when it is a jamb of an opening that the wall
+ * goes on over or under. */
+function jambLines(openings, height) {
+  const near = new Map(), key = (x, n) => `${Math.round(x * 100)},${Math.round(n * 100)}`; // to a centimetre
+  for (const { corners, open } of openings) {
+    if (!open || (open.lo <= 0.01 && open.hi >= height - 0.03)) continue; // open floor to ceiling: the wall ends
+    for (const [x, n] of corners) near.set(key(x, n), open);
+  }
+  return ([x, n]) => near.get(key(x, n)) ?? null;
+}
+
 /** How thick the wall an opening is in is, and how far its middle is across from the
  * opening's span: from the wall's jambs, the short edges across it at each end of the
  * span (walls are drawn with gaps at their openings); else the floor's thickness, on
@@ -589,7 +626,7 @@ function jambs(plan) {
     }
   }
   return ({ a, b }, ux, un) => {
-    const depths = [], shifts = [];
+    const depths = [], shifts = [], corners = [];
     for (const end of [a, b]) {
       const i0 = Math.floor(end[0] / cell), j0 = Math.floor(end[1] / cell);
       for (let i = i0 - 1; i <= i0 + 1; i++) {
@@ -601,13 +638,14 @@ function jambs(plan) {
             if (Math.abs(along) > 0.12 || Math.abs(across) > 0.6) continue;
             depths.push(len);
             shifts.push(across);
+            corners.push(p, q);
           }
         }
       }
     }
-    if (!depths.length) return { depth: plan.thickness, shift: 0 };
+    if (!depths.length) return { depth: plan.thickness, shift: 0, corners };
     const middle = (v) => v.sort((x, y) => x - y)[v.length >> 1];
-    return { depth: middle(depths), shift: middle(shifts) };
+    return { depth: middle(depths), shift: middle(shifts), corners };
   };
 }
 
@@ -681,18 +719,25 @@ function boxEdges(out, e, p, q, y0, y1, depth) {
 const BOX_EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
 
 /** Lines along the walls of polygons standing from y0 to y1: round each ring at the
- * bottom and the top, and up each corner (where the wall turns). */
-function outlineEdges(out, polygons, y0, y1) {
+ * bottom and the top, and up each corner (where the wall turns); at the jamb of an
+ * opening that the wall goes on over or under (``jamb``), only as high as it is open, and
+ * none across the jamb where the wall goes on. */
+function outlineEdges(out, polygons, y0, y1, jamb = () => null) {
   for (const ring of polygons.flat(1)) {
     const n = ring.length - 1; // closed: its last point is its first
     if (n < 2) continue;
     for (let i = 0; i < n; i++) {
       const [x0, n0] = ring[i], [x1, n1] = ring[i + 1];
-      out.push(x0, y0, -n0, x1, y0, -n1, x0, y1, -n0, x1, y1, -n1);
+      const j0 = jamb(ring[i]), j1 = jamb(ring[i + 1]), across = j0 && j1;
+      if (!across || j0.lo <= 0.01) out.push(x0, y0, -n0, x1, y0, -n1);
+      if (!across) out.push(x0, y1, -n0, x1, y1, -n1);
       const [xp, np] = ring[(i + n - 1) % n];
       const ax = x0 - xp, an = n0 - np, bx = x1 - x0, bn = n1 - n0;
       const la = Math.hypot(ax, an), lb = Math.hypot(bx, bn);
-      if (la > 1e-6 && lb > 1e-6 && (ax * bx + an * bn) / (la * lb) < EDGE_TURN) out.push(x0, y0, -n0, x0, y1, -n0);
+      if (la > 1e-6 && lb > 1e-6 && (ax * bx + an * bn) / (la * lb) < EDGE_TURN) {
+        if (j0) out.push(x0, y0 + j0.lo, -n0, x0, y0 + j0.hi, -n0);
+        else out.push(x0, y0, -n0, x0, y1, -n0);
+      }
     }
   }
 }

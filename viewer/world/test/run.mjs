@@ -1311,7 +1311,7 @@ test("the look: real, at the quality the machine gets (Low here: a software rend
     const real = { meshes: meshes(), finished: Boolean(office().map), colours: await picture(world) };
     world.setStyle("model");
     await world.ready();
-    const model = { meshes: meshes(), offset: world.scene.getObjectByName(floor).getObjectByName("wall").material.polygonOffset,
+    const model = { meshes: meshes(), clay: world.scene.getObjectByName(floor).getObjectByName("wall").material.map === null,
       colours: await picture(world) };
     world.setQuality("high");
     await world.ready();
@@ -1342,7 +1342,7 @@ test("the look: real, at the quality the machine gets (Low here: a software rend
   truly(names.length > 20 && names.every((n) => r.model.meshes[n]?.geometry === r.real.meshes[n].geometry
     && r.back.meshes[n]?.geometry === r.real.meshes[n].geometry), "built again");
   truly(names.filter((n) => r.model.meshes[n].material !== r.real.meshes[n].material).length >= names.length - 2, "the same materials");
-  truly(r.model.meshes.wall.lines === 1 && r.model.meshes.items.lines === 1 && r.model.meshes.door.lines === 1 && r.model.offset,
+  truly(r.model.meshes.wall.lines === 1 && r.model.meshes.items.lines === 1 && r.model.meshes.door.lines === 1 && r.model.clay,
     `model: lines along edges ${JSON.stringify(r.model.meshes.wall)}`);
   truly(names.every((n) => r.real.meshes[n].lines === 0 && r.back.meshes[n].lines === 0), "real: no lines");
   truly(r.model.colours > 20 && r.high.colours > 20, `pictures of ${r.model.colours} and ${r.high.colours} colours`);

@@ -51,9 +51,15 @@ export class Materials {
     this.highlight = new THREE.MeshStandardMaterial({
       color: 0xff8a00, emissive: 0xff8a00, emissiveIntensity: 0.35, transparent: true, opacity: 0.35, depthWrite: false,
     });
-    // lines along edges ("model"): seen over the faces they edge (those are pushed back a
-    // little), and not in the depth the occlusion is worked out from
+    // lines along edges ("model"): seen over the faces they edge, drawn a little nearer
+    // (a share of the distance, so that at a glancing angle what is behind a wall is not
+    // seen through it), and not in the depth the occlusion is worked out from
     this.edges = new THREE.LineBasicMaterial({ color: 0x33363b, transparent: true, opacity: 0.72, depthWrite: false });
+    this.edges.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace("#include <project_vertex>",
+        "#include <project_vertex>\nmvPosition.xyz *= 0.997;\ngl_Position = projectionMatrix * mvPosition;");
+    };
+    this.edges.customProgramCacheKey = () => "storeypath-edges";
     if (style === "model") this.#model();
     else this.#real();
   }
@@ -181,10 +187,8 @@ export class Materials {
   // ---- the "model" look -------------------------------------------------------------
 
   #model() {
-    // pushed back a little, so that the lines along their edges are seen over them; flat-shaded
-    // (boxes have no normals)
-    const clay = (color, extra = {}) => new THREE.MeshStandardMaterial({
-      color, roughness: 0.92, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, flatShading: true, ...extra });
+    // flat-shaded (boxes have no normals)
+    const clay = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.92, flatShading: true, ...extra });
     this.wall = clay(0xedece8);
     this.wallPlain = clay(0xedece8);
     this.wallTop = clay(0xdddbd6);
@@ -221,8 +225,7 @@ export class Materials {
         const c = new THREE.Color(TYPE_COLORS[type] || TYPE_COLORS.unspecified);
         const hsl = c.getHSL({});
         c.setHSL(hsl.h, hsl.s * 0.55, 0.74 + hsl.l * 0.14);
-        this.#floors.set(type, new THREE.MeshStandardMaterial({ color: c, roughness: 0.9,
-          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+        this.#floors.set(type, new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 }));
       }
       return this.#floors.get(type);
     }
