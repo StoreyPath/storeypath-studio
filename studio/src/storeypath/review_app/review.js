@@ -2100,6 +2100,7 @@ async function build3d() {
       view3d.stale = false;
       const dirty = [...view3d.dirty].filter((f) => f.startsWith(`${building}-`));
       dirty.forEach((f) => view3d.dirty.delete(f));
+      const other = view3d.building && view3d.building !== building;
       try {
         await view3d.world.open(url);
       } catch (e) {
@@ -2107,6 +2108,10 @@ async function build3d() {
         throw e;
       }
       view3d.building = building;
+      if (other && view3d.world.mode === "walk") { // into another building: walking again, from its middle
+        view3d.world.setMode("dollhouse");
+        view3d.from = "3d";
+      }
     } else {
       const floors = [...view3d.dirty].filter((f) => f.startsWith(`${building}-`));
       if (floors.length) {
@@ -2312,6 +2317,7 @@ function showWalk() {
   const w = view3d.world, walking = view3d.mode === "walk";
   const locked = walking && Boolean(w?.walking);
   $("walk-hud").hidden = !walking;
+  document.body.classList.toggle("walking", walking); // (messages above the room walked in)
   $("crosshair").hidden = !locked;
   $("walk-enter").hidden = !walking || locked || !w || w.mode !== "walk";
   $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
