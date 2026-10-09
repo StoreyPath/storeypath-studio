@@ -343,10 +343,44 @@ windows, openings and spaces the drawing leaves out, to resize a door, window or
 opening, or to place furniture and equipment; the keys are on the page (W wall, V
 divide, S space, D door, O opening, Del delete, N next to review, F fit). Every change
 is saved to the workspace file immediately, and *Re-read drawing* converts a revised
-drawing without leaving the page. The editor also shows the floor in 3D. *Undo* and
-*Redo* (⌘Z, ⇧⌘Z) take back your own changes, and *History* lists who changed what on
-the floor; in Studio, others' changes appear as they are saved, and one person edits
-a floor at a time ([Many people at once](#many-people-at-once)).
+drawing without leaving the page. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
+changes, and *History* lists who changed what on the floor; in Studio, others' changes
+appear as they are saved, and one person edits a floor at a time ([Many people at
+once](#many-people-at-once)).
+
+**2D, 3D and Walk** are one view, switched in the toolbar: the plan, the floor as built
+(orbit it: drag to turn, Shift-drag to move, scroll to zoom), or a walk through it
+(click the view to look, W A S D or the arrows to move, Shift to run, E and Q up and
+down at stairs and lifts, Esc frees the mouse for the panel and the toolbar). The
+floor, what is chosen, the panel (space and item editors, History, the lists) and the
+plan's view stay as they are from one to another. The 3D world is Studio's package of
+the floor's building as it is now (not recorded as an export), built the first time
+and kept: switching is instant, and nothing is drawn while the plan is shown. Walking
+starts in the room or before the item chosen, else where the 3D view (or the plan) was
+looking, and shows the room you are in.
+
+Editing in 3D and walking, for whoever may edit the floor (the same requests as on the
+plan: the floor's lock, undo and history as for any change):
+
+| | 3D | Walk |
+|---|---|---|
+| choose a room or an item (its editor opens) | click it | aim the cross at it and click |
+| place an item (*Place*: choose its type) | click the floor: its ghost follows the pointer | aim the cross at the floor and click: its ghost follows the cross |
+| move an item | drag it across the floor | — |
+| turn it, delete it | R (90°), [ and ] (15°), Del | the same |
+| draw walls, doors, dividers, spaces | right-click (or 2): *Draw here in 2D*, the plan centred there; W, V, S, D, O there with that tool | right-click (or 2) at the cross |
+
+An item placed or carried in 3D settles as on the plan (`fit.js`): its room's walls hold
+it, the magnet lines it up against a wall or an item near it, Alt places it as it is;
+its ghost is green, or red where it does not fit. What changes shows in 3D at once:
+items (yours, or others' as they are saved) are drawn again on their floor alone, a
+room's name, number or type changes its label and its floor's finish; walls, doors,
+dividers and spaces drawn on the plan come with the floor read again, and that floor
+alone is built again (another person's re-read of another floor when that floor is
+next shown). A floor of about a thousand rooms and a thousand desks orbits and walks
+at 60 frames a second on a laptop's graphics (labels only where there is room for
+them). *3D in its own window* opens the building on a page of its own, to show it
+full screen.
 
 The same corrections are possible from the command line:
 

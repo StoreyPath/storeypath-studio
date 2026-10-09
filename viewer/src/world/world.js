@@ -18,6 +18,12 @@
 // pre-built file) the first time a floor shows them: detailed when one floor is
 // shown, a box each when more are.
 //
+// A page may edit on top of it (Studio's Review does): pointAt says what is under the
+// pointer or the crosshair, ghost shows where an item would go, setFloorItems draws a
+// floor's items again (nothing else), items are dragged (setDraggable, itemdrag…), a
+// click says what it is on first (pick, cancelable), updateSpace and reload show
+// corrections and a floor read again. The world itself changes nothing.
+//
 // A way through the building (format 0.8: route() in ../navigation.js) is drawn with
 // showRoute: a ribbon just over each floor it walks on, through the lift or stairs
 // between them, its start and end marked; flyRoute takes the camera along it.

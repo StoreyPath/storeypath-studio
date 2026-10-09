@@ -1,7 +1,8 @@
 # StoreyPath Viewer
 
 Read-only web viewer engines for StoreyPath packages, to embed in any web app. It
-does no editing; packages are made with [StoreyPath Studio](../studio).
+does no editing of its own; packages are made with [StoreyPath Studio](../studio),
+whose Review edits on top of the 3D world through its [editing API](#the-3d-world).
 
 - **`StoreyPathWorld`**, the 3D world: walls, doorways, windows and floor finishes
   built from the package, with sunlight and shadows. Orbit it as a dollhouse (one
@@ -63,8 +64,8 @@ install `three` and `jszip` alongside it.
 | `open(source)` | load a package (URL, `Blob`, `File`, `ArrayBuffer`); builds its first building |
 | `setBuilding(id)` | build and show a building; a promise, resolved once it is shown |
 | `setFloor(id)` | one floor, or `null` for all; when walking, go to that floor |
-| `setMode("dollhouse" \| "walk")` | orbit, or stand at the front door to walk in |
-| `startWalking()` | take the mouse to look around (call it from a click: pointer lock) |
+| `setMode("dollhouse" \| "walk", { at, floor, heading, back })` | orbit, or stand at the front door to walk in; walking from `at` (`{ x, z }`, local metres: the middle of the nearest room when in none), on `floor`, facing `heading`; back to orbiting, round the whole building, or with `back`, where the view was before walking |
+| `startWalking()` | take the mouse to look around (call it from a click: pointer lock); `stopWalking()` gives it back |
 | `changeFloor(+1 \| -1)` | when walking: up or down a floor |
 | `select(id, { go })` | highlight a space, zone or item and fly (or, walking, go) to it |
 | `setXray(on)`, `setCutaway(on)`, `setLabels(on)`, `setShowHidden(on)`, `setExplode(m)` | |
@@ -72,7 +73,23 @@ install `three` and `jszip` alongside it.
 | `plan(floorId)` | a floor's walls, rooms, items and obstacles in local meters, for drawing a minimap |
 | `showRoute(route, { fly, color, casing, arrow, start, end })` | draw a way (`route()`, below): an edged ribbon over each floor it walks on, through the lift or stairs between them, its start and end marked, in the page's colours (CSS colours; by default the plan viewer's); with `fly`, the camera goes along it |
 | `flyRoute({ seconds })` | take the camera along the way shown, the floors it is not on faded meanwhile (a promise); `clearRoute()` takes it away; `route` is the way shown |
+| `reload(source, { floors })` | read the package again and build only `floors` again (default: all of the building shown), where they stand: the view, mode, floor shown, selection, walker and a way shown are kept |
+| `pause()`, `resume()` | stop drawing while the page hides the world (kept as it is), and draw again at once |
 | `destroy()` | |
+
+**Editing on top of it** (what Studio's Review does in 3D and walking; the world
+changes nothing by itself — the page decides, saves, and tells it):
+
+| Method | |
+|---|---|
+| `pointAt(clientX, clientY)` | what is under a point of the screen — walking with the mouse taken, or given no point, under the crosshair: `{ floor, x, z, local, space, item }` (`x`, `z`: local metres; `local`: `[x, y]` in the building's own frame, the metres of its drawings, as Studio and an item's `local` have them; the space or zone it is in; the item in the way). The first thing in the way counts: aimed at a wall, the point is on the floor just before it. From the plan's walls and the items' boxes, not triangles: well under a millisecond on a floor of a thousand rooms, so it can follow the pointer, or the crosshair every frame |
+| `worldPoint([x, y])`, `buildingPoint({ x, z })` | the building's own frame into the world and back (through its placement, format 0.7; null without one) |
+| `setFloorItems(floorId, items)` | replace one floor's furniture and equipment without building anything else again (a thousand desks in milliseconds): each `{ id, type, x, y, rotation }` in the building's own frame (rotation: degrees counter-clockwise, its front its own −y), with `width`, `depth`, `height`, `mount`, `elevation`, `color`, `grade` where they are not its type's in the package's catalogue |
+| `ghost(item \| null)` | where an item would go: see-through over its floor, green, or red with `ok: false`, its footprint outlined, with the magnet's `guides` (`[[x, y], [x, y]]` each); `null` takes it away |
+| `setDraggable(on)` | items carried across their floor by a drag in the dollhouse view: `itemdragstart`, `itemdrag`, `itemdragend` say where (`{ id, floor, x, z, local, altKey, shiftKey }`; a press that does not move stays a click) |
+| `updateSpace(id, { name, number, type, hidden, ignored })` | a room corrected: its label at once; its floor built again when its type (its finish) or whether it shows changed |
+
+Properties: `target` (where the dollhouse view looks, `{ x, z }`), `paused`, `draggable`.
 
 Properties: `package`, `building`, `floor`, `mode`, `selected`, `room` (the space
 the walker is in), `walkFloor`, `atStairs`, `walking` (mouse taken), `player`
@@ -99,8 +116,16 @@ are of another export or the world was given other sizes, and builds the rest.
 Either way it looks the same.
 
 Events: `load`, `buildingchange`, `floorchange`, `modechange`, `select`
-(`{ id, feature }`), `roomchange` (`{ id, type, name, number, stairs }`) and
-`walklock` (`{ locked }`).
+(`{ id, feature }`), `roomchange` (`{ id, type, name, number, stairs }`),
+`walklock` (`{ locked }`), `pick` (a click on the dollhouse view, or walking with
+the mouse taken at the crosshair: what `pointAt` says is there, with `button`,
+`altKey`, `shiftKey`; cancelable — unless a listener calls `preventDefault()`, what
+was clicked is selected), `itemdragstart`, `itemdrag`, `itemdragend` (with
+`cancelled`) and `reload` (`{ floors }`).
+
+Rooms' labels show where there is room for them on the screen (a room at least
+56 px across), and are placed again only when the view moves: a floor of a thousand
+rooms orbits as smoothly as a floor of ten.
 
 Walking: mouse to look, <kbd>W A S D</kbd> or the arrow keys to move,
 <kbd>Shift</kbd> to run. Walls and windows stop you; doorways don't. Floor changes

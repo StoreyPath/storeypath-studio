@@ -219,9 +219,21 @@ building.
   <kbd>Del</kbd> deletes what is chosen, <kbd>Esc</kbd> stops, <kbd>F</kbd> fits the
   floor in view. After each change the floor is read again, and what you drew is
   kept with the floor through every re-read and every revised drawing.
-- **3D.** The *2D / 3D* switch shows the floor as built, in the editor: click a room
-  to correct it as on the plan; *Update 3D* shows changes made since. *Walk in 3D*
-  opens the floor in the 3D world in a new tab.
+- **2D, 3D, Walk — one view.** The switch in the toolbar shows the floor as a plan,
+  as built (orbit it), or walks you through it, in the same place: the floor, what
+  you chose, the panel and the plan's view stay as they are, and switching is
+  instant once the building is built. Walking: click the view to look, <kbd>W A S
+  D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panel; the room you're in
+  is shown, and you start in the room you chose, or where the 3D view or the plan
+  was looking. In 3D and walking you edit as on the plan: a click chooses a room or
+  an item (walking: at the cross) and its editor opens; choose an item in *Place*
+  and click the floor (walking: aim the cross and click) — its ghost shows where it
+  will go, held in its room and lined up as on the plan; drag items in 3D;
+  <kbd>R</kbd>, <kbd>[</kbd> <kbd>]</kbd> and <kbd>Del</kbd> as on the plan.
+  Walls, doors, dividers and spaces are drawn on the plan: right-click (or
+  <kbd>2</kbd>) *Draw here in 2D* shows that place there. What changes — yours or
+  others' — shows in 3D at once; drawn walls when the floor has been read again.
+  *3D in its own window* opens the building on a page of its own.
 - **Re-read drawing** reads the floor's drawing again (a revised one too): IDs and
   corrections are kept. A reading that would retire most of the floor's rooms is
   held back, the floor unchanged, and Studio asks before applying it (*Read
