@@ -2427,6 +2427,7 @@ function showRoom(r) {
 function key3d(e) {
   const w = view3d.world;
   if (!w) return false;
+  if (e.defaultPrevented) return true; // the world took it (E at a door it opens or shuts)
   const tool = view3d.mode === "3d" ? { w: "wall", v: "divide", s: "space", d: "door", o: "opening" }[e.key.toLowerCase()] : null;
   if (e.key === "2" || tool) {
     const p = w.walking ? w.pointAt() : view3d.pointer ? w.pointAt(...view3d.pointer) : null;
