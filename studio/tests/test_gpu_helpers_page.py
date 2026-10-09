@@ -49,7 +49,7 @@ def test_the_page_starts_from_the_environment_and_says_how_each_helper_is(team):
     assert status == 200 and page["from"] == "environment" and page["model"] == MODEL
     (h,) = page["helpers"]
     assert h == {"url": team.first.url, "key": True, "enabled": True, "parallel": 3, "state": "answers",
-                 "error": None, "models": [MODEL], "busy": 0}
+                 "error": None, "models": [MODEL], "busy": 0, "tls": "plain HTTP"}
     assert "first-key" not in str(page)  # never the key itself
 
 
@@ -92,9 +92,9 @@ def test_a_helper_serving_another_model_is_shown_left_out(team, helpers):
     assert page["helpers"][1]["error"] == f"serves qwen3-vl-8b, not {MODEL}"
 
 
-def test_the_test_button_sends_a_sample_room(team, helpers):
+def test_the_test_button_sends_a_sample_room(team, helpers, tmp_path, monkeypatch):
     status, tried = team("boss", "POST", "/api/admin/helpers/test", {"url": team.first.url})
-    assert status == 200 and tried["ok"] is True and tried["model"] == MODEL
+    assert status == 200 and tried["ok"] is True and tried["model"] == MODEL and tried["tls"] == "plain HTTP"
     assert tried["answer"] == {"outline": "exactly one room"} and tried["seconds"] >= 0
     assert team.first.asked == 1 and team.first.keys[-1] == "Bearer first-key"  # its own key, as kept
     stranger = helpers(key="its-own-key")
@@ -103,6 +103,15 @@ def test_the_test_button_sends_a_sample_room(team, helpers):
     status, tried = team("boss", "POST", "/api/admin/helpers/test", {"url": stranger.url, "key": "its-own-key"})
     assert tried["ok"] is True
     assert team("sara", "POST", "/api/admin/helpers/test", {"url": stranger.url})[0] == 403
+    # one over HTTPS with its own certificate (as the GPU helper makes): it answers, and says it is not checked
+    from storeypath.tls import context, studio_certificate
+
+    monkeypatch.delenv("STOREYPATH_VISION_CA", raising=False)
+    monkeypatch.delenv("STOREYPATH_VISION_INSECURE", raising=False)
+    made = studio_certificate(tmp_path / "helper-tls", machine=set())
+    own = helpers(key="its-own-key", tls=context(made.cert, made.key))
+    status, tried = team("boss", "POST", "/api/admin/helpers/test", {"url": own.url, "key": "its-own-key"})
+    assert tried["ok"] is True and tried["tls"] == "HTTPS, its own certificate (not checked)"
 
 
 def test_the_sample_room_is_a_png():

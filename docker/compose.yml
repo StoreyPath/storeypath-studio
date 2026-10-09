@@ -11,9 +11,10 @@
 #
 #   echo "STOREYPATH_HELPER_KEY=$(openssl rand -hex 32)" > docker/.env
 #
-# Studio asks the helper at http://gpu-helper:8105/v1, on the compose network alone
-# (the helper's port is not published); without the gpu profile it says the helper
-# does not answer, and works without vision. More settings, in docker/.env too:
+# Studio asks the helper at https://gpu-helper:8105/v1, on the compose network alone
+# (the helper's port is not published), encrypted with the certificate the helper makes
+# as it starts, which Studio cannot check (its GPU helpers page says so); without the
+# gpu profile it says the helper does not answer, and works without vision. More settings, in docker/.env too:
 # STOREYPATH_PORT (8080), STOREYPATH_BIND (127.0.0.1; 0.0.0.0 for others on your
 # network), STOREYPATH_ALLOWED_HOSTS, STOREYPATH_HELPER_SLOTS (questions the helper
 # answers at once: 2 for the llama.cpp image, 16 for the vLLM one), STOREYPATH_HELPER_GPU_MEMORY
@@ -41,7 +42,7 @@ services:
       - storeypath:/data
     environment:
       STOREYPATH_ALLOWED_HOSTS: ${STOREYPATH_ALLOWED_HOSTS:-}
-      STOREYPATH_VISION_URL: ${STOREYPATH_VISION_URL:-http://gpu-helper:8105/v1}
+      STOREYPATH_VISION_URL: ${STOREYPATH_VISION_URL:-https://gpu-helper:8105/v1}
       STOREYPATH_VISION_KEY: ${STOREYPATH_HELPER_KEY:-}
       STOREYPATH_VISION_PARALLEL: ${STOREYPATH_HELPER_SLOTS:-2}
     # Studio stops first, then its database: give them the time

@@ -65,9 +65,9 @@ export async function helpersPage(page, toast) {
       try {
         const t = await api("admin/helpers/test", { url: r.url.trim(), ...(r.key ? { key: r.key } : {}) });
         result.className = `small ${t.ok ? "ok" : "unsure"}`;
-        result.textContent = t.ok
+        result.textContent = (t.ok
           ? `Answered in ${t.seconds} s (${t.model}): ${Object.values(t.answer).join(", ") || "nothing it could say"}`
-          : `No answer: ${t.error}`;
+          : `No answer: ${t.error}`) + (t.tls ? ` · ${t.tls}` : "");
       } catch (e) {
         result.className = "small unsure";
         result.textContent = e.message;
@@ -90,6 +90,7 @@ export async function helpersPage(page, toast) {
       el("td", { class: "center" }, used),
       el("td", {}, parallel),
       el("td", {}, el("span", { class: `chip ${cls}` }, words),
+        r.tls ? el("div", { class: "muted small" }, r.tls) : null,
         r.error ? el("div", { class: "muted small" }, r.error) : null,
         r.busy ? el("div", { class: "muted small" }, `${r.busy} being asked now`) : null),
       el("td", { class: "small" }, models),

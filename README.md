@@ -504,7 +504,7 @@ stop`.
 | Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
 | Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without |
 | Users, backups | the person menu (top right): *Users* for admins, *Download a backup*; or `docker exec storeypath storeypath users list`, `docker exec storeypath storeypath backup --out /tmp/studio.backup` |
-| Look at the plans with GPU helpers | `-e STOREYPATH_VISION_URL=http://gpu1:8105/v1,http://gpu2:8105/v1 -e STOREYPATH_VISION_KEY=…` (the helpers' key): [Run the GPU helper](#run-the-gpu-helper). Any OpenAI-compatible endpoint that takes images works too |
+| Look at the plans with GPU helpers | `-e STOREYPATH_VISION_URL=https://gpu1:8105/v1,https://gpu2:8105/v1 -e STOREYPATH_VISION_KEY=…` (the helpers' key): [Run the GPU helper](#run-the-gpu-helper). Any OpenAI-compatible endpoint that takes images works too |
 | Its database | inside, reached over a socket only (no port): `docker exec -it storeypath psql`. Its log: `/data/pg/log` |
 | Another database | `-e STOREYPATH_DATABASE_URL=postgresql://user:password@host/storeypath`: your own PostgreSQL 17 with PostGIS 3, in place of the one inside (which then does not start). Optional: Studio needs none |
 | Docker Compose | `docker compose -f docker/compose.yml up -d`, the same Studio and volume; `--profile gpu` adds the GPU helper beside it ([docker/compose.yml](docker/compose.yml)) |
@@ -633,20 +633,20 @@ needs nothing but its published port.
 ### Run the GPU helper
 
 On the GPU machine (Linux, Docker, the NVIDIA Container Toolkit, NVIDIA driver 525 or
-newer), with a key of your own that Studio will send:
+newer), with a key of your own that Studio will send (at least 32 characters):
 
 ```sh
+printf 'STOREYPATH_HELPER_KEY=%s\n' "$(openssl rand -hex 32)" > helper.env && chmod 600 helper.env
 docker load -i storeypath-gpu-helper.tar.gz
-docker run -d --name storeypath-gpu --gpus all -p 8105:8105 \
-    -e STOREYPATH_HELPER_KEY=<a long random key, e.g. from openssl rand -hex 32> storeypath/gpu-helper
-docker logs -f storeypath-gpu    # the model loads in a minute or two
+docker run -d --name storeypath-gpu --gpus all -p 8105:8105 --env-file helper.env storeypath/gpu-helper
+docker logs -f storeypath-gpu    # its certificate's fingerprint; the model loads in a minute or two
 ```
 
 Then tell Studio where it is, with the same key:
 
 ```sh
 docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data \
-    -e STOREYPATH_VISION_URL=http://gpu-machine:8105/v1 -e STOREYPATH_VISION_KEY=<the same key> \
+    -e STOREYPATH_VISION_URL=https://gpu-machine:8105/v1 -e STOREYPATH_VISION_KEY=<the same key> \
     ghcr.io/storeypath/studio
 ```
 
@@ -661,9 +661,9 @@ serve the same one) and a *Test* that sends it a sample room.
 | GPU memory | one NVIDIA card with 32 GB free: the vision model, and two rooms looked at at once |
 | Choose a card | `--gpus '"device=1"'` |
 | Rooms looked at at once | `-e STOREYPATH_HELPER_SLOTS=2` (the default; each more needs more GPU memory), and as many on Studio's side: `STOREYPATH_VISION_PARALLEL`. `STOREYPATH_HELPER_CONTEXT` (default 8192) is the context each gets |
-| Several helpers | one on each GPU or machine (`--gpus '"device=0"' -p 8105:8105`, `--gpus '"device=1"' -p 8106:8105`, …), all with the same key, and Studio given them all: `STOREYPATH_VISION_URL=http://gpu1:8105/v1,http://gpu1:8106/v1,http://gpu2:8105/v1`. It spreads each floor's rooms over the helpers that answer, leaves out one that fails, and tries it again a while later |
-| The key | every call but `/health` needs it; the helper does not start without one (`-e STOREYPATH_HELPER_OPEN=1` serves without, on a network nothing else can reach) |
-| HTTPS | mount a certificate and its key: `-v /etc/helper-tls:/tls:ro -e STOREYPATH_HELPER_CERT=/tls/cert.pem -e STOREYPATH_HELPER_CERT_KEY=/tls/key.pem`, and give Studio `https://…`. Studio checks the certificate: `STOREYPATH_VISION_CA` (a file mounted into Studio) for one your organization made, `STOREYPATH_VISION_INSECURE=1` not to check a self-signed one on a trusted network. Without, the helper speaks plain HTTP: keep it on a trusted network, or behind a proxy that speaks HTTPS |
+| Several helpers | one on each GPU or machine (`--gpus '"device=0"' -p 8105:8105`, `--gpus '"device=1"' -p 8106:8105`, …), all with the same key, and Studio given them all: `STOREYPATH_VISION_URL=https://gpu1:8105/v1,https://gpu1:8106/v1,https://gpu2:8105/v1`. It spreads each floor's rooms over the helpers that answer, leaves out one that fails, and tries it again a while later |
+| The key | every call but `/health` needs it, and it must be at least 32 characters (`openssl rand -hex 32`); the helper does not start without one (`-e STOREYPATH_HELPER_OPEN=1` serves without, on a network nothing else can reach) |
+| HTTPS | on by default: the helper makes a certificate of its own as it starts (its fingerprint in its log), so the calls and the key are encrypted. Studio cannot check that certificate, so it does not know *who* it is talking to: someone on your network posing as the helper could collect the key. Its GPU helpers page and log say so: *HTTPS, its own certificate (not checked)*. To close that, give the helper a certificate from your organisation's CA (`-v /etc/helper-tls:/tls:ro -e STOREYPATH_HELPER_CERT=/tls/cert.pem -e STOREYPATH_HELPER_CERT_KEY=/tls/key.pem`) and Studio that CA (`STOREYPATH_VISION_CA`, a file mounted into Studio): Studio then checks it, refuses one it does not vouch for and says *HTTPS, certificate checked*. Or keep the helpers on a network only Studio reaches. `STOREYPATH_HELPER_PLAIN_HTTP=1` serves plain HTTP (`http://…`), for an SSH tunnel or a proxy that speaks HTTPS. The helper's README has a [Security](https://github.com/StoreyPath/storeypath-gpu-helper#security) section |
 | Beside Studio, on one machine | `docker compose -f docker/compose.yml --profile gpu up -d`, the key in `docker/.env` ([docker/compose.yml](docker/compose.yml)) |
 | Its log | `docker logs storeypath-gpu` |
 

@@ -12,9 +12,17 @@ service; or several helpers serving the same model, the questions spread over th
     STOREYPATH_VISION_MODEL  model name, when the server serves several
     STOREYPATH_VISION_KEY    bearer token: the helpers' key, or a hosted service's
     STOREYPATH_VISION_PARALLEL  questions in flight at once, per helper (default 2)
-    STOREYPATH_VISION_INSECURE  1: a helper's HTTPS certificate is not checked
     STOREYPATH_VISION_CA     the certificate (PEM) to check helpers' against, in
-                             place of the system's authorities
+                             place of the system's authorities: then a helper's
+                             certificate must be one it vouches for, or the helper is
+                             not used
+    STOREYPATH_VISION_INSECURE  1: a helper's HTTPS certificate is never checked
+
+Over HTTPS with no STOREYPATH_VISION_CA, a helper's certificate is checked against the
+system's authorities; one nobody Studio trusts vouches for (a helper's own, self-signed,
+as the GPU helper makes when given none) is still used, encrypted but not checked: an
+impostor on the network could pose as the helper. Each helper says which (TLS_*): in
+`serve`'s log, helper_states and the GPU helpers page.
 
 The helpers are set on Studio's GPU helpers page (an admin's) once Studio runs: each
 one's address, key, whether it is used and how many questions it takes at once, kept
@@ -104,6 +112,18 @@ LIST_TIMEOUT_S = 5.0  # for a helper's list of models
 MAX_PARALLEL = 32  # questions one helper may be given at once, at most
 
 
+# How Studio reaches a helper, as it says it (describe, helper_states, the GPU helpers page)
+TLS_PLAIN = "plain HTTP"
+TLS_CHECKED = "HTTPS, certificate checked"
+TLS_OWN = "HTTPS, its own certificate (not checked)"
+TLS_INSECURE = "HTTPS, not checked (STOREYPATH_VISION_INSECURE)"
+# OpenSSL's verify codes for a certificate no authority Studio trusts vouches for:
+# self-signed (18, 19) or its issuer unknown (2, 20, 21). With no STOREYPATH_VISION_CA,
+# Studio still talks to such a helper, encrypted, and says it is not checked; any other
+# failure (expired, another name) is an error
+UNKNOWN_CERTIFICATE = {2, 18, 19, 20, 21}
+
+
 class VisionUnavailable(Exception):
     pass
 
@@ -126,6 +146,13 @@ def _helper_down(e: Exception) -> bool:
     return True
 
 
+def _unknown_certificate(e: Exception) -> bool:
+    """Whether a connection failed only because no authority Studio trusts vouches for
+    the helper's certificate (UNKNOWN_CERTIFICATE)."""
+    reason = getattr(e, "reason", e)
+    return isinstance(reason, ssl.SSLCertVerificationError) and reason.verify_code in UNKNOWN_CERTIFICATE
+
+
 def _why(e: Exception) -> str:
     if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
         return f"{e} (is STOREYPATH_VISION_KEY the helper's key?)"
@@ -145,6 +172,8 @@ class _Helper:
         self.out_until = 0.0  # left out until then (time.monotonic())
         self.error: str | None = None
         self.checking = False  # its list of models is being read
+        # how it is reached (TLS_*): known for http://, else once it is
+        self.tls: str | None = TLS_PLAIN if url.lower().startswith("http://") else None
 
     def down(self, error: str, now: float) -> None:
         self.failures += 1
@@ -175,11 +204,13 @@ class VisionModel:
         self.helpers = [_Helper(u, each, self.key) for u in urls if u.lower().startswith(web)]
         self.ignored = [u for u in urls if not u.lower().startswith(web)]
         self.timeout = timeout
-        # TLS to a helper is verified (against STOREYPATH_VISION_CA, when given, else the
-        # system's authorities), unless it is insecure: a self-signed one on a trusted network
+        # TLS to a helper is checked against STOREYPATH_VISION_CA when given (strictly),
+        # else the system's authorities, a helper none of them vouches for still used but
+        # not checked (TLS_OWN); never with STOREYPATH_VISION_INSECURE
         self.insecure = os.environ.get("STOREYPATH_VISION_INSECURE", "") == "1" if insecure is None else insecure
         self.ca = os.environ.get("STOREYPATH_VISION_CA") or None
         self._tls: ssl.SSLContext | None = None
+        self._tls_unchecked: ssl.SSLContext | None = None
         self._strict = len(self.helpers) > 1  # several: each one must serve the same model
         self._listed = False  # their lists of models are read before they are asked
         self._turn = 0  # the helper next in turn, of those equally busy
@@ -228,8 +259,9 @@ class VisionModel:
 
     def helper_states(self) -> list[dict]:
         """How each helper is, as the GPU helpers page shows it: {url, state, error,
-        models, busy}; state "answers", "other model" (left out: it serves another),
-        "not answering" or "not asked yet"."""
+        models, busy, tls}; state "answers", "other model" (left out: it serves another),
+        "not answering" or "not asked yet"; tls how it is reached (TLS_*: None for an
+        https:// one not reached yet)."""
         now = time.monotonic()
         out = []
         with self._lock:
@@ -242,7 +274,8 @@ class VisionModel:
                     state = "not answering"
                 else:
                     state = "not asked yet"
-                out.append({"url": h.url, "state": state, "error": h.error, "models": h.models, "busy": h.busy})
+                out.append({"url": h.url, "state": state, "error": h.error, "models": h.models, "busy": h.busy,
+                            "tls": h.tls})
         return out
 
     @property
@@ -285,7 +318,7 @@ class VisionModel:
     def _read_lists(self, helpers: list[_Helper]) -> None:
         def read(h: _Helper):
             try:
-                with self._open(h, "/models", None, LIST_TIMEOUT_S) as r:
+                with self._open(h, "/models", None, LIST_TIMEOUT_S, recheck=True) as r:
                     listed = json.load(r)
             except (OSError, ValueError, http.client.HTTPException) as e:
                 return None, e
@@ -321,19 +354,51 @@ class VisionModel:
         return "no vision model answers: " + "; ".join(f"{h.url}: {h.error or 'no answer'}" for h in self.helpers)
 
     def _tls_context(self) -> ssl.SSLContext:
+        """Checking (against STOREYPATH_VISION_CA, else the system's authorities), or
+        not at all with STOREYPATH_VISION_INSECURE."""
         if self._tls is None:
             self._tls = ssl._create_unverified_context() if self.insecure else ssl.create_default_context(cafile=self.ca)
         return self._tls
 
-    def _open(self, h: _Helper, path: str, body: dict | None, timeout: float):
+    def _unchecked_context(self) -> ssl.SSLContext:
+        """Encrypted, the certificate not checked: for a helper with its own (TLS_OWN)."""
+        if self._tls_unchecked is None:
+            self._tls_unchecked = ssl._create_unverified_context()
+        return self._tls_unchecked
+
+    def _open(self, h: _Helper, path: str, body: dict | None, timeout: float, recheck: bool = False):
+        """A call to a helper. Over HTTPS with no STOREYPATH_VISION_CA, a helper whose
+        certificate no authority vouches for is called unchecked (TLS_OWN), and then
+        straight away, without checking first, unless ``recheck`` (its list of models
+        read: it may have been given another certificate since)."""
         headers = {"Content-Type": "application/json"}
         if h.key:
             headers["Authorization"] = f"Bearer {h.key}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(h.url + path, data=data, headers=headers)
-        if h.url.lower().startswith("https://"):
-            return urllib.request.urlopen(req, timeout=timeout, context=self._tls_context())
-        return urllib.request.urlopen(req, timeout=timeout)
+        if not h.url.lower().startswith("https://"):
+            h.tls = TLS_PLAIN
+            return urllib.request.urlopen(req, timeout=timeout)
+        if self.insecure:
+            return self._over_tls(h, req, timeout, self._tls_context(), TLS_INSECURE)
+        if self.ca is None and h.tls == TLS_OWN and not recheck:
+            return self._over_tls(h, req, timeout, self._unchecked_context(), TLS_OWN)
+        try:
+            return self._over_tls(h, req, timeout, self._tls_context(), TLS_CHECKED)
+        except (urllib.error.URLError, ssl.SSLCertVerificationError) as e:
+            if self.ca is not None or not _unknown_certificate(e):  # an authority given: only what it vouches for
+                raise
+        return self._over_tls(h, req, timeout, self._unchecked_context(), TLS_OWN)
+
+    @staticmethod
+    def _over_tls(h: _Helper, req, timeout: float, context: ssl.SSLContext, how: str):
+        try:
+            r = urllib.request.urlopen(req, timeout=timeout, context=context)
+        except urllib.error.HTTPError:
+            h.tls = how  # it answered (refusing): reached so
+            raise
+        h.tls = how
+        return r
 
     def _may_ask(self, h: _Helper) -> bool:
         # once lists are read (available()), only a helper whose list has the model
@@ -414,9 +479,7 @@ class VisionModel:
                     state = f"not answering ({h.error}); tried again in {max(0, round(h.out_until - now))} s"
                 else:
                     state = "not asked yet"
-                tls = (" (its certificate not checked: STOREYPATH_VISION_INSECURE)" if self.insecure else "") \
-                    if h.url.lower().startswith("https://") else " (plain HTTP: for a trusted network)"
-                lines.append(f"  {h.url}{tls}: {state}")
+                lines.append(f"  {h.url} ({h.tls or 'HTTPS'}): {state}")
         lines += [f"  {u}: not used: not an http:// or https:// address" for u in self.ignored]
         return lines
 
