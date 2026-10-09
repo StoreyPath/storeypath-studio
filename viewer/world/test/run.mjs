@@ -30,6 +30,7 @@ register(`data:text/javascript,${encodeURIComponent(`
 const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
 const { buildItems, originOf, planFloor, toLocal } = await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
+const { isItemId } = await import("../../src/ids.js");
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -114,7 +115,9 @@ for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's ite
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
     const held = { campus: 9, "campus-hq": 10 }[name]; // campus-hq: and a kiosk
-    truly(x.builder === 2 && x.items.length === held && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
+    // an item's ID: an asset's tag (format 0.8), the project's number before (campus: 0.6)
+    const itemId = name === "campus" ? (id) => /^[A-Z0-9]+-I\d{6}$/.test(id) : isItemId;
+    truly(x.builder === 2 && x.items.length === held && x.items.every(itemId), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
     const want = { items: {}, "items:high": { view: "full" }, "items:light": { form: "light" },
       "items:light:high": { view: "full", form: "light" } };

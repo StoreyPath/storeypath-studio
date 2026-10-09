@@ -181,8 +181,8 @@ export class StoreyPathPackage {
 
   /**
    * Everything an ID says about where an object is:
-   * PROJECT-LOCATION-BUILDING-FLOOR-OBJECT. An item's ID (PROJECT-I000142) says
-   * nothing of it: its floor does, and the item is the object.
+   * PROJECT-LOCATION-BUILDING-FLOOR-OBJECT. An item's ID (an asset's tag,
+   * 7K2Q-XM9F-4DP) says nothing of it: its floor does, and the item is the object.
    */
   hierarchy(id) {
     const item = this.get(id);

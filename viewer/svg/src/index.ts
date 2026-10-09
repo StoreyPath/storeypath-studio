@@ -11,3 +11,5 @@ export type { Camera, FloorPlan, PlanDrawing, PlanItem, PlanOpening, PlanRoute, 
 // finding the way (format 0.8): the module both viewers share
 export { route, shortest, Graph } from "./navigation.js";
 export type { Navigation, NavEdge, NavFloor, NavNode, NavPlace, Route, RouteChange, RouteLeg, RouteStep } from "./navigation.js";
+// items' IDs (format 0.8): a tag checked, or read as a person typed it (shared too)
+export { ITEM_ID_ALPHABET, itemCheckSymbol, isItemId, normalizeItemId } from "./ids.js";

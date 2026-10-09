@@ -11,6 +11,7 @@ import { floorFromPackage } from "../dist/package.js";
 import { inside } from "../dist/geometry.js";
 import { FORMAT_VERSION, readPackage as readInBrowsers } from "../dist/read.js";
 import { Graph, route } from "../dist/navigation.js";
+import { ITEM_ID_ALPHABET, isItemId, itemCheckSymbol, normalizeItemId } from "../dist/ids.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -234,9 +235,11 @@ test("a building moved on the map: its items stand where they stood in its plan,
   }
   // the desk carried to the Annex, and the TV taken away, are not in the Headquarters' plan
   const gone = hq.items.map((i) => i.id).filter((id) => !moved.items.some((i) => i.id === id));
-  equal(gone, [`${P}-I000003`, `${P}-I000005`], "gone");
+  const carried = hq.items.find((i) => i.properties.type === "DESK-JUNIOR" && i.properties.floor_id === `${HQ}-F00`).id;
+  const tv = hq.items.find((i) => i.properties.type === "TV").id;
+  equal(gone.sort(), [carried, tv].sort(), "gone");
   const annex = readPackage(join(conformance, "packages/campus-annex-2.storeypath"));
-  const desk = floorFromPackage(annex, `${P}-DEMO-ANNEX-F01`).items.find((i) => i.id === `${P}-I000003`);
+  const desk = floorFromPackage(annex, `${P}-DEMO-ANNEX-F01`).items.find((i) => i.id === carried);
   near(desk.at, [143, 63.75], 1e-9, "the desk, in the Annex where its local says");
   near(desk.front, [1, 0], 1e-9, "facing +x there");
 });
@@ -281,6 +284,25 @@ test("an unplaced building reads in its own metres too", () => {
   const plan = floorFromPackage(unplaced, floor.id);
   truly(plan.spaces.length > 0, "spaces");
   for (const s of plan.spaces) truly(inside(s.polygons, s.marker), `${s.id}: its label point is inside it`);
+});
+
+// format 0.8: items' IDs (ids.js, the module the viewers share), as every reader of
+// the format reads them: spec/conformance/asset-ids.json
+const assetIds = JSON.parse(readFileSync(join(conformance, "asset-ids.json"), "utf8"));
+test("items' IDs: check symbols, IDs right and wrong, and what people type, as every reader reads them", () => {
+  equal(ITEM_ID_ALPHABET, assetIds.alphabet, "the alphabet");
+  equal(itemCheckSymbol("7K2QXM9F4D"), "P", "FORMAT.md's worked example");
+  for (const c of assetIds.check) equal(itemCheckSymbol(c.symbols), c.check, `the check symbol of ${c.symbols}`);
+  for (const bad of ["7K2QXM9F4", "7K2QXM9F4DP", "7k2qxm9f4d", "7K2QXM9F4O", null]) {
+    equal(itemCheckSymbol(bad), null, `no check symbol of ${bad}`);
+  }
+  for (const id of [...assetIds.valid, ...assetIds.swapped_unseen]) truly(isItemId(id), `${id} is an item's ID`);
+  for (const id of [...assetIds.wrong_symbol, ...assetIds.swapped, ...assetIds.not_ids]) {
+    truly(!isItemId(id), `${JSON.stringify(id)} is not an item's ID`);
+  }
+  for (const t of assetIds.typed) equal(normalizeItemId(t.text), t.id, `${JSON.stringify(t.text)} as typed`);
+  equal([normalizeItemId(null), normalizeItemId(42)], [null, null], "not text");
+  truly(hq.items.length && hq.items.every((i) => isItemId(i.id)), "every item of campus-hq has one");
 });
 
 // format 0.8: the walking network, and the way on it (navigation.js, the module both
@@ -401,9 +423,11 @@ inChrome("a desk is drawn with what goes with its grade: visitors' chairs, a ret
       g.querySelector("title").textContent, [g.querySelectorAll(".sp-item-body").length, g.querySelectorAll(".sp-item-visitor").length,
         g.querySelectorAll(".sp-item-back").length]]))));
   }
-  // [desk, return, cabinet], visitors, chairs' backs (a high-backed one's and the visitors')
-  equal(drawn, { "Director's desk": [3, 2, 3], "Senior staff desk": [2, 0, 0], "Junior staff desk": [1, 0, 0],
-    "Manager's desk": [2, 2, 2], "Head of section desk": [2, 1, 1] }, "by grade (in the order drawn)");
+  // [desk, return, cabinet], visitors, chairs' backs (a high-backed one's and the visitors'),
+  // by name (they are drawn in the order of their IDs, which is no order)
+  const byName = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
+  equal(byName(drawn), byName({ "Director's desk": [3, 2, 3], "Senior staff desk": [2, 0, 0], "Junior staff desk": [1, 0, 0],
+    "Manager's desk": [2, 2, 2], "Head of section desk": [2, 1, 1] }), "by grade");
   const older = floorFromPackage(pkg, "EWBSSN-DEMO-HQ-F00"); // 0.6: no grades in its catalogue
   truly(older.items.every((i) => i.grade === null), "an older package's desks are plain");
 });

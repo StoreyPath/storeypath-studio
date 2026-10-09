@@ -11,6 +11,10 @@
       "types": "./src/navigation.d.ts",
       "default": "./src/navigation.js"
     },
+    "./ids": {
+      "types": "./src/ids.d.ts",
+      "default": "./src/ids.js"
+    },
     "./viewer.css": "./src/viewer.css"
   },
   "files": [

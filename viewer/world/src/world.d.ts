@@ -5,6 +5,7 @@
 export { webglSupport, type WebGLSupport } from './support.js';
 // finding the way (format 0.8): the module both viewers share
 export { route, shortest, Graph } from './navigation.js';
+export { ITEM_ID_ALPHABET, itemCheckSymbol, isItemId, normalizeItemId } from './ids.js';
 export type { Navigation, NavEdge, NavFloor, NavNode, NavPlace, Route, RouteChange, RouteLeg, RouteStep, RouteOptions,
 	Routable } from './navigation.js';
 import type { Navigation, Route } from './navigation.js';
@@ -31,8 +32,8 @@ export interface Feature<P = Record<string, unknown>> {
 	properties: P;
 }
 
-/** A piece of furniture or equipment (items.geojson, format 0.6). Its ID is the
- * project's and its own number (PROJECT-I000142), not its place. Where it stands is
+/** A piece of furniture or equipment (items.geojson, format 0.6). Its ID is an asset's
+ * tag (format 0.8: 7K2Q-XM9F-4DP, isItemId), not its place nor its project's. Where it stands is
  * `local` (format 0.7), in its building's own frame; its point and heading on the
  * map follow from that and the building's placement. */
 export interface ItemProperties {
