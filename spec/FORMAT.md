@@ -518,14 +518,17 @@ The node names it; its `extras` say what it is: `material`, `view`, and `type` a
 | `floor:<type>` | `floor` | | the floor finish of the spaces and zones of that `type` |
 | `volume:<type>` | `volume` | `xray` | each space of that `type` as a volume, up to its ceiling (to its parapets, when open to the sky) |
 | `ceiling` | `ceiling` | `walk` | the ceiling, over every space but those open to the sky |
+| `lights` | `lightPanel` | `walk` | ceiling panels, 60 cm square, about every 2.4 m in each space or zone (none in shafts and lifts): their faces down |
 | `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces, and their tops and undersides, full height |
 | `parapet`, `parapetTop` | `wall`, `wallTop` | `full` | the parapets, likewise |
+| `skirting` | `skirting` | | a skirting board along every face of the walls and parapets, and under windows |
 | `heads` | `wallPlain` | `full` | the wall over doors, doorways and windows |
 | `sills` | `wallPlain` | | the wall under windows |
+| `sillBoard` | `sillBoard` | | a board on each window's sill |
 | `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
 | `door`, `doorFrame` | `door`, `doorFrame` | `full` | door leaves, open as the plan draws them, and their frames |
-| `items`, `items:high` | `item` | `full` for `high` | the floor's items, each drawn as a simple shape of its kind (a desk: its top, ends, modesty panel and a chair): those wholly below `options.cutHeight`, and the others (on a wall, under the ceiling) |
-| `items:light`, `items:light:high` | `item` | `full` for `high` | the same items as a box each (`"form": "light"`), for a view of many floors |
+| `trim`, `handle` | `trim`, `handle` | `full` | architraves round doors, on both faces of their wall; lever handles each side of each leaf |
+| `items:light`, `items:light:high` | `item` | `full` for `high` | the floor's items, a box each (`"form": "light"`), for a view of many floors: those wholly below `options.cutHeight`, and the others (on a wall, under the ceiling) |
 | `obstacles` | | | lines (mode `LINES`) at the floor, not drawn: what someone walking bumps into (walls, windows, open leaves) |
 
 `view` says when a piece shows: `full` unless the walls are cut low, as on a plan;
@@ -534,7 +537,10 @@ with none, always. The pieces of spaces and zones hidden or ignored in review ar
 meshes of their own (`floor:shaft:hidden`, `"hidden": true`), shown only when asked
 for. A plain glTF viewer shows every mesh at once. The items' pieces are kept apart
 from the rest, so that a viewer leaves them out until they are asked for; a floor
-with no items has none.
+with no items has none. Drawn in detail (a desk with its chairs, and what goes with
+its grade), items are not in the file: a viewer builds them from the items, as
+quickly as it would read them (files of builder 2 have them, as `items` and
+`items:high`).
 
 The walls and parapets cut low are not in the file: they are `wall`, `wallTop`,
 `parapet` and `parapetTop` with every vertex higher than `elevation` +
@@ -542,15 +548,19 @@ The walls and parapets cut low are not in the file: they are `wall`, `wallTop`,
 1 − `cutHeight`), shown with `view` `cut`, the tops with the material `wallCut`.
 Texture coordinates (`TEXCOORD_0`) are only on what has a texture: the floor
 finishes (metres east and north) and the walls' and parapets' faces (v = 1 − the
-height above the floor, in metres).
+height above the floor, in metres). What is built of boxes (`heads`, `sills`,
+`glass`, `frame`, `door`, `doorFrame`, `trim`, `handle`, `skirting`, `sillBoard`,
+`lights`) shares its corners between its faces and has no normals: flat-shaded, as
+glTF draws a mesh without them.
 
 The floor finishes and volumes have a vertex attribute `_ROOM` (unsigned integer),
 an index into `rooms` below: the space or zone each vertex belongs to, so that a
 click on a floor tells which room it is. The items' pieces have `_ITEM`, an index
 into `items` below, likewise; their colours are the vertices' (`COLOR_0`: their
-type's colour, and shades of it), and they have no normals (flat-shaded, as glTF
-draws a mesh without them). The materials in the file are plain colours;
-StoreyPath's viewer draws each piece with its own, by `material` and `type`.
+type's colour, and shades of it), how rough and how metallic each is `_FINISH`
+(unsigned bytes, normalised: roughness, metalness), and they have no normals
+(flat-shaded). The materials in the file are plain colours; StoreyPath's viewer
+draws each piece with its own, by `material` and `type`, in the look it is asked for.
 
 **Extras.** The scene's `extras.storeypath`:
 
@@ -558,7 +568,7 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
 |---|---|
 | `project_id`, `building_id`, `floor_id` | what it is |
 | `export_sequence` | the export it was built for: a file whose sequence is not the manifest's is stale; build that floor instead |
-| `builder` | the version of StoreyPath's builder that made it: 2 since items (format 0.6); a viewer builds a floor itself from a file of another version (a file without it is of 1, and has no items) |
+| `builder` | the version of StoreyPath's builder that made it: 3 since skirting, architraves, handles, window boards, ceiling panels and the finer furniture; 2 since items (format 0.6); a viewer builds a floor itself from a file of another version (a file without it is of 1, and has no items) |
 | `origin` | `lon`, `lat`, `kx`, `ky`: the frame above |
 | `options` | the sizes it was built with, in metres: `slab` (thickness), `doorHead`, `windowSill`, `windowHead`, `wallThickness` (where the floor gives none), `cutHeight` |
 | `elevation`, `wall_height` | the floor's elevation, and how high its walls rise above it |

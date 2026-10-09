@@ -41,8 +41,9 @@ const { BUILDER, GEOMETRY, buildFloor, buildItems, originOf } = await import("..
 
 // Colours near the world's, so the files look right in any glTF viewer; the world
 // draws each piece with its own materials, by name. Items are coloured by vertex.
-const COLORS = { slab: 0xd8d4cc, wall: 0xf1ede6, wallPlain: 0xf1ede6, wallTop: 0xcfc9bf, wallCut: 0x3a3a3f,
-  ceiling: 0xfbfaf7, glass: 0xbcd6e4, frame: 0x5b5f66, door: 0x9a7350, doorFrame: 0x6b4a32 };
+const COLORS = { slab: 0xcfcbc3, wall: 0xeae7e1, wallPlain: 0xeae7e1, wallTop: 0xd9d5cd, wallCut: 0x3a3a3f,
+  ceiling: 0xf7f6f3, glass: 0xc9dde6, frame: 0x3f4349, door: 0xb48c64, doorFrame: 0xd8d4cc, trim: 0xd8d4cc,
+  skirting: 0xe6e3dd, sillBoard: 0xe9e6e0, handle: 0xc4c7cb, lightPanel: 0xffffff };
 const SEE_THROUGH = { glass: 0.28, volume: 0.22 };
 const materials = new Map();
 function material({ material: key, type }) {
@@ -57,12 +58,13 @@ function material({ material: key, type }) {
 }
 
 /** A floor as binary glTF: one mesh a piece, named as build.js names it, with
- * what it is in its extras (its items in both forms, apart from the rest); the
- * walker's obstacles as lines; and in the scene's extras, what the world needs to
- * use it (FORMAT.md, "Pre-built 3D"). */
+ * what it is in its extras (its items a box each, apart from the rest: drawn in detail,
+ * a world builds them from their templates in milliseconds, far quicker than it would
+ * read them); the walker's obstacles as lines; and in the scene's extras, what the world
+ * needs to use it (FORMAT.md, "Pre-built 3D"). */
 async function bakeFloor(pkg, floor, origin) {
   const { plan, pieces, rooms, obstacles } = buildFloor(pkg, floor, origin, GEOMETRY);
-  pieces.push(...buildItems(plan, "detailed", GEOMETRY), ...buildItems(plan, "light", GEOMETRY));
+  pieces.push(...buildItems(plan, "light", GEOMETRY));
   const scene = new THREE.Scene();
   scene.name = floor.id;
   scene.userData.storeypath = {

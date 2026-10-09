@@ -28,7 +28,8 @@ register(`data:text/javascript,${encodeURIComponent(`
     return path ? { url: ${JSON.stringify(vendor)} + path, shortCircuit: true } : next(specifier, context);
   }`)}`);
 const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
-const { buildItems, originOf, planFloor, toLocal } = await import("../../src/world/build.js");
+const { BUILDER, buildItems, buildPieces, ceilingPanels, inside, itemExtent, originOf, planFloor, setItems, toLocal } =
+  await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
 
 const tests = [];
@@ -92,8 +93,17 @@ test("the baker writes each floor as binary glTF: its pieces, rooms and obstacle
       && x.origin.kx > 100000 && x.rooms.length >= 17, JSON.stringify({ ...x, rooms: x.rooms.length }));
     const node = (name) => json.nodes.find((n) => n.name === name);
     for (const name of ["slab", "wall", "wallTop", "floor:office", "volume:office", "ceiling", "door", "doorFrame",
-      "glass", "frame", "heads", "sills", "floor:shaft:hidden", "obstacles"]) truly(node(name), `no ${name}`);
+      "glass", "frame", "heads", "sills", "floor:shaft:hidden", "obstacles", "skirting", "trim", "handle", "sillBoard",
+      "lights"]) truly(node(name), `no ${name}`);
     truly(!node("wallLow") && !node("wallCut"), "the walls cut low are made from the full ones, not stored");
+    truly(x.builder === BUILDER && BUILDER === 3, `builder ${x.builder}`);
+    truly(node("lights").extras.view === "walk" && node("trim").extras.view === "full" && !node("skirting").extras.view,
+      "panels show walking, architraves not in the cutaway, skirting always");
+    // boxes (frames, doors, skirting, …) share their corners and have no normals: flat-shaded, as items are
+    for (const name of ["door", "skirting", "handle"]) {
+      const attributes = json.meshes[node(name).mesh].primitives[0].attributes;
+      truly(attributes.NORMAL === undefined && attributes.TEXCOORD_0 === undefined, `${name}: ${Object.keys(attributes)}`);
+    }
     const office = node("floor:office");
     truly(office.extras.material === "floor" && office.extras.type === "office" && !office.extras.view, JSON.stringify(office.extras));
     truly(json.meshes[office.mesh].primitives[0].attributes._ROOM !== undefined, "floors say whose room each vertex is");
@@ -107,17 +117,18 @@ test("the baker writes each floor as binary glTF: its pieces, rooms and obstacle
   }
 });
 
-for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's items apart, in both forms, with the IDs they index (${name})`, () => {
+for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's items apart, a box each, with the IDs they index (${name})`, () => {
   const out = mkdtempSync(join(tmpdir(), "sp-bake-"));
   try {
     execFileSync(process.execPath, [join(root, "bake.mjs"), join(packages, `${name}.storeypath`), out]);
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
     const held = { campus: 9, "campus-hq": 10 }[name]; // campus-hq: and a kiosk
-    truly(x.builder === 2 && x.items.length === held && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
+    truly(x.builder === 3 && x.items.length === held && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
-    const want = { items: {}, "items:high": { view: "full" }, "items:light": { form: "light" },
-      "items:light:high": { view: "full", form: "light" } };
+    // drawn in detail, they are built from their templates (in milliseconds), not read
+    truly(!node("items") && !node("items:high"), "the detailed items are not in the file");
+    const want = { "items:light": { form: "light" }, "items:light:high": { view: "full", form: "light" } };
     for (const [name, extras] of Object.entries(want)) {
       const n = node(name);
       truly(n && n.extras.material === "item" && n.extras.view === extras.view && n.extras.form === extras.form,
@@ -126,8 +137,6 @@ for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's ite
       truly(attributes._ITEM !== undefined && attributes.COLOR_0 !== undefined && attributes.NORMAL === undefined,
         `${name}: ${Object.keys(attributes)}`); // flat-shaded: no normals to store
     }
-    const tris = (name) => json.accessors[json.meshes[node(name).mesh].primitives[0].indices].count / 3;
-    truly(tris("items") > 3 * tris("items:light"), `detailed ${tris("items")}, light ${tris("items:light")} triangles`);
     const upper = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F02.glb")))));
     truly(upper.scenes[0].extras.storeypath.items.length === 0 && !upper.nodes.some((n) => n.name.startsWith("items")),
       "a floor with no items has no item pieces");
@@ -238,27 +247,44 @@ test("with no `local` (before 0.7) an item is placed by its point and heading on
   }
 });
 
-test("a desk is built with what goes with its grade: visitors' chairs, a return, a cabinet, a high-backed chair", async () => {
-  const boxes = {}; // a type's desk: how many boxes it is built of (8 corners each)
+test("a desk is built with what goes with its grade: visitors' chairs, a return, a credenza, an executive chair", async () => {
+  const seen = {}; // a type's desk, as built: what is round it, in its own frame
   for (const name of ["campus-hq", "campus-annex"]) {
     const pkg = await loadPackage(readFileSync(join(packages, `${name}.storeypath`)));
     const b = pkg.buildings[0].id;
     for (const floor of pkg.floorsOf(b)) {
       const plan = planFloor(pkg, floor, originOf(pkg, b));
-      const item = buildItems(plan).find((p) => p.name === "items")?.geometry.getAttribute("_item");
+      const g = buildItems(plan).find((p) => p.name === "items")?.geometry;
+      if (!g) continue;
+      const item = g.getAttribute("_item"), pos = g.getAttribute("position");
       plan.items.forEach((it, k) => {
         if (!it.type.startsWith("DESK-")) return;
-        let n = 0;
-        for (let i = 0; i < item.count; i++) if (item.getX(i) === k) n++;
-        boxes[it.type] = n / 8;
+        const at = []; // [across, ahead, up]
+        for (let i = 0; i < item.count; i++) {
+          if (item.getX(i) !== k) continue;
+          const x = pos.getX(i) - it.x, n = -pos.getZ(i) - it.n;
+          at.push([-x * it.fn + n * it.fx, x * it.fx + n * it.fn, pos.getY(i) - plan.elevation - it.y]);
+        }
+        const d = it.depth, [a0, b0, a1, b1, top] = itemExtent(it), front = at.filter(([, ahead]) => ahead < -d / 2 - 0.2);
+        seen[it.type] = {
+          return: at.some(([, ahead, up]) => ahead > d / 2 + 0.75 && ahead < d / 2 + 0.85 && up > it.height - 0.05),
+          cabinet: at.some(([, ahead]) => ahead > d / 2 + 1.3),
+          visitors: !front.length ? 0 : Math.max(...front.map(([across]) => Math.abs(across))) < 0.3 ? 1 : 2, // (in the middle, or two)
+          armchairs: front.some(([, ahead]) => ahead < -d / 2 - 0.75),
+          executive: at.some(([, , up]) => up > 1.15),
+          // what a click or the walker meets: all of it
+          within: at.every(([across, ahead, up]) => across >= a0 - 1e-3 && across <= a1 + 1e-3 && ahead >= b0 - 1e-3
+            && ahead <= b1 + 1e-3 && up >= -1e-3 && up <= top + 1e-3),
+        };
       });
     }
   }
-  // a top, its end and modesty panels, a chair (3); a return (2); visitors (2 each, an
-  // armchair 4); a cabinet (1); a high-backed chair (3)
-  const want = { "DESK-DIRECTOR": 14, "DESK-JUNIOR": 7, "DESK-MANAGER": 13, "DESK-PRESIDENT": 18, "DESK-SECTION-HEAD": 11,
-    "DESK-SENIOR": 9 };
-  const got = Object.fromEntries(Object.entries(boxes).sort(([a], [b]) => a.localeCompare(b)));
+  const of = (has) => ({ return: false, cabinet: false, visitors: 0, armchairs: false, executive: false, within: true, ...has });
+  const want = { "DESK-DIRECTOR": of({ return: true, cabinet: true, visitors: 2, executive: true }), "DESK-JUNIOR": of({}),
+    "DESK-MANAGER": of({ return: true, visitors: 2 }),
+    "DESK-PRESIDENT": of({ return: true, cabinet: true, visitors: 2, armchairs: true, executive: true }),
+    "DESK-SECTION-HEAD": of({ return: true, visitors: 1 }), "DESK-SENIOR": of({ return: true }) };
+  const got = Object.fromEntries(Object.entries(seen).sort(([a], [b]) => a.localeCompare(b)));
   truly(JSON.stringify(got) === JSON.stringify(want), `by grade: ${JSON.stringify(got)}`);
 });
 
@@ -275,11 +301,66 @@ test("a wayfinding kiosk: a plinth, a post and a head, its screen ahead, as tall
     return { g, at };
   };
   const { g, at } = of("items"), high = of("items:high");
-  truly(at.length === 32 && high.at.length === 0, `four boxes, below the cut: ${at.length} vertices, ${high.at.length} above it`);
+  // a plinth, a post and a head, bevelled (24 corners each), and its screen (a box: 8)
+  truly(at.length === 3 * 24 + 8 && high.at.length === 0, `below the cut: ${at.length} vertices, ${high.at.length} above it`);
   const top = Math.max(...at.map((i) => g.getAttribute("position").getY(i)));
   truly(Math.abs(top - (plan.elevation + 1.7)) < 1e-4, `its top at ${top}`);
   const color = g.getAttribute("color");
   truly(at.some((i) => color.getX(i) < 0.01 && color.getY(i) < 0.01), "its screen, dark");
+});
+
+/** The ground floor of campus-hq, planned. */
+const hqGround = async () => {
+  const pkg = await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")));
+  return { pkg, plan: planFloor(pkg, pkg.floorsOf(HQ).find((f) => f.id.endsWith("-F00")), originOf(pkg, HQ)) };
+};
+/** A piece's triangles. */
+const triangles = (p) => (p.geometry.index ? p.geometry.index.count : p.geometry.getAttribute("position").count) / 3;
+
+test("a floor's details: skirting along its walls, architraves and lever handles on its doors, boards on its sills, ceiling panels in its rooms", async () => {
+  const { plan } = await hqGround();
+  const pieces = Object.fromEntries(buildPieces(plan).pieces.map((p) => [p.name, p]));
+  // each door: its frame (three boxes); a box each side up and over it (4 faces each: not against the wall, nor under);
+  // three boxes a handle, each side of each leaf; each window's sill (a box) and its board (5 faces: not underneath)
+  const doors = triangles(pieces.doorFrame) / 36, windows = triangles(pieces.sills) / 12;
+  truly(doors > 5 && triangles(pieces.trim) === doors * 6 * 8, `${doors} doors, ${triangles(pieces.trim)} architraves' triangles`);
+  truly(triangles(pieces.handle) % 72 === 0 && triangles(pieces.handle) >= doors * 72, `handles: ${triangles(pieces.handle)} triangles`);
+  truly(windows > 5 && triangles(pieces.sillBoard) === windows * 10, `${windows} windows, boards: ${triangles(pieces.sillBoard)}`);
+  truly(triangles(pieces.skirting) > 100, "skirting");
+  // panels: in rooms (not in shafts or lifts), wholly inside them, each its face down alone
+  const panels = ceilingPanels(plan);
+  truly(triangles(pieces.lights) === panels.length * 2 && panels.length > 20, `${panels.length} panels`);
+  for (const q of panels) {
+    const u = plan.units.find((v) => v.id === q.unit);
+    truly(u && !["shaft", "elevator"].includes(u.type) && u.rings.some((r) => inside(r[0], q.x, -q.z)), `a panel at ${q.x},${q.z} in ${q.unit}`);
+  }
+  truly(ceilingPanels(plan) === panels, "worked out once a plan");
+});
+
+test("lines along edges (the model look): only when asked for, the same when built alone; none on floors or glass", async () => {
+  const { plan } = await hqGround();
+  truly(buildPieces(plan).pieces.every((p) => !p.edges) && buildItems(plan).every((p) => !p.edges), "lines only when asked for");
+  const both = buildPieces(plan, { edges: true }).pieces, alone = buildPieces(plan, { only: "edges" }).pieces;
+  const lines = (pieces) => Object.fromEntries(pieces.filter((p) => p.edges).map((p) => [p.name, Array.from(p.edges)]));
+  truly(JSON.stringify(lines(both)) === JSON.stringify(lines(alone)), "built alone, other lines");
+  truly(alone.every((p) => !p.geometry), "built alone: no geometry");
+  const names = Object.keys(lines(alone)).sort();
+  truly(JSON.stringify(names) === JSON.stringify(["door", "doorFrame", "frame", "sillBoard", "slab", "wall"]), `lines on ${names}`);
+  const items = buildItems(plan, "detailed", { only: "edges" });
+  truly(items.length && items.every((p) => p.edges.length % 6 === 0 && p.edges.length > 0 && !p.geometry), "the items' lines");
+});
+
+test("items of a kind and size are copies of one template: a thousand desks in milliseconds", async () => {
+  const { plan } = await hqGround();
+  const desk = plan.items.find((i) => i.type === "DESK-MANAGER");
+  setItems(plan, Array.from({ length: 1000 }, (_, k) => ({ ...desk, id: `D${k}`, x: desk.x + (k % 40) * 3, n: desk.n + Math.floor(k / 40) * 3 })));
+  buildItems(plan); // (warmed up)
+  const t = performance.now();
+  const [piece] = buildItems(plan);
+  const took = performance.now() - t;
+  const one = triangles(piece) / 1000;
+  truly(Number.isInteger(one) && one > 300, `${one} triangles a desk`);
+  truly(took < 60, `a thousand desks in ${took.toFixed(1)} ms`);
 });
 
 test("a catalogue colour that is not #rrggbb is not used: the item takes the default colour", async () => {
@@ -738,11 +819,12 @@ test("pre-built floors are used only as they were built: this export, this build
     };
     const same = await rewritten(() => {});
     const old = await rewritten((x) => delete x.builder);
+    const two = await rewritten((x) => (x.builder = 2)); // before the details and the finer furniture
     window.world.setFloor(window.world.package.floors[0].id);
     const furnished = window.world.scene.getObjectByName("items") !== undefined;
-    return { sized, stale, same, old, furnished, floors: window.world.plan(window.world.package.floors[0].id) !== null };
+    return { sized, stale, same, old, two, furnished, floors: window.world.plan(window.world.package.floors[0].id) !== null };
   });
-  truly(r.sized === 0 && r.stale === 0 && r.same >= 2 && r.old === 0 && r.furnished && r.floors, JSON.stringify(r));
+  truly(r.sized === 0 && r.stale === 0 && r.same >= 2 && r.old === 0 && r.two === 0 && r.furnished && r.floors, JSON.stringify(r));
 });
 
 // format 0.8: the way through a building (route(), the module both viewers share)
@@ -805,9 +887,16 @@ test("a way is drawn over each floor it walks on, through the lift between them,
     const during = opacity();
     await flying;
     const after = opacity();
+    // again: the camera goes back to the start and along (it ends where it was: how far it went meanwhile)
     const before = world.camera.position.clone();
+    let moved = 0, watching = true;
+    const watch = () => {
+      moved = Math.max(moved, world.camera.position.distanceTo(before));
+      if (watching) requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
     await world.flyRoute({ seconds: 2 }); // (longer than a frame drawn in software, however busy the machine)
-    const moved = world.camera.position.distanceTo(before);
+    watching = false;
     const target = { x: world.camera.position.x, y: world.camera.position.y };
     world.clearRoute();
     await window.frames();

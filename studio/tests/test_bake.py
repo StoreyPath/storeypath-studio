@@ -43,15 +43,16 @@ def test_a_package_exported_with_node_has_each_floor_pre_built(converted):
     assert spaces <= set(x["rooms"]) <= spaces | zones  # what _ROOM indexes
     assert x["origin"]["kx"] > 0 and x["options"]["cutHeight"] == 1.25
     names = {n["name"] for n in gltf["nodes"]}
-    assert {"slab", "wall", "wallTop", "ceiling", "door", "obstacles"} <= names
+    assert {"slab", "wall", "wallTop", "ceiling", "door", "obstacles", "skirting", "trim", "handle", "lights"} <= names
     assert any(n.startswith("floor:") for n in names) and any(n.startswith("volume:") for n in names)
 
 
 @with_node
 def test_a_floors_items_are_pre_built_apart_from_the_rest(converted):
     # Format 0.6: the items in pieces of their own (a viewer leaves them out until
-    # asked for), in both forms, with the IDs their vertices index; the builder's
-    # version, so that a viewer builds again a floor made before items.
+    # asked for), a box each, with the IDs their vertices index (drawn in detail, a
+    # viewer builds them from the items: builder 3); the builder's version, so that a
+    # viewer builds again a floor made by another.
     ws, d, f_id, *_ = converted
     desk = ws.add_item("DESK-MANAGER", f_id, 3.0, 3.0, rotation=90)
     ap = ws.add_item("ACCESS-POINT", f_id, 4.0, 4.0)
@@ -59,13 +60,14 @@ def test_a_floors_items_are_pre_built_apart_from_the_rest(converted):
     with zipfile.ZipFile(d / "out.storeypath") as z:
         gltf = _gltf(z.read(f"world/{f_id}.glb"))
     x = gltf["scenes"][0]["extras"]["storeypath"]
-    assert x["builder"] == 2 and x["items"] == [desk.id, ap.id]
+    assert x["builder"] == 3 and x["items"] == [desk.id, ap.id]
     nodes = {n["name"]: n for n in gltf["nodes"]}
-    assert {"items", "items:high", "items:light", "items:light:high"} <= set(nodes)  # the desk below the cut, the AP above
+    assert {"items:light", "items:light:high"} <= set(nodes)  # the desk below the cut, the AP above
+    assert not {"items", "items:high"} & set(nodes)
     assert nodes["items:light"]["extras"] == {"material": "item", "form": "light"}
-    assert nodes["items:high"]["extras"] == {"material": "item", "view": "full"}
-    attributes = gltf["meshes"][nodes["items"]["mesh"]]["primitives"][0]["attributes"]
-    assert {"POSITION", "COLOR_0", "_ITEM"} == set(attributes)
+    assert nodes["items:light:high"]["extras"] == {"material": "item", "view": "full", "form": "light"}
+    attributes = gltf["meshes"][nodes["items:light"]["mesh"]]["primitives"][0]["attributes"]
+    assert {"POSITION", "COLOR_0", "_ITEM", "_FINISH"} == set(attributes)
 
 
 @with_node
