@@ -305,6 +305,13 @@ test("as printed, a room is labelled once: the print without its texts under Stu
   await until(() => window.storeypathReview.state.underlay.print?.endsWith(":plain"), "the print without its texts", 60000);
   const labelled = await R(() => [...document.querySelectorAll("#labels text")].filter((t) => t.textContent).length);
   truly(labelled > 5, `Studio's labels: ${labelled}`);
+  // each fits its room, so none runs into the next room's (cut short, or its number, instead)
+  const over = await R(() => {
+    const r = window.storeypathReview, k = r.state.view.k;
+    return [...r.state.labels].map(([id, t]) => [r.state.byId.get(id), t]).filter(([s, t]) => s && t.textContent)
+      .filter(([s, t]) => t.getBBox().width > s.label_room[0] * k).map(([, t]) => t.textContent);
+  });
+  truly(!over.length, `labels wider than their rooms: ${JSON.stringify(over)}`);
   await press("t");
   await until(() => window.storeypathReview.state.underlay.print?.endsWith(":text") && document.getElementById("labels").classList.contains("hidden"),
     "T: the print with its texts, Studio's labels hidden", 60000);

@@ -332,6 +332,32 @@ export function showCursor(pane, sx, sy) {
   );
 }
 
+// a label's width as drawn (canvas.css, #labels text: 600 12px, a number 400), measured once
+let measure = null;
+const measured = new Map();
+function textWidth(text, bold = true) {
+  const key = `${bold ? "b" : "n"}${text}`;
+  let w = measured.get(key);
+  if (w !== undefined) return w;
+  if (!measure) {
+    measure = document.createElement("canvas").getContext("2d");
+    measure.family = getComputedStyle(document.documentElement).getPropertyValue("--font-ui").trim() || "sans-serif";
+  }
+  measure.font = `${bold ? 600 : 400} 12px ${measure.family}`;
+  w = measure.measureText(text).width + 1;
+  if (measured.size > 20000) measured.clear();
+  measured.set(key, w);
+  return w;
+}
+
+/** As much of ``text`` as fits ``room`` pixels: all of it, or cut short with an ellipsis. */
+function fitted(text, room, bold) {
+  if (textWidth(text, bold) <= room) return text;
+  let n = text.length - 1;
+  while (n > 1 && textWidth(text.slice(0, n).trimEnd() + "…", bold) > room) n -= 1;
+  return text.slice(0, n).trimEnd() + "…";
+}
+
 let labelFrame = 0;
 export function placeLabels() {
   if (labelFrame) return;
@@ -353,17 +379,18 @@ export function placeLabels() {
       }
       const sx = s.label_point[0] * k + tx;
       const sy = -s.label_point[1] * k + ty;
-      const max = Math.max(3, Math.floor(w / 7.5));
-      const fitText = (text) => (text.length > max ? text.slice(0, max - 1) + "…" : text);
+      const room = w - 4; // clear of the walls, and of the next room's label
+      const isNumber = (text) => text === label.dataset.number && text !== label.dataset.name;
+      const fits = (text) => textWidth(text, !isNumber(text)) <= room;
       let lines = [label.dataset.name, label.dataset.number].filter(Boolean);
       // a name that does not fit, beside a number that does: the number (rooms go by it)
-      if (lines.length === 2 && lines[0].length > max && lines[1].length <= max) lines = [lines[1]];
+      if (lines.length === 2 && !fits(lines[0]) && fits(lines[1])) lines = [lines[1]];
       const both = lines.length === 2 && h >= 34;
       const shown = both ? lines : lines.slice(0, 1);
       label.replaceChildren(...shown.map((text, i) => {
         const span = svg("tspan", { x: sx, y: sy + (both ? (i === 0 ? -3 : 12) : 4) });
-        if (text === label.dataset.number && text !== label.dataset.name) span.setAttribute("class", "num");
-        span.textContent = fitText(text);
+        if (isNumber(text)) span.setAttribute("class", "num");
+        span.textContent = fitted(text, room, !isNumber(text));
         return span;
       }));
     }
