@@ -119,6 +119,40 @@ def test_two_people_changing_a_floor_at_once_both_keep_their_change(stored, tmp_
     other.db.close()
 
 
+def test_an_item_id_is_one_projects_in_the_whole_studio(stored, tmp_path, monkeypatch):
+    # An item's ID is the key of its row in the whole Studio (no project counts its
+    # items): a new item's is drawn again while an item of any project here has it, and
+    # an item of another project is never written over (an asset is one project's).
+    from storeypath import ids
+    from storeypath.errors import Conflict
+
+    store, ws, f_id, _ = stored
+    (desk,) = ws.items.values()
+    copy = ws.save_as_new_project(tmp_path / "copy.spproj", "Copy")  # another project, its items its own
+    store.create(copy)
+    (theirs,) = copy.items
+    assert store.item_taken(theirs) and store.item_taken(desk.id) and not store.item_taken("ZZZZ-ZZZZ-ZZA")
+    symbols = iter("".join(i.replace("-", "")[:10] for i in (theirs, desk.id, "ZZZZ-ZZZZ-ZZA")))
+    monkeypatch.setattr(ids.secrets, "choice", lambda alphabet: next(symbols))
+    review = Review(StoredProject(store, ws.id, tmp_path / "cache"))
+    added = review.add_item(f_id, {"type": "COPIER", "x": 1.0, "y": 1.0})
+    assert added["id"] == "ZZZZ-ZZZZ-ZZA" and next(symbols, None) is None
+    monkeypatch.undo()
+    with store.db.connection() as conn:
+        rows = conn.execute("SELECT project, id FROM items ORDER BY position").fetchall()
+        assert rows == [(ws.id, desk.id), (copy.id, theirs), (ws.id, "ZZZZ-ZZZZ-ZZA")]
+        assert not conn.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' "
+                                "AND column_name = 'next_item_seq'").fetchone()  # no project counts its items
+
+    # a third project whose item has the first's desk's ID: refused, nothing made
+    third = copy.save_as_new_project(tmp_path / "third.spproj", "Third")
+    (mine,) = third.items.values()
+    third.items = {desk.id: mine.model_copy(update={"id": desk.id})}
+    with pytest.raises(Conflict, match=f"item {desk.id} is an item of another project here"):
+        store.create(third)
+    assert not store.exists(third.id) and store.current(ws.id).items[desk.id] == desk
+
+
 def test_the_schema_applies_as_a_plain_role_owning_its_database(databases):
     # As in the studio image: Studio's role owns its database and is no superuser; the
     # image made PostGIS before Studio started.

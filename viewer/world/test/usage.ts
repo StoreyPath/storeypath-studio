@@ -1,7 +1,7 @@
 // Type-checked by `npm run check`: the declarations describe the module as a
 // strict TypeScript application uses it.
-import { StoreyPathWorld, loadPackage, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents, type WorldLook,
-	type WorldPoint, type WorldQuality } from '@storeypath/viewer-world';
+import { StoreyPathWorld, isItemId, loadPackage, normalizeItemId, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents,
+	type WorldLook, type WorldPoint, type WorldQuality } from '@storeypath/viewer-world';
 import { webglSupport as check } from '@storeypath/viewer-world/support';
 
 export async function show(element: HTMLElement, data: ArrayBuffer): Promise<string | null> {
@@ -36,7 +36,8 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 		const p: WorldPoint = e.detail;
 		if (p.local && floor) {
 			e.preventDefault();
-			const desk: GivenItem = { id: 'P-I000001', type: 'DESK-JUNIOR', x: p.local[0], y: p.local[1], rotation: 90 };
+			const tag: string | null = normalizeItemId('7k2q xm9f 4dp'); // as typed: 7K2Q-XM9F-4DP
+			const desk: GivenItem = { id: isItemId(tag) ? tag : '7K2Q-XM9F-4DP', type: 'DESK-JUNIOR', x: p.local[0], y: p.local[1], rotation: 90 };
 			world.setFloorItems(floor, [desk]);
 		}
 	});

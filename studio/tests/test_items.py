@@ -47,27 +47,48 @@ def test_a_type_code_and_a_field_key_are_checked():
 
 
 def test_an_item_keeps_its_id_wherever_it_goes(converted):
-    # An item's ID is the project's and its own number: carried to another floor, it
-    # keeps it; taken away, it is retired and its number never issued again.
+    # An item's ID is an asset's tag, of no project or place: carried to another floor,
+    # it keeps it; taken away, it is retired and its ID never issued again.
     ws, d, f_id, b_id, *_ = converted
     first = ws.add_item("DESK-MANAGER", f_id, 3.0, 4.0, rotation=450)
     second = ws.add_item("COPIER", f_id, 6.0, 1.0)
-    assert is_item_id(first.id) and first.id == f"{ws.id}-I000001" and second.id == f"{ws.id}-I000002"
-    assert first.rotation == 90
-    assert [i.id for i in ws.floor_items(f_id)] == [first.id, second.id]
+    assert is_item_id(first.id) and is_item_id(second.id) and first.id != second.id
+    assert ws.id not in first.id and first.rotation == 90
+    assert [i.id for i in ws.floor_items(f_id)] == [first.id, second.id]  # in the order they were placed
     second.status = "retired"
     third = ws.add_item("SOFA", f_id, 1.0, 1.0)
-    assert third.id.endswith("I000003") and [i.id for i in ws.floor_items(f_id)] == [first.id, third.id]
+    assert is_item_id(third.id) and [i.id for i in ws.floor_items(f_id)] == [first.id, third.id]
     path = d / "p.spproj"
     ws.save(path)
     again = Workspace.load(path)
-    assert again.items[first.id] == first and again.next_item_seq == 4
+    assert again.items[first.id] == first and "next_item_seq" not in path.read_text()
 
 
-def test_a_location_code_cannot_look_like_an_item():
-    ws = Workspace.new("P")
-    with pytest.raises(ValueError, match="item"):
-        ws.add_location("I000001", "Somewhere")
+def test_a_new_item_is_given_no_id_the_project_or_another_has(converted, monkeypatch):
+    # drawn again while an item of the project has it, or ``taken`` says one elsewhere has
+    from storeypath import ids
+
+    ws, d, f_id, *_ = converted
+    first = ws.add_item("DESK-MANAGER", f_id, 3.0, 4.0)
+    elsewhere, free = "7K2Q-XM9F-4DP", "ZZZZ-ZZZZ-ZZA"
+    # what is drawn: the project's item's ID, then the one taken elsewhere, then one free
+    symbols = iter("".join(i.replace("-", "")[:10] for i in (first.id, elsewhere, free)))
+    monkeypatch.setattr(ids.secrets, "choice", lambda alphabet: next(symbols))
+    second = ws.add_item("COPIER", f_id, 6.0, 1.0, taken=lambda i: i == elsewhere)
+    assert second.id == free and next(symbols, None) is None
+
+
+def test_a_building_code_cannot_make_an_item_id():
+    # a project of four symbols (not one Studio makes): a building ID 4-4-3 with its check
+    # right would read as an item's
+    from storeypath.workspace import Project
+
+    ws = Workspace(project=Project(code="7K2Q", name="P"))
+    loc = ws.add_location("XM9F", "Somewhere")
+    with pytest.raises(ValueError, match="item's ID"):
+        ws.add_building(loc, "4DP", "Here")
+    assert ws.add_building(loc, "4DK", "There") == "7K2Q-XM9F-4DK"
+    assert ws.add_location("I000001", "Anywhere") == "7K2Q-I000001"  # (an item's form before format 0.8)
 
 
 def test_items_in_a_package_and_what_changed_of_them(converted, tmp_path):
@@ -162,7 +183,7 @@ def test_items_placed_moved_and_taken_away_in_review(tmp_path):
 
         status, item = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "ACCESS-POINT", "x": 3, "y": 4,
                                                                           "values": {"color": "#00ff00"}})
-        assert status == 200 and item["id"] == f"{code}-I000001" and item["values"] == {"color": "#00ff00"}
+        assert status == 200 and is_item_id(item["id"]) and item["values"] == {"color": "#00ff00"}
         status, err = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "ACCESS-POINT", "x": 3, "y": 4,
                                                                          "values": {"ssid": "Staff"}})
         assert status == 400 and "system that manages" in err["error"]  # the network is wayfinder's to enter
@@ -189,10 +210,10 @@ def test_items_placed_moved_and_taken_away_in_review(tmp_path):
         srv.server_close()
 
 
-def test_items_come_back_when_a_package_opens_as_a_project(converted, tmp_path):
+def test_items_come_back_when_a_package_opens_as_a_project(converted, tmp_path, monkeypatch):
     # A project rebuilt from a package has its items where they were, turned as they
-    # were, with their details; retired item numbers are never given again; the
-    # receiving Studio learns the item types it lacks.
+    # were, with their details; retired item IDs are never given again; the receiving
+    # Studio learns the item types it lacks.
     from storeypath import catalogue
     from storeypath.bundle import open_file
     from storeypath.export import export_package
@@ -219,4 +240,39 @@ def test_items_come_back_when_a_package_opens_as_a_project(converted, tmp_path):
         assert (back.type, back.floor_id) == (it.type, it.floor_id)
         assert abs(back.x - it.x) < 0.02 and abs(back.y - it.y) < 0.02 and abs((back.rotation - it.rotation + 180) % 360 - 180) < 0.1
     assert again.items[gone.id].status == "retired"
-    assert again.add_item("COPIER", f_id, 0, 0).id.endswith("I000004")  # after the retired one
+    from storeypath import ids
+
+    symbols = iter(gone.id.replace("-", "")[:10] + "Z" * 10)  # the retired one's drawn first
+    monkeypatch.setattr(ids.secrets, "choice", lambda alphabet: next(symbols))
+    assert again.add_item("COPIER", f_id, 0, 0).id == "ZZZZ-ZZZZ-ZZA"  # not given again
+
+
+def test_an_item_is_found_by_its_id_as_a_person_types_it(tmp_path, monkeypatch):
+    # Review's search box and the Navigate page take an item's ID as typed: either case,
+    # O for 0, I and L for 1, with or without its hyphens; of a floor the person sees.
+    from urllib.parse import quote
+
+    from shapely.geometry import shape
+
+    from people import Team
+    from storeypath import accounts as acc
+
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    monkeypatch.delenv("STOREYPATH_ALLOWED_HOSTS", raising=False)
+    team = Team(tmp_path / "data")
+    try:
+        office = next(r for r in team.spaces(team.hq0) if r.name == "OFFICE")
+        p = shape(office.geometry).representative_point()
+        status, desk = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
+        assert status == 200
+        typed = desk["id"].lower().replace("-", " ").replace("0", "o").replace("1", "l")
+        status, found = team("vera", "GET", f"items/{quote(typed)}")  # vera sees the ground floor
+        assert status == 200 and found["id"] == desk["id"] and found["floor_id"] == team.hq0
+        assert team("bob", "GET", f"items/{quote(typed)}")[0] == 404  # bob sees the Annex alone
+        wrong = typed[:-1] + ("x" if typed[-1] != "x" else "y")  # its check symbol wrong: not an ID
+        assert team("khalid", "GET", f"items/{quote(wrong)}")[0] == 404
+        # the way from it, asked with it as typed
+        status, way = team("khalid", "GET", f"buildings/{team.hq}/navigation?from={quote(typed)}&to={office.id}")
+        assert status == 200 and way["route"]["from"] == desk["id"], way
+    finally:
+        team.close()

@@ -9,6 +9,7 @@
           "type": "string"
         },
         "id": {
+          "description": "its asset ID (format 0.8): ten random symbols of Crockford's base32 and a check symbol, 4-4-3 (7K2Q-XM9F-4DP), of no project or place: carried anywhere, it keeps it",
           "title": "Id",
           "type": "string"
         },

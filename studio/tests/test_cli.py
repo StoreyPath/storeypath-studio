@@ -58,6 +58,24 @@ def test_errors_are_reported(tmp_path):
     assert result.exit_code == 1 and "already exists" in result.output
 
 
+def test_packages_held_together_are_validated_together():
+    # each, and together: an item's ID is one project's (one item in two of campus's)
+    from storeypath.assets import asset_dir
+
+    folder = asset_dir("spec") / "conformance" / "packages"
+    hq, annex = folder / "campus-hq.storeypath", folder / "campus-annex-2.storeypath"
+    assert run("validate", hq, annex).splitlines() == [f"{hq}: valid", f"{annex}: valid"]
+
+
+def test_an_item_id_is_read_as_a_person_types_it():
+    assert run("item-id", "7k2q", "xm9f", "4dp") == "7K2Q-XM9F-4DP"
+    assert run("item-id", "7K2QXM9F4DP") == run("item-id", "7K2Q-XM9F-4DP") == "7K2Q-XM9F-4DP"
+    assert run("item-id", "lOZO-iabc-Ldd") == "10Z0-1ABC-1DD"  # O for 0, I and L for 1
+    for wrong in ("7K2Q-XM9F-4DK", "7K2Q-XM9F-4D", "K7Q2XM-I000142"):  # its check wrong, too short, of 0.7
+        result = runner.invoke(app, ["item-id", wrong])
+        assert result.exit_code == 1 and "is not an item's ID" in result.output, wrong
+
+
 def _two_floors(path):
     """Ground and first floor drawn side by side, the first 70 m right and 2.5 m up."""
     write_sheet_dxf(path, [(office_floor(0), (100.0, 50.0), "GROUND FLOOR PLAN"),

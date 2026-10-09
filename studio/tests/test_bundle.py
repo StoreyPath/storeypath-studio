@@ -79,7 +79,12 @@ def _changes(path):
 
 def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
     # A package of an earlier format, of the whole campus: rebuilt, then exported a
-    # building at a time (one per package), each with nothing changed.
+    # building at a time (one per package), each with nothing changed but its items'
+    # IDs. Numbered by the project then (format 0.6: EWBSSN-I000001), its items are
+    # given asset IDs made from those (the same in any Studio that opens it): listed as
+    # added, and the IDs of then as retired.
+    from storeypath.ids import is_item_id, item_id_for_legacy
+
     source = PACKAGES / "campus.storeypath"
     opened = open_file(tmp_path, source)
     assert opened["how"] == "package" and opened["code"] == "EWBSSN" and opened["floors"] == 5 and opened["drawings"] == 0
@@ -89,6 +94,15 @@ def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
         set(before["spaces"]) | set(before["zones"]) | set(before["openings"])
     hq = ws.building("EWBSSN-DEMO-HQ")
     assert hq.placement is not None and len(hq.floors) == 3 and all(f.source is None for f in hq.floors)
+    with zipfile.ZipFile(source) as z:
+        then = {f["id"]: f["properties"] for f in json.loads(z.read("items.geojson"))["features"]}
+    assert then and set(ws.items) == {item_id_for_legacy(i) for i in then} and all(map(is_item_id, ws.items))
+    for i, p in then.items():
+        it = ws.items[item_id_for_legacy(i)]
+        assert (it.type, it.floor_id, it.status) == (p["type"], p["floor_id"], "active")
+    assert set(Workspace.load(tmp_path / "EWBSSN" / "EWBSSN.spproj").items) == set(ws.items)
+    open_file(tmp_path / "other", source)
+    assert set(Workspace.load(tmp_path / "other" / "EWBSSN" / "EWBSSN.spproj").items) == set(ws.items)
 
     previous = _changes(source)["sequence"]
     for n, b in enumerate(("EWBSSN-DEMO-HQ", "EWBSSN-DEMO-ANNEX"), 1):
@@ -98,8 +112,14 @@ def test_a_package_opens_as_a_project_and_exports_as_it_was(tmp_path):
         changes = _changes(out)
         # the last package that held the building: the campus's, for both
         assert changes["sequence"] == previous + n and changes["previous_sequence"] == previous
-        assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
+        its = sorted(i for i, p in then.items() if p["building_id"] == b)
+        assert changes["added"] == sorted(item_id_for_legacy(i) for i in its) and changes["retired"] == its
+        assert (changes["changed"], changes["moved_away"]) == ([], []) and set(its) <= set(changes["all_retired"])
         _same(_features(out), _of(before, b))
+    # and the next lists nothing (the items by their new IDs now)
+    export_package(ws, tmp_path / "hq-again.storeypath", building="EWBSSN-DEMO-HQ")
+    changes = _changes(tmp_path / "hq-again.storeypath")
+    assert (changes["added"], changes["changed"], changes["retired"], changes["moved_away"]) == ([], [], [], [])
 
 
 def test_an_unplaced_building_stays_unplaced(tmp_path):
@@ -122,6 +142,27 @@ def test_new_ids_follow_every_id_given(tmp_path):
     given = max(int(i.rsplit("-", 1)[1]) for i in ws.objects if i.startswith(b_id + "-F"))
     assert ws.building(b_id).next_object_seq == given + 1
     assert ws.allocate_object_code(b_id) == f"{given + 1:04d}"
+
+
+def test_a_project_file_of_a_studio_before_asset_ids_opens_with_its_items_tagged(review, tmp_path):
+    # Its items numbered by the project then (format 0.7): given asset IDs made from
+    # those, the one retired left out (its ID is never in use again).
+    from storeypath.bundle import read_file
+    from storeypath.ids import is_item_id, item_id_for_legacy
+
+    _, path, f_id = review
+    ws = Workspace.load(path)
+    desk = ws.add_item("DESK-MANAGER", f_id, 3.0, 3.0)
+    gone = ws.add_item("TV", f_id, 4.0, 4.0)
+    gone.status = "retired"
+    then = {desk.id: f"{ws.id}-I000001", gone.id: f"{ws.id}-I000002"}
+    ws.items = {then[i]: it.model_copy(update={"id": then[i]}) for i, it in ws.items.items()}
+    ws.save(path)
+    export_project(path, tmp_path / "p.storeypath-project")
+    incoming = read_file(tmp_path / "p.storeypath-project")
+    tag = item_id_for_legacy(f"{ws.id}-I000001")
+    assert is_item_id(tag) and list(incoming.ws.items) == [tag]
+    assert incoming.ws.items[tag].model_dump(exclude={"id"}) == desk.model_dump(exclude={"id"})
 
 
 def test_a_project_travels_whole_and_continues(review, tmp_path):

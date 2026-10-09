@@ -13,9 +13,9 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from .catalogue import Catalogue
-from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, parse_id
-from .package import (COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes, FeatureCollection,
-                      ItemFeature, Manifest, Navigation, version_problem, version_tuple)
+from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
+from .package import (ASSET_IDS_FROM, COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes,
+                      FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -79,6 +79,12 @@ def validate_package(path: str | Path) -> list[str]:
             return errors
         project = manifest.project.id
         one_building = version >= ONE_BUILDING_FROM
+        # an item's ID: an asset's tag (0.8), else the project's code, -I and six digits
+        asset_ids = version >= ASSET_IDS_FROM
+        item_form = is_item_id if asset_ids else is_legacy_item_id
+        not_an_item = ("not an item ID (four, four and three symbols of Crockford's base32, the last its "
+                       "check: 7K2Q-XM9F-4DP)" if asset_ids
+                       else f"not an item ID of project {project} ({project}-I and six digits)")
 
         def file_of(role: str) -> str:
             """A file of the package: by its role in the manifest's files, else by the name
@@ -168,7 +174,8 @@ def validate_package(path: str | Path) -> list[str]:
                     errors.append(f"{f.id}: connects to {s} on another floor")
 
         # Items (format 0.6): furniture and equipment, when the package has them. Their
-        # IDs are the project's and their own number; where they are is data.
+        # IDs are assets' tags (0.8; before, the project's and their own number); where
+        # they are is data.
         if "items" in manifest.files:
             codes = None
             if "catalogue" in manifest.files and (cat := load(manifest.files["catalogue"], Catalogue)) is not None:
@@ -180,10 +187,9 @@ def validate_package(path: str | Path) -> list[str]:
                     errors.append(f"{manifest.files['items']}: manifest counts {manifest.counts.get('items')}, file has {len(items)}")
                 for f in items:
                     q = f.properties
-                    if not is_item_id(f.id) or not f.id.startswith(project + "-"):
-                        errors.append(f"{f.id[:MAX_ID_LENGTH]}: not an item ID of project {project} "
-                                      f"({project}-I and six digits)")
-                        if not is_item_id(f.id):  # not an ID at all: nothing else of it is checked
+                    if not item_form(f.id) or not (asset_ids or f.id.startswith(project + "-")):
+                        errors.append(f"{f.id[:MAX_ID_LENGTH]}: {not_an_item}")
+                        if not item_form(f.id):  # not an ID at all: nothing else of it is checked
                             continue
                     if f.id in ids:
                         errors.append(f"duplicate ID {f.id}")
@@ -268,7 +274,7 @@ def validate_package(path: str | Path) -> list[str]:
             for i in sorted(retired & set(ids)):
                 errors.append(f"{name}: retired ID {i} is still in the package")
             for m in changes.moved_away:
-                if not is_item_id(m.id) or m.id in ids:
+                if not item_form(m.id) or m.id in ids:
                     errors.append(f"{name}: {m.id} is listed as moved away but is not an item gone from here")
                 elif m.id in retired:  # carried elsewhere, it is not retired: it keeps its ID
                     errors.append(f"{name}: {m.id} is listed as moved away and as retired")
@@ -281,6 +287,34 @@ def validate_package(path: str | Path) -> list[str]:
             if changes.previous_sequence is not None and not changes.previous_sequence < changes.sequence:
                 errors.append(f"{name}: previous_sequence {changes.previous_sequence} is not before "
                               f"this export's {changes.sequence}")
+    return errors
+
+
+def validate_across(paths) -> list[str]:
+    """Packages held together (each checked by validate_package): an asset is one
+    project's, so the same item ID in packages of two projects is a clash, not one
+    item. Each is a problem of the later package (in the order given), which a reader
+    refuses. In packages of one project the same ID is the same item, carried from
+    building to building."""
+    seen: dict[str, tuple[str, str]] = {}  # item ID -> its project, and the package it was first in
+    errors: list[str] = []
+    for path in paths:
+        name = Path(path).name
+        try:
+            with zipfile.ZipFile(path) as z:
+                manifest = json.loads(z.read("manifest.json"))
+                project, items = manifest["project"]["id"], manifest.get("files", {}).get("items")
+                features = json.loads(z.read(items))["features"] if items in z.namelist() else []
+        except (OSError, zipfile.BadZipFile, KeyError, ValueError, TypeError, AttributeError):
+            continue  # not read: validate_package says why
+        for f in features:
+            i = f.get("id") if isinstance(f, dict) else None
+            if not isinstance(i, str):
+                continue
+            project_first, where = seen.setdefault(i, (project, name))
+            if project_first != project:
+                errors.append(f"{name}: item {i[:MAX_ID_LENGTH]} is an item of project {project_first} too "
+                              f"({where}): an item's ID is one project's")
     return errors
 
 

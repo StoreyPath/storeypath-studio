@@ -38,6 +38,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .errors import Conflict
+from .ids import is_item_id
 
 COMMAND_LINE = "command line"
 SHOWN = 50  # rows listed, unless asked for more…
@@ -158,8 +159,11 @@ def _first_up(text: str) -> str:
 # ---- lines to read -----------------------------------------------------------------
 
 def short(object_id: str | None) -> str:
-    """An ID as lines show it: its last part (…-0013, …-I000004)."""
-    return f"…-{object_id.rsplit('-', 1)[-1]}" if object_id else ""
+    """An ID as lines show it: a place's, its last part (…-0013); an item's, whole
+    (7K2Q-XM9F-4DP: the tag on it, which says nothing of where it is)."""
+    if not object_id:
+        return ""
+    return object_id if is_item_id(object_id) else f"…-{object_id.rsplit('-', 1)[-1]}"
 
 
 def type_label(value) -> str:
@@ -176,7 +180,7 @@ OPENINGS = ("door", "window", "opening")
 
 def subject(e: dict) -> str:
     """What a row changed, as a sentence names it: OFFICE 012, a space …-0013,
-    Manager's desk …-I000004, a wall."""
+    Manager's desk 7K2Q-XM9F-4DP, a wall."""
     part, target = e.get("part"), (e.get("targets") or [None])[0]
     if part == "object":
         what = e.get("what") or "space"
@@ -201,7 +205,7 @@ def _drawn(e: dict) -> str:
 
 def describe(e: dict) -> str:
     """A row as people read it, without who: "deleted OFFICE 012", "moved Manager's
-    desk …-I000004", "drew a wall"; an undo, "undid: …"."""
+    desk 7K2Q-XM9F-4DP", "drew a wall"; an undo, "undid: …"."""
     line = _describe(e)
     if e.get("undoes"):
         return f"undid: {line}"

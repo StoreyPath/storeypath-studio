@@ -32,6 +32,7 @@ const { BUILDER, buildItems, buildPieces, ceilingPanels, inside, itemExtent, ori
   await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
 const { qualityFor } = await import("../../src/world/gpu.js");
+const { isItemId } = await import("../../src/ids.js");
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -125,7 +126,9 @@ for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's ite
     const json = gltfJSON(readFileSync(join(out, readdirSync(out).find((f) => f.endsWith("-HQ-F00.glb")))));
     const x = json.scenes[0].extras.storeypath;
     const held = { campus: 9, "campus-hq": 10 }[name]; // campus-hq: and a kiosk
-    truly(x.builder === 3 && x.items.length === held && x.items.every((id) => /^[A-Z0-9]+-I\d{6}$/.test(id)), JSON.stringify(x.items));
+    // an item's ID: an asset's tag (format 0.8), the project's number before (campus: 0.6)
+    const itemId = name === "campus" ? (id) => /^[A-Z0-9]+-I\d{6}$/.test(id) : isItemId;
+    truly(x.builder === 3 && x.items.length === held && x.items.every(itemId), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
     // drawn in detail, they are built from their templates (in milliseconds), not read
     truly(!node("items") && !node("items:high"), "the detailed items are not in the file");
@@ -920,16 +923,17 @@ test("a way is drawn over each floor it walks on, through the lift between them,
     const during = opacity();
     await flying;
     const after = opacity();
-    // again: the camera goes back to the start and along (it ends where it was: how far it went meanwhile)
+    // again, from where the first ended: how far along the way the camera goes, frame by
+    // frame (where it ends depends on the frames, as the first's: it may end where that
+    // one did)
     const before = world.camera.position.clone();
-    let moved = 0, watching = true;
-    const watch = () => {
+    let moved = 0, flown = false;
+    const again = world.flyRoute({ seconds: 2 }).then(() => (flown = true)); // (longer than a frame drawn in software)
+    while (!flown) {
+      await window.frames(1);
       moved = Math.max(moved, world.camera.position.distanceTo(before));
-      if (watching) requestAnimationFrame(watch);
-    };
-    requestAnimationFrame(watch);
-    await world.flyRoute({ seconds: 2 }); // (longer than a frame drawn in software, however busy the machine)
-    watching = false;
+    }
+    await again;
     const target = { x: world.camera.position.x, y: world.camera.position.y };
     world.clearRoute();
     await window.frames();

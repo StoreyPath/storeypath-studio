@@ -24,6 +24,10 @@ const (
 // oneBuildingFrom: from format 0.7 a package holds exactly one building.
 const oneBuildingFrom = 7
 
+// assetIDsFrom: from format 0.8 an item's ID is an asset's tag (IsItemID); before, the
+// project's code, -I and six digits.
+const assetIDsFrom = 8
+
 // The files of a package, by the names they usually have. A reader finds each
 // through the manifest's files, by its role; the names are for a manifest that
 // does not list a file every package has. Items and the catalogue (format 0.6), and
@@ -73,10 +77,6 @@ type Manifest struct {
 		Sequence         int    `json:"sequence"`
 		ExportedAt       string `json:"exported_at"`
 		PreviousSequence *int   `json:"previous_sequence"`
-		// NextItem (format 0.7): the number the project gives the next item placed in
-		// any of its buildings; every lower number may be taken. A system continuing
-		// the project from this package numbers its new items from it. Nil before.
-		NextItem *int `json:"next_item"`
 	} `json:"export"`
 	CRS        string               `json:"crs"`
 	LengthUnit string               `json:"length_unit"`

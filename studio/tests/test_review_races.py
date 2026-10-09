@@ -119,7 +119,6 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
 
     monkeypatch.setattr(f"{module}.{name}", slow)
     _, first = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
-    number = int(first["id"][-6:])
     _, job = call(f"{base}/api/projects/{code}/{which}", {} if which == "convert" else {"building": hq})
     assert started.wait(10)
     try:
@@ -136,11 +135,11 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     assert finished(base, job)["state"] == "done"
     saved = s.workspace(code)
     assert saved.items[first["id"]].status == "active"  # as before the job: nothing half kept
-    assert space.id not in saved.overrides and saved.next_item_seq == number + 1
+    assert space.id not in saved.overrides and set(saved.items) == {first["id"]}  # none added during it
     # after the job, kept; and through the next job too
     assert call(f"{base}/api/projects/{code}/objects/{space.id}", {"correction": {"name": "After"}})[0] == 200
     _, second = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
-    assert int(second["id"][-6:]) == number + 1  # the next number: none was given during the job
+    assert set(s.workspace(code).items) == {first["id"], second["id"]}  # kept
     go.set()
     _, job = call(f"{base}/api/projects/{code}/{which}", {} if which == "convert" else {"building": hq})
     assert finished(base, job)["state"] == "done"

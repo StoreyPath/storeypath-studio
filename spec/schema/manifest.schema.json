@@ -24,20 +24,6 @@
           "default": null,
           "description": "the sequence of the last export that held this building (format 0.7; null for its first): what changes.json lists changes since. A gap from the last package of the building a reader has applied means it missed one",
           "title": "Previous Sequence"
-        },
-        "next_item": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "the number the project gives the next item placed in any of its buildings (format 0.7): every lower number may be taken, by an item of another building or one retired. A system continuing the project from this package numbers its new items from it",
-          "title": "Next Item"
         }
       },
       "required": [

@@ -194,7 +194,7 @@ import { route } from "@storeypath/viewer/navigation"; // or from @storeypath/vi
 
 const pkg = await loadPackage("/files/headquarters.storeypath");
 // from a kiosk (its item's ID) to an office (a space's, a zone's, an item's or a node's ID)
-const way = route(pkg, "K7Q2XM-I000017", "K7Q2XM-RUH-HQ-F01-0069", { accessible: true });
+const way = route(pkg, "7K2Q-XM9F-4DP", "K7Q2XM-RUH-HQ-F01-0069", { accessible: true }); // from a kiosk
 way.steps.map((s) => s.text);
 // ["Start at the kiosk in RECEPTION 017", "Walk 48 m along CORRIDOR to the lift",
 //  "Take the lift up to Floor 1", "Walk 24 m along CORRIDOR to OFFICE 112", "OFFICE 112 is on your left"]
@@ -210,6 +210,21 @@ word in its own language); `null` when there is none (none without stairs, with
 `accessible`); it throws for an ID the network does not have. `Graph` and
 `shortest` are there for more. Spaces of lifts and stairs carry their `stack`: the
 same on every floor one serves.
+
+## Items' IDs
+
+An item's ID (format 0.8) is an asset's tag, `7K2Q-XM9F-4DP`: ten random symbols of
+Crockford's base32 and a check symbol (spec/FORMAT.md, "Asset IDs"). [src/ids.js](src/ids.js),
+shared by both viewers too, reads it as a person types it, for a search box (a kiosk's,
+an asset's page):
+
+```js
+import { isItemId, normalizeItemId } from "@storeypath/viewer/ids"; // or from @storeypath/viewer, -world, -svg
+
+normalizeItemId("7k2q xm9f 4dp"); // "7K2Q-XM9F-4DP": either case, O for 0, I and L for 1, hyphens and spaces left out
+normalizeItemId("7K2Q-XM9F-4DK"); // null: its check symbol is wrong (a symbol mistyped, or two swapped)
+isItemId("7K2Q-XM9F-4DP");        // true: as a package writes it
+```
 
 ## The map view
 

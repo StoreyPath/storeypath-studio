@@ -285,9 +285,13 @@ the floors in review.
 - **A kiosk** (type `KIOSK`) is where a wayfinding kiosk stands, its screen at its
   front: wayfinder links each of its kiosks to one, so the kiosk's map shows "you are
   here", and a way to an office can later start from it.
-- **An item's ID never changes when it moves**: it is the project's code and the
-  item's own number (`K7Q2XM-I000142`), not its place. Carried to another office,
-  floor or building, it keeps it; deleted, its ID is never issued again.
+- **An item's ID never changes when it moves**: it is an asset's tag, ten random
+  symbols and a check symbol (`7K2Q-XM9F-4DP`), of no place and no project. Carried to
+  another office, floor or building, it keeps it; deleted, its ID is never issued
+  again. It is written on the asset as it is: a person may type it in either case,
+  with or without its hyphens, O for 0 and I or L for 1 (Review's search box finds the
+  item, `storeypath item-id` reads it), and the check symbol catches a symbol mistyped
+  or two swapped.
 - **Who enters what.** Each type's details are fields owned by StoreyPath (what is
   physical: a colour, a size, a model) or by the system that manages the asset (an
   access point's network name or VLAN). Studio shows only its own; the others are
@@ -834,8 +838,11 @@ bookings…). Each export carries a list of IDs added, changed and retired since
 the previous one, and a retired ID is never issued again. Lifts and stairs keep one
 object code on every floor they serve when Studio finds them, and share one *stack*
 however they were drawn. Items are the exception that proves the
-rule: their ID (`K7Q2XM-I000142`) is the project's and their own number, so it does
-not change when they move.
+rule: their ID is an asset's tag (`7K2Q-XM9F-4DP`: ten random symbols of Crockford's
+base32 and a Luhn mod 32 check symbol), of no project or place, so it does not change
+when they move, even to another building. A Studio draws a new one again while any
+of its items has it; between Studios a clash is unlikely, and a reader refuses the same
+item ID in packages of two projects.
 
 ## Status
 

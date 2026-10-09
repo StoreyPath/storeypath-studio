@@ -11,10 +11,17 @@ from pathlib import Path
 import pytest
 
 from storeypath.assets import asset_dir
+from storeypath.ids import is_item_id
 
 PAGE = Path(__file__).parent.parent / "src" / "storeypath" / "review_app" / "navigate.js"
 
+IDS = asset_dir("viewer") / "src" / "ids.js"  # served at /viewer/src/ids.js
+
 SCRIPT = r"""
+const { register } = await import("node:module");
+register("data:text/javascript," + encodeURIComponent(`export async function resolve(s, c, next) {
+  return s === "/viewer/src/ids.js" ? { url: ${JSON.stringify(process.argv[2])}, shortCircuit: true } : next(s, c);
+}`));
 const { choicesOf, search, duration } = await import(process.argv[1]);
 const network = JSON.parse(await new Promise((done) => { let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => done(s)); }));
 const choices = choicesOf(network);
@@ -23,6 +30,7 @@ console.log(JSON.stringify({
   kiosk: choices.find((c) => c.group === "kiosk"),
   entrance: choices.find((c) => c.group === "entrance"),
   office: search(choices, "office 112"),
+  typed: search(choices, choices[0].id.toLowerCase().replaceAll("-", " ")).map((c) => c.id),
   floor: search(choices, "floor 1 112").map((c) => c.id),
   nothing: search(choices, "no such room"),
   all: search(choices, "  ").length === choices.length,
@@ -37,7 +45,7 @@ def page():
         pytest.skip("Node.js is not here")
     with zipfile.ZipFile(asset_dir("spec") / "conformance" / "packages" / "campus-hq.storeypath") as z:
         network = json.loads(z.read("navigation.json"))
-    out = subprocess.run(["node", "--input-type=module", "-e", SCRIPT, PAGE.as_uri()], input=json.dumps(network),
+    out = subprocess.run(["node", "--input-type=module", "-e", SCRIPT, PAGE.as_uri(), IDS.as_uri()], input=json.dumps(network),
                          capture_output=True, text=True, timeout=60, check=True)
     return network, json.loads(out.stdout)
 
@@ -48,8 +56,9 @@ def test_kiosks_then_entrances_then_rooms(page):
     assert groups[0] == "kiosk" and set(groups) == {"kiosk", "entrance", "room"}
     assert groups == sorted(groups, key=["kiosk", "entrance", "room"].index)
     kiosk = got["kiosk"]
-    assert kiosk["label"] == "Kiosk in RECEPTION 017" and kiosk["sub"] == "Ground floor"
-    assert kiosk["node"] == f"kiosk:{kiosk['id']}"  # asked for by its item's ID
+    assert kiosk["label"] == "Kiosk in RECEPTION 017" and kiosk["sub"] == f"Ground floor · {kiosk['id']}"
+    assert kiosk["node"] == f"kiosk:{kiosk['id']}" and is_item_id(kiosk["id"])  # asked for by its item's ID, its tag
+    assert got["typed"] == [kiosk["id"]]  # found by its tag as typed: either case, no hyphens
     assert got["entrance"]["label"].startswith("Entrance into ") and got["entrance"]["id"].startswith("door:")
 
 

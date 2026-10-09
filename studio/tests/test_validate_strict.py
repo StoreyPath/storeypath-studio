@@ -54,8 +54,8 @@ def test_ids_are_ascii_and_the_whole_string():
             parse_id(bad)
     with pytest.raises(ValueError):
         make_id("K7Q2XM", "HQ\n")
-    assert is_item_id("K7Q2XM-I000142")
-    for bad in ("K7Q2XM-I00014٢", "K7Q2XM-I000142\n", "K7Q2XM-I0001420", "k7q2xm-I000142", "-I000142"):
+    assert is_item_id("7K2Q-XM9F-4DP")
+    for bad in ("7K2Q-XM9F-4D٢", "7K2Q-XM9F-4DP\n", "7K2Q-XM9F-4DPP", "7k2q-xm9f-4dp", "-XM9F-4DP", "K7Q2XM-I000142"):
         assert not is_item_id(bad), bad
 
 
@@ -65,7 +65,7 @@ def test_an_id_longer_than_any_id_is_refused_before_it_is_taken_apart():
     huge = "A-" * 8_000_000
     with pytest.raises(ValueError, match="longer than an ID can be"):
         parse_id(huge)
-    assert not is_item_id("K7Q2XM-I" + "0" * 8_000_000)
+    assert not is_item_id("7K2Q-XM9F-" + "0" * 8_000_000)
 
 
 def test_a_huge_id_in_a_package_is_refused_without_repeating_it(tmp_path):
@@ -87,6 +87,39 @@ def test_an_item_id_with_other_digits_is_refused(tmp_path):
                                  "changes.json": lambda t: t.replace(item, other)})
     errors = validate_package(out)
     assert any(other in e and "not an item ID" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("how", ["a symbol wrong", "two swapped", "the project's number", "lower case"])
+def test_an_item_id_must_be_an_asset_id_with_its_check_right(tmp_path, how):
+    item = first("items.geojson")["id"]
+    whole = item.replace("-", "")
+    at = next(k for k in range(10) if whole[k] != whole[k + 1] and {whole[k], whole[k + 1]} != {"0", "Z"})
+    other = {"a symbol wrong": item[:-1] + ("0" if item[-1] != "0" else "1"),
+             "two swapped": _hyphened(whole[:at] + whole[at + 1] + whole[at] + whole[at + 2:]),
+             "the project's number": f"{_project()}-I000001",
+             "lower case": item.lower()}[how]
+    out = rewritten(tmp_path, **{name: (lambda t: t.replace(item, other))
+                                 for name in ("items.geojson", "objects.csv", "changes.json", "navigation.json")})
+    errors = validate_package(out)  # (and not taken as an item: objects.csv and changes.json name another)
+    assert errors[0] == (f"{other}: not an item ID (four, four and three symbols of Crockford's base32, the last "
+                         "its check: 7K2Q-XM9F-4DP)"), errors
+
+
+def test_an_item_id_is_of_no_project_and_a_place_never_has_one(tmp_path):
+    from storeypath.ids import new_item_id
+
+    item, space = first("items.geojson")["id"], first()["id"]
+    tag = new_item_id()  # an asset's ID of its own, nothing of the package's project in it
+    out = rewritten(tmp_path, **{name: (lambda t: t.replace(item, tag))
+                                 for name in ("items.geojson", "objects.csv", "changes.json", "navigation.json")})
+    assert validate_package(out) == []
+    out = rewritten(tmp_path, **{name: (lambda t: t.replace(space, "7K2Q-XM9F-4DP"))
+                                 for name in ("spaces.geojson", "objects.csv", "changes.json")})
+    assert any("7K2Q-XM9F-4DP is an item's ID (an asset's), not a place's" in e for e in validate_package(out))
+
+
+def _hyphened(whole: str) -> str:
+    return f"{whole[:4]}-{whole[4:8]}-{whole[8:]}"
 
 
 # Format versions
@@ -338,8 +371,28 @@ def test_an_id_retired_since_the_last_export_is_not_in_the_package(tmp_path):
     assert validate_package(out) == [f"changes.json: retired ID {space} is still in the package"]
 
 
+def test_an_item_of_two_projects_is_refused_in_the_later_package(tmp_path):
+    # An asset is one project's: the same item ID in packages of two projects is a clash.
+    # In packages of one project it is one item, carried from building to building
+    # (campus: the desk in the HQ's first package, then in the Annex's second).
+    from storeypath.validate import validate_across
+
+    names = ("campus-hq", "campus-annex", "campus-hq-2", "campus-annex-2")
+    assert validate_across([PACKAGES / f"{n}.storeypath" for n in names]) == []
+    item = first("items.geojson")["id"]
+    theirs = json.loads(zipfile.ZipFile(PACKAGES / "campus-annex.storeypath").read("items.geojson"))["features"][0]["id"]
+
+    def other_project(doc):
+        doc["project"]["id"] = "ZZZZZZ"
+    other = rewritten(tmp_path, PACKAGES / "campus-annex.storeypath", **{
+        "manifest.json": edited(other_project), "items.geojson": lambda t: t.replace(theirs, item)})
+    assert validate_across([HQ, other]) == [
+        f"{other.name}: item {item} is an item of project {_project()} too ({HQ.name}): an item's ID is one project's"]
+    assert validate_across([other, HQ])[0].startswith(f"{HQ.name}: item {item} is an item of project ZZZZZZ too")
+
+
 def test_an_item_moved_away_is_not_retired(tmp_path):
-    item = f"{_project()}-I999999"
+    item = "7K2Q-XM9F-4DP"
 
     def both(c):
         c["moved_away"] = [{"id": item, "building_id": f"{_project()}-DEMO-ANNEX"}]

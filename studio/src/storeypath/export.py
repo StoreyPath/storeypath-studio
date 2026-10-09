@@ -526,16 +526,6 @@ def building_ids(ws: Workspace) -> list[str]:
     return [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings]
 
 
-def item_number(item_id: str) -> int:
-    """An item's own number (``K7Q2XM-I000142`` → 142)."""
-    return int(item_id.split("-")[1][1:])
-
-
-def next_item_number(ws: Workspace) -> int:
-    """The number the project gives its next item: after every one it has given."""
-    return max([ws.next_item_seq, *(item_number(i) + 1 for i in ws.items if is_item_id(i))])
-
-
 def _in_building(i: str, b_id: str) -> bool:
     return i == b_id or i.startswith(b_id + "-")
 
@@ -563,7 +553,7 @@ def last_packages(ws: Workspace) -> tuple[dict[str, LastPackage], set[str]]:
         retired = {i for i, r in ws.objects.items() if r.status == "retired" and _in_building(i, b)} | nowhere
         retired |= {i for i, it in ws.items.items() if it.status == "retired" and _in_building(it.floor_id, b)}
         held[b] = LastPackage(sequence=seq, objects=objects, retired=sorted(retired))
-    return held, {i for i in last.objects if is_item_id(i)} | set(last.places)
+    return held, {i for i in last.objects if i in ws.items or is_item_id(i)} | set(last.places)
 
 
 def export_package(ws: Workspace, out_path, *, building: str | None = None, record: bool = True,
@@ -638,15 +628,18 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
     here = {f["id"] for f in features["items"]}
     gone = sorted(i for i in prev_hashes if i not in hashes)
-    moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if is_item_id(i) and i in places]
+    moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if i in places]
+
+    def item(i: str) -> bool:  # an item's ID: one the project has, or a package of it held (of any format)
+        return i in ws.items or i in known or is_item_id(i)
 
     def taken_away(i: str) -> bool:  # an object of the building, or an item retired (wherever it was then)
-        if is_item_id(i):
+        if item(i):
             return i not in ws.items or ws.items[i].status == "retired"
         return scoped(i)  # a location stays
 
     def active(i: str) -> bool:
-        r = ws.items.get(i) if is_item_id(i) else ws.objects.get(i)
+        r = ws.items.get(i) if item(i) else ws.objects.get(i)
         return r is not None and r.status == "active"
 
     retired = [i for i in gone if taken_away(i)]
@@ -660,9 +653,8 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         sequence=sequence,
         previous_sequence=max((p.sequence for p in last.values()), default=None),
         # an item a package of the project held before, carried into the building, is not new
-        added=sorted(i for i in hashes if i not in prev_hashes and not (is_item_id(i) and i in known)),
-        changed=sorted(i for i in hashes if (prev_hashes[i] != hashes[i] if i in prev_hashes
-                                             else is_item_id(i) and i in known)),
+        added=sorted(i for i in hashes if i not in prev_hashes and i not in known),
+        changed=sorted(i for i in hashes if (prev_hashes[i] != hashes[i] if i in prev_hashes else i in known)),
         retired=retired,
         all_retired=all_retired,
         moved_away=moved_away,
@@ -672,8 +664,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     manifest = Manifest(
         generator=Generator(name="storeypath", version=version("storeypath")),
         project=ProjectInfo(id=ws.id, name=ws.project.name),
-        export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence,
-                          next_item=next_item_number(ws)),
+        export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
         files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
@@ -715,7 +706,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
                 sequence=sequence,
                 objects={i: h for i, h in hashes.items()
                          if i == location or _in_building(i, b) or places.get(i) == b},
-                retired=[i for i in all_retired if _in_building(i, b) or is_item_id(i)])
+                retired=[i for i in all_retired if _in_building(i, b) or item(i)])
         ws.exports.append(ExportRecord(
             sequence=sequence, exported_at=now, file=Path(out_path).name, buildings=buildings,
             held=held_now, items_held=sorted(known | here)))

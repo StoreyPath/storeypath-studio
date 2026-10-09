@@ -223,6 +223,9 @@ ROWS = [
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/items/{item}", {"x": "far"}, ok=(400, "is a number"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
+    # an item by its ID as a person typed it: view on its floor
+    Row("GET", C + "/items/{item}", ok=200, passes={"admin", "owner", "floor_viewer"},
+        hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/floors/{hq0}/convert", {"force": "yes"}, ok=(400, "force is true or false"),
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/objects/{space}", {}, ok=(400, "nothing to change"), passes={"admin", "owner"},

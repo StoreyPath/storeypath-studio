@@ -49,10 +49,17 @@ localframe.json: points in Studio's local drawing metres and where they are on
 earth, for each building's placement, as Studio's projection gives them: a reader
 that turns lon/lat back into local metres must agree to a millimetre.
 
+asset-ids.json (``asset-ids``): items' IDs (format 0.8, Items): ten symbols and the
+check symbol every reader works out the same; IDs that are right, and the same with
+one symbol wrong or two neighbours swapped (which no reader takes; and a 0 and a Z
+beside it swapped, which the check cannot see); strings that are not IDs as written;
+and what people type, with the ID every reader reads in it (or none). The same every
+run.
+
 Readers make their own broken variants of these packages to test their checks.
 Run from studio/ after a format change, and commit the result:
 
-    uv run python ../spec/conformance/make.py campus           # one step: campus, simple-office, world, routes
+    uv run python ../spec/conformance/make.py campus           # one step: campus, simple-office, world, routes, asset-ids
 
 Every run makes new projects, so new IDs: remake only what changed. ``world`` makes
 no project: it bakes simple-office as it is (it needs Node.js), so run it after a
@@ -69,7 +76,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-STEPS = ("campus", "simple-office", "world", "routes")
+STEPS = ("campus", "simple-office", "world", "routes", "asset-ids")
 
 
 def main(names: list[str]) -> None:
@@ -88,6 +95,8 @@ def main(names: list[str]) -> None:
             world()
         if "campus" in names or "routes" in names:
             routes()
+        if "asset-ids" in names:
+            asset_ids()
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -241,6 +250,65 @@ def routes() -> None:
     doc = {"tolerance_m": 0.01, "tolerance_s": 0.1, "routes": out}
     (HERE / "routes.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
     print(f"wrote routes.json ({len(out)} ways)")
+
+
+def asset_ids() -> None:
+    """asset-ids.json: items' IDs for every reader to check and read the same way (from
+    a fixed seed: the same file every run)."""
+    import random
+
+    from storeypath.ids import CROCKFORD_ALPHABET as ALPHABET
+    from storeypath.ids import is_item_id, item_check_symbol, normalize_item_id
+
+    rng = random.Random(8)
+
+    def written(whole: str) -> str:  # eleven symbols, 4-4-3
+        return f"{whole[:4]}-{whole[4:8]}-{whole[8:]}"
+
+    def checked(symbols: str) -> str:
+        return written(symbols + item_check_symbol(symbols))
+
+    example = "7K2QXM9F4D"  # FORMAT.md's
+    unusual = "10Z01ABC1D"  # 1, 0 and Z: typed with O for 0, I and L for 1; a 0 and a Z swapped
+    symbols = [example, "0000000000", "ZZZZZZZZZZ", "0123456789", "ABCDEFGHJK", "MNPQRSTVWX", unusual,
+               *("".join(rng.choice(ALPHABET) for _ in range(10)) for _ in range(25))]
+    valid = [checked(s) for s in symbols]
+    wrong, swapped, unseen = [], [], []
+    for n, i in enumerate(valid[:12]):
+        whole = i.replace("-", "")
+        for at in range(11):  # each symbol wrong: to every other symbol in the example, to one in the others
+            others = [c for c in ALPHABET if c != whole[at]]
+            for c in others if n == 0 else [rng.choice(others)]:
+                wrong.append(written(whole[:at] + c + whole[at + 1:]))
+        for at in range(10):  # each two neighbours swapped
+            a, b = whole[at], whole[at + 1]
+            if a != b:
+                (unseen if {a, b} == {"0", "Z"} else swapped).append(written(whole[:at] + b + a + whole[at + 2:]))
+    not_ids = ["", "7K2Q-XM9F-4DK", "7k2q-xm9f-4dp", "7K2QXM9F4DP", "7K2QX-M9F-4DP", "7K2Q-XM9F4-DP",
+               "7K2Q XM9F 4DP", "7K2Q-XM9F-4DP\n", " 7K2Q-XM9F-4DP", "7K2Q-XM9F-4DP-", "7K2Q--XM9F-4DP",
+               "7K2Q-XM9F-4D", "7K2Q-XM9F-4DPP", "7K2O-XM9F-4DP", "7K2Q-XM9F-4D٢", "K7Q2XM-I000142",
+               "K7Q2XM-RUH-HQ", "7K2Q-XM9F-4DP-0142", "7K2Q‐XM9F‐4DP"]
+    u = checked(unusual).replace("-", "")
+    typed = ["7k2q xm9f 4dp", "7K2QXM9F4DP", " 7k2q-xm9f-4dp\n", "7K2Q - XM9F - 4DP", "7-K-2-Q-X-M-9-F-4-D-P",
+             "7k2Q\txm9F\r\n4dP", u.replace("0", "O").replace("1", "I", 1).replace("1", "l"),
+             u.lower().replace("0", "o").replace("1", "L"), "7K2Q-XM9F-4DK", "7K2Q-XM9F-4D", "7K2Q-XM9F-4DPP",
+             "7K2U-XM9F-4DP", "7K2Q-XM9F-4D٢", "7K2Q XM9F 4DP", "7K2Q_XM9F_4DP", "7K2Q.XM9F.4DP",
+             "7K2Q-XM9F-4ıP", "7K2Q-XM9F-4İP", "K7Q2XM-I000142", "K7Q2XM-RUH-HQ", "", "   ",
+             "7k2q" + " " * 45 + "xm9f4dp", "7k2q" + " " * 60 + "xm9f4dp", valid[1].lower(), valid[2].lower()]
+    doc = {
+        "alphabet": ALPHABET,
+        "check": [{"symbols": s, "check": item_check_symbol(s)} for s in symbols],
+        "valid": valid,
+        "wrong_symbol": wrong,
+        "swapped": swapped,
+        "swapped_unseen": unseen,
+        "not_ids": not_ids,
+        "typed": [{"text": t, "id": normalize_item_id(t)} for t in typed],
+    }
+    assert valid[0] == "7K2Q-XM9F-4DP" and unseen and all(map(is_item_id, valid + unseen))
+    assert not any(map(is_item_id, wrong + swapped + not_ids))
+    (HERE / "asset-ids.json").write_text(json.dumps(doc, indent=1) + "\n")
+    print(f"wrote asset-ids.json ({len(valid)} IDs, {len(wrong)} with a symbol wrong, {len(swapped)} swapped)")
 
 
 def furnish(ws) -> None:
