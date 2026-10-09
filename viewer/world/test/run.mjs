@@ -808,9 +808,17 @@ test("a way is drawn over each floor it walks on, through the lift between them,
     const during = opacity();
     await flying;
     const after = opacity();
+    // again, from where the first ended: how far along the way the camera goes, frame by
+    // frame (where it ends depends on the frames, as the first's: it may end where that
+    // one did)
     const before = world.camera.position.clone();
-    await world.flyRoute({ seconds: 2 }); // (longer than a frame drawn in software, however busy the machine)
-    const moved = world.camera.position.distanceTo(before);
+    let moved = 0, flown = false;
+    const again = world.flyRoute({ seconds: 2 }).then(() => (flown = true)); // (longer than a frame drawn in software)
+    while (!flown) {
+      await window.frames(1);
+      moved = Math.max(moved, world.camera.position.distanceTo(before));
+    }
+    await again;
     const target = { x: world.camera.position.x, y: world.camera.position.y };
     world.clearRoute();
     await window.frames();
