@@ -1,6 +1,6 @@
 # StoreyPath Studio
 
-The authoring side of [StoreyPath](https://github.com/StoreyPath/storeypath):
+The authoring side of [StoreyPath](https://github.com/StoreyPath/storeypath-studio):
 converts DWG/DXF floor plans into StoreyPath packages, lets you review, correct and
 complete the result (walls, doors, furniture and equipment), and exports packages
 that keep the same object IDs every time.
@@ -405,7 +405,7 @@ A package holds **one building** (format 0.7): with several, `export --building`
 says which. Its `changes.json` lists what changed in that building since the last
 package that held it. An export also builds each floor in 3D ahead of time, as the
 viewer would build it, and puts it in the package (`world/<floor-id>.glb`; see
-*Pre-built 3D* in [FORMAT.md](../spec/FORMAT.md)), so that a slow machine shows the
+*Pre-built 3D* in [FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)), so that a slow machine shows the
 building without building it. That takes Node.js (20.6 or newer; the container has
 it): `node` on the `PATH`, or `STOREYPATH_NODE` set to it (empty: never). Without it
 the package is exported as before, and the export says why.
@@ -670,7 +670,7 @@ gives, at every conversion.
 Items (desks by grade, central photocopiers, wireless access points, sofas, TVs,
 beds, wayfinding kiosks) are placed on floors in the review editor, and kept in the workspace. Each has
 an ID of its own, an asset's tag (`7K2Q-XM9F-4DP`: ten random symbols and a check
-symbol, [spec/FORMAT.md](../spec/FORMAT.md), Asset IDs), which stays with it wherever
+symbol, [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), Asset IDs), which stays with it wherever
 it is carried, to another building too; a deleted item's ID is never issued again. It
 is no project's: a new one is drawn again while an item of any project in the Studio's
 database has it (the items' key), and a project saved as new gives its items new ones.
@@ -799,4 +799,4 @@ uv run pytest
 
 Tests run against generated floor plans (`storeypath.samples`) whose correct
 answer is known. When the package models change, regenerate the committed
-schemas with `uv run storeypath schema ../spec/schema` (a test checks they match).
+schemas with `uv run storeypath schema ../storeypath-viewer/spec/schema` (a test checks they match).

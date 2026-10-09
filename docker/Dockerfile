@@ -100,10 +100,13 @@ RUN cd "libredwg-${LIBREDWG_VERSION}" \
 
 # ---- the 2D plan engine (viewer/svg), compiled from its TypeScript; and Node.js, ---------
 # whose program alone goes into the image: Studio runs the viewer's baker with it
-# (viewer/world/bake.mjs, in Studio's package, with three.js and JSZip beside it)
+# (viewer/world/bake.mjs, in Studio's package, with three.js and JSZip beside it).
+# The viewer and the format come from StoreyPath Viewer (the storeypath-viewer
+# submodule: `git submodule update --init` before building). The plan's build takes
+# files from viewer/src beside it, so the whole viewer is copied.
 FROM node:22-slim AS plan
-COPY viewer/svg /build/svg
-RUN cd /build/svg && npm ci --no-audit --no-fund && npm run build
+COPY storeypath-viewer/viewer /build/viewer
+RUN cd /build/viewer/svg && npm ci --no-audit --no-fund && npm run build
 
 # ---- StoreyPath Studio ---------------------------------------------------------------
 FROM debian:${DEBIAN}-slim AS studio
@@ -124,9 +127,9 @@ RUN if [ -f /build/symbols/weights/best.pth ]; then \
         rm -rf /build/symbols && mkdir /build/symbols; \
     fi
 COPY studio /build/studio
-COPY spec /build/spec
-COPY viewer /build/viewer
-COPY --from=plan /build/svg/dist /build/viewer/svg/dist
+COPY storeypath-viewer/spec /build/spec
+COPY storeypath-viewer/viewer /build/viewer
+COPY --from=plan /build/viewer/svg/dist /build/viewer/svg/dist
 RUN cd /build/studio && uv build --wheel -o /build/dist \
     && VIRTUAL_ENV=/opt/storeypath uv pip install --no-cache "$(ls /build/dist/*.whl)[vision]"
 
@@ -157,9 +160,9 @@ COPY --from=studio /build/symbols /opt/storeypath/symbols
 COPY --from=plan /usr/local/bin/node /opt/node/bin/node
 COPY --from=plan /usr/local/LICENSE /usr/share/storeypath/licenses/LICENSE-node.js.txt
 COPY docker/models/${MODEL} /opt/storeypath/models/${MODEL}
-COPY viewer/vendor/LICENSE-maplibre-gl.txt viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
-COPY viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
-COPY viewer/vendor/n8ao/LICENSE /usr/share/storeypath/licenses/LICENSE-n8ao.txt
+COPY storeypath-viewer/viewer/vendor/LICENSE-maplibre-gl.txt storeypath-viewer/viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
+COPY storeypath-viewer/viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
+COPY storeypath-viewer/viewer/vendor/n8ao/LICENSE /usr/share/storeypath/licenses/LICENSE-n8ao.txt
 COPY docker/start.sh /usr/local/bin/storeypath-start
 RUN cp /opt/llama/LICENSE /usr/share/storeypath/licenses/LICENSE-llama.cpp.txt \
     && cp /opt/storeypath/lib/python3*/site-packages/storeypath-*.dist-info/licenses/LICENSE \
@@ -196,7 +199,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
      || python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/login.html', timeout=4)"
 LABEL org.opencontainers.image.title="StoreyPath Studio" \
       org.opencontainers.image.description="Turn DWG/DXF floor plans into portable indoor maps with stable IDs; runs offline" \
-      org.opencontainers.image.source="https://github.com/StoreyPath/storeypath" \
+      org.opencontainers.image.source="https://github.com/StoreyPath/storeypath-studio" \
       org.opencontainers.image.licenses="Apache-2.0 AND PostgreSQL AND GPL-2.0-or-later AND GPL-3.0-or-later AND MIT AND BSD-3-Clause"
 # tini passes docker stop's SIGTERM on to the start script, which stops Studio, then
 # the database; the command is Studio's (`docker run … storeypath/studio users list`)

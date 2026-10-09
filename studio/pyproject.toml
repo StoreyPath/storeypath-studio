@@ -44,8 +44,8 @@ vision = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/StoreyPath/storeypath"
-Source = "https://github.com/StoreyPath/storeypath/tree/main/studio"
+Homepage = "https://github.com/StoreyPath/storeypath-studio"
+Source = "https://github.com/StoreyPath/storeypath-studio/tree/main/studio"
 
 [project.scripts]
 storeypath = "storeypath.cli:main"

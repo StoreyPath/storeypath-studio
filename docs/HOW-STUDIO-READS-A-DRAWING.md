@@ -416,7 +416,7 @@ list. See [What you can do in Studio](../README.md#what-you-can-do-in-studio).
 ## 10. Export (`export.py`)
 
 A package holds **one building**: its floors, spaces, zones, openings and items with
-their IDs, and its location ([spec/FORMAT.md](../spec/FORMAT.md), format 0.7).
+their IDs, and its location ([spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), format 0.7).
 
 - It is written beside where it goes, checked against the format, and entered as an
   export only when it is valid; one that is not valid is not kept.

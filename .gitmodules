@@ -1,0 +1,4 @@
+[submodule "storeypath-viewer"]
+	path = storeypath-viewer
+	url = https://github.com/StoreyPath/storeypath-viewer.git
+	branch = main

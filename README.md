@@ -311,7 +311,7 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.8](spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.9](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
 openings, its items and their catalogue, with every ID, and its walking network
 ([Navigation](#navigation-from-the-kiosk-to-your-office)). It is checked against the
@@ -377,9 +377,9 @@ gives.
   each lift's or staircase's floors are linked by their code or where they overlap,
   and a person may link or unlink them by hand.
 - **For other systems**: `Package.Navigation()` and `Route(from, to, opts)` in
-  [Go](go), `route(pkg, from, to, { accessible })` in the [viewers](viewer), with
+  [Go](https://github.com/StoreyPath/storeypath-viewer/tree/main/go), `route(pkg, from, to, { accessible })` in the [viewers](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer), with
   `showRoute(route)` on the 2D plan and in the 3D world;
-  [spec/conformance/routes.json](spec/conformance) holds ways every reader must find
+  [spec/conformance/routes.json](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/conformance) holds ways every reader must find
   the same.
 
 ## Walk through it
@@ -412,7 +412,7 @@ graphics), High or Low.
 
 **Walk in 3D** in Studio always shows the project as it is now — no export needed.
 It's [three.js](https://threejs.org) (WebGL), drawn from the package alone, so it
-works the same embedded in your own app ([viewer/](viewer)).
+works the same embedded in your own app ([viewer/](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer)).
 
 ## With a GPU or without
 
@@ -645,8 +645,8 @@ Studio is a Python program and runs from a clone of this repository with
 
 ```sh
 brew install uv          # macOS; on Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/StoreyPath/storeypath
-cd storeypath/studio
+git clone --recurse-submodules https://github.com/StoreyPath/storeypath-studio
+cd storeypath-studio/studio
 uv sync
 uv run storeypath serve --data ~/storeypath --open
 ```
@@ -705,7 +705,7 @@ setting. Also, as you need them:
   `docker/fetch-vision.sh` and run a CUDA build of `llama-server` with it and its
   `--mmproj`, as [docker/gpu-helper/start.sh](docker/gpu-helper/start.sh) does (or
   run the GPU helper's image).
-- **The 2D plan page**: `npm ci && npm run build` in `viewer/svg` (Studio offers
+- **The 2D plan page**: `npm ci && npm run build` in `storeypath-viewer/viewer/svg` (Studio offers
   *2D plan* once it is built).
 - **Pre-built 3D in packages**: Node.js 20.6 or newer on the `PATH`.
 
@@ -790,17 +790,20 @@ storeypath export house.spproj --building VILLA -o villa.storeypath
 
 ## For other systems
 
-- **The package format**: [spec/FORMAT.md](spec/FORMAT.md) (format 0.8) and JSON
-  Schemas in [spec/schema](spec/schema): one building per package, plain JSON,
+The format and everything that reads it are [StoreyPath Viewer](https://github.com/StoreyPath/storeypath-viewer), a repository
+of its own that Studio pins as a submodule (`storeypath-viewer/`):
+
+- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.9) and JSON
+  Schemas in [spec/schema](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/schema): one building per package, plain JSON,
   GeoJSON and CSV in a ZIP, readable without our code. Each export says what was
   added, changed and retired; `objects.csv` lists every ID with its parents;
   `navigation.json` is the building's walking network, with the rule every reader
   finds the same way by.
-- **Go**: [go/](go) reads and validates packages, and finds the way in a building,
-  standard library only.
-- **Viewers** to embed: [viewer/](viewer) (the 3D world, a map view) and
-  [viewer/svg](viewer/svg) (a 2D plan with no WebGL, for any machine).
-- **Conformance**: [spec/conformance](spec/conformance) holds packages that every
+- **Go**: [go/](https://github.com/StoreyPath/storeypath-viewer/tree/main/go) (`github.com/storeypath/storeypath-viewer/go`) reads and
+  validates packages, and finds the way in a building, standard library only.
+- **Viewers** to embed: [viewer/](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer) (the 3D world, a map view) and
+  [viewer/svg](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer/svg) (a 2D plan with no WebGL, for any machine).
+- **Conformance**: [spec/conformance](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/conformance) holds packages that every
   reader must read the same way, with items, a building moved on the map and a desk
   carried to another building, and ways on them that every reader must find the same.
 - **Items are for asset management**: where things are, and where they have been,
@@ -818,9 +821,7 @@ DWG / DXF ──▶ StoreyPath Studio ──▶ package (*.storeypath) ──▶
 | Folder | What it is |
 |---|---|
 | [studio/](studio) | **StoreyPath Studio** (Python): reads drawings, keeps IDs stable across revisions, the web app and review editor, exports packages |
-| [viewer/](viewer) | **StoreyPath Viewer** (JavaScript): to embed in web apps — the walk-through 3D world, a map view with search, and a 2D SVG plan |
-| [spec/](spec) | **The package format**: [FORMAT.md](spec/FORMAT.md), JSON Schemas and conformance packages — everything a system needs to read a package without our code |
-| [go/](go) | A Go module that reads and validates packages |
+| [storeypath-viewer/](https://github.com/StoreyPath/storeypath-viewer) | **StoreyPath Viewer**, a submodule (`git submodule update --init`): the package format ([spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), schemas, conformance), the viewers to embed in web apps (3D world, map view, 2D SVG plan) and the Go reader |
 | [docker/](docker) | The two images (CPU and GPU) and the scripts that fetch their models |
 | [docs/](docs) | [How Studio reads a drawing](docs/HOW-STUDIO-READS-A-DRAWING.md), and the pictures in this page |
 

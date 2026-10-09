@@ -18,10 +18,28 @@ env:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    services:
+      postgres:  # as in ci.yml: the tests make their databases on it
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: storeypath
+          POSTGRES_PASSWORD: storeypath
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U storeypath" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      STOREYPATH_TEST_DATABASE_URL: postgresql://storeypath:storeypath@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true  # StoreyPath Viewer
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci && npm run build
+        working-directory: storeypath-viewer/viewer/svg
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync && uv run pytest -q
+      - run: uv sync --extra vision && uv run pytest -q
         working-directory: studio
 
   image:
@@ -40,6 +58,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@v5
+        with:
+          submodules: true  # StoreyPath Viewer
       - name: Fetch the language model
         run: docker/fetch-models.sh
       # SymPoint-V2 is for research only and must not go into published images:
@@ -78,6 +98,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true  # StoreyPath Viewer
       - uses: actions/download-artifact@v4
         with:
           pattern: digest-*

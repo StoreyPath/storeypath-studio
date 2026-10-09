@@ -1,11 +1,10 @@
 # build context: only what the image needs
 *
 !studio/
-!viewer/
-!spec/
+!storeypath-viewer/
 !docker/
 studio/.venv
-viewer/**/node_modules
+storeypath-viewer/**/node_modules
 studio/**/__pycache__
 studio/src/storeypath/_bundled
 studio/eval
