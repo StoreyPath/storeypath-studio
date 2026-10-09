@@ -231,7 +231,7 @@ def test_a_cut_is_undone_where_the_pieces_look_like_one_room(workspace):
 
 
 def test_a_long_look_says_how_far_it_has_got(workspace, monkeypatch):
-    # A large building floor has a thousand rooms: the questions go out while the rest
+    # A large floor has a thousand rooms: the questions go out while the rest
     # are still being drawn, and the job says how many have been looked at.
     ws, d, f_id, _, _ = workspace
     monkeypatch.setattr(vision, "PROGRESS_S", 0.0)
@@ -287,7 +287,7 @@ def test_never_more_questions_in_flight_than_the_model_takes():
 
 
 def test_an_area_doors_join_to_several_rooms_is_a_way_through_not_the_outside():
-    # A large building's ring corridor, too large and winding for one picture, was set aside
+    # A large floor's ring corridor, too large and winding for one picture, was set aside
     # by vision as not a room; doors join it to many rooms: it is kept. A courtyard
     # with one door out stays set aside.
     from storeypath.extract import ExtractedDoor, ExtractedSpace, FloorExtraction
