@@ -103,7 +103,7 @@ export async function helpersPage(page, toast) {
   const draw = () => table.replaceChildren(...rows.map(line));
   draw();
 
-  page.replaceChildren(
+  page.replaceChildren(...[
     el("section", {},
       el("a", { class: "back", href: "#/" }, "← Projects"),
       el("h1", {}, "GPU helpers"),
@@ -130,5 +130,5 @@ export async function helpersPage(page, toast) {
         el("span", { class: "grow" }),
         el("button", { type: "button", onclick: () => helpersPage(page, toast), title: "Ask each how it is again" }, "Check again"),
         el("button", { type: "button", class: "primary", onclick: save }, "Save"))),
-  );
+  ].filter(Boolean)); // (the note about the environment only when they come from it)
 }
