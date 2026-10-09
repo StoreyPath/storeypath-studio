@@ -203,11 +203,32 @@ export interface WorldOptions {
 	showHidden?: boolean;
 	/** Furniture and equipment: shown, not drawn at all, or (null, the default) shown when one floor is. */
 	items?: boolean | null;
-	/** Fog colour (0xeef1f2). */
+	/** Fog colour (default: the look's). */
 	fog?: number;
+	/** The look ("real"). */
+	style?: WorldStyle;
+	/** The quality ("auto"). */
+	quality?: WorldQuality;
 }
 
 export type WorldMode = 'dollhouse' | 'walk';
+/** "real": real but clean (floors finished by room type, plaster walls, soft shadows); "model": an
+ * architectural model (white clay, floors tinted by room type, lines along edges). */
+export type WorldStyle = 'real' | 'model';
+/** "high": ambient occlusion, multisampling, finer shadows and finishes; "low": none of them, for weak
+ * graphics; "auto": Low on a software, virtual or integrated renderer, or when High draws slowly at first. */
+export type WorldQuality = 'auto' | 'high' | 'low';
+
+/** How a world is drawn. */
+export interface WorldLook {
+	style: WorldStyle;
+	/** As asked. */
+	quality: WorldQuality;
+	/** As drawn. */
+	drawn: 'high' | 'low';
+	/** Why auto chose Low: its renderer is a software, virtual or integrated one, or High drew slowly. */
+	why: 'software' | 'virtual' | 'integrated' | 'slow' | null;
+}
 
 export interface WorldEvents {
 	load: { package: StoreyPathPackage };
@@ -228,6 +249,8 @@ export interface WorldEvents {
 	itemdragend: ItemDrag & { cancelled: boolean };
 	/** Floors built again by `reload`. */
 	reload: { floors: string[] };
+	/** The look or quality changed (setStyle, setQuality, or auto choosing Low). */
+	lookchange: WorldLook;
 }
 
 /** A point of the world, as `pointAt` finds it. */
@@ -326,6 +349,14 @@ export declare class StoreyPathWorld extends EventTarget {
 	pause(): void;
 	resume(): void;
 	readonly paused: boolean;
+	/** The look: materials, lights and passes change; nothing is built again. */
+	setStyle(style: WorldStyle): void;
+	/** The quality: "auto" (the default), "high" or "low". */
+	setQuality(quality: WorldQuality): void;
+	/** How it is drawn now. */
+	readonly look: WorldLook;
+	/** Resolves once the look is drawn as it will stay: its finishes painted, its passes loaded. */
+	ready(): Promise<void>;
 	/** Read the package again and build only these floors again (default: all of the building
 	 * shown), keeping the view, mode, floor shown, selection and walker. */
 	reload(source: string | URL | Blob | ArrayBuffer | Uint8Array, options?: { floors?: string[] }): Promise<StoreyPathPackage>;

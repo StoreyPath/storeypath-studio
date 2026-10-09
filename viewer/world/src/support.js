@@ -4,7 +4,7 @@
 // every second or so, so they are refused too: a system shows the floor in 2D
 // there (the SVG viewer, made for machines with no GPU).
 
-const SOFTWARE = /swiftshader|llvmpipe|softpipe|lavapipe|software|basic render|mesa offscreen/i;
+import { SOFTWARE } from "../../src/world/gpu.js";
 
 /**
  * @returns {{ ok: boolean, reason?: "no-webgl" | "software" | "error", renderer?: string }}

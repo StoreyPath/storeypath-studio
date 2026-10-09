@@ -14,7 +14,8 @@
     "./viewer.css": "./src/viewer.css"
   },
   "files": [
-    "src"
+    "src",
+    "vendor/n8ao"
   ],
   "peerDependencies": {
     "jszip": "^3.10.1",

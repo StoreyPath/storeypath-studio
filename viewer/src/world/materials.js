@@ -1,11 +1,24 @@
-// Materials for the 3D world, all drawn here: floor finishes are painted on a
-// canvas, so nothing is downloaded and the world works offline.
+// Materials for the 3D world, one set for each look and quality (style.js), all made
+// here: floor finishes are painted (finishes.js), the sky and ground on a canvas, so
+// nothing is downloaded and the world works offline. A world makes a set the first
+// time it is shown and swaps sets without building anything again.
+//
+//   real:  finishes by room type (High: with normal and roughness maps, and a far larger
+//          tint so that nothing visibly repeats), plaster walls, painted joinery,
+//          metal handles; furniture rough or metallic part by part (its `_finish`)
+//   model: white clay, floors lightly tinted by room type, the furniture white with a
+//          hint of its colour, dark lines along edges (`edges`)
 
 import * as THREE from "three";
+import { TYPE_COLORS } from "../theme.js";
+import { FINISH_OF, finishes } from "./finishes.js";
 
-const TEXTURE_PX = 512;
+// how rough each finish is when it has no map of it (Low)
+const ROUGH = { carpet: 1, carpetWarm: 1, terrazzo: 0.22, polished: 0.32, porcelain: 0.25, porcelainWarm: 0.25,
+  concrete: 0.88, oak: 0.5, plaster: 0.9 };
+const MACRO_EVERY = 7.3; // m: the tint against repetition (not a multiple of any finish's size)
 
-/** A seeded random number generator, so finishes look the same every time. */
+/** A seeded random number generator, for the canvases' noise. */
 function random(seed) {
   let s = seed >>> 0;
   return () => {
@@ -14,233 +27,276 @@ function random(seed) {
   };
 }
 
-function canvas(paint) {
+/** A canvas texture painted by ``paint(ctx, size)``. */
+function painted(size, paint, { repeat = true, colorSpace = THREE.SRGBColorSpace } = {}) {
   const c = document.createElement("canvas");
-  c.width = c.height = TEXTURE_PX;
-  paint(c.getContext("2d"), TEXTURE_PX);
-  return c;
-}
-
-function noise(ctx, size, amount, rnd, alpha = 0.06) {
-  for (let i = 0; i < amount; i++) {
-    const v = Math.floor(rnd() * 255);
-    ctx.fillStyle = `rgba(${v},${v},${v},${alpha})`;
-    ctx.fillRect(rnd() * size, rnd() * size, 1 + rnd() * 2, 1 + rnd() * 2);
-  }
-}
-
-const FINISHES = {
-  // metres one texture covers, and how to paint it
-  wood: { size: 2.4, paint(ctx, n, rnd) {
-    const planks = 14;
-    const w = n / planks;
-    for (let i = 0; i < planks; i++) {
-      let y = -rnd() * n;
-      while (y < n) {
-        const len = n * (0.35 + rnd() * 0.5);
-        const tone = 0.85 + rnd() * 0.25;
-        ctx.fillStyle = `rgb(${Math.round(176 * tone)},${Math.round(132 * tone)},${Math.round(92 * tone)})`;
-        ctx.fillRect(i * w, y, w - 1, len - 1);
-        ctx.strokeStyle = "rgba(90,60,35,0.12)";
-        for (let g = 0; g < 6; g++) {
-          ctx.beginPath();
-          const gx = i * w + rnd() * w;
-          ctx.moveTo(gx, y);
-          ctx.bezierCurveTo(gx + rnd() * 4 - 2, y + len / 3, gx + rnd() * 4 - 2, y + 2 * len / 3, gx, y + len);
-          ctx.stroke();
-        }
-        y += len;
-      }
-    }
-    noise(ctx, n, 6000, rnd, 0.05);
-  }, roughness: 0.55 },
-  tile: { size: 1.2, paint(ctx, n, rnd) {
-    const tiles = 2;
-    const t = n / tiles;
-    for (let i = 0; i < tiles; i++) {
-      for (let j = 0; j < tiles; j++) {
-        const tone = 0.95 + rnd() * 0.06;
-        ctx.fillStyle = `rgb(${Math.round(226 * tone)},${Math.round(224 * tone)},${Math.round(218 * tone)})`;
-        ctx.fillRect(i * t, j * t, t, t);
-      }
-    }
-    noise(ctx, n, 9000, rnd, 0.04);
-    ctx.strokeStyle = "rgb(170,166,158)";
-    ctx.lineWidth = 3;
-    for (let k = 0; k <= tiles; k++) {
-      ctx.beginPath(); ctx.moveTo(k * t, 0); ctx.lineTo(k * t, n); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, k * t); ctx.lineTo(n, k * t); ctx.stroke();
-    }
-  }, roughness: 0.25 },
-  stone: { size: 1.6, paint(ctx, n, rnd) {
-    ctx.fillStyle = "rgb(214,208,198)";
-    ctx.fillRect(0, 0, n, n);
-    ctx.strokeStyle = "rgba(140,130,118,0.18)";
-    for (let v = 0; v < 18; v++) {
-      ctx.lineWidth = 0.5 + rnd() * 1.5;
-      ctx.beginPath();
-      let x = rnd() * n, y = rnd() * n;
-      ctx.moveTo(x, y);
-      for (let k = 0; k < 6; k++) {
-        x += (rnd() - 0.4) * 90; y += (rnd() - 0.5) * 90;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-    noise(ctx, n, 8000, rnd, 0.04);
-    ctx.strokeStyle = "rgba(120,112,100,0.5)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(0, 0, n, n);
-  }, roughness: 0.3 },
-  carpet: { size: 1.0, paint(ctx, n, rnd) {
-    ctx.fillStyle = "rgb(122,128,138)";
-    ctx.fillRect(0, 0, n, n);
-    noise(ctx, n, 40000, rnd, 0.12);
-  }, roughness: 0.95 },
-  deck: { size: 2.4, paint(ctx, n, rnd) {
-    const boards = 12;
-    const w = n / boards;
-    ctx.fillStyle = "rgb(60,52,44)";
-    ctx.fillRect(0, 0, n, n);
-    for (let i = 0; i < boards; i++) {
-      const tone = 0.85 + rnd() * 0.2;
-      ctx.fillStyle = `rgb(${Math.round(150 * tone)},${Math.round(128 * tone)},${Math.round(104 * tone)})`;
-      ctx.fillRect(i * w + 1.5, 0, w - 3, n);
-    }
-    noise(ctx, n, 6000, rnd, 0.06);
-  }, roughness: 0.7 },
-  concrete: { size: 3.0, paint(ctx, n, rnd) {
-    ctx.fillStyle = "rgb(186,184,180)";
-    ctx.fillRect(0, 0, n, n);
-    noise(ctx, n, 30000, rnd, 0.07);
-  }, roughness: 0.85 },
-  asphalt: { size: 3.0, paint(ctx, n, rnd) {
-    ctx.fillStyle = "rgb(92,94,98)";
-    ctx.fillRect(0, 0, n, n);
-    noise(ctx, n, 40000, rnd, 0.15);
-  }, roughness: 0.9 },
-  ground: { size: 6.0, paint(ctx, n, rnd) {
-    ctx.fillStyle = "rgb(190,186,170)";
-    ctx.fillRect(0, 0, n, n);
-    noise(ctx, n, 30000, rnd, 0.05);
-  }, roughness: 1.0 },
-};
-
-/** Which finish each kind of space has. */
-export const FINISH_OF = {
-  bedroom: "wood", living_room: "wood", dining_room: "wood", dressing_room: "wood", office: "wood",
-  meeting_room: "carpet", open_area: "carpet", prayer_room: "carpet", room: "wood",
-  bathroom: "tile", restroom: "tile", kitchen: "tile", laundry: "tile",
-  lobby: "stone", corridor: "stone", stairs: "stone", elevator: "stone", escalator: "stone", ramp: "stone",
-  balcony: "deck", terrace: "deck", parking: "asphalt",
-  storage: "concrete", utility: "concrete", shaft: "concrete", unspecified: "concrete",
-};
-
-/** Plaster over a skirting board. The sides of extruded walls have v = 1 − height
- * (in metres), so the texture is mapped to cover heights 0–4 m, floor at the top. */
-function wallTexture() {
-  const c = document.createElement("canvas");
-  c.width = 8;
-  c.height = 512;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "rgb(241,237,230)";
-  ctx.fillRect(0, 0, 8, 512);
-  const board = Math.round(512 * (0.09 / 4));
-  ctx.fillStyle = "rgb(122,112,102)";
-  ctx.fillRect(0, 0, 8, board);
-  ctx.fillStyle = "rgba(0,0,0,0.12)"; // the board's top edge
-  ctx.fillRect(0, board, 8, 2);
-  const texture = new THREE.CanvasTexture(c);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.repeat.set(1, 0.25);
-  texture.offset.set(0, 0.75);
-  return texture;
+  c.width = c.height = size;
+  paint(c.getContext("2d"), size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = colorSpace;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
 }
 
 export class Materials {
-  constructor(renderer) {
+  /** ``style``: "real" or "model"; ``quality``: a QUALITY (its finishes' size, and
+   * whether fine); ``painter``: the Painter to paint finishes with. */
+  constructor(renderer, { style, quality, painter }) {
+    this.style = style;
     this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
-    this._floors = new Map();
-    this._volumes = new Map();
-    // Wall faces: plaster, with a skirting board along the floor.
-    this.wall = new THREE.MeshStandardMaterial({ map: wallTexture(), roughness: 0.92 });
-    // Heads over doors and windows, and sills: plaster only.
-    this.wallPlain = new THREE.MeshStandardMaterial({ color: 0xf1ede6, roughness: 0.92 });
-    // The cut top of a wall, as on an architect's section: dark and crisp.
-    this.wallCut = new THREE.MeshStandardMaterial({ color: 0x3a3a3f, roughness: 0.8 });
-    this.wallTop = new THREE.MeshStandardMaterial({ color: 0xcfc9bf, roughness: 0.9 });
-    this.slab = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.9 });
-    this.ceiling = new THREE.MeshStandardMaterial({
-      color: 0xfbfaf7, roughness: 0.95, side: THREE.DoubleSide, emissive: 0xfff6ea, emissiveIntensity: 0.18,
-    });
-    this.glass = new THREE.MeshPhysicalMaterial({
-      color: 0xbcd6e4, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.28,
-      envMapIntensity: 1.2, depthWrite: false,
-    });
-    // Window frames: aluminium. Doors: a wooden leaf in a darker wooden frame.
-    this.frame = new THREE.MeshStandardMaterial({ color: 0x5b5f66, roughness: 0.45, metalness: 0.35 });
-    this.door = new THREE.MeshStandardMaterial({ color: 0x9a7350, roughness: 0.55 });
-    this.doorFrame = new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 0.6 });
-    // Furniture and equipment: each part in its own colour (the vertices'), flat-shaded.
-    this.item = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.6 });
+    this.#quality = quality;
+    this.#painter = painter;
+    this.#floors = new Map();
+    this.#volumes = new Map();
     this.highlight = new THREE.MeshStandardMaterial({
       color: 0xff8a00, emissive: 0xff8a00, emissiveIntensity: 0.35, transparent: true, opacity: 0.35, depthWrite: false,
     });
+    // lines along edges ("model"): seen over the faces they edge (those are pushed back a
+    // little), and not in the depth the occlusion is worked out from
+    this.edges = new THREE.LineBasicMaterial({ color: 0x33363b, transparent: true, opacity: 0.72, depthWrite: false });
+    if (style === "model") this.#model();
+    else this.#real();
   }
+
+  #quality;
+  #painter;
+  #floors;
+  #volumes;
+  #pending = new Set(); // finishes being painted
+  #textures = [];
+  #disposed = false;
+
+  // ---- the "real" look --------------------------------------------------------------
+
+  #real() {
+    // (boxes — over and under openings, frames, doors, skirting, boards, handles, panels —
+    // have no normals: their materials are flat-shaded)
+    const flat = { flatShading: true };
+    this.wall = this.#finish("plaster");
+    this.wallPlain = new THREE.MeshStandardMaterial({ color: 0xeae7e1, roughness: 0.9, ...flat }); // no texture coordinates
+    this.wallTop = new THREE.MeshStandardMaterial({ color: 0xd9d5cd, roughness: 0.9 });
+    this.wallCut = new THREE.MeshStandardMaterial({ color: 0x3a3a3f, roughness: 0.8 });
+    this.slab = new THREE.MeshStandardMaterial({ color: 0xcfcbc3, roughness: 0.9 });
+    this.ceiling = new THREE.MeshStandardMaterial({
+      color: 0xf7f6f3, roughness: 0.95, side: THREE.DoubleSide, emissive: 0xfff8ee, emissiveIntensity: 0.42,
+    });
+    this.glass = new THREE.MeshPhysicalMaterial({
+      color: 0xc9dde6, roughness: 0.03, metalness: 0, transparent: true, opacity: 0.2, envMapIntensity: 1.6,
+      depthWrite: false, specularIntensity: 1, ...flat,
+    });
+    // window frames: dark aluminium; doors: oak leaves in painted frames and architraves
+    this.frame = new THREE.MeshStandardMaterial({ color: 0x3f4349, roughness: 0.4, metalness: 0.55, ...flat });
+    this.door = new THREE.MeshStandardMaterial({ color: 0xb48c64, roughness: 0.5, ...flat });
+    this.doorFrame = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.5, ...flat });
+    this.trim = this.doorFrame;
+    this.skirting = new THREE.MeshStandardMaterial({ color: 0xe6e3dd, roughness: 0.5, ...flat });
+    this.sillBoard = new THREE.MeshStandardMaterial({ color: 0xe9e6e0, roughness: 0.35, ...flat });
+    this.handle = new THREE.MeshStandardMaterial({ color: 0xc4c7cb, roughness: 0.28, metalness: 1, ...flat });
+    this.lightPanel = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfffaf0, emissiveIntensity: 2.2, ...flat });
+    // furniture: each vertex says how rough and how metallic it is (`_finish`); the
+    // catalogue's colours a little quieter (they are chosen to tell types apart)
+    this.item = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 1 });
+    this.item.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nattribute vec2 _finish;\nvarying vec2 vFinish;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFinish = _finish;");
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nvarying vec2 vFinish;")
+        .replace("#include <color_fragment>",
+          "#include <color_fragment>\ndiffuseColor.rgb = mix(vec3(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722))), diffuseColor.rgb, 0.8);")
+        .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = vFinish.x;")
+        .replace("#include <metalnessmap_fragment>", "#include <metalnessmap_fragment>\nmetalnessFactor = vFinish.y;");
+    };
+    this.item.customProgramCacheKey = () => "storeypath-item-finish";
+  }
+
+  /** A material in a finish (finishes.js): its colour on the whole at once, its image
+   * (and, High, its normal and roughness map and the far larger tint) once painted. */
+  #finish(name) {
+    const fine = this.#quality.fine, px = name === "plaster" ? Math.min(512, this.#quality.finish) : this.#quality.finish;
+    const tone = new THREE.Color().setRGB(...finishTone(name).map((v) => v / 255), THREE.SRGBColorSpace);
+    const m = new THREE.MeshStandardMaterial({ color: tone, roughness: ROUGH[name] ?? 0.9 });
+    const job = this.#painter.paint(name, px, fine).then((f) => {
+      if (this.#disposed) return;
+      m.color.set(0xffffff);
+      m.map = this.#texture(f.color, px, f.size, true);
+      if (f.normal) {
+        m.normalMap = this.#texture(f.normal, px, f.size, false);
+        m.normalScale.set(f.normalScale, f.normalScale);
+        m.roughness = f.roughness;
+      }
+      if (fine) this.#tint(m, f);
+      m.needsUpdate = true;
+    }).catch((e) => console.warn(`StoreyPathWorld: the ${name} finish could not be painted: ${e.message}`))
+      .finally(() => this.#pending.delete(job));
+    this.#pending.add(job);
+    return m;
+  }
+
+  /** High: roughness from the normal map's alpha, and a far larger tint varying the
+   * colour over metres, so that a finish does not visibly repeat. */
+  #tint(m, f) {
+    this.macro ??= (() => {
+      const px = 256, t = this.#texture(finishes().macro(px), px, 1, false);
+      t.anisotropy = 1;
+      return t;
+    })();
+    const macro = this.macro, scale = f.size / MACRO_EVERY, amount = f.macro || 0;
+    m.onBeforeCompile = (shader) => {
+      shader.uniforms.macroMap = { value: macro };
+      shader.uniforms.macroScale = { value: scale };
+      shader.uniforms.macroAmount = { value: amount };
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform sampler2D macroMap;\nuniform float macroScale;\nuniform float macroAmount;")
+        .replace("#include <map_fragment>", `#include <map_fragment>
+          float macroV = texture2D(macroMap, vMapUv * macroScale).r + texture2D(macroMap, vMapUv * macroScale * 0.37 + 0.5).r - 1.0;
+          diffuseColor.rgb *= 1.0 + macroAmount * macroV * 1.6;`)
+        .replace("#include <roughnessmap_fragment>", `float roughnessFactor = roughness;
+          #ifdef USE_NORMALMAP
+            roughnessFactor *= texture2D(normalMap, vNormalMapUv).a;
+          #endif`);
+    };
+    m.customProgramCacheKey = () => "storeypath-finish";
+  }
+
+  /** A texture from RGBA bytes, tiling every ``size`` metres; its bytes let go once on
+   * the graphics card. */
+  #texture(bytes, px, size, srgb) {
+    const t = new THREE.DataTexture(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length), px, px, THREE.RGBAFormat);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.anisotropy = this.maxAnisotropy;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.repeat.set(1 / size, 1 / size);
+    t.onUpdate = () => {
+      t.image = { width: px, height: px, data: null };
+    };
+    t.needsUpdate = true;
+    this.#textures.push(t);
+    return t;
+  }
+
+  // ---- the "model" look -------------------------------------------------------------
+
+  #model() {
+    // pushed back a little, so that the lines along their edges are seen over them; flat-shaded
+    // (boxes have no normals)
+    const clay = (color, extra = {}) => new THREE.MeshStandardMaterial({
+      color, roughness: 0.92, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, flatShading: true, ...extra });
+    this.wall = clay(0xedece8);
+    this.wallPlain = clay(0xedece8);
+    this.wallTop = clay(0xdddbd6);
+    this.wallCut = clay(0x34363b);
+    this.slab = clay(0xdedcd7);
+    this.ceiling = new THREE.MeshStandardMaterial({ color: 0xfbfbfa, roughness: 0.95, side: THREE.DoubleSide,
+      emissive: 0xffffff, emissiveIntensity: 0.25 });
+    this.glass = new THREE.MeshStandardMaterial({ color: 0xcfe0ea, roughness: 0.1, transparent: true, opacity: 0.32,
+      depthWrite: false, flatShading: true });
+    this.frame = clay(0xc9ccd1);
+    this.door = clay(0xe8e6e1);
+    this.doorFrame = clay(0xd8d6d1);
+    this.trim = this.doorFrame;
+    this.skirting = clay(0xeceae6);
+    this.sillBoard = clay(0xeceae6);
+    this.handle = clay(0xb8bbc0, { roughness: 0.5 });
+    this.lightPanel = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.2, flatShading: true });
+    // furniture: white, keeping a hint of its colour
+    this.item = clay(0xffffff, { vertexColors: true, flatShading: true, roughness: 0.85 });
+    this.item.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>",
+        "#if defined( USE_COLOR )\n diffuseColor.rgb *= mix(vec3(1.0), vColor.rgb, 0.16);\n#endif");
+    };
+    this.item.customProgramCacheKey = () => "storeypath-item-clay";
+  }
+
+  // ---- by room type, and the rest ----------------------------------------------------
 
   /** The floor material for a type of space. */
   floor(type) {
-    const finish = FINISH_OF[type] || "concrete";
-    if (!this._floors.has(finish)) {
-      const spec = FINISHES[finish];
-      const texture = new THREE.CanvasTexture(canvas((ctx, n) => spec.paint(ctx, n, random(finish.length * 7919))));
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(1 / spec.size, 1 / spec.size);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = this.maxAnisotropy;
-      this._floors.set(finish, new THREE.MeshStandardMaterial({ map: texture, roughness: spec.roughness }));
+    if (this.style === "model") {
+      if (!this.#floors.has(type)) {
+        // the type's colour, mostly washed out to white
+        const c = new THREE.Color(TYPE_COLORS[type] || TYPE_COLORS.unspecified);
+        const hsl = c.getHSL({});
+        c.setHSL(hsl.h, hsl.s * 0.55, 0.74 + hsl.l * 0.14);
+        this.#floors.set(type, new THREE.MeshStandardMaterial({ color: c, roughness: 0.9,
+          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+      }
+      return this.#floors.get(type);
     }
-    return this._floors.get(finish);
-  }
-
-  ground() {
-    if (!this._groundMaterial) {
-      const spec = FINISHES.ground;
-      const texture = new THREE.CanvasTexture(canvas((ctx, n) => spec.paint(ctx, n, random(17))));
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(1 / spec.size, 1 / spec.size);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      this._groundMaterial = new THREE.MeshStandardMaterial({ map: texture, roughness: 1 });
-    }
-    return this._groundMaterial;
-  }
-
-  /** The sky: a soft gradient behind everything. */
-  sky(top = "#9fc3e6", bottom = "#eef1f2") {
-    const c = document.createElement("canvas");
-    c.width = 2;
-    c.height = 256;
-    const ctx = c.getContext("2d");
-    const g = ctx.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, top);
-    g.addColorStop(0.62, bottom);
-    g.addColorStop(1, bottom);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 2, 256);
-    const texture = new THREE.CanvasTexture(c);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
+    const name = FINISH_OF[type] || "concrete";
+    if (!this.#floors.has(name)) this.#floors.set(name, this.#finish(name));
+    return this.#floors.get(name);
   }
 
   /** A see-through volume tinted by a space's type (x-ray view). */
   volume(color) {
-    if (!this._volumes.has(color)) {
-      this._volumes.set(color, new THREE.MeshStandardMaterial({
+    if (!this.#volumes.has(color)) {
+      this.#volumes.set(color, new THREE.MeshStandardMaterial({
         color, transparent: true, opacity: 0.22, depthWrite: false, roughness: 0.6, side: THREE.DoubleSide,
       }));
     }
-    return this._volumes.get(color);
+    return this.#volumes.get(color);
+  }
+
+  /** The ground round the building. */
+  ground() {
+    if (!this._ground) {
+      const model = this.style === "model";
+      const texture = painted(256, (ctx, n) => {
+        ctx.fillStyle = model ? "rgb(236,236,233)" : "rgb(190,192,190)";
+        ctx.fillRect(0, 0, n, n);
+        const rnd = random(17), alpha = model ? 0.012 : 0.035;
+        for (let i = 0; i < 8000; i++) {
+          const v = Math.floor(rnd() * 255);
+          ctx.fillStyle = `rgba(${v},${v},${v},${alpha})`;
+          ctx.fillRect(rnd() * n, rnd() * n, 1 + rnd() * 2, 1 + rnd() * 2);
+        }
+      });
+      texture.anisotropy = this.maxAnisotropy;
+      texture.repeat.set(1 / 6, 1 / 6);
+      this.#textures.push(texture);
+      // kept out of the depth the occlusion reads: far off, at a glancing angle, it would blotch
+      this._ground = new THREE.MeshStandardMaterial({ map: texture, roughness: 1, depthWrite: false });
+    }
+    return this._ground;
+  }
+
+  /** The sky: a soft gradient behind everything. */
+  sky([top, bottom]) {
+    if (!this._sky) {
+      this._sky = painted(256, (ctx) => {
+        const g = ctx.createLinearGradient(0, 0, 0, 256);
+        g.addColorStop(0, top);
+        g.addColorStop(0.62, bottom);
+        g.addColorStop(1, bottom);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 256, 256);
+      }, { repeat: false });
+      this.#textures.push(this._sky);
+    }
+    return this._sky;
+  }
+
+  /** Resolves once the finishes asked for so far are painted. */
+  ready() {
+    return Promise.all([...this.#pending]).then(() => (this.#pending.size ? this.ready() : undefined));
+  }
+
+  dispose() {
+    this.#disposed = true;
+    const seen = new Set();
+    for (const v of [...Object.values(this), ...this.#floors.values(), ...this.#volumes.values()]) {
+      if (v?.isMaterial && !seen.has(v)) {
+        seen.add(v);
+        v.dispose();
+      }
+    }
+    for (const t of this.#textures) t.dispose();
   }
 }
+
+// a finish's colour on the whole, shown until its image is painted
+const { tone: finishTone } = finishes();

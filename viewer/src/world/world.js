@@ -27,6 +27,12 @@
 // A way through the building (format 0.8: route() in ../navigation.js) is drawn with
 // showRoute: a ribbon just over each floor it walks on, through the lift or stairs
 // between them, its start and end marked; flyRoute takes the camera along it.
+//
+// It is drawn in a look (style.js: "real", real but clean, by default; "model", an
+// architectural model) and a quality ("high", with ambient occlusion and multisampling;
+// "low", for weak graphics; "auto", the default, chooses Low on a software, virtual or
+// integrated renderer, or when High draws slowly at first). Switching either swaps
+// materials, lights and passes: nothing is built again.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -36,11 +42,14 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { loadPackage } from "../package.js";
 import { TYPE_COLORS } from "../theme.js";
 import {
-  BUILDER, GEOMETRY, buildItems, buildPieces, cutPieces, flat, inside, itemBox, itemExtent, itemPoint, occluders,
-  originOf, planFloor, planItem, setItems, toLocal as localOf,
+  BUILDER, GEOMETRY, buildItems, buildPieces, ceilingPanels, cutPieces, flat, inside, itemBox, itemExtent, itemPoint,
+  occluders, originOf, planFloor, planItem, setItems, toLocal as localOf,
 } from "./build.js";
+import { Painter } from "./finishes.js";
 import { toLonLat } from "./frame.js";
+import { qualityFor, rendererName } from "./gpu.js";
 import { Materials } from "./materials.js";
+import { QUALITY, SLOW_FRAME, STYLES } from "./style.js";
 import { Obstacles, Walker } from "./walk.js";
 
 const DEFAULTS = {
@@ -49,7 +58,9 @@ const DEFAULTS = {
   labels: true,
   showHidden: false,
   items: null, // furniture and equipment: true, false, or null: shown when one floor is
-  fog: 0xeef1f2,
+  style: "real", // the look: "real" or "model" (style.js)
+  quality: "auto", // "auto", "high" or "low"
+  fog: null, // its colour (default: the look's)
 };
 const LABEL_STYLE = {
   display: "flex", flexDirection: "column", alignItems: "center", padding: "2px 7px", borderRadius: "7px",
@@ -58,10 +69,19 @@ const LABEL_STYLE = {
 };
 const VERTICAL = new Set(["stairs", "elevator", "escalator", "ramp"]);
 const LABEL_ROOM = 56; // px: a room this wide on the screen (its longer side) has its label shown
-// what casts and takes shadows, by material; the order drawn in, after the rest
-const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door", "item"]);
-const TAKES = new Set([...CASTS, "floor", "glass"]);
+// what casts and takes shadows, by material (walking, the ceiling keeps the sun out but
+// at the windows); the order drawn in, after the rest
+const CASTS = new Set(["slab", "wall", "wallTop", "wallCut", "wallPlain", "frame", "doorFrame", "door", "item", "skirting",
+  "trim", "handle", "sillBoard", "ceiling"]);
+const TAKES = new Set([...CASTS, "floor", "glass"].filter((m) => m !== "ceiling"));
 const ORDER = { volume: 2, glass: 4 };
+const QUALITIES = new Set(["auto", "high", "low"]);
+// the sun's shadow follows what is looked at on a floor bigger than this (metres round
+// it), walking and orbiting; and its frame moves in steps, so that it is drawn again
+// only now and then
+const SHADOW = { walk: 24, orbit: 1.1, least: 16, steps: 4 };
+// auto: High is watched for this many frames, once the building has been shown this long (ms)
+const WATCH = { frames: 90, after: 1500 };
 // a way through the building: its ribbon this high over the floor and this wide, seen
 // through what is in front of it, and arrows on it this far apart
 const ROUTE = { lift: 0.14, width: 0.55, casing: 0.16, arrows: 3, order: 20, faded: 0.18,
@@ -77,9 +97,24 @@ export class StoreyPathWorld extends EventTarget {
   #camera;
   #orbit;
   #walker;
-  #materials;
+  #materials; // the look's and quality's materials, shown now (one of #looks)
+  #looks = new Map(); // "style:finish size" → Materials, each made the first time it is shown
+  #painter = new Painter(); // paints the finishes, off the page's thread
+  #style; // the look: "real" or "model"
+  #quality; // asked for: "auto", "high" or "low"
+  #drawn; // drawn: "high" or "low"
+  #why = null; // why auto chose Low
+  #watch = null; // auto: High's frames timed, at first
+  #post = null; // High's passes (post.js), once loaded
+  #posting = null;
+  #hemi;
   #sun;
-  #lamp;
+  #sunDir = new THREE.Vector3(-0.6, 1.4, 0.45).normalize(); // towards the sun
+  #shadowAt = ""; // where the sun's shadow is fitted now
+  #shadowsDirty = true; // the shadows drawn again next frame
+  #panelLights = []; // walking: the nearest ceiling panels' lights
+  #ground = null;
+  #destroyed = false;
   #pkg = null;
   #origin = null;
   #building = null;
@@ -110,6 +145,8 @@ export class StoreyPathWorld extends EventTarget {
   constructor(container, options = {}) {
     super();
     this.#o = { ...DEFAULTS, ...options };
+    this.#style = STYLES[this.#o.style] ? this.#o.style : "real";
+    this.#quality = QUALITIES.has(this.#o.quality) ? this.#o.quality : "auto";
     const element = typeof container === "string" ? document.querySelector(container) : container;
     if (!element) throw new Error(`StoreyPathWorld: container ${container} not found`);
     this.#element = element;
@@ -117,14 +154,16 @@ export class StoreyPathWorld extends EventTarget {
     if (getComputedStyle(element).position === "static") element.style.position = "relative";
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.95;
+    renderer.shadowMap.autoUpdate = false; // drawn again only when what casts them, or their frame, changed
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     element.appendChild(renderer.domElement);
     this.#renderer = renderer;
+    // auto: Low on a software, virtual or integrated renderer; else High, watched at first
+    const gpu = qualityFor(rendererName(renderer.getContext()));
+    this.#drawn = this.#quality === "auto" ? gpu.quality : this.#quality;
+    this.#why = this.#quality === "auto" ? gpu.why : null;
 
     this.#labelRenderer = new CSS2DRenderer();
     Object.assign(this.#labelRenderer.domElement.style, { position: "absolute", inset: "0", pointerEvents: "none" });
@@ -133,22 +172,14 @@ export class StoreyPathWorld extends EventTarget {
     const scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.4;
-    scene.add(new THREE.HemisphereLight(0xf4f7fb, 0x8b8374, 0.6));
-    const sun = new THREE.DirectionalLight(0xfff3e3, 3.0);
+    pmrem.dispose();
+    this.#hemi = new THREE.HemisphereLight();
+    scene.add(this.#hemi);
+    const sun = new THREE.DirectionalLight();
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.03;
-    sun.shadow.radius = 3;
     scene.add(sun, sun.target);
     this.#sun = sun;
-    // A warm light that goes with the walker, as if each room were lit.
-    this.#lamp = new THREE.PointLight(0xfff0dc, 0, 14, 1.4);
-    scene.add(this.#lamp);
     this.#scene = scene;
-    this.#materials = new Materials(renderer);
-    scene.background = this.#materials.sky();
     const look = (color) => ({
       solid: new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, depthWrite: false }),
       line: new THREE.LineBasicMaterial({ color, transparent: true, depthTest: false }),
@@ -156,7 +187,8 @@ export class StoreyPathWorld extends EventTarget {
     this.#ghostLook = { ok: look(0x0ca678), refused: look(0xe03131),
       guide: new THREE.LineBasicMaterial({ color: 0xff8a00, transparent: true, depthTest: false }) };
 
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 3000);
+    // near and far as close as they can be: the occlusion is worked out from depth
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
     camera.position.set(30, 30, 30);
     this.#camera = camera;
     const orbit = new OrbitControls(camera, renderer.domElement);
@@ -170,6 +202,7 @@ export class StoreyPathWorld extends EventTarget {
     this.#walker.addEventListener("unlock", () => this.#emit("walklock", { locked: false }));
 
     this.#pointerPicking();
+    this.#applyLook({ quiet: true });
     new ResizeObserver(() => this.#resize()).observe(element);
     this.#resize();
     this.#timer.connect(document);
@@ -195,6 +228,141 @@ export class StoreyPathWorld extends EventTarget {
   }
 
   get paused() { return this.#paused; }
+
+  // ---- the look --------------------------------------------------------------------
+
+  /** The look: "real" (real but clean: floors finished by room type, plaster walls, soft
+   * shadows) or "model" (an architectural model: white clay, floors tinted by room type,
+   * lines along edges). Its materials, lights and passes change; nothing is built again. */
+  setStyle(style) {
+    if (!STYLES[style] || style === this.#style) return;
+    this.#style = style;
+    this.#applyLook();
+  }
+
+  /** The quality: "high" (ambient occlusion, multisampling, finer shadows and finishes),
+   * "low" (none of them: for weak graphics), or "auto": Low on a software, virtual or
+   * integrated renderer, or when High draws slowly at first; else High. */
+  setQuality(quality) {
+    if (!QUALITIES.has(quality) || quality === this.#quality) return;
+    this.#quality = quality;
+    const gpu = qualityFor(rendererName(this.#renderer.getContext()));
+    this.#drawn = quality === "auto" ? gpu.quality : quality;
+    this.#why = quality === "auto" ? gpu.why : null;
+    this.#applyLook();
+  }
+
+  /** How it is drawn: ``style``, ``quality`` (as asked), ``drawn`` ("high" or "low") and
+   * ``why`` auto chose Low ("software", "virtual" or "integrated": its renderer; "slow":
+   * High drew slowly), else null. */
+  get look() {
+    return { style: this.#style, quality: this.#quality, drawn: this.#drawn, why: this.#why };
+  }
+
+  /** Resolves once the look is drawn as it will stay: its finishes painted, its passes loaded. */
+  ready() {
+    return Promise.all([this.#materials.ready(), this.#posting]).then(() => undefined);
+  }
+
+  /** The look and quality applied: tone mapping, materials (swapped on what is built),
+   * the sky, lights, shadow map, passes and the pixels drawn. */
+  #applyLook({ quiet = false } = {}) {
+    const s = STYLES[this.#style], q = QUALITY[this.#drawn], r = this.#renderer;
+    r.toneMapping = s.toneMapping;
+    r.toneMappingExposure = s.exposure;
+    const key = `${this.#style}:${q.finish}`;
+    if (!this.#looks.has(key)) this.#looks.set(key, new Materials(r, { style: this.#style, quality: q, painter: this.#painter }));
+    const m = this.#looks.get(key), swapped = m !== this.#materials;
+    this.#materials = m;
+    this.#scene.background = m.sky(s.sky);
+    this.#scene.fog?.color.set(this.#o.fog ?? s.fog);
+    this.#hemi.color.set(s.hemisphere[0]);
+    this.#hemi.groundColor.set(s.hemisphere[1]);
+    this.#sun.color.set(s.sun[0]);
+    const shadow = this.#sun.shadow;
+    Object.assign(shadow, { bias: s.shadow.bias, normalBias: s.shadow.normalBias, radius: s.shadow.radius });
+    if (shadow.mapSize.x !== q.shadowMap) {
+      shadow.mapSize.set(q.shadowMap, q.shadowMap);
+      shadow.map?.dispose();
+      shadow.map = null;
+    }
+    if (swapped) this.#rematerial();
+    this.#lights(q.panels);
+    this.#postProcessing(q.post);
+    this.#resize();
+    this.#applyVisibility(); // (lit as indoors or out, the x-ray, lines along edges, shadows)
+    this.#watch = this.#quality === "auto" && this.#drawn === "high" && !this.#why ? { since: null, times: [] } : null;
+    if (!quiet) this.#emit("lookchange", this.look);
+  }
+
+  /** Every piece built drawn with the look's materials. */
+  #rematerial() {
+    for (const f of this.#floors.values()) {
+      for (const mesh of [...f.pieces, ...Object.values(f.itemMeshes).flat()]) mesh.material = this.#material(mesh.userData);
+    }
+    if (this.#ground) this.#ground.material = this.#materials.ground();
+    if (this.#lit) this.#lit.material = this.#materials.highlight;
+  }
+
+  /** ``n`` lights for the ceiling panels nearest the walker (shown only when walking). */
+  #lights(n) {
+    while (this.#panelLights.length < n) {
+      // shining down from just under the ceiling, wide and soft
+      const light = new THREE.SpotLight(0xfff6ea, 0, 9, 1.25, 1, 2);
+      light.visible = false;
+      this.#scene.add(light, light.target);
+      this.#panelLights.push(light);
+    }
+    while (this.#panelLights.length > n) {
+      const light = this.#panelLights.pop();
+      this.#scene.remove(light, light.target);
+      light.dispose();
+    }
+  }
+
+  /** High's passes (post.js, loaded the first time), or none. */
+  #postProcessing(on) {
+    if (!on) {
+      this.#post?.dispose();
+      this.#post = null;
+      this.#posting = null;
+      return;
+    }
+    if (this.#post || this.#posting) return;
+    this.#posting = import("./post.js").then(({ makeComposer }) => {
+      if (this.#post || this.#destroyed || !QUALITY[this.#drawn].post) return;
+      this.#post = makeComposer(this.#renderer, this.#scene, this.#camera, { samples: QUALITY.high.samples });
+      this.#resize();
+    }).catch((e) => console.warn(`StoreyPathWorld: no post-processing (${e.message}): drawn as Low is`));
+  }
+
+  /** Lines along the edges of a floor's pieces (the "model" look), made the first time:
+   * of its walls, slab, openings and items in a form. */
+  #edgesOf(f, form) {
+    const add = (meshes, pieces) => {
+      const lines = new Map(pieces.map((p) => [p.name, p.edges]));
+      for (const mesh of meshes) {
+        const edges = lines.get(mesh.name);
+        if (!edges?.length) continue;
+        const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(edges, 3));
+        const line = new THREE.LineSegments(g, this.#materials.edges);
+        line.name = `${mesh.name}:edges`;
+        line.renderOrder = 1;
+        line.raycast = () => {}; // never what a click is on
+        mesh.add(line);
+      }
+    };
+    if (!f.edged) {
+      f.edged = true;
+      const { pieces } = buildPieces(f.plan, { ...this.#o, only: "edges" });
+      add(f.pieces, [...pieces, ...cutPieces(pieces, f.elevation, this.#o)]);
+    }
+    f.itemsEdged ??= new Set();
+    if (form && f.itemMeshes[form] && !f.itemsEdged.has(form)) {
+      f.itemsEdged.add(form);
+      add(f.itemMeshes[form], buildItems(f.plan, form, { ...this.#o, only: "edges" }));
+    }
+  }
 
   // ---- public API ---------------------------------------------------------------
 
@@ -248,6 +416,7 @@ export class StoreyPathWorld extends EventTarget {
     }
     this.#building = id;
     this.#endTour();
+    if (this.#watch) this.#watch.since = null; // (auto) its frames timed once it has been shown a while
     this.#route = null; // drawn on the floors taken away
     this.#floors.clear();
     this.#floor = null;
@@ -598,10 +767,11 @@ export class StoreyPathWorld extends EventTarget {
     for (const meshes of Object.values(f.itemMeshes)) {
       for (const m of meshes) {
         m.removeFromParent();
-        m.geometry.dispose();
+        m.traverse((o) => o.geometry?.dispose()); // (its lines along edges with it)
       }
     }
     f.itemMeshes = {};
+    f.itemsEdged = null;
     f.bakedItems = null;
     f.itemObstacles = null;
     setItems(f.plan, f.given.map((g) => this.#itemOf(f, g)));
@@ -994,11 +1164,17 @@ export class StoreyPathWorld extends EventTarget {
   }
 
   destroy() {
+    this.#destroyed = true;
     this.#endTour();
     this.#renderer.setAnimationLoop(null);
     this.#walker.dispose();
     this.#orbit.dispose();
     if (this.#buildingGroup) this.#dispose(this.#buildingGroup);
+    this.#post?.dispose();
+    this.#painter.dispose();
+    for (const m of this.#looks.values()) m.dispose();
+    this.#sun.shadow.map?.dispose();
+    this.#scene.environment?.dispose();
     this.#renderer.dispose();
     this.#element.replaceChildren();
   }
@@ -1034,10 +1210,13 @@ export class StoreyPathWorld extends EventTarget {
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(centre.x, (all[0]?.elevation ?? 0) - this.#o.slab - 0.02, centre.z);
     ground.receiveShadow = true;
-    ground.material.map.repeat.set(1 / 6, 1 / 6);
+    ground.renderOrder = -1; // drawn first, out of the depth the occlusion reads (Materials.ground)
     group.add(ground);
+    this.#ground = ground;
     this.#placeSun(centre, span);
-    this.#scene.fog = new THREE.Fog(this.#o.fog, span * 4, fogFar);
+    this.#scene.fog = new THREE.Fog(this.#o.fog ?? STYLES[this.#style].fog, span * 4, fogFar);
+    this.#camera.far = Math.max(3000, fogFar * 1.6);
+    this.#camera.updateProjectionMatrix();
     return group;
   }
 
@@ -1149,7 +1328,7 @@ export class StoreyPathWorld extends EventTarget {
   #mesh(p) {
     const mesh = new THREE.Mesh(p.geometry, this.#material(p));
     mesh.name = p.name;
-    mesh.userData = { material: p.material, view: p.view, hidden: Boolean(p.hidden), form: p.form };
+    mesh.userData = { material: p.material, type: p.type, view: p.view, hidden: Boolean(p.hidden), form: p.form };
     mesh.castShadow = CASTS.has(p.material);
     mesh.receiveShadow = TAKES.has(p.material);
     mesh.renderOrder = ORDER[p.material] ?? 0;
@@ -1237,6 +1416,7 @@ export class StoreyPathWorld extends EventTarget {
     // a way shown, over the whole building: the floors above the highest it goes to are left out
     const top = !walking && !this.#floor && this.#route
       ? Math.max(...this.#route.legs.map((l) => l.floor.ordinal)) : Infinity;
+    const s = STYLES[this.#style], q = QUALITY[this.#drawn];
     for (const f of this.#floors.values()) {
       // Walking: the floors up to yours, open to the sky. Dollhouse: one or all.
       const shown = walking ? Boolean(wf) && f.ordinal <= wf.ordinal : (!this.#floor || f.id === this.#floor) && f.ordinal <= top;
@@ -1258,17 +1438,33 @@ export class StoreyPathWorld extends EventTarget {
         for (const m of meshes) m.visible = furnished && name === form && seen(m.userData);
       }
       if (f === wf) this.#walker.obstacles = this.#obstaclesOf(f, furnished);
+      // the "model" look: lines along edges, made the first time a floor (its items) shows
+      if (s.edges && shown) this.#edgesOf(f, furnished ? form : null);
+      for (const mesh of [...f.pieces, ...Object.values(f.itemMeshes).flat()]) {
+        for (const line of mesh.children) {
+          line.visible = s.edges;
+          line.material = this.#materials.edges;
+        }
+      }
     }
     if (this.#lit) this.#lit.visible = this.#o.showHidden || !this.#lit.userData.space?.tucked;
     this.#labelsMoved = true;
     this.#placeRoute();
     const see = this.#xray ? 0.22 : 1;
     const m8 = this.#materials;
-    for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door]) {
+    for (const m of [m8.wall, m8.wallPlain, m8.wallTop, m8.wallCut, m8.frame, m8.doorFrame, m8.door, m8.skirting, m8.handle,
+      m8.sillBoard]) {
       m.transparent = this.#xray;
       m.opacity = see;
       m.depthWrite = !this.#xray;
     }
+    // walking, lit as indoors: less sky (the ceiling keeps the sun out but at the
+    // windows), and the nearest ceiling panels (#lightPanels)
+    this.#hemi.intensity = walking ? s.walk.hemisphere * q.ambient : s.hemisphere[2];
+    this.#scene.environmentIntensity = walking ? s.walk.environment * q.ambient : s.environment;
+    this.#sun.intensity = walking ? s.walk.sun : s.sun[1];
+    for (const light of this.#panelLights) light.visible = walking;
+    this.#shadowsDirty = true;
   }
 
   /** In the dollhouse view of all floors, labels show for the top floor only. */
@@ -1399,13 +1595,63 @@ export class StoreyPathWorld extends EventTarget {
 
   #placeSun(centre, size) {
     const sun = this.#sun;
-    sun.position.set(centre.x - size * 0.6, centre.y + size * 1.4, centre.z + size * 0.45);
+    sun.position.copy(centre).addScaledVector(this.#sunDir, size * 1.6);
     sun.target.position.copy(centre);
-    const c = sun.shadow.camera;
-    const r = size * 0.85 + 5;
-    Object.assign(c, { left: -r, right: r, top: r, bottom: -r, near: 0.5, far: size * 4 + 50 });
-    c.updateProjectionMatrix();
+    this.#shadowAt = ""; // fitted again, next frame
   }
+
+  /** The sun's shadow fitted closely round the floors shown (the walker's, walking), so
+   * that its texels are as small as they can be; on a floor bigger than what is looked at,
+   * round that (walking, round the walker), in steps. Drawn again only when it moved. */
+  #fitSun() {
+    const walking = this.#mode === "walk", wf = walking ? this.#floors.get(this.#walkFloor) : null;
+    const box = this.#sunBox.makeEmpty(), floor = this.#floorBox;
+    for (const f of this.#floors.values()) {
+      if (!f.group.visible || (wf && f !== wf) || f.bounds3.isEmpty()) continue;
+      floor.copy(f.bounds3);
+      floor.min.y += f.group.position.y;
+      floor.max.y += f.group.position.y;
+      box.union(floor);
+    }
+    if (box.isEmpty()) return;
+    // round what is looked at: a reach in steps of √2, its middle in quarters of it
+    const focus = walking ? this.#camera.position : this.#orbit.target;
+    const wide = walking ? SHADOW.walk : Math.max(SHADOW.least, this.#camera.position.distanceTo(this.#orbit.target) * SHADOW.orbit);
+    const reach = SHADOW.least * Math.SQRT2 ** Math.ceil(Math.log2(wide / SHADOW.least) * 2);
+    const step = reach / SHADOW.steps;
+    const near = (lo, hi, at) => {
+      const a = Math.max(lo, Math.floor((at - reach) / step) * step), b = Math.min(hi, Math.ceil((at + reach) / step) * step);
+      return a < b ? [a, b] : [lo, hi];
+    };
+    const [x0, x1] = near(box.min.x, box.max.x, focus.x), [z0, z1] = near(box.min.z, box.max.z, focus.z);
+    const at = [x0, x1, z0, z1, box.min.y, box.max.y].map((v) => v.toFixed(2)).join();
+    if (at === this.#shadowAt) return;
+    this.#shadowAt = at;
+    const sun = this.#sun, cam = sun.shadow.camera;
+    const centre = new THREE.Vector3((x0 + x1) / 2, (box.min.y + box.max.y) / 2, (z0 + z1) / 2);
+    const away = Math.hypot(x1 - x0, box.max.y - box.min.y, z1 - z0) + 50;
+    sun.target.position.copy(centre);
+    sun.position.copy(centre).addScaledVector(this.#sunDir, away);
+    sun.updateMatrixWorld();
+    sun.target.updateMatrixWorld();
+    cam.position.copy(sun.position);
+    cam.lookAt(centre);
+    cam.updateMatrixWorld();
+    // the box's corners as the sun sees them (a little under the floor: what stands on it)
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity), hi = lo.clone().negate();
+    for (let i = 0; i < 8; i++) {
+      const v = new THREE.Vector3(i & 1 ? x1 : x0, i & 2 ? box.max.y : box.min.y - 0.5, i & 4 ? z1 : z0).applyMatrix4(cam.matrixWorldInverse);
+      lo.min(v);
+      hi.max(v);
+    }
+    Object.assign(cam, { left: lo.x - 1, right: hi.x + 1, bottom: lo.y - 1, top: hi.y + 1, near: Math.max(0.5, -hi.z - 10),
+      far: -lo.z + 10 });
+    cam.updateProjectionMatrix();
+    this.#shadowsDirty = true;
+  }
+
+  #sunBox = new THREE.Box3(); // (each frame: kept, not made)
+  #floorBox = new THREE.Box3();
 
   // ---- loop and input ----------------------------------------------------------------
 
@@ -1440,10 +1686,8 @@ export class StoreyPathWorld extends EventTarget {
       this.#orbit.target.lerpVectors(f.fromT, f.toT, k);
       if (f.t >= 1) this.#flight = null;
     }
-    this.#lamp.intensity = this.#mode === "walk" ? 9 : 0;
     if (this.#mode === "walk") {
       this.#walker.update(dt);
-      this.#lamp.position.copy(this.#camera.position).y += 0.9;
       const f = this.#floors.get(this.#walkFloor);
       if (f) {
         const here = this.#spaceAt(f, this.#camera.position.x, this.#camera.position.z);
@@ -1456,8 +1700,65 @@ export class StoreyPathWorld extends EventTarget {
     } else {
       this.#orbit.update();
     }
-    this.#renderer.render(this.#scene, this.#camera);
+    this.#lightPanels();
+    this.#fitSun();
+    if (this.#shadowsDirty) {
+      this.#renderer.shadowMap.needsUpdate = true;
+      this.#shadowsDirty = false;
+    }
+    if (this.#post) {
+      // occlusion over metres close up; seen from afar, over a share of the distance
+      const ao = STYLES[this.#style].ao;
+      const far = this.#mode === "walk" ? 0 : this.#camera.position.distanceTo(this.#orbit.target);
+      this.#post.setAo(ao, Math.min(4, Math.max(ao.radius, far * ao.overview)));
+      this.#post.composer.render(dt);
+    } else this.#renderer.render(this.#scene, this.#camera);
     this.#placeLabels();
+    this.#timeHigh(dt);
+  }
+
+  /** Walking: the ceiling panels of the walker's room nearest them lit (spot lights
+   * without shadows: none from another room, so none through a wall); outside a room,
+   * those within a few metres. The lights stay in the scene (unlit), so that no material
+   * is made again as the walker goes from room to room. */
+  #lightPanels() {
+    const lights = this.#panelLights;
+    const f = this.#mode === "walk" ? this.#floors.get(this.#walkFloor) : null;
+    if (!f || !lights.length) return;
+    if (!f.panels) {
+      f.panels = new Map();
+      for (const q of ceilingPanels(f.plan)) f.panels.set(q.unit, [...(f.panels.get(q.unit) ?? []), q]);
+    }
+    const p = this.#camera.position, room = this.#room?.id;
+    const near = (room ? f.panels.get(room) ?? [] : [...f.panels.values()].flat().filter((q) => Math.hypot(q.x - p.x, q.z - p.z) < 4))
+      .map((q) => ({ q, d: (q.x - p.x) ** 2 + (q.z - p.z) ** 2 }))
+      .sort((a, b) => a.d - b.d);
+    const y = f.elevation + f.plan.wallHeight - 0.03, power = STYLES[this.#style].walk.panels;
+    lights.forEach((light, i) => {
+      const hit = near[i]?.q;
+      light.intensity = hit ? power : 0;
+      if (!hit) return;
+      light.position.set(hit.x, y, hit.z);
+      light.target.position.set(hit.x, f.elevation, hit.z);
+    });
+  }
+
+  /** Auto: High's frames timed once the building has been shown a while; drawn slower
+   * than SLOW_FRAME (the median), Low instead, from then on. */
+  #timeHigh(dt) {
+    const watch = this.#watch;
+    if (!watch || !this.#floors.size || document.hidden) return;
+    const now = performance.now();
+    watch.since ??= now;
+    if (now - watch.since < WATCH.after || dt <= 0) return;
+    watch.times.push(dt * 1000);
+    if (watch.times.length < WATCH.frames) return;
+    this.#watch = null;
+    const median = watch.times.sort((a, b) => a - b)[watch.times.length >> 1];
+    if (median <= SLOW_FRAME || this.#quality !== "auto") return;
+    this.#drawn = "low";
+    this.#why = "slow";
+    this.#applyLook();
   }
 
   /** The rooms' labels, placed again when the view moved (or what is shown changed): only
@@ -1487,7 +1788,13 @@ export class StoreyPathWorld extends EventTarget {
 
   #resize() {
     const w = this.#element.clientWidth || 1, h = this.#element.clientHeight || 1;
+    // High: up to 1.5 of the screen's pixels a CSS pixel, and not too many in all; Low: one
+    const q = QUALITY[this.#drawn];
+    const ratio = Math.min(window.devicePixelRatio || 1, q.pixelRatio, Math.sqrt(q.pixels / (w * h)));
+    if (this.#renderer.getPixelRatio() !== ratio) this.#renderer.setPixelRatio(ratio);
     this.#renderer.setSize(w, h, false);
+    this.#post?.composer.setPixelRatio(ratio);
+    this.#post?.composer.setSize(w, h);
     this.#renderer.domElement.style.width = "100%";
     this.#renderer.domElement.style.height = "100%";
     this.#labelRenderer.setSize(w, h);

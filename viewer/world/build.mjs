@@ -1,8 +1,8 @@
-// node build.mjs: dist/world.js, the 3D world with three.js and JSZip inside (from
-// ../vendor, the copies the examples and Studio use), so that a system installs
-// one file and downloads nothing at run time; dist/support.js, the WebGL check,
-// small enough to load before deciding to load the world; their declarations; and
-// the licences of what is inside.
+// node build.mjs: dist/world.js, the 3D world with three.js, JSZip and N8AO (its
+// ambient occlusion) inside (from ../vendor, the copies the examples and Studio
+// use), so that a system installs one file and downloads nothing at run time;
+// dist/support.js, the WebGL check, small enough to load before deciding to load
+// the world; their declarations; and the licences of what is inside.
 
 import { build } from "esbuild";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -43,6 +43,10 @@ writeFileSync(join(dist, "THIRD-PARTY-LICENSES.txt"), [
   "JSZip 3.10.1, https://stuk.github.io/jszip/ (dual MIT/GPL-3.0; used under MIT)",
   "-".repeat(78),
   version(join(vendor, "LICENSE-jszip.markdown")).trim(),
+  "",
+  "N8AO 2.0.1, https://github.com/N8python/n8ao: ambient occlusion (CC0-1.0, public domain)",
+  "-".repeat(78),
+  version(join(vendor, "n8ao/LICENSE")).trim(),
   "",
 ].join("\n"));
 console.log("built dist/world.js, dist/support.js");

@@ -31,6 +31,7 @@ const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
 const { BUILDER, buildItems, buildPieces, ceilingPanels, inside, itemExtent, originOf, planFloor, setItems, toLocal } =
   await import("../../src/world/build.js");
 const { toLonLat } = await import("../../src/world/frame.js");
+const { qualityFor } = await import("../../src/world/gpu.js");
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -361,6 +362,24 @@ test("items of a kind and size are copies of one template: a thousand desks in m
   const one = triangles(piece) / 1000;
   truly(Number.isInteger(one) && one > 300, `${one} triangles a desk`);
   truly(took < 60, `a thousand desks in ${took.toFixed(1)} ms`);
+});
+
+test("auto: Low on a software, virtual or integrated renderer; High on a graphics card", () => {
+  const low = { software: ["ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "llvmpipe (LLVM 15.0.7, 256 bits)", "Microsoft Basic Render Driver", "ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)"],
+  virtual: ["VMware SVGA 3D", "ANGLE (VMware, Inc., VMware SVGA 3D Direct3D11 vs_5_0 ps_5_0, D3D11)", "Parallels Display Adapter (WDDM)",
+    "Citrix Indirect Display Adapter"],
+  integrated: ["ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)", "Mesa Intel(R) Iris(R) Xe Graphics (TGL GT2)",
+    "Intel(R) HD Graphics 4000", "ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)", "Mali-G78", "Adreno (TM) 650"] };
+  for (const [why, names] of Object.entries(low)) {
+    for (const name of names) truly(JSON.stringify(qualityFor(name)) === JSON.stringify({ quality: "low", why }), `${name}: ${JSON.stringify(qualityFor(name))}`);
+  }
+  for (const name of ["ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)", "Apple GPU",
+    "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)", "NVIDIA RTX PRO 6000 Blackwell/PCIe/SSE2",
+    "ANGLE (AMD, AMD Radeon RX 6800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)", "AMD Radeon Pro 5500M OpenGL Engine",
+    "ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)", "", null]) {
+    truly(qualityFor(name).quality === "high", `${name}: ${JSON.stringify(qualityFor(name))}`);
+  }
 });
 
 test("a catalogue colour that is not #rrggbb is not used: the item takes the default colour", async () => {
@@ -1251,6 +1270,159 @@ test("a way shown stays shown when a floor it walks on is built again (a room's 
   }, lifted);
   const same = (a) => JSON.stringify(a) === JSON.stringify(r.before) && a.every((l) => l.live && l.color === "ff0000");
   truly(r.before.length === 2 && same(r.retyped) && same(r.reloaded) && r.route === null, JSON.stringify(r));
+});
+
+// ---- the looks and qualities ---------------------------------------------------------
+
+/** In the page: what a world draws, as seen on its canvas (the frame after the next one,
+ * read before the page shows it): how many colours, of a sample of its pixels. */
+const PICTURE = `async (world) => {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const c = world.renderer.domElement, out = document.createElement("canvas");
+  out.width = c.width;
+  out.height = c.height;
+  const ctx = out.getContext("2d");
+  ctx.drawImage(c, 0, 0);
+  const px = ctx.getImageData(0, 0, out.width, out.height).data, colours = new Set();
+  for (let i = 0; i < px.length; i += 4 * 97) colours.add(px[i] + "," + px[i + 1] + "," + px[i + 2]);
+  return colours.size;
+}`;
+
+test("the look: real, at the quality the machine gets (Low here: a software renderer); High and the model when asked, building nothing again", async () => {
+  const r = await page.run(async (PICTURE) => {
+    const picture = eval(PICTURE);
+    const world = new window.sp.StoreyPathWorld("#v");
+    const said = [];
+    world.addEventListener("lookchange", (e) => said.push(e.detail));
+    const first = world.look;
+    const pkg = await world.open("/campus-hq.storeypath");
+    const floor = pkg.floorsOf(world.building)[0].id;
+    world.setFloor(floor);
+    await world.ready();
+    const meshes = () => {
+      const out = {};
+      world.scene.getObjectByName(floor).traverse((m) => {
+        if (m.isMesh && m.userData.material) out[m.name] = { geometry: m.geometry.uuid, material: m.material.uuid,
+          lines: m.children.filter((l) => l.isLineSegments && l.visible).length };
+      });
+      return out;
+    };
+    const office = () => world.scene.getObjectByName(floor).getObjectByName("floor:office").material;
+    const real = { meshes: meshes(), finished: Boolean(office().map), colours: await picture(world) };
+    world.setStyle("model");
+    await world.ready();
+    const model = { meshes: meshes(), offset: world.scene.getObjectByName(floor).getObjectByName("wall").material.polygonOffset,
+      colours: await picture(world) };
+    world.setQuality("high");
+    await world.ready();
+    const high = { look: world.look, colours: await picture(world) };
+    world.setStyle("real");
+    world.setQuality("low");
+    const back = { meshes: meshes(), look: world.look };
+    world.setQuality("auto");
+    const auto = world.look;
+    world.setStyle("cartoon"); // not a look: as it was
+    world.setQuality("ultra");
+    const kept = world.look;
+    world.destroy();
+    // asked for at the start
+    const given = new window.sp.StoreyPathWorld("#v", { style: "model", quality: "high" });
+    const asked = given.look;
+    given.destroy();
+    const wrong = new window.sp.StoreyPathWorld("#v", { style: "cartoon", quality: "ultra" });
+    const defaults = wrong.look;
+    wrong.destroy();
+    return { first, real, model, high, back, auto, kept, asked, defaults, said };
+  }, PICTURE);
+  const look = (style, quality, drawn, why = null) => JSON.stringify({ style, quality, drawn, why });
+  truly(JSON.stringify(r.first) === look("real", "auto", "low", "software"), `at first: ${JSON.stringify(r.first)}`);
+  truly(r.real.finished && r.real.colours > 40, `real: painted finishes, a picture of ${r.real.colours} colours`);
+  // nothing built again: the same geometry, other materials; the model's lines along edges
+  const names = Object.keys(r.real.meshes);
+  truly(names.length > 20 && names.every((n) => r.model.meshes[n]?.geometry === r.real.meshes[n].geometry
+    && r.back.meshes[n]?.geometry === r.real.meshes[n].geometry), "built again");
+  truly(names.filter((n) => r.model.meshes[n].material !== r.real.meshes[n].material).length >= names.length - 2, "the same materials");
+  truly(r.model.meshes.wall.lines === 1 && r.model.meshes.items.lines === 1 && r.model.meshes.door.lines === 1 && r.model.offset,
+    `model: lines along edges ${JSON.stringify(r.model.meshes.wall)}`);
+  truly(names.every((n) => r.real.meshes[n].lines === 0 && r.back.meshes[n].lines === 0), "real: no lines");
+  truly(r.model.colours > 20 && r.high.colours > 20, `pictures of ${r.model.colours} and ${r.high.colours} colours`);
+  truly(JSON.stringify(r.high.look) === look("model", "high", "high"), JSON.stringify(r.high.look));
+  truly(JSON.stringify(r.back.look) === look("real", "low", "low") && JSON.stringify(r.auto) === look("real", "auto", "low", "software")
+    && JSON.stringify(r.kept) === JSON.stringify(r.auto), `${JSON.stringify(r.back.look)} ${JSON.stringify(r.auto)} ${JSON.stringify(r.kept)}`);
+  truly(r.said.map((l) => `${l.style}:${l.quality}`).join() === "model:auto,model:high,real:high,real:low,real:auto", JSON.stringify(r.said));
+  truly(JSON.stringify(r.asked) === look("model", "high", "high") && JSON.stringify(r.defaults) === look("real", "auto", "low", "software"),
+    `${JSON.stringify(r.asked)} ${JSON.stringify(r.defaults)}`);
+});
+
+test("walking: the ceiling keeps the sun out, and the panels nearest the walker light its room; none orbiting", async () => {
+  const r = await page.run(async () => {
+    const world = new window.sp.StoreyPathWorld("#v");
+    const pkg = await world.open("/campus-hq.storeypath");
+    const floor = pkg.floorsOf(world.building)[0].id;
+    const room = world.plan(floor).spaces.find((s) => s.type === "office");
+    const xs = room.rings.flat(1).map((p) => p[0]), zs = room.rings.flat(1).map((p) => p[1]);
+    const at = { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 };
+    const lights = () => {
+      const out = [];
+      world.scene.traverse((o) => { if (o.isSpotLight) out.push({ on: o.visible, lit: o.intensity > 0, x: o.position.x, z: o.position.z }); });
+      return out;
+    };
+    const orbiting = lights();
+    world.setMode("walk", { at, floor });
+    await window.frames(3);
+    const walking = lights(), here = world.room?.id ?? null;
+    const ceiling = world.scene.getObjectByName(floor).getObjectByName("ceiling");
+    const panels = world.scene.getObjectByName(floor).getObjectByName("lights");
+    const shown = { ceiling: ceiling.visible && ceiling.castShadow, panels: panels.visible };
+    world.setMode("dollhouse");
+    const after = lights();
+    world.destroy();
+    return { orbiting, walking, after, here, room: room.id, shown, rings: room.rings };
+  });
+  const inRoom = (l) => r.rings.some((ring) => ring.length && (() => {
+    let hit = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, zi] = ring[i], [xj, zj] = ring[j];
+      if ((zi > l.z) !== (zj > l.z) && l.x < ((xj - xi) * (l.z - zi)) / (zj - zi) + xi) hit = !hit;
+    }
+    return hit;
+  })());
+  truly(r.orbiting.length === 4 && r.orbiting.every((l) => !l.on) && r.after.every((l) => !l.on), `orbiting: ${JSON.stringify(r.orbiting)}`);
+  truly(r.here === r.room && r.walking.every((l) => l.on) && r.walking.some((l) => l.lit)
+    && r.walking.filter((l) => l.lit).every(inRoom), `walking in ${r.here}: ${JSON.stringify(r.walking)}`);
+  truly(r.shown.ceiling && r.shown.panels, JSON.stringify(r.shown));
+});
+
+test("the way, a ghost, items given and a choice in the model look at High quality", async () => {
+  const lifted = routes.routes.find((c) => c.package === "campus-hq.storeypath" && c.accessible && c.expect.changes.length);
+  const r = await page.run(async (c, PICTURE) => {
+    const picture = eval(PICTURE);
+    const world = new window.sp.StoreyPathWorld("#v", { style: "model", quality: "high" });
+    const pkg = await world.open("/campus-hq.storeypath");
+    await world.ready();
+    const floor = pkg.floorsOf(world.building)[0].id;
+    world.setFloor(null);
+    await world.showRoute(window.sp.route(pkg, c.from, c.to, { accessible: true }));
+    const route = [];
+    world.scene.traverse((o) => { if (o.name.startsWith("route:leg:")) route.push(o.visible && o.parent.visible); });
+    world.setFloor(floor);
+    const desk = pkg.itemsOn(floor).find((i) => i.properties.type.startsWith("DESK-"));
+    const { x_m: x, y_m: y } = desk.properties.local;
+    world.ghost({ type: desk.properties.type, x: x + 3, y, ok: false });
+    const ghost = world.scene.getObjectByName("ghost");
+    const given = world.setFloorItems(floor, [{ id: desk.id, type: desk.properties.type, x: x + 1, y, rotation: 0 }]);
+    await window.frames(2);
+    const items = world.scene.getObjectByName(floor).getObjectByName("items");
+    const lines = items.children.filter((l) => l.isLineSegments && l.visible).length;
+    world.select(desk.id, { go: false });
+    const lit = world.scene.getObjectByName("highlight");
+    const aimed = world.pointAt();
+    const colours = await picture(world);
+    world.destroy();
+    return { route, ghost: Boolean(ghost?.parent), given, lines, lit: Boolean(lit?.visible), aimed: aimed?.floor === floor, colours };
+  }, lifted, PICTURE);
+  truly(r.route.length === 2 && r.route.every(Boolean) && r.ghost && r.given && r.lines === 1 && r.lit && r.aimed && r.colours > 20,
+    JSON.stringify(r));
 });
 
 test("destroy empties the container", async () => {

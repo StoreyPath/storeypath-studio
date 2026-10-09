@@ -1,13 +1,23 @@
 // Type-checked by `npm run check`: the declarations describe the module as a
 // strict TypeScript application uses it.
-import { StoreyPathWorld, loadPackage, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents, type WorldPoint } from '@storeypath/viewer-world';
+import { StoreyPathWorld, loadPackage, route, webglSupport, type Feature, type GivenItem, type Route, type WorldEvents, type WorldLook,
+	type WorldPoint, type WorldQuality } from '@storeypath/viewer-world';
 import { webglSupport as check } from '@storeypath/viewer-world/support';
 
 export async function show(element: HTMLElement, data: ArrayBuffer): Promise<string | null> {
 	const support = check();
 	if (!support.ok || !webglSupport().ok) return support.reason ?? null;
-	const world = new StoreyPathWorld(element, { labels: true, explode: 0 });
+	const world = new StoreyPathWorld(element, { labels: true, explode: 0, style: 'real', quality: 'auto' });
+	// the look and quality: one click each (nothing is built again)
+	world.addEventListener('lookchange', (e) => {
+		const look: WorldLook = e.detail;
+		console.log(look.style, look.quality, look.drawn, look.why ?? 'as asked');
+	});
+	const quality: WorldQuality = world.look.drawn === 'low' ? 'low' : 'auto';
+	world.setStyle('model');
+	world.setQuality(quality);
 	const pkg = await world.open(data);
+	await world.ready();
 	const office: Feature | undefined = pkg.units.find((u) => u.properties['type'] === 'office');
 	world.addEventListener('select', (e) => {
 		const detail: WorldEvents['select'] = e.detail;
