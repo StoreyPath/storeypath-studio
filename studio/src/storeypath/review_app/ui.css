@@ -40,7 +40,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: var(--fw-semibold); }
 :focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 /* ---- buttons ---------------------------------------------------------------------------- */
-button, .btn {
+button, .btn, a.button {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
   min-height: var(--hit); padding: 0 var(--sp-3);
   font: inherit; font-weight: var(--fw-medium); color: var(--text); line-height: 1.2; white-space: nowrap;
@@ -48,13 +48,13 @@ button, .btn {
   cursor: pointer; text-decoration: none; user-select: none; -webkit-user-select: none;
   transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
 }
-button:hover:not(:disabled):not([aria-disabled="true"]), .btn:hover { background: var(--surface-3); border-color: var(--border-strong); text-decoration: none; }
+button:hover:not(:disabled):not([aria-disabled="true"]), .btn:hover, a.button:hover { background: var(--surface-3); border-color: var(--border-strong); text-decoration: none; }
 button:active:not(:disabled):not([aria-disabled="true"]) { background: var(--surface-4); }
 button:disabled, button[aria-disabled="true"] { opacity: .45; cursor: default; }
-.btn-primary, button.primary {
+.btn-primary, button.primary, a.button.primary {
   background: var(--accent); border-color: transparent; color: var(--text-on-accent);
 }
-.btn-primary:hover:not(:disabled), button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: transparent; }
+.btn-primary:hover:not(:disabled), button.primary:hover:not(:disabled), a.button.primary:hover { background: var(--accent-hover); border-color: transparent; }
 .btn-danger { color: var(--danger-text); }
 .btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: transparent; }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
@@ -86,7 +86,8 @@ button.active, .btn.active, button[aria-pressed="true"].toggle {
 .segmented.block > button { flex: 1; }
 
 /* ---- fields ----------------------------------------------------------------------------- */
-input[type="text"], input[type="search"], input[type="number"], input:not([type]), select, textarea {
+input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="email"], input[type="url"],
+input:not([type]), select, textarea {
   font: inherit; color: var(--text); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: var(--r-md);
   min-height: var(--hit); padding: 0 var(--sp-3); width: 100%;
@@ -215,3 +216,53 @@ dialog.dialog {
   box-shadow: var(--shadow-lg); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
 }
 dialog.dialog::backdrop { background: var(--scrim); }
+
+/* ---- the top bar: the same on every page ----------------------------------------------------
+   <header class="topbar"> with .tb-start (.tb-home, the mark and a way to the projects; .crumbs:
+   where you are), .tb-center (optional) and .tb-end (what the page offers; .presence; the
+   person's menu in .tb-account). */
+.topbar {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--sp-3);
+  padding: 0 var(--sp-2) 0 var(--sp-2); background: var(--surface-1); border-bottom: 1px solid var(--border);
+  position: relative; z-index: var(--z-panel);
+}
+.topbar:not(:has(> .tb-center)) { grid-template-columns: minmax(0, 1fr) auto; }
+.tb-start, .tb-end { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.tb-end { justify-content: flex-end; }
+.tb-center { display: flex; justify-content: center; }
+.tb-home {
+  width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: var(--r-md);
+  background: var(--accent); color: var(--text-on-accent);
+}
+.tb-home:hover { background: var(--accent-hover); text-decoration: none; }
+.crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; font-size: var(--fs-md); }
+.crumb {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 30px; padding: 0 var(--sp-2);
+  border-radius: var(--r-sm); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+a.crumb:hover { background: var(--surface-3); color: var(--text); text-decoration: none; }
+.crumb-plain { flex-shrink: 2; }
+.crumb-sep { color: var(--text-faint); flex: none; }
+.presence { display: flex; align-items: center; min-height: 32px; }
+.presence:empty { display: none; }
+.presence .avatar + .avatar { margin-left: -7px; }
+.presence .more { margin-left: var(--sp-1); color: var(--text-muted); font-size: var(--fs-xs); }
+.share-button { gap: 6px; padding: 0 var(--sp-2) 0 var(--sp-3); }
+.tb-account .account { position: relative; }
+.tb-account .account-button { min-height: 32px; padding: 0 var(--sp-1); border: 0; background: transparent; gap: var(--sp-2); }
+.tb-account .account-button:hover { background: var(--surface-3); }
+.tb-account .account-name { display: none; }
+.tb-account .account-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: var(--z-popover); min-width: 200px;
+  display: flex; flex-direction: column; padding: var(--sp-1); background: var(--overlay); border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+}
+.tb-account .account-menu a, .tb-account .account-menu button {
+  display: flex; justify-content: flex-start; width: 100%; min-height: 30px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-sm);
+  background: none; color: var(--text); font-weight: 400; align-items: center;
+}
+.tb-account .account-menu a:hover, .tb-account .account-menu button:hover,
+.tb-account .account-menu a:focus-visible, .tb-account .account-menu button:focus-visible {
+  background: var(--accent); color: var(--text-on-accent); text-decoration: none; box-shadow: none;
+}
+

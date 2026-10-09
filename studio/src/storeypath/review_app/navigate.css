@@ -1,11 +1,8 @@
-/* StoreyPath Navigate: the way between two places of a building. Shares Studio's
-   tokens (style.css); the way's colours are the plan engine's --sp-route* variables,
-   set here for light and dark. */
+/* StoreyPath Navigate: the way between two places of a building. On theme.css's tokens,
+   ui.css's components and the top bar every page has; the way's colours are the plan
+   engine's --sp-route* variables (the plan and the 3D view are light in both themes). */
 
 body.navigate { --route: #0b6bcb; --route-casing: #ffffff; --route-start: #2e9d63; --route-end: #d62d50; --route-change: #7048e8; }
-@media (prefers-color-scheme: dark) {
-  body.navigate { --route: #5aa9ff; --route-casing: #101014; --route-start: #43c47f; --route-end: #ff6b81; --route-change: #a58bff; }
-}
 body.navigate .sp-plan {
   --sp-route: var(--route);
   --sp-route-casing: var(--route-casing);
@@ -15,10 +12,18 @@ body.navigate .sp-plan {
   --sp-background: var(--map-bg);
 }
 
-body.navigate #panel { width: 360px; }
-.back { color: var(--muted); text-decoration: none; font-size: 13px; }
-.back:hover { color: var(--text); }
-#panel header h1 { margin-top: 6px; }
+body.navigate {
+  display: grid; grid-template-rows: var(--topbar-h) minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden;
+}
+.crumb-here { color: var(--text); font-weight: var(--fw-semibold); }
+.nav-main { display: flex; min-height: 0; }
+body.navigate #panel {
+  width: 360px; flex: none; overflow-y: auto; padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-5);
+  background: var(--surface-1); border-right: 1px solid var(--border);
+}
+#panel > section { display: flex; flex-direction: column; gap: var(--sp-2); }
+#panel header h1 { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); margin: 0 0 var(--sp-1); }
+#panel header h1 .icon { color: var(--accent-text); }
 .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
 .field .hint { margin-left: 4px; }
 
@@ -29,8 +34,8 @@ body.navigate #panel { width: 360px; }
 .picker > .field .hint { margin: 0; }
 .choices {
   position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin: 4px 0 0; padding: 4px; list-style: none;
-  max-height: 340px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .18);
+  max-height: 340px; overflow-y: auto; background: var(--overlay); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
 }
 .choices li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; }
 .choices li .label { font-weight: 600; overflow-wrap: anywhere; }
@@ -38,8 +43,7 @@ body.navigate #panel { width: 360px; }
 .choices li.active, .choices li[data-i]:hover { background: var(--hover); }
 .choices li.group { cursor: default; padding: 8px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .choices li.none { cursor: default; color: var(--muted); }
-.swap { align-self: flex-end; margin: -4px 0 -6px; font-size: 18px; line-height: 26px; color: var(--muted); }
-.swap:hover { color: var(--text); }
+.swap { align-self: flex-end; margin: -4px 0 -6px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .check input { margin: 0; accent-color: var(--accent); width: 16px; height: 16px; }
 
@@ -65,30 +69,24 @@ body.navigate #panel { width: 360px; }
 #steps .sub { color: var(--muted); font-size: 12px; font-weight: 400; }
 
 /* the views: the plan of a floor, the building in 3D, or both */
-#views { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--map-bg); }
+#views { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--canvas-bg); }
 #bar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
-  background: var(--panel); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
 }
 #bar .grow { flex: 1; }
-#view-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-#view-mode button { border: 0; border-radius: 0; padding: 5px 12px; }
-#view-mode button + button { border-left: 1px solid var(--line); }
-#view-mode button.active, #floors button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+#floors button.active { background: var(--accent); color: var(--text-on-accent); border-color: transparent; }
 /* the 3D view's look (Real or Model) and quality */
-#bar .look { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-#look { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-#look button { border: 0; border-radius: 0; padding: 4px 10px; }
-#look button + button { border-left: 1px solid var(--line); }
-#look button.active { background: var(--accent); color: var(--accent-text); }
+#bar .look { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-muted); }
+#bar .look select { width: auto; }
 #floors { display: flex; gap: 6px; flex-wrap: wrap; }
-#floors button { padding: 4px 10px; font-size: 13px; }
+#floors button { min-height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-sm); }
 #floors button.on-route:not(.active) { border-color: var(--route); box-shadow: inset 0 0 0 1px var(--route); }
 #floors .leg {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 4px;
   font-size: 11px; font-weight: 700; background: var(--route); color: #fff;
 }
-#floors button.active .leg { background: var(--accent-text); color: var(--accent); }
+#floors button.active .leg { background: var(--text-on-accent); color: var(--accent); }
 #views[data-view="plan"] .only-3d, #views[data-view="3d"] .only-plan, #views[data-view="3d"] #floors { display: none; }
 
 #panes { flex: 1; display: grid; min-height: 0; }
@@ -101,12 +99,12 @@ body.navigate #panel { width: 360px; }
 #plan, #world3d { position: absolute; inset: 0; }
 .note {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); margin: 0; max-width: min(460px, 90%);
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; color: var(--muted);
-  text-align: center;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3) var(--sp-4);
+  color: var(--text-muted); text-align: center; box-shadow: var(--shadow-md);
 }
 
 @media (max-width: 860px) {
-  body.navigate { flex-direction: column; }
+  .nav-main { flex-direction: column; }
   body.navigate #panel { width: 100%; max-height: 55%; border-right: none; border-bottom: 1px solid var(--line); }
   #panes.both { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
   #panes.both #plan-pane { border-right: none; border-bottom: 1px solid var(--line); }

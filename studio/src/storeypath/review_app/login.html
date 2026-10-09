@@ -1,16 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Log in · StoreyPath Studio</title>
   <link rel="icon" href="data:,">
+  <script>
+    try { if (localStorage.getItem("storeypath.theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
+  </script>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="ui.css">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="studio.css">
 </head>
 <body class="studio">
   <header class="topbar">
-    <a class="brand" href="/">StoreyPath <span>Studio</span></a>
+    <div class="tb-start">
+      <a class="tb-home" href="/" aria-label="StoreyPath Studio">
+        <svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#layers"/></svg>
+      </a>
+      <a class="tb-brand" href="/">StoreyPath <span>Studio</span></a>
+    </div>
+    <div class="tb-end"></div>
   </header>
 
   <main class="page auth-page">

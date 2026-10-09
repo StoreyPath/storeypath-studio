@@ -46,6 +46,12 @@ editor. This note is about Review, for whoever adds to it.
 | `review/api.js`, `notify.js`, `access.js`, `dom.js`, `tooltip.js` | calls to Studio, toasts and the status line, who may edit, elements and icons, tooltips |
 | `icons/lucide.svg` | the icons, one `<symbol>` each (Lucide, ISC: `icons/LICENSE-lucide.txt`) |
 
+The other pages use the same `theme.css`, `ui.css`, icons and top bar (`.topbar` in
+`ui.css`: the mark home, where you are, the page's own controls, the theme switch, the
+account): `style.css` is what they share besides (and their older token names, as
+aliases), `studio.css` and `navigate.css` each page's own, `chrome.js` their crumbs
+(`setCrumbs`), tooltips and theme switch.
+
 ## Adding a tool
 
 Register it once (from the module that does its work, in `main.js`'s setup order for
@@ -120,8 +126,9 @@ in (then when it is left), unless someone else changed what it shows.
 
 Every colour, size, space, radius and shadow is a token in `theme.css`; a page's CSS
 uses tokens only. `<html data-theme="light">` switches to the light theme (View, or
-the palette's *Light interface*; remembered in the browser as `storeypath.theme`). The
-canvas (the drawing, the plan) is light paper in both.
+the palette's *Light interface*, or the sun and moon in the other pages' top bar; one
+setting for every page, remembered in the browser as `storeypath.theme`). The canvas
+(the drawing, the plan) is light paper in both.
 
 ## Icons
 

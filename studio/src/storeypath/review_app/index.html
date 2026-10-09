@@ -1,19 +1,35 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StoreyPath Studio</title>
   <link rel="icon" href="data:,">
+  <script>
+    // the theme this browser chose, before anything is drawn (no flash of the other one)
+    try { if (localStorage.getItem("storeypath.theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
+  </script>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="ui.css">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="studio.css">
 </head>
 <body class="studio">
   <header class="topbar">
-    <a class="brand" href="#/">StoreyPath <span>Studio</span></a>
-    <div class="end">
+    <div class="tb-start">
+      <a class="tb-home" href="#/" aria-label="StoreyPath Studio: all projects" data-tip="All projects">
+        <svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#layers"/></svg>
+      </a>
+      <a class="tb-brand" href="#/">StoreyPath <span>Studio</span></a>
+      <nav id="crumbs" class="crumbs" aria-label="Where you are"></nav>
+    </div>
+    <div class="tb-end">
       <div id="status" class="chips"></div>
-      <div id="account"></div>
+      <button id="theme-toggle" type="button" class="btn-ghost btn-icon theme-toggle" aria-label="Light or dark" data-tip="Light or dark">
+        <svg class="icon icon-dark" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#moon"/></svg>
+        <svg class="icon icon-light" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#sun"/></svg>
+      </button>
+      <div id="account" class="tb-account"></div>
     </div>
   </header>
 
@@ -24,7 +40,7 @@
     <ol id="job-log"></ol>
   </aside>
 
-  <div id="toast" hidden></div>
+  <div id="toast" role="status" hidden></div>
   <script type="module" src="studio.js"></script>
 </body>
 </html>

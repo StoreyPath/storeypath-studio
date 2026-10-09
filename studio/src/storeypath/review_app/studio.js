@@ -5,6 +5,7 @@
 // each building and each floor); the server checks everything anyway.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { setCrumbs, setupChrome } from "./chrome.js";
 import { helpersPage } from "./helpers.js";
 import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
@@ -138,9 +139,11 @@ async function route() {
     if (parts[0] === "p" && parts[1]) await projectPage(decodeURIComponent(parts[1]));
     else if (parts[0] === "users" && me?.role === "admin") {
       document.title = "Users · StoreyPath Studio";
+      setCrumbs([{ label: "Projects", href: "#/" }, { label: "Users" }]);
       await usersPage($("page"), me, toast);
     } else if (parts[0] === "helpers" && me?.role === "admin") {
       document.title = "GPU helpers · StoreyPath Studio";
+      setCrumbs([{ label: "Projects", href: "#/" }, { label: "GPU helpers" }]);
       await helpersPage($("page"), toast);
     } else await projectsPage();
   } catch (e) {
@@ -163,6 +166,7 @@ async function projectsPage() {
   } }, name, el("button", { class: "primary", type: "submit" }, "New project"));
 
   document.title = "StoreyPath Studio";
+  setCrumbs([{ label: "Projects" }]);
   const creates = !me || me.create; // admins and engineers make projects, and open files as new ones
   const whose = (p) => p.can && !p.can.project ? "Parts shared with you"
     : p.can?.owner ? "Yours" : p.can && !p.can.admin ? `Shared with you: ${p.can.project}` : null;
@@ -223,6 +227,7 @@ function showWhoIsOn() {
 async function projectPage(code) {
   const p = await api(`projects/${code}`);
   document.title = `${p.project.name} · StoreyPath Studio`;
+  setCrumbs([{ label: "Projects", href: "#/" }, { label: p.project.name }]);
   const plansArea = el("div", { id: "plans-area" });
 
   const converted = p.locations.some((l) => l.buildings.some((b) => b.floors.some((f) => f.converted)));
@@ -1042,6 +1047,7 @@ function exportCard(code, p) {
 }
 
 window.addEventListener("hashchange", route);
+setupChrome();
 whoami().then((who) => {
   me = who;
   $("account").replaceChildren(accountMenu(me));

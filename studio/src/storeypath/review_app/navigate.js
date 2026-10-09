@@ -11,6 +11,7 @@
 // may find the way in it; the server checks.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { setupChrome } from "./chrome.js";
 import { lookOptions, setupLook } from "./look.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 
@@ -244,6 +245,7 @@ let from, to;
 async function start() {
   from = new Picker($("from"), () => changed());
   to = new Picker($("to"), () => changed());
+  setupChrome();
   $("swap").addEventListener("click", () => {
     const a = from.chosen, b = to.chosen;
     from.choose(b, { quiet: true });
@@ -263,7 +265,6 @@ async function start() {
     return;
   }
   $("back").href = `/#/p/${encodeURIComponent(CODE)}`;
-  $("back").textContent = "← Project";
   try {
     const me = await whoami();
     $("account").replaceChildren(accountMenu(me));
@@ -273,7 +274,8 @@ async function start() {
     return;
   }
   document.title = `${state.project.project.name} · Navigate`;
-  $("project-meta").textContent = state.project.project.name;
+  $("back").textContent = state.project.project.name;
+  $("project-meta").textContent = "From a kiosk, an entrance or any room, to any room";
   const can = state.project.can;
   const sees = (b) => !can || ["view", "edit", "share"].includes(can.buildings?.[b.id] ?? can.project);
   state.buildings = state.project.locations.flatMap((l) => l.buildings)
