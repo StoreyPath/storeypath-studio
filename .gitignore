@@ -17,6 +17,13 @@ demo/
 *.storeypath
 !spec/conformance/packages/*.storeypath
 *.spproj
+# area samples people send (docs/AREA-SAMPLES.md): never in the repository
+*.spsample
+
+# Claude Code: only the project's skills are shared; agents' worktrees and settings
+# are this machine's
+.claude/*
+!.claude/skills/
 
 .DS_Store
 

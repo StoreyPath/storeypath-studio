@@ -220,6 +220,7 @@ log).
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
 | `GET …/project.storeypath-project` | view on the project |
 | `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
+| `POST …/floors/<id>/sample/preview {area, keep?, remove?}`, `POST …/floors/<id>/sample {area, note?, keep?, remove?}` | view on the floor, as its drawing: an area sample's preview, and the sample itself (`<id>.spsample`, recorded in the audit log) ([area samples](../docs/AREA-SAMPLES.md)) |
 | `POST …/floors/<id>/edits`, `…/items`, `…/convert`, `POST …/objects/<id>` | edit on the floor, and its lock (the first change takes it) |
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and their locks) |
 | `POST …/floors/<id>/release` | view on the floor: their own lock of it let go (Done editing; leaving the floor) |
@@ -301,6 +302,9 @@ what they may see.
 | `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
 | `words DRAWING` | every word and string in a drawing, to look through for anything private |
+| `sample make FILE --floor ID --area x0,y0,x1,y1` | an area sample of a floor (at most 50 × 50 m), as Review's *Share an area* makes it: `-o`, `--note`, `--list` (what would be taken out, with ids), `--keep ID`, `--remove ID` ([area samples](../docs/AREA-SAMPLES.md)) |
+| `sample inspect SAMPLE` | what is in an area sample: the note, counts, what Studio decided there and by whom, the corrections as a diff |
+| `sample replay SAMPLE` | read a sample's drawing with this Studio and compare with Studio then and with the corrections, with a score: `-o DIR` (replay.json, replay.png, side-by-side.png), `--no-model`, `--no-vision`, `--fresh` (without the answers the sample keeps), `--no-edits`, `--units`, `--json` |
 | `view PACKAGE` | open a package in the viewer's example app |
 | `demo DIR` | sample drawings, a workspace and its packages, to try things out |
 | `profiles` | list the built-in layer-mapping profiles |

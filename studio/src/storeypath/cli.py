@@ -1145,6 +1145,120 @@ def demo(directory: Path):
                f"next: storeypath view {packages[0]}")
 
 
+sample_app = typer.Typer(no_args_is_help=True, help="Area samples (*.spsample): a part of a floor, how Studio read it "
+                                                    "and what people corrected, sent to be looked at "
+                                                    "(docs/AREA-SAMPLES.md).")
+app.add_typer(sample_app, name="sample")
+
+
+def _sample_failed(e: Exception) -> None:
+    from .areasample.tools import NotASample
+
+    if isinstance(e, (NotASample, ValueError, KeyError, DrawingError)):
+        _fail(str(e))
+    raise e
+
+
+@sample_app.command("inspect")
+def sample_inspect(sample: Annotated[Path, typer.Argument(help="an area sample (*.spsample)")]):
+    """What is in a sample: the note, counts, what Studio decided there and by whom, and
+    the corrections as a diff of its reading."""
+    from .areasample.tools import inspect
+
+    try:
+        typer.echo(inspect(sample), nl=False)
+    except Exception as e:
+        _sample_failed(e)
+
+
+@sample_app.command("replay")
+def sample_replay(
+    sample: Annotated[Path, typer.Argument(help="an area sample (*.spsample)")],
+    out: Annotated[Optional[Path], typer.Option("-o", "--out", help="write replay.json, replay.png and the "
+                                                                     "sample's pictures here")] = None,
+    use_model: Annotated[bool, typer.Option("--model/--no-model", help="the local language model, when one "
+                                                                       "is set up")] = True,
+    use_vision: Annotated[bool, typer.Option("--vision/--no-vision", help="the vision model "
+                                                                          "($STOREYPATH_VISION_URL), when one is set")] = True,
+    fresh: Annotated[bool, typer.Option("--fresh", help="leave out the models' answers the sample keeps")] = False,
+    edits: Annotated[bool, typer.Option("--edits/--no-edits", help="apply what people drew in review")] = True,
+    units: Annotated[Optional[str], typer.Option(help="read in these units (mm, cm, m, in, ft; auto: worked out "
+                                                      "from the part); default: as Studio read it")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="print the comparison as JSON")] = False,
+):
+    """Read the sample's drawing with this Studio (its profile and units; the models when
+    they answer, else rules alone, saying which) and compare: rooms found, missed and
+    extra, types right and wrong, doors, with a score, for Studio then and this Studio."""
+    from .areasample.tools import replay, summary
+
+    model = vision = None
+    if use_model:
+        from .llm import LocalModel
+
+        model = LocalModel()
+    if use_vision:
+        from .vision import VisionModel
+
+        vision = VisionModel()
+    try:
+        result = replay(sample, out, model=model, vision=vision, fresh=fresh, edits=edits, units=units,
+                        say=lambda m: typer.echo(m, err=as_json))
+    except Exception as e:
+        _sample_failed(e)
+    finally:
+        if model is not None:
+            model.close()
+    if as_json:
+        typer.echo(json.dumps({k: v for k, v in result.items() if k != "reading"}, indent=1, ensure_ascii=False))
+    else:
+        typer.echo(summary(result), nl=False)
+        if out is not None:
+            typer.echo(f"\nwritten to {out}: replay.json, replay.png, drawing.png, reading.png, side-by-side.png")
+
+
+@sample_app.command("make")
+def sample_make(
+    workspace: WorkspaceArg,
+    floor: Annotated[str, typer.Option(help="the floor's ID")],
+    area: Annotated[str, typer.Option(help="x0,y0,x1,y1: two opposite corners, the floor's local metres "
+                                           "(at most 50 × 50 m)")],
+    out: Annotated[Path, typer.Option("-o", "--out", help="the sample file to write, or a folder")] = Path("."),
+    note: Annotated[str, typer.Option(help="what went wrong there")] = "",
+    keep: Annotated[Optional[list[str]], typer.Option(help="a finding to keep (its id, from --list)")] = None,
+    remove: Annotated[Optional[list[str]], typer.Option(help="another text to take out (its id, from --list)")] = None,
+    list_only: Annotated[bool, typer.Option("--list", help="only list what would be taken out, and the other "
+                                                           "texts, with their ids")] = False,
+):
+    """Make an area sample of a floor of a workspace, as Review's Share an area does."""
+    from .areasample import build
+    from .review import Review
+
+    try:
+        corners = [float(v) for v in area.split(",")]
+    except ValueError:
+        _fail("--area: x0,y0,x1,y1, numbers of metres")
+    _load(workspace)
+    try:
+        s = build(Review(workspace), floor, corners, note=note, keep=keep or [], remove=remove or [],
+                  preview=list_only)
+    except Exception as e:
+        _sample_failed(e)
+    if list_only:
+        view = s.privacy.view()
+        for f in view["found"]:
+            if not f["always"]:
+                typer.echo(f"{f['id']}  {f['placeholder']:<10} {f['text']}  (in: {'; '.join(f['where'][:2])})")
+        typer.echo(f"always taken out: {sum(1 for f in view['found'] if f['always'])} names and codes")
+        for o in view["others"]:
+            typer.echo(f"{o['id']}  kept       {o['text']}")
+        return
+    target = out / s.name if out.is_dir() else out
+    target.write_bytes(s.zipped())
+    typer.echo(f"{target}: {s.manifest['counts']['spaces']} spaces, {s.manifest['counts']['zones']} zones, "
+               f"{s.manifest['counts']['openings']} openings, {s.manifest['counts']['texts']} texts; taken out: "
+               + (", ".join(f"{n} {k}" for k, n in s.manifest["privacy"]["texts"]["removed"].items()) or "nothing"))
+
+
 def main() -> None:
     import logging
 

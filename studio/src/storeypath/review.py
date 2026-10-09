@@ -23,6 +23,9 @@ and read again whenever it changes on disk. The web server is in server.py:
                                                   {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
                                                   what a person draws, kept through every conversion; then
                                                   the floor is read again (a job)
+    POST /api/projects/<code>/floors/<id>/sample/preview  {area, keep?, remove?}: what an area sample of the
+                                                  floor would hold (areasample/): its pictures, what is taken out
+    POST /api/projects/<code>/floors/<id>/sample  {area, note?, keep?, remove?}: the sample, <id>.spsample
     POST /api/projects/<code>/floors/<id>/release    one's lock of the floor let go (Done editing)
     POST /api/projects/<code>/floors/<id>/take-over  an admin takes the floor from whoever edits it
     POST /api/projects/<code>/undo {floor?}       one's own latest change undone (step_back); …/redo
