@@ -34,10 +34,10 @@ export async function show(element: HTMLElement, data: ArrayBuffer): Promise<str
 	// editing on top of it: what is under the pointer, a ghost, a floor's items replaced
 	// a room's finishes (format 0.9): painted where the pointer is, a wall on the side aimed at
 	const navy: Finish | null = finishOf('FLOOR-CARPET-NAVY');
-	const walls: string = FINISHES.defaults.wall['office'] ?? FINISHES.exterior;
+	const officeWalls: string = FINISHES.defaults.wall['office'] ?? FINISHES.exterior;
 	world.addEventListener('pick', (e) => {
 		const p: WorldPoint = e.detail;
-		if (p.wall && p.room) world.updateSpace(p.room, { wall_finish: walls });
+		if (p.wall && p.room) world.updateSpace(p.room, { wall_finish: officeWalls });
 		else if (p.space && navy) world.updateSpace(p.space, { floor_finish: navy.code });
 		const shown: string = floorFinish(office?.properties ?? null);
 		console.log(shown, world.finishOf(p.space ?? '')?.wall);
