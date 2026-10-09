@@ -12,7 +12,8 @@ Every change is a row of the project's history in Studio's database (db/store.py
               (what was drawn on the floor), "floor" (read again; taken over), "building",
               "project"
     kind      the change: correct, reset, delete, restore, hide, show, capacity, link,
-              unlink, as found (an object); add, move, turn, retype, values, carry, delete, restore (an
+              unlink, as found, finish (an object; finish may be of many rooms at once:
+              before and after {"overrides": {id: …}}); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
               open, import, floors, align, site, place, arrange, export, drawing…
     floors    the floors it changed (none: the building's, or the project's)
@@ -232,6 +233,8 @@ def _describe(e: dict) -> str:
             seats = (e.get("after") or {}).get("override") or {}
             return f"set {it} to seat {seats['capacity']}" if seats.get("capacity") is not None \
                 else f"left what {it} seats to its desks"
+        if kind == "finish":  # its floor's or walls' finish (finishes.py); many rooms at once
+            return _finished(e, it)
         if kind == "link":  # a lift's or stairs' link to another floor's (stacks.py)
             to = ((e.get("after") or {}).get("override") or {}).get("stack")
             return f"linked {it} with {short(to)} on another floor" if to else f"linked {it} with another floor's"
@@ -269,6 +272,25 @@ def _describe(e: dict) -> str:
         "open": "opened a file into the project" if part == "building" else "opened the project from a file",
     }
     return lines.get(kind) or kind or "changed the project"
+
+
+def _finished(e: dict, it: str) -> str:
+    """A finish's row in words: "set the floor of OFFICE 012 to Carpet tiles, navy"."""
+    from .finishes import name as finish_name
+
+    def to(code):
+        return finish_name(code) if code else "its type's"
+
+    floor, wall = e.get("floor_to"), e.get("wall_to")
+    if floor is not None and wall is not None:
+        if not floor and not wall:
+            return f"set the floor and walls of {it} back to its type's"
+        return f"set the floor of {it} to {to(floor)} and its walls to {to(wall)}"
+    if wall is not None:
+        return f"set the walls of {it} to {to(wall)}" if wall else f"set the walls of {it} back to its type's"
+    if floor is not None:
+        return f"set the floor of {it} to {to(floor)}" if floor else f"set the floor of {it} back to its type's"
+    return f"changed the finishes of {it}"
 
 
 def visible_to(sight):

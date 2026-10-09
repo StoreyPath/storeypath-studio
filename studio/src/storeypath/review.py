@@ -14,7 +14,10 @@ and read again whenever it changes on disk. The web server is in server.py:
     GET  /api/projects/<code>/floors/<id>/print.png  the print (drawn once, kept until the drawing changes)
     POST /api/projects/<code>/floors/<id>/convert re-read the drawing (keeps IDs): a job
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
-                                                  {"ignored": bool} deletes a space or an opening (or restores it)
+                                                  {"ignored": bool} deletes a space or an opening (or restores it);
+                                                  {"floor_finish": code or null, "wall_finish": …} its finishes
+    POST /api/projects/<code>/floors/<id>/finishes  {"ids": […] or "type": t, "floor_finish", "wall_finish"}: many
+                                                  rooms' finishes at once, one change
     POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}}, {"add": {"divider": …}},
                                                   {"add": {"opening": {"type", "span"}}} or
                                                   {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
@@ -52,7 +55,7 @@ from typing import NamedTuple
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from .cad import DrawingError, meters_per_unit, read_drawing
-from . import history
+from . import finishes, history
 from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating
@@ -70,6 +73,9 @@ CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/j
                  ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2",
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
+# what a correction keeps of an object besides its type, name and number
+KEPT = {"hidden", "ignored", "capacity", "stack", "floor_finish", "wall_finish"}
+FINISHED_AT_ONCE = 5000  # rooms whose finishes one change sets, at most
 REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
 RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
 PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
@@ -223,7 +229,7 @@ def _dump(model) -> dict | None:
 
 # ---- what history keeps to say a change in words (history.describe) ------------------
 
-LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list")
+LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list", "floor_to", "wall_to", "rooms")
 
 
 def _type_name(cat, code: str) -> str:
@@ -251,6 +257,15 @@ def _object_lines(r: ObjectRecord, had: Override | None, new: Override | None, k
     return {k: v for k, v in out.items() if v is not None}
 
 
+def _finish_lines(body: dict, finish: dict) -> dict:
+    """What a finish's row says of it: the finishes set (a code, or "" for its type's)."""
+    out = {}
+    for key, line in (("floor_finish", "floor_to"), ("wall_finish", "wall_to")):
+        if key in body:
+            out[line] = finish.get(key) or ""
+    return out
+
+
 def _drawn_what(name: str, shapes: list) -> str:
     """What was drawn, from the list of the floor's edits it is in."""
     if name == "openings":
@@ -262,7 +277,21 @@ def _inverse(ws: Workspace, entry: dict, ch: Changes, refused) -> None:
     """Into ``ch``: what puts back what the history row ``entry`` changed, as it was before
     it; refused() raised when it is not as the row left it (changed since)."""
     part, target = entry["part"], (entry["targets"] or [None])[0]
-    if part == "object":
+    if part == "object" and "overrides" in (entry["after"] or {}):  # many rooms at once (finishes)
+        afters, befores = entry["after"]["overrides"], (entry["before"] or {}).get("overrides") or {}
+        ch.before, ch.after = {"overrides": {}}, {"overrides": {}}
+        for target, want in afters.items():
+            r = ws.objects.get(target)
+            have = ws.overrides.get(target)
+            if r is None or r.status != "active" or \
+                    not _same(Override.model_validate(want) if want is not None else None, have):
+                raise refused()
+            back = befores.get(target)
+            new = Override.model_validate(back) if back is not None else None
+            ch.before["overrides"][target], ch.after["overrides"][target] = _dump(have), _dump(new)
+            if not _same(have, new):
+                ch.overrides[target] = new
+    elif part == "object":
         r = ws.objects.get(target)
         if r is None or r.status != "active":
             raise refused()
@@ -673,8 +702,9 @@ class Review:
             "detected": {"type": r.type, "name": r.name, "number": r.number, "source": r.type_source},
             "drawing_label": r.label,
             # a person's correction or check ({}: accepted as it is); not a capacity alone
-            "correction": o.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity", "stack"})
-            if o and eff["corrected"] else None,
+            "correction": o.model_dump(exclude_none=True, exclude=KEPT) if o and eff["corrected"] else None,
+            # what its floor and (a space's) walls are finished in, set here; null: as its type
+            "floor_finish": eff["floor_finish"], "wall_finish": eff["wall_finish"],
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             # how many it seats: set here, else its desks'; and who it is laid out for
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
@@ -695,7 +725,9 @@ class Review:
         flags. ``{"capacity": n}`` sets how many people it is meant to seat (null: as its
         desks say). ``{"stack": id}`` links a lift, stairs, escalator or ramp to one on
         another floor of its building (stacks.py), ``""`` to none, null: as found.
-        ``{"reset": true}`` removes the correction (the flags, capacity and link stay)."""
+        ``{"floor_finish": code}`` and (a space's) ``{"wall_finish": code}`` set what its floor
+        and walls are finished in (finishes.py; null: as its type).
+        ``{"reset": true}`` removes the correction (the flags, capacity, link and finishes stay)."""
 
         def fn(ws: Workspace):
             r = ws.objects.get(object_id)
@@ -704,6 +736,12 @@ class Review:
             if r.kind == "opening" and set(body) - {"ignored"}:
                 raise ValueError("an opening can only be deleted or restored")
             current = ws.overrides.get(object_id) or Override()
+            finish = {"floor_finish": current.floor_finish, "wall_finish": current.wall_finish}
+            for key, applies in (("floor_finish", "floor"), ("wall_finish", "wall")):
+                if key in body:
+                    if applies == "wall" and r.kind != "space":
+                        raise ValueError("a zone has no walls of its own: set its space's wall_finish")
+                    finish[key] = finishes.check(body[key], applies)
             capacity = current.capacity
             if "capacity" in body:
                 capacity = body["capacity"]
@@ -729,8 +767,8 @@ class Review:
                 values = {k: v.strip() if isinstance(v, str) else v for k, v in c.items() if v is not None}
                 if "type" in values:
                     values["type"] = SpaceType(values["type"])
-            elif any(f in body for f in flags) or "capacity" in body or "stack" in body:
-                values = current.model_dump(exclude_none=True, exclude={"hidden", "ignored", "capacity", "stack"})
+            elif any(f in body for f in flags) or set(body) & {"capacity", "stack", "floor_finish", "wall_finish"}:
+                values = current.model_dump(exclude_none=True, exclude=KEPT)
             else:
                 raise ValueError("nothing to change")
             stack = current.stack
@@ -743,18 +781,20 @@ class Review:
             was_checked = object_id in ws.overrides and ws.effective(r)["corrected"] \
                 and not (current.hidden or current.ignored)
             checked = False if body.get("reset") else True if "correction" in body else was_checked
-            override = Override(**values, **flags, capacity=capacity, stack=stack)
-            if checked and not values and (capacity is not None or stack is not None) and override.hidden is None:
-                override.hidden = False  # accepted as it is, with a capacity or a link: the mark of the check
+            override = Override(**values, **flags, capacity=capacity, stack=stack, **finish)
+            if checked and not values and (capacity is not None or stack is not None or any(finish.values())) \
+                    and override.hidden is None:
+                override.hidden = False  # accepted as it is, with a capacity, a link or finishes: the mark of the check
             new = None if override == Override() and not checked else override
             had = ws.overrides.get(object_id)
             kind = "reset" if body.get("reset") else "correct" if "correction" in body else \
                 ("delete" if body["ignored"] else "restore") if "ignored" in body else \
                 ("hide" if body["hidden"] else "show") if "hidden" in body else \
-                ("link" if stack else "unlink" if stack == NOT_LINKED else "as found") if "stack" in body else "capacity"
+                ("link" if stack else "unlink" if stack == NOT_LINKED else "as found") if "stack" in body else \
+                "finish" if "floor_finish" in body or "wall_finish" in body else "capacity"
             ch = Changes(part="object", kind=kind, targets=[object_id], floors={floor_of(object_id)},
                          before={"override": _dump(had)}, after={"override": _dump(new)},
-                         more=_object_lines(r, had, new, kind))
+                         more={**_object_lines(r, had, new, kind), **_finish_lines(body, finish)})
             if not (had is None and new is None) and not _same(had, new):
                 ch.overrides[object_id] = new
             return ch, None
@@ -764,6 +804,78 @@ class Review:
         r = ws.objects[object_id]
         return self._door(ws, r, self._floor(ws, floor_of(object_id)).edits.resized) if r.kind == "opening" \
             else self._space(ws, r)
+
+    def finish_rooms(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
+        """Many rooms of a floor finished at once, as one change (undone as one): ``{"ids":
+        [space and zone IDs]}`` or ``{"type": t}`` (every space and zone in use of that type
+        on the floor, as corrected), with ``floor_finish`` and/or ``wall_finish`` (a code of
+        finishes.py, or null for each room's type's default; walls only a space's: a zone's
+        are its space's). {"changed": the IDs whose finishes changed, "spaces": each as the
+        floor lists it}."""
+        if not isinstance(body, dict) or not ({"floor_finish", "wall_finish"} & set(body)):
+            raise ValueError('send {"ids": […] or "type": t, "floor_finish": code or null, "wall_finish": code or null}')
+        floor_code = finishes.check(body["floor_finish"], "floor") if "floor_finish" in body else None
+        wall_code = finishes.check(body["wall_finish"], "wall") if "wall_finish" in body else None
+
+        def fn(ws: Workspace):
+            self._floor(ws, floor_id)
+            if isinstance(body.get("ids"), list):
+                ids = body["ids"]
+                if len(ids) > FINISHED_AT_ONCE or not all(isinstance(i, str) for i in ids):
+                    raise ValueError(f"ids: at most {FINISHED_AT_ONCE} IDs of spaces and zones")
+                rooms = []
+                for i in dict.fromkeys(ids):
+                    r = ws.objects.get(i)
+                    if r is None or r.status != "active" or r.kind not in ("space", "zone") or floor_of(i) != floor_id:
+                        raise NotFound(f"no active space or zone {i} on this floor")
+                    rooms.append(r)
+                label = None
+            elif isinstance(body.get("type"), str):
+                kind = SpaceType(body["type"])
+                rooms = [r for r in ws.floor_objects(floor_id) if r.kind in ("space", "zone") and not r.zones
+                         and ws.effective(r)["type"] == kind.value]
+                label = history.type_label(kind.value)
+            else:
+                raise ValueError('name the rooms: {"ids": […]} or {"type": "office"}')
+            before, after, changed = {}, {}, []
+            ch = Changes(part="object", kind="finish", floors={floor_id})
+            for r in rooms:
+                had = ws.overrides.get(r.id)
+                current = had or Override()
+                update = {}
+                if "floor_finish" in body:
+                    update["floor_finish"] = floor_code
+                if "wall_finish" in body and r.kind == "space":
+                    update["wall_finish"] = wall_code
+                new = current.model_copy(update=update)
+                checked = had is not None and ws.effective(r)["corrected"] and not (current.hidden or current.ignored)
+                if checked and new.type is None and new.name is None and new.number is None and new.hidden is None:
+                    new.hidden = False  # accepted as it is: the mark of the check stays
+                if new == Override():
+                    new = None
+                if _same(had, new):
+                    continue
+                before[r.id], after[r.id] = _dump(had), _dump(new)
+                ch.overrides[r.id] = new
+                changed.append(r.id)
+            ch.targets = changed
+            ch.before, ch.after = {"overrides": before}, {"overrides": after}
+            n = len(changed)
+            ch.more = {"what": "space", "rooms": n,
+                       "label": (f"{n} {label}s" if label and n != 1 else f"1 {label}" if label else
+                                 f"{n} rooms" if n != 1 else None),
+                       **_finish_lines(body, {"floor_finish": floor_code, "wall_finish": wall_code})}
+            ch.more = {k: v for k, v in ch.more.items() if v is not None}
+            if n == 1 and not label:
+                ch.more.update({k: v for k, v in _object_lines(ws.objects[changed[0]], None, None, "finish").items()
+                                if k == "label"})
+            return ch, changed
+
+        changed = self._change(fn, by, editor)
+        ws = self.workspace()
+        cat = self.catalogue()
+        seats = self._seats(ws, cat, floor_id)
+        return {"changed": changed, "spaces": [self._space(ws, ws.objects[i], seats, cat) for i in changed]}
 
     # ---- undo and redo: each person their own changes ---------------------------------
 

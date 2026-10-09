@@ -77,6 +77,13 @@ def correct(code: str, object_id: str, request: Request, may: May, studio: TheSt
     return answer(request, studio.review(code).correct(object_id, body, by=may.user, editor=may.editor))
 
 
+@calls.post(F + "/finishes")
+def finish_rooms(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """Many rooms' finishes at once (every room of a type on the floor, or those named): edit on the floor."""
+    may.floor(code, floor_id, "edit")
+    return answer(request, studio.review(code).finish_rooms(floor_id, body, by=may.user, editor=may.editor))
+
+
 # ---- who edits the floor ------------------------------------------------------------------
 
 @calls.post(F + "/release")

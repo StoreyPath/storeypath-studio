@@ -230,6 +230,9 @@ ROWS = [
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/objects/{space}", {}, ok=(400, "nothing to change"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
+    # many rooms' finishes at once: edit on the floor
+    Row("POST", C + "/floors/{hq0}/finishes", {}, ok=(400, "floor_finish"), passes={"admin", "owner"},
+        hidden=OUTSIDE | {"building_editor"}),
     # lifts and stairs drawn, and linked through the floors (vertical.py)
     Row("POST", C + "/floors/{hq0}/vertical", {"type": "lift"}, ok=(400, "type is"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
