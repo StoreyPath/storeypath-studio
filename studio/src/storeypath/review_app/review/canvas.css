@@ -1,0 +1,233 @@
+/* Review's canvas: the plan (2D) over the floor's drawing, the 3D view and walking, and
+   what floats over them (the tool's options, review mode, someone else editing, the
+   floors and the zoom). The canvas is light paper in both themes: its colours are
+   theme.css's --canvas-* and --plan-* tokens. */
+
+#map {
+  position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas-bg);
+  color: var(--canvas-text);
+}
+#svg { width: 100%; height: 100%; display: block; cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; }
+#svg:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+#map[data-tool="pan"] .pane, #map.panning .pane, #map.space-held .pane { cursor: grab; }
+#map .pane.dragging, #map.space-held .pane.dragging { cursor: grabbing; }
+
+/* ---- the drawing under the spaces -------------------------------------------------------- */
+#drawing path { fill: none; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#drawing .walls { stroke: var(--plan-walls); stroke-width: 1.2; }
+#drawing .doors { stroke: var(--plan-doors); }
+#drawing .outlines { stroke: var(--plan-outlines); stroke-dasharray: 4 3; }
+#drawing .other { stroke: var(--plan-other); }
+#drawing text { fill: var(--plan-text); opacity: .8; font-family: var(--font-ui); }
+/* the drawing's room labels, while Studio's are shown: not written twice */
+#map.lined.labels-on #drawing text.label { display: none; }
+#drawing.hidden, #print.hidden { display: none; }
+#print image { image-rendering: auto; }
+
+/* side by side: the print on the left (or above), the spaces on the right (or below) */
+#svg-print {
+  position: absolute; left: 0; top: 0; width: 50%; height: 100%; display: block; background: var(--canvas-paper);
+  cursor: default; touch-action: none; user-select: none; -webkit-user-select: none;
+  border-right: 2px solid var(--canvas-overlay-border); box-sizing: border-box;
+}
+#map.side.cols #svg { position: absolute; left: 50%; top: 0; width: 50%; }
+#map.side.rows #svg-print { width: 100%; height: 50%; border-right: none; border-bottom: 2px solid var(--canvas-overlay-border); }
+#map.side.rows #svg { position: absolute; left: 0; top: 50%; width: 100%; height: 50%; }
+#print-selected { fill: none; stroke: var(--select); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.cursor { pointer-events: none; }
+.cursor line, .cursor circle { stroke: var(--plan-review); stroke-width: 1.5; fill: none; }
+
+/* ---- spaces, zones, doors and what was drawn here ---------------------------------------- */
+#outline { fill: none; stroke: var(--plan-outlines); stroke-width: 1; vector-effect: non-scaling-stroke; }
+#spaces path {
+  fill-opacity: .5; fill-rule: evenodd; cursor: pointer;
+  stroke: var(--plan-space-stroke); stroke-width: 1; vector-effect: non-scaling-stroke;
+  transition: fill-opacity var(--dur-fast);
+}
+#spaces path:hover { fill-opacity: .7; }
+#map.drawing-tool #spaces path { cursor: inherit; }
+/* a space divided into zones: its walls, as a line; its zones over it, their edges light and dashed */
+#spaces path.divided { fill: none; stroke: var(--plan-space-stroke); stroke-width: 2; pointer-events: none; }
+#spaces path.zone { stroke-dasharray: 2 4; stroke-opacity: .8; }
+#spaces path.review { stroke: var(--plan-review); stroke-width: 2; stroke-dasharray: 6 4; }
+#spaces path.dim { fill-opacity: .12; }
+#spaces path.tucked { fill-opacity: .12; stroke-dasharray: 3 3; stroke: var(--canvas-muted); }
+#spaces path.selected { fill-opacity: .75; stroke: var(--select); stroke-width: 3; stroke-dasharray: none; }
+#spaces path.focus { stroke-width: 4; }
+/* over the print the spaces are lighter, so what is drawn under them shows */
+#map.printed #spaces path { fill-opacity: .28; }
+#map.printed #spaces path:hover { fill-opacity: .45; }
+#map.printed #spaces path.selected { fill-opacity: .5; }
+#map.printed #spaces path.dim { fill-opacity: .06; }
+/* review mode: the room being looked at stands out, the others step back */
+#map.reviewing #spaces path:not(.selected) { fill-opacity: .2; }
+#map.reviewing.printed #spaces path:not(.selected) { fill-opacity: .12; }
+
+#doors .divider { fill: none; stroke: var(--canvas-text); stroke-opacity: .75; stroke-width: 1.5; stroke-dasharray: 2 5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+#doors circle { fill: var(--canvas-paper); stroke: var(--plan-doors); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
+#doors circle.deleted, #doors .span.deleted { opacity: .35; }
+#doors circle.selected { stroke: var(--select); stroke-width: 3; }
+#doors .span { stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+#doors .span.door, #doors .span.way { stroke: var(--plan-door); }
+#doors .span.way { stroke-dasharray: 4 5; stroke-linecap: butt; }
+#doors .span.window { stroke: var(--plan-window); stroke-width: 3; }
+#doors .swing { fill: none; stroke: var(--plan-door); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+#doors circle.door, #doors circle.way { fill: var(--plan-door); stroke: #fff; stroke-width: 1.5; }
+#doors circle.window { fill: var(--plan-window); stroke: none; }
+#doors .span.selected, #doors .swing.selected { stroke: var(--select); }
+#drawn line { stroke: var(--plan-drawn); stroke-width: 4; stroke-dasharray: 7 4; stroke-linecap: square; vector-effect: non-scaling-stroke; cursor: pointer; }
+#drawn line.hit { stroke: transparent; stroke-width: 14; stroke-dasharray: none; }
+#drawn line.divide { stroke: var(--plan-divider); stroke-width: 3; stroke-dasharray: 3 4; }
+#drawn line.selected { stroke: var(--select); }
+
+/* what a tool would add, under the pointer */
+.preview { pointer-events: none; }
+.preview line { stroke: var(--plan-drawn); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.preview line.door, .preview line.opening.door { stroke: var(--plan-door); stroke-width: 6; }
+.preview line.window { stroke: var(--plan-window); stroke-width: 5; }
+.preview line.opening { stroke: var(--plan-door); stroke-width: 6; stroke-dasharray: 5 4; }
+.preview line.divide { stroke: var(--plan-divider); stroke-dasharray: 3 4; }
+.preview path.space-outline { fill: rgba(12, 166, 120, .18); stroke: var(--plan-divider); stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.preview circle { fill: var(--plan-drawn); }
+#map.drawing-tool .pane { cursor: crosshair; }
+#map.busy .pane { cursor: progress; }
+
+/* the band dragged (Shift-drag) to choose rooms */
+.band { fill: rgba(59, 130, 246, .1); stroke: #3b82f6; stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
+
+/* ---- labels ---------------------------------------------------------------------------- */
+#labels { pointer-events: none; }
+#labels text {
+  font: 600 12px var(--font-ui); fill: var(--plan-label); text-anchor: middle;
+  paint-order: stroke; stroke: var(--plan-label-halo); stroke-width: 3px; stroke-linejoin: round;
+}
+#labels text .num { font-weight: 400; }
+/* over the print, where Studio reads a room otherwise than its text: on a tag over it */
+#labels text.tag { fill: #0b4a9c; stroke: #fff; stroke-width: 6px; filter: url(#label-tag); }
+#labels.hidden { display: none; }
+
+/* ---- items (furniture and equipment) ---------------------------------------------------- */
+#assets .asset { cursor: grab; }
+#map.drawing-tool #assets .asset { cursor: inherit; }
+#assets .asset rect, #assets .asset circle { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
+#assets .asset .front { stroke: var(--canvas-text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+#assets .asset .chair { fill: #5b5f69; }
+#assets .asset .chair.back { fill: var(--canvas-text); fill-opacity: .55; }
+#assets .asset.ceiling circle { fill-opacity: .3; stroke-dasharray: 3 3; }
+#assets .asset.chosen rect, #assets .asset.chosen circle { stroke: var(--select); stroke-width: 3; }
+#assets .asset.retired { opacity: .35; }
+#map.in3d #assets { display: none; }
+#guides line { stroke: var(--select); stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+#guides circle.ping { fill: none; stroke: var(--select); stroke-width: 3; vector-effect: non-scaling-stroke; animation: ping 1.6s ease-out forwards; }
+@keyframes ping { from { opacity: 1; } to { opacity: 0; } }
+.preview .asset-ghost { fill: rgba(12, 166, 120, .25); stroke: #0ca678; stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.preview .asset-ghost.refused { fill: rgba(224, 49, 49, .2); stroke: #e03131; }
+.preview .asset-ghost.refused rect, .preview .asset-ghost.refused circle { fill: rgba(224, 49, 49, .35); stroke: #e03131; }
+
+/* ---- measure ---------------------------------------------------------------------------- */
+#measure { pointer-events: none; }
+#measure .m-line { fill: none; stroke: var(--plan-measure); stroke-width: 2; vector-effect: non-scaling-stroke; }
+#measure .m-area { fill: rgba(112, 72, 232, .14); stroke: var(--plan-measure); stroke-width: 2; vector-effect: non-scaling-stroke; }
+#measure .m-live { stroke-dasharray: 5 4; }
+#measure .m-point { fill: #fff; stroke: var(--plan-measure); stroke-width: 2; vector-effect: non-scaling-stroke; }
+#measure-labels { pointer-events: none; }
+#measure-labels text { font: 600 11px var(--font-ui); fill: #fff; text-anchor: middle; dominant-baseline: central; }
+#measure-labels rect { fill: var(--plan-measure); }
+#measure-labels .m-total rect { fill: #3a1f9b; }
+
+/* ---- the 3D view ------------------------------------------------------------------------ */
+#world3d { position: absolute; inset: 0; z-index: 0; }
+#map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
+#map.placing #world3d, #map.painting #world3d canvas { cursor: crosshair; }
+
+/* walking: the cross aimed with, the room you are in, and how to start */
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 4;
+  pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .45);
+}
+#crosshair::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+}
+#map.placing #crosshair { border-color: #0ca678; }
+.walk-hud {
+  position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px; max-width: min(400px, calc(100% - 24px));
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); background: rgba(18, 19, 22, .82); color: #f1f2f4;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: var(--shadow-md); pointer-events: none;
+}
+#walk-room { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
+.walk-hud .meta { color: #b9bcc4; font-size: var(--fs-sm); }
+#walk-keys:empty, #walk-meta:empty { display: none; }
+.walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
+.walk-enter .card {
+  max-width: min(440px, calc(100% - 32px)); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-xl);
+  background: rgba(18, 19, 22, .88); color: #f1f2f4; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-lg); font-size: var(--fs-md);
+}
+.walk-enter .card strong { font-size: var(--fs-lg); }
+.walk-enter .keys { list-style: none; margin: var(--sp-3) 0 0; padding: 0; color: #c3c6cd; display: grid; gap: 6px; }
+.walk-enter kbd, .walk-hud kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
+
+/* ---- over the canvas, at its top: someone else editing, review mode, the tool's options --- */
+.canvas-top {
+  position: absolute; top: var(--sp-3); left: var(--sp-3); right: var(--sp-3); z-index: var(--z-canvas-ui);
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); pointer-events: none;
+}
+.canvas-top > * { pointer-events: auto; }
+.canvas-top > [hidden] { display: none !important; }
+.canvas-chrome {
+  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+}
+.tool-options, .review-bar, .lock-banner {
+  display: flex; align-items: center; gap: var(--sp-2); min-height: 44px; padding: var(--sp-1) var(--sp-2);
+  max-width: 100%; flex-wrap: wrap;
+  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md); font-size: var(--fs-md);
+}
+.tool-options { animation: rise var(--dur) var(--ease); }
+@keyframes rise { from { transform: translateY(-6px); opacity: 0; } }
+.to-name { display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-1) 0 var(--sp-1); font-weight: var(--fw-semibold); white-space: nowrap; }
+.to-name .icon { color: var(--accent-text); }
+.to-sep { width: 1px; align-self: stretch; margin: var(--sp-1) 0; background: var(--border); }
+.to-group { display: flex; align-items: center; gap: var(--sp-2); }
+.to-label { color: var(--text-muted); font-size: var(--fs-sm); white-space: nowrap; }
+.to-note { color: var(--text-muted); font-size: var(--fs-sm); max-width: 360px; }
+.to-value { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); white-space: nowrap; }
+.tool-options input[type="number"] { width: 76px; min-height: 28px; }
+
+.lock-banner.other { border-color: color-mix(in srgb, var(--select) 55%, var(--border-strong)); }
+.lock-banner .lb-text { padding: 0 var(--sp-1); }
+.lock-banner button { min-height: 28px; }
+
+/* ---- bottom right: the building's floors and the zoom ------------------------------------ */
+.canvas-corner {
+  position: absolute; right: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2);
+}
+.zoom, .floor-stack {
+  display: flex; padding: 3px; gap: 2px; border-radius: var(--r-lg);
+  background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.zoom button, .floor-stack button { color: #3b3d44; min-height: 0; }
+.zoom button { width: 30px; height: 30px; }
+.zoom button:hover:not(:disabled), .floor-stack button:hover:not(:disabled):not([aria-current="true"]) { background: rgba(0, 0, 0, .06); color: #111; }
+#map.in3d .zoom { display: none; }
+.floor-stack { flex-direction: column; }
+.floor-stack:empty { display: none; }
+.floor-stack button {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  width: 64px; height: 28px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: transparent;
+  font: var(--fw-semibold) var(--fs-sm) / 1 var(--font-ui); font-variant-numeric: tabular-nums;
+}
+.floor-stack button[aria-current="true"] { background: #1f2329; color: #fff; }
+.floor-stack button .fs-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); flex: none; }
+.floor-stack button[aria-current="true"] .fs-dot { box-shadow: 0 0 0 2px #1f2329; }
+.floor-stack .fs-all { font-weight: var(--fw-medium); color: #5b5f69; }
+.floor-stack .fs-all[aria-pressed="true"] { background: rgba(59, 130, 246, .14); color: #1d4fd0; }
+.floor-stack .fs-sep { height: 1px; background: rgba(0, 0, 0, .1); margin: 2px 4px; }
+
+/* the walking HUD, the menu and the toast above the floor stack's corner */
+body.walking #toast { bottom: calc(var(--status-h) + 112px); }

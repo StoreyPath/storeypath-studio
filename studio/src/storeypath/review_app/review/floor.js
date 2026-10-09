@@ -7,7 +7,7 @@ import { emit } from "./bus.js";
 import { loadCatalogue, renderAssets } from "./items.js";
 import { say, toast } from "./notify.js";
 import { clearUnderlay, fit, renderPlan, showUnderlay } from "./plan.js";
-import { select, selectAsset } from "./selection.js";
+import { clearSelection, keepChosen, select } from "./selection.js";
 import { BASE, CODE, state, view3d } from "./state.js";
 import { onFloor } from "../together.js";
 import { refresh3d } from "./view3d.js";
@@ -54,18 +54,17 @@ export async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   const changed = state.floor?.id !== id;
   state.floor = floor;
   state.byId = new Map(floor.spaces.map((s) => [s.id, s]));
-  state.selected = null;
-  state.item = null;
   state.segments = null;
   state.wallStart = null;
   if (changed) clearUnderlay();
   onFloor(id, floor.lock); // (together.js: this floor's stream, who is on it)
   renderPlan();
   if (!keepView || changed) fit();
-  if (changed) selectAsset(null);
+  if (changed) clearSelection();
+  else keepChosen(); // the same floor read again: what is chosen stays chosen while it is there
   renderAssets();
   emit("floor", { changed });
-  select(spaceId && state.byId.has(spaceId) ? spaceId : null, { fly: Boolean(spaceId) });
+  if (spaceId && state.byId.has(spaceId)) select(spaceId, { fly: true });
   showUnderlay();
   if (view3d.shown) refresh3d();
 }

@@ -3,18 +3,24 @@
 // with it wherever it is carried; it is saved at once, with no reading of the drawing
 // again. An item stays in the room it was placed in and lines up with walls and items
 // (fit.js); Alt places or drags it freely.
+//
+// The Place tool (I): choose a type in its options, click where it goes (in 3D on the
+// floor; walking, at the cross). An item chosen: R turns it 90° (Shift: back), , and . by
+// 15°, the arrows move it (Shift: further), Del deletes it.
 
 import { viewOnly } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
-import { $, svg } from "./dom.js";
+import { command } from "./commands.js";
+import { $, el, icon, svg } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { toast } from "./notify.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "../fit.js";
 import { selectAsset } from "./selection.js";
 import { BASE, round4, state, typeOf, visible, view3d } from "./state.js";
-import { update3d } from "./view3d.js";
+import { setTool, tool } from "./tools.js";
+import { aimSoon, update3d } from "./view3d.js";
 
 export async function loadCatalogue() {
   try {
@@ -232,4 +238,125 @@ export async function copyId(id) {
   } catch {
     toast("Could not copy; select the ID and copy it", true);
   }
+}
+
+// ---- the Place tool ----------------------------------------------------------------------
+
+let typesOpen = null; // the type picker, while it is open
+
+function closeTypes() {
+  typesOpen?.remove();
+  typesOpen = null;
+}
+
+/** The types to place, by category, in a popover under ``anchor``; ``pick(code)``. */
+export function typePicker(anchor, pick) {
+  closeTypes();
+  const tile = (t) => {
+    const b = el("button", { type: "button", class: `type-tile${state.placeType === t.code ? " chosen" : ""}`, role: "option",
+      "aria-selected": String(state.placeType === t.code), "data-tip": `${t.name_en}${t.name_ar ? ` · ${t.name_ar}` : ""} · ${t.width} × ${t.depth} m${t.mount && t.mount !== "floor" ? ` · on the ${t.mount}` : ""}` },
+    el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }), el("span", { class: "type-name" }, t.name_en));
+    b.addEventListener("click", () => {
+      closeTypes();
+      pick(t.code);
+    });
+    return b;
+  };
+  const box = el("div", { class: "popover type-picker", role: "listbox", "aria-label": "What to place" },
+    ...categories().map(([category, types]) => [el("div", { class: "menu-section" }, category[0].toUpperCase() + category.slice(1)),
+      el("div", { class: "type-grid" }, ...types.map(tile))]));
+  box.addEventListener("keydown", (e) => {
+    const tiles = [...box.querySelectorAll(".type-tile")];
+    const i = tiles.indexOf(document.activeElement);
+    const step = { ArrowRight: 1, ArrowDown: 2, ArrowLeft: -1, ArrowUp: -2 }[e.key];
+    if (step) {
+      tiles[Math.max(0, Math.min(tiles.length - 1, i + step))]?.focus();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      closeTypes();
+      anchor.focus();
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  document.body.append(box);
+  const r = anchor.getBoundingClientRect();
+  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8))}px`;
+  box.style.top = `${Math.min(r.bottom + 6, innerHeight - box.offsetHeight - 8)}px`;
+  typesOpen = box;
+  (box.querySelector(".type-tile.chosen") || box.querySelector(".type-tile"))?.focus();
+}
+
+/** What is placed: a type chosen (the Place tool taken when it is not in use). */
+export function placeType(code) {
+  state.placeType = code;
+  if (state.tool !== "place") setTool("place");
+  emit("tool-options");
+  emit("tool-progress");
+  if (view3d.shown) aimSoon();
+}
+
+function placeOptions() {
+  const t = typeOf(state.placeType);
+  const chooser = el("button", { type: "button", class: "type-chooser", "aria-haspopup": "listbox", "data-tip": "What to place" },
+    t ? el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }) : null,
+    el("span", {}, t ? t.name_en : "Choose what to place…"), icon("chevron-down", { size: 14 }));
+  chooser.addEventListener("click", () => (typesOpen ? closeTypes() : typePicker(chooser, placeType)));
+  return [chooser, t ? el("span", { class: "to-note" }, `${t.width} × ${t.depth} m · Alt: anywhere, as it is`) : null];
+}
+
+/** The item chosen, its keys (the "item" scope: while one is chosen and no tool is in use). */
+function itemCommand(id, title, keys, fn, repeat = false) {
+  command({ id, title, group: "Item", scope: "item", keys, palette: false, repeat,
+    when: () => Boolean(chosenAsset()), run: () => fn(chosenAsset()) });
+}
+
+export function setupItems() {
+  tool({
+    id: "place", label: "Place an item", icon: "armchair", key: "i", group: "place", views: ["2d", "3d", "walk"], edits: true,
+    words: "furniture equipment desk asset item add",
+    hint: (view) => {
+      const t = typeOf(state.placeType);
+      if (!t) return "Choose what to place in the options above";
+      return view === "walk" ? `Aim the cross at the floor where the ${t.name_en} goes and click · Alt: as it is · Esc frees the mouse`
+        : view === "3d" ? `Click on the floor where the ${t.name_en} goes · it lines up as on the plan · Alt-click: as it is`
+          : `Click in a room where the ${t.name_en} goes · it lines up with walls and items · Alt-click: anywhere, as it is`;
+    },
+    options: placeOptions,
+    start: () => {
+      if (!state.placeType) requestAnimationFrame(() => document.querySelector(".type-chooser")?.click());
+    },
+    stop: () => {
+      closeTypes();
+      drawGuides();
+      for (const id of ["preview", "preview-print"]) $(id).replaceChildren();
+      view3d.world?.ghost(null);
+    },
+    plan: {
+      hover: (p) => {
+        const t = typeOf(state.placeType);
+        if (!t || state.busy) return;
+        const got = settle({ want: { at: p, rot: 0 }, last: null, ...placing(p, t.code), free: state.alt });
+        drawGuides(got?.guides);
+        const ghost = () => assetShape({ x: (got?.at ?? p)[0], y: (got?.at ?? p)[1], rotation: got?.rot ?? 0 }, t,
+          got ? "asset-ghost" : "asset-ghost refused");
+        for (const id of ["preview", "preview-print"]) $(id).replaceChildren(ghost());
+      },
+      click: (p, e) => {
+        if (!state.placeType) return toast("Choose what to place first", true);
+        placeAsset(state.placeType, p, e.altKey);
+      },
+    },
+  });
+  itemCommand("item.turn", "Turn the item 90°", ["r"], (a) => turnAsset(a, a.rotation + 90));
+  itemCommand("item.turn-back", "Turn the item back 90°", ["shift+r"], (a) => turnAsset(a, a.rotation + 270));
+  itemCommand("item.turn-left", "Turn the item 15° left", [","], (a) => turnAsset(a, a.rotation + 15), true);
+  itemCommand("item.turn-right", "Turn the item 15° right", ["."], (a) => turnAsset(a, a.rotation + 345), true);
+  for (const [key, dx, dy] of [["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
+    itemCommand(`item.move-${key.slice(5)}`, `Move the item ${key.slice(5)}`, [key], (a) => nudgeAsset(a, dx * 0.1, dy * 0.1), true);
+    itemCommand(`item.move-${key.slice(5)}-far`, `Move the item ${key.slice(5)} 1 m`, [`shift+${key}`], (a) => nudgeAsset(a, dx, dy), true);
+  }
+  document.addEventListener("pointerdown", (e) => {
+    if (typesOpen && !e.target.closest?.(".type-picker, .type-chooser")) closeTypes();
+  }, true);
 }

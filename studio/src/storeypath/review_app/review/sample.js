@@ -4,13 +4,12 @@
 // send to the StoreyPath team (Studio's areasample/, docs/AREA-SAMPLES.md). Anyone who
 // may see the floor may do it: nothing on the floor changes.
 //
-// Its own file, joined to review.js by a few marked hooks:
+// Its own file, joined to the page by:
 //
-//   setup(api)       once, with what of review.js it uses;
-//   sharing()        whether a rectangle is being dragged for a sample (the plan's
-//                    pointer then draws it instead of panning or choosing);
-//   down(p), move(p), up(p)  the pointer on the plan, in the plan's metres;
-//   stop()           another tool, the 3D view, another floor: the rectangle goes.
+//   setup(api)       once, with what of the page it uses: the Share an area tool (A),
+//                    whose pointer on the plan drags the rectangle (the plan's metres);
+//   sharing()        whether the tool is in use;
+//   stop()           another floor: the rectangle goes (the tool with it).
 
 import { sentAway } from "../account.js";
 import { PAGE } from "../together.js";
@@ -38,53 +37,52 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
-/** Once, before the page starts: the toolbar's button and the rectangle's layer. */
+/** Once, before the page starts: the tool, and the rectangle's layer. */
 export function setup(given) {
   api = given;
-  const css = document.createElement("link");
-  css.rel = "stylesheet";
-  css.href = "review/sample.css";
-  document.head.append(css);
-  const b = el("button", { type: "button", id: "share-area", class: "only2d",
-    title: `Share an area: drag a rectangle over the plan (at most ${MAX_SIDE} × ${MAX_SIDE} m) to download a small ` +
-      "file of it, the drawing there, how Studio read it and what was corrected, without names or numbers, " +
-      "to send to the StoreyPath team" }, "Share an area");
-  b.addEventListener("click", () => toggle());
-  const toolbar = $("toolbar");
-  toolbar.insertBefore(b, $("status"));
   for (const world of ["world", "world-print"]) {
     const layer = document.createElementNS(SVG_NS, "g");
     layer.setAttribute("class", "share-preview");
     $(world).append(layer);
   }
+  api.tool({
+    id: "share", label: "Share an area", icon: "square-dashed-mouse-pointer", key: "a", group: "share", keepsSelection: true,
+    words: "sample spsample send report wrong",
+    wrongView: () => "An area is chosen on the plan",
+    available: () => (api.state.floor?.source ? "" : "This floor has no drawing yet: a sample is made from a floor's drawing"),
+    hint: () => `Drag a rectangle over the part of the plan Studio read wrong (at most ${MAX_SIDE} × ${MAX_SIDE} m): a file to send to the StoreyPath team`,
+    options: () => {
+      const a = area();
+      return [el("span", { class: "to-note" }, "Nothing is sent: you download the sample and send it yourself"),
+        el("span", { class: `to-value${a && tooBig(a) ? " too-big" : ""}` }, a ? size(a) : `≤ ${MAX_SIDE} × ${MAX_SIDE} m`)];
+    },
+    start: () => {
+      share.on = true;
+      share.start = share.end = null;
+      $("map").classList.add("sharing");
+      draw();
+    },
+    stop: () => {
+      share.on = false;
+      share.start = share.end = null;
+      $("map").classList.remove("sharing");
+      draw();
+    },
+    escape: () => {
+      if (!share.start) return false;
+      share.start = share.end = null;
+      draw();
+      return true;
+    },
+    plan: { down, move, up },
+  });
 }
 
 export const sharing = () => share.on;
 
-function toggle(on = !share.on) {
-  if (on && !api.state.floor?.source) {
-    api.toast("This floor has no drawing yet: a sample is made from a floor's drawing", true);
-    return;
-  }
-  share.on = on;
-  share.start = share.end = null;
-  if (on) api.setTool(null);
-  $("share-area")?.classList.toggle("active", on);
-  $("map").classList.toggle("sharing", on);
-  draw();
-  if (on) api.toast(`Share an area: drag a rectangle over the part of the plan to share (at most ${MAX_SIDE} × ${MAX_SIDE} m). Esc to stop.`);
-}
-
 /** The rectangle goes, and the tool with it. */
 export function stop() {
-  if (share.on) toggle(false);
-}
-
-/** Esc: the tool stopped (true when it was on). */
-export function escape() {
-  if (!share.on) return false;
-  toggle(false);
-  return true;
+  if (share.on) api.setTool(null);
 }
 
 function area() {
@@ -110,24 +108,22 @@ function draw() {
     r.setAttribute("class", tooBig(a) ? "share-rect too-big" : "share-rect");
     layer.append(r);
   }
-  const status = $("status");
-  if (a && share.on) status.textContent = tooBig(a) ? `${size(a)}: at most ${MAX_SIDE} × ${MAX_SIDE} m` : size(a);
-  else if (status.dataset.sharing) status.textContent = "";
-  status.dataset.sharing = a && share.on ? "1" : "";
+  api.emit("tool-options");
 }
 
-export function down(p) {
+function down(p) {
   share.start = share.end = p;
   draw();
+  return true; // the drag is the tool's
 }
 
-export function move(p) {
+function move(p) {
   if (!share.start) return;
   share.end = p;
   draw();
 }
 
-export function up(p) {
+function up(p) {
   if (!share.start) return;
   share.end = p;
   const a = area();

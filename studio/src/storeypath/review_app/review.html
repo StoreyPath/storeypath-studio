@@ -1,11 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StoreyPath Review</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="style.css">
+  <script>
+    // the theme this browser chose, before anything is drawn (no flash of the other one)
+    try { if (localStorage.getItem("storeypath.theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
+  </script>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="review/shell.css">
+  <link rel="stylesheet" href="review/panels.css">
+  <link rel="stylesheet" href="review/canvas.css">
+  <link rel="stylesheet" href="review/finish.css">
+  <link rel="stylesheet" href="review/vertical.css">
+  <link rel="stylesheet" href="review/sample.css">
   <script type="importmap">
     {
       "imports": {
@@ -16,244 +27,206 @@
     }
   </script>
 </head>
-<body>
-  <aside id="panel">
-    <header>
-      <div id="account"></div>
-      <a id="back" class="back" href="/">← Projects</a>
-      <h1 id="project-name">StoreyPath Review</h1>
-      <div id="project-meta" class="meta"></div>
-      <div id="presence" class="presence" hidden aria-live="polite"></div>
-    </header>
+<body class="review">
+  <a class="skip" href="#svg">Skip to the plan</a>
 
-    <section>
-      <label class="field">Floor
-        <select id="floor"></select>
-      </label>
-      <span id="view-only" class="badge view-only" hidden title="You may look at this floor, not change it: its owner, or whoever shares it, can let you">View only</span>
-      <div id="floor-meta" class="meta"></div>
-      <div class="row">
-        <button id="convert" type="button" class="edit-only" title="Read the floor's drawing again; IDs and corrections are kept">Re-read drawing</button>
-        <a id="open-print" class="button" target="_blank" title="The floor's drawing as printed, full size, in a new tab">Open print</a>
-      </div>
-      <a id="own-window" class="subtle" target="_blank" title="The building in 3D in a page of its own, as it is now, to show it full screen (nothing is changed from there)">3D in its own window ↗</a>
-      <details id="warnings" hidden>
-        <summary></summary>
-        <ul></ul>
-      </details>
-    </section>
-
-    <section id="editor" hidden>
-      <div class="editor-head">
-        <h3 id="ed-title"></h3>
-        <button id="ed-close" type="button" class="icon" title="Close (Esc)" aria-label="Close">×</button>
-      </div>
-      <div class="id-row"><code id="ed-id"></code><button id="ed-copy" type="button">Copy</button></div>
-      <div class="meta" id="ed-label" title="The text written in this space on the drawing, exactly as written: exported as drawing_label, for other systems to match on beside the ID"></div>
-      <ul id="ed-reasons" class="reasons"></ul>
-      <form id="ed-form" autocomplete="off">
-        <label class="field">Type
-          <select id="ed-type"></select>
-          <span class="detected" id="ed-type-detected"></span>
-        </label>
-        <label class="field">Name
-          <input id="ed-name" type="text" placeholder="no name">
-          <span class="detected" id="ed-name-detected"></span>
-        </label>
-        <label class="field">Number
-          <input id="ed-number" type="text" placeholder="no number">
-          <span class="detected" id="ed-number-detected"></span>
-        </label>
-        <label class="field" title="How many people it is meant to seat: saved when changed. Left empty, its desks say (each seats one)">Capacity
-          <input id="ed-capacity" type="number" min="0" max="10000" step="1" inputmode="numeric">
-          <span class="detected" id="ed-capacity-from"></span>
-        </label>
-        <div id="ed-finishes" title="What its floor and walls are finished in: shown in 3D and walking, exported with it"></div>
-        <div class="meta" id="ed-area"></div>
-        <div class="row edit-only">
-          <button id="ed-save" type="submit" class="primary">Save</button>
-          <button id="ed-reset" type="button" title="Remove the corrections and use what was detected">Use detected</button>
-        </div>
-        <div class="row flags">
-          <button id="ed-delete" type="button" class="edit-only" title="Not there, or not worth anything (a sliver, the outside): out of the plan, the lists and the 3D view; kept with its ID, and back with Show deleted">Delete</button>
-          <span id="ed-flags" class="meta"></span>
-        </div>
-      </form>
-    </section>
-
-    <section id="asset-editor" hidden>
-      <div class="editor-head">
-        <h3 id="as-title"></h3>
-        <button id="as-close" type="button" class="icon" title="Close (Esc)" aria-label="Close">×</button>
-      </div>
-      <div class="id-row"><code id="as-id" title="Its ID, the tag on it: the same wherever it goes"></code><button id="as-copy" type="button">Copy</button></div>
-      <div id="as-meta" class="meta"></div>
-      <div class="as-grid">
-        <label>Type <select id="as-type"></select></label>
-        <label>Turned <span class="unit"><input id="as-rotation" type="number" step="1"> °</span></label>
-        <label>Floor <select id="as-floor"></select></label>
-      </div>
-      <div id="as-fields" class="as-grid"></div>
-      <p class="meta edit-only">Drag it to move it: near a wall or another item it turns square and moves up against it, and it stays in its room (hold Alt to move it freely, or out of the room). R turns it 90°, [ and ] by 15°, the arrows move it (Shift: further).</p>
-      <div class="row flags">
-        <button id="as-delete" type="button" class="edit-only" title="Delete (Del)">Delete</button>
-        <span id="as-flags" class="meta"></span>
-      </div>
-    </section>
-
-    <section id="item-editor" hidden>
-      <div class="editor-head">
-        <h3 id="it-title"></h3>
-        <button id="it-close" type="button" class="icon" title="Close (Esc)" aria-label="Close">×</button>
-      </div>
-      <div class="id-row"><code id="it-id"></code></div>
-      <div id="it-meta" class="meta"></div>
-      <form id="it-size" class="size-form edit-only" autocomplete="off" hidden>
-        <label>Width <input name="width" type="number" min="0.3" max="8" step="0.05" placeholder="as drawn"> m</label>
-        <label class="sill">Sill <input name="sill" type="number" min="0" max="3" step="0.05" placeholder="as drawn"> m</label>
-        <label>Height <input name="height" type="number" min="0.3" max="10" step="0.05" placeholder="as drawn"> m</label>
-        <div class="row">
-          <button type="submit" class="primary">Change size</button>
-          <button type="button" class="as-drawn" title="Back to the size the drawing gives it">Size as drawn</button>
-        </div>
-      </form>
-      <div class="row flags">
-        <button id="it-delete" type="button" class="edit-only" title="Delete (Del)">Delete</button>
-        <span id="it-flags" class="meta"></span>
-      </div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>To review <span id="review-count" class="count"></span></h2>
-        <button id="next" type="button" title="Next space to review (N)">Next ›</button>
-      </div>
-      <ul id="review-list" class="list"></ul>
-      <p id="review-done" class="meta" hidden>Nothing left to review on this floor.</p>
-    </section>
-
-    <section>
-      <h2>All spaces <span id="space-count" class="count"></span></h2>
-      <input id="search" type="search" placeholder="Filter by name, number, type or ID; an item's ID finds it" title="An item's ID (7K2Q-XM9F-4DP: either case, with or without its hyphens) chooses that item, on its floor">
-      <ul id="space-list" class="list"></ul>
-    </section>
-
-    <section>
-      <h2>Space types</h2>
-      <ul id="legend" class="legend"></ul>
-    </section>
-  </aside>
-
-  <main id="map">
-    <svg id="svg-print" class="pane" aria-label="The floor's drawing as printed" hidden>
-      <g id="world-print">
-        <g id="print-copy"></g>
-        <path id="print-selected"></path>
-        <g id="preview-print" class="preview"></g>
-      </g>
-      <g id="cursor-print" class="cursor"></g>
-    </svg>
-    <svg id="svg" class="pane" tabindex="0" aria-label="Floor plan">
-      <g id="world">
-        <g id="print"></g>
-        <g id="drawing"></g>
-        <path id="outline"></path>
-        <g id="spaces"></g>
-        <g id="doors"></g>
-        <g id="drawn"></g>
-        <g id="assets"></g>
-        <g id="guides"></g>
-        <g id="preview" class="preview"></g>
-      </g>
-      <g id="labels"></g>
-      <g id="cursor-main" class="cursor"></g>
-    </svg>
-    <div id="world3d" hidden></div>
-    <div id="crosshair" hidden aria-hidden="true"></div>
-    <div id="walk-hud" class="walk-hud" hidden aria-live="polite">
-      <div id="walk-room">Outside</div>
-      <div id="walk-meta" class="meta"></div>
-      <div id="walk-keys" class="meta"></div>
+  <!-- the top bar: where you are (project › building › floor), the view, search, undo and
+       redo, history, who is here, sharing, the person's menu -->
+  <header id="topbar" class="topbar">
+    <div class="tb-start">
+      <a id="home" class="tb-home" href="/" data-tip="All projects" aria-label="StoreyPath Studio: all projects">
+        <svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#layers"/></svg>
+      </a>
+      <nav class="crumbs" aria-label="Where you are">
+        <a id="crumb-project" class="crumb" href="/" data-tip="The project's page">Project</a>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span id="crumb-building" class="crumb crumb-plain"></span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <button id="crumb-floor" type="button" class="crumb crumb-floor" aria-haspopup="menu" aria-expanded="false"
+                data-tip="Another floor" data-key="pageup pagedown">
+          <span id="crumb-floor-name">Floor</span>
+          <span id="crumb-floor-review" class="badge warn" hidden></span>
+          <svg class="icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#chevron-down"/></svg>
+        </button>
+      </nav>
+      <span id="view-only" class="pill" hidden data-tip="You may look at this floor, not change it: its owner, or whoever shares it, can let you">View only</span>
     </div>
-    <div id="walk-enter" class="walk-enter" hidden>
-      <div class="card">
-        <strong>Click to look around</strong>
-        <ul class="keys">
-          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows: move · <kbd>Shift</kbd> run</li>
-          <li>Click: choose what is at the cross · <kbd>R</kbd> <kbd>[</kbd> <kbd>]</kbd> turn it · <kbd>Del</kbd> delete it</li>
-          <li class="edit-only">Place: choose an item, aim at the floor and click</li>
-          <li><kbd>E</kbd> / <kbd>Q</kbd> up / down at stairs · <kbd>2</kbd> or right-click: this place in 2D</li>
-          <li><kbd>Esc</kbd> frees the mouse for the panel and the toolbar</li>
-        </ul>
+    <div class="tb-center">
+      <div class="segmented" id="view-mode" role="radiogroup" aria-label="View">
+        <button type="button" role="radio" data-view="2d" aria-checked="true" data-tip="The plan: correct rooms and items, draw walls, doors and spaces" data-key="2">2D</button>
+        <button type="button" role="radio" data-view="3d" aria-checked="false" data-tip="The floor as built: orbit it, correct and place as on the plan" data-key="3">3D</button>
+        <button type="button" role="radio" data-view="walk" aria-checked="false" data-tip="Walk through the floor: look with the mouse, move with W A S D" data-key="4">Walk</button>
       </div>
     </div>
-    <div id="lock-banner" class="lock-banner" hidden role="status"></div>
-    <aside id="history" class="history" hidden aria-label="History of this floor">
-      <div class="history-head">
+    <div class="tb-end">
+      <button id="search-open" type="button" class="search-button" data-tip="Find a room, an item, a floor or a command" data-key="mod+k">
+        <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#search"/></svg>
+        <span class="search-label">Search</span>
+        <kbd id="search-key">⌘K</kbd>
+      </button>
+      <div class="tb-group" role="group" aria-label="Changes">
+        <button id="undo" type="button" class="btn-ghost btn-icon edit-only" disabled aria-label="Undo" data-key="mod+z">
+          <svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#undo-2"/></svg>
+        </button>
+        <button id="redo" type="button" class="btn-ghost btn-icon edit-only" disabled aria-label="Redo" data-key="mod+shift+z">
+          <svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#redo-2"/></svg>
+        </button>
+        <button id="history-open" type="button" class="btn-ghost btn-icon" aria-label="History" aria-pressed="false" data-tip="History: who changed what on this floor">
+          <svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#history"/></svg>
+        </button>
+      </div>
+      <div id="presence" class="presence" aria-live="polite"></div>
+      <button id="share-open" type="button" class="btn-primary share-button" aria-haspopup="menu" aria-expanded="false" data-tip="Export, share an area, print">
+        <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#share-2"/></svg>
+        <span>Share</span>
+        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#chevron-down"/></svg>
+      </button>
+      <div id="account" class="tb-account"></div>
+    </div>
+  </header>
+
+  <div id="workspace" class="workspace">
+    <!-- the tools (tools.js: their registry draws this) -->
+    <nav id="rail" class="rail" aria-label="Tools"></nav>
+
+    <!-- the navigator: rooms, items, how the floor is shown (navigator.js) -->
+    <aside id="navigator" class="panel navigator" aria-label="Navigator">
+      <div class="panel-head">
+        <div class="tabs" role="tablist" aria-label="Navigator">
+          <button type="button" role="tab" id="tab-rooms" aria-controls="pane-rooms" aria-selected="true">Rooms</button>
+          <button type="button" role="tab" id="tab-items" aria-controls="pane-items" aria-selected="false" tabindex="-1">Items</button>
+          <button type="button" role="tab" id="tab-view" aria-controls="pane-view" aria-selected="false" tabindex="-1">View</button>
+        </div>
+        <button type="button" class="btn-ghost btn-icon btn-sm panel-close" data-collapse="navigator" aria-label="Hide the navigator" data-key="[">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#panel-left-close"/></svg>
+        </button>
+      </div>
+      <div id="pane-rooms" class="pane-body" role="tabpanel" aria-labelledby="tab-rooms"></div>
+      <div id="pane-items" class="pane-body" role="tabpanel" aria-labelledby="tab-items" hidden></div>
+      <div id="pane-view" class="pane-body" role="tabpanel" aria-labelledby="tab-view" hidden></div>
+      <div class="resizer" data-resize="navigator" role="separator" aria-orientation="vertical" aria-label="Navigator width: arrows change it" tabindex="0"></div>
+    </aside>
+
+    <main id="map" class="labels-on" aria-label="The floor">
+      <svg id="svg-print" class="pane" aria-label="The floor's drawing as printed" hidden>
+        <g id="world-print">
+          <g id="print-copy"></g>
+          <path id="print-selected"></path>
+          <g id="preview-print" class="preview"></g>
+        </g>
+        <g id="cursor-print" class="cursor"></g>
+      </svg>
+      <svg id="svg" class="pane" tabindex="0" aria-label="Floor plan: the arrows move it, + and − zoom, F fits it">
+        <defs>
+          <!-- a label on a tag: a box of paper under the text (Studio's reading, over the print's) -->
+          <filter id="label-tag" x="-0.08" y="-0.14" width="1.16" height="1.28">
+            <feFlood flood-color="#ffffff" flood-opacity="0.96"/>
+            <feComposite in="SourceGraphic" operator="over"/>
+          </filter>
+        </defs>
+        <g id="world">
+          <g id="print"></g>
+          <g id="drawing"></g>
+          <path id="outline"></path>
+          <g id="spaces"></g>
+          <g id="doors"></g>
+          <g id="drawn"></g>
+          <g id="assets"></g>
+          <g id="guides"></g>
+          <g id="measure"></g>
+          <g id="preview" class="preview"></g>
+        </g>
+        <g id="labels"></g>
+        <g id="measure-labels"></g>
+        <rect id="band" class="band" hidden></rect>
+        <g id="cursor-main" class="cursor"></g>
+      </svg>
+      <div id="world3d" hidden></div>
+      <div id="crosshair" hidden aria-hidden="true"></div>
+
+      <!-- over the canvas, at its top: someone else editing, review mode, the tool's options -->
+      <div id="canvas-top" class="canvas-top">
+        <div id="lock-banner" class="lock-banner" hidden role="status"></div>
+        <div id="review-bar" class="review-bar" hidden role="region" aria-label="Reviewing"></div>
+        <div id="tool-options" class="tool-options" hidden role="toolbar" aria-label="Tool options"></div>
+      </div>
+
+      <div id="walk-hud" class="walk-hud" hidden aria-live="polite">
+        <div id="walk-room">Outside</div>
+        <div id="walk-meta" class="meta"></div>
+        <div id="walk-keys" class="meta"></div>
+      </div>
+      <div id="walk-enter" class="walk-enter" hidden>
+        <div class="card">
+          <strong>Click to look around</strong>
+          <ul class="keys">
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows: move · <kbd>Shift</kbd> run</li>
+            <li>Click: choose what is at the cross · <kbd>R</kbd> <kbd>,</kbd> <kbd>.</kbd> turn it · <kbd>Del</kbd> delete it</li>
+            <li class="edit-only">Place: the Place tool, aim at the floor and click</li>
+            <li><kbd>PgUp</kbd> / <kbd>PgDn</kbd> up or down at stairs · <kbd>2</kbd> or right-click: this place in 2D</li>
+            <li id="walk-doors" hidden><kbd>E</kbd> open or close a door</li>
+            <li><kbd>Esc</kbd> frees the mouse for the panels</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- on the canvas, bottom right: the zoom and the building's floors -->
+      <div class="canvas-corner">
+        <nav id="floor-stack" class="floor-stack" aria-label="The building's floors"></nav>
+        <div id="zoom" class="zoom" role="group" aria-label="Zoom">
+          <button id="zoom-out" type="button" class="btn-ghost btn-icon" aria-label="Zoom out" data-key="-">
+            <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#minus"/></svg>
+          </button>
+          <button id="zoom-in" type="button" class="btn-ghost btn-icon" aria-label="Zoom in" data-key="=">
+            <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#plus"/></svg>
+          </button>
+          <button id="fit" type="button" class="btn-ghost btn-icon" aria-label="Fit the floor in view" data-key="f">
+            <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#maximize"/></svg>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- the inspector: what is chosen, or the floor (inspector.js and its sections) -->
+    <aside id="inspector" class="panel inspector" aria-label="Inspector">
+      <div class="resizer" data-resize="inspector" role="separator" aria-orientation="vertical" aria-label="Inspector width: arrows change it" tabindex="0"></div>
+      <div id="inspector-head" class="inspector-head"></div>
+      <div id="inspector-body" class="inspector-body"></div>
+    </aside>
+
+    <!-- the history drawer (together.js), over the inspector -->
+    <aside id="history" class="drawer history" hidden aria-label="History of this floor">
+      <div class="drawer-head">
         <div><h2>History</h2><div id="history-floor" class="meta"></div></div>
-        <button id="history-close" type="button" class="icon" title="Close" aria-label="Close">×</button>
+        <button id="history-close" type="button" class="btn-ghost btn-icon" aria-label="Close the history" data-key="escape">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#x"/></svg>
+        </button>
       </div>
       <ol id="history-list" class="history-list"></ol>
     </aside>
-    <div id="toolbar">
-      <div class="segmented" id="view-mode" role="group" aria-label="View">
-        <button type="button" data-view="2d" class="active" title="The plan: correct rooms and items, and draw walls, dividers, doors and spaces">2D</button>
-        <button type="button" data-view="3d" title="The floor as built: click a room or an item to correct it, place items, drag them">3D</button>
-        <button type="button" data-view="walk" title="Walk through the floor: look with the mouse, move with W A S D, choose and place what is at the cross">Walk</button>
-      </div>
-      <button id="fit" type="button" class="only2d" title="Show the whole floor (F)">Fit</button>
-      <button id="undo" type="button" class="edit-only step" disabled title="Undo your last change on this floor (⌘Z / Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3 2 6.5 5.5 10M2.5 6.5H10a4 4 0 0 1 0 8H7"/></svg></button>
-      <button id="redo" type="button" class="edit-only step" disabled title="Redo what you undid (⇧⌘Z / Ctrl+Y)" aria-label="Redo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3 14 6.5 10.5 10M13.5 6.5H6a4 4 0 0 0 0 8h3"/></svg></button>
-      <button id="history-open" type="button" title="Who changed what on this floor">History</button>
-      <label class="edit-only" title="Furniture and equipment: choose a type, then click in the room where it goes (in 3D, on its floor; walking, aim the cross at it and click); it lines up with the walls and items near it (Alt-click: anywhere, as it is). Esc to stop">Place
-        <select id="place-type"><option value="">an item…</option></select>
-      </label>
-      <label class="only2d" title="The drawing as printed on the left, Studio's spaces on the right, moving together"><input type="checkbox" id="side-by-side"> Side by side</label>
-      <label id="drawing-label" class="only2d" title="The floor's drawing under the spaces: as printed, or its lines">Drawing
-        <select id="drawing-mode">
-          <option value="print">as printed</option>
-          <option value="lines">lines</option>
-          <option value="off">off</option>
-        </select>
-      </label>
-      <span class="look only3dwalk" title="How the 3D view is drawn: Real, floors finished by what each room is, plaster walls and soft shadows; Model, white, like an architect's model, its edges drawn">Look
-        <span class="segmented" id="look" role="group" aria-label="Look">
-          <button type="button" data-style="real">Real</button>
-          <button type="button" data-style="model">Model</button>
-        </span>
-      </span>
-      <label class="only3dwalk" title="High: soft shadows where surfaces meet, smooth edges. Low: quickest, for built-in, virtual or software graphics. Auto: Low on those, or when High draws slowly; else High">Quality
-        <select id="quality">
-          <option value="auto">Auto</option>
-          <option value="high">High</option>
-          <option value="low">Low</option>
-        </select>
-      </label>
-      <label><input type="checkbox" id="show-labels" checked> Labels</label>
-      <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
-      <!-- navigate.html: the way between two places of the floor's building (its address follows the floor shown) -->
-      <a id="navigate-link" class="button" href="/navigate.html" title="Find the way in this building: from a kiosk, an entrance or any room, to any room">Navigate</a>
-      <script>
-        (() => {
-          const a = document.getElementById("navigate-link");
-          const aim = () => {
-            const p = new URLSearchParams(location.search).get("p") || "";
-            const floor = new URLSearchParams(location.hash.slice(1)).get("floor");
-            a.href = "/navigate.html?" + new URLSearchParams({ p, ...(floor ? { building: floor.split("-").slice(0, 3).join("-") } : {}) });
-          };
-          aim();
-          for (const e of ["pointerenter", "focus", "pointerdown"]) a.addEventListener(e, aim);
-        })();
-      </script>
-      <span class="hint only2d edit-only" title="What you add, delete or resize is kept with the floor through every re-read. Keys: W wall, V divide, S space, D door, O opening, Del delete, Esc stop">Right-click the plan to add, delete or resize</span>
-      <span class="hint only3d" title="On a trackpad: hold Shift and drag to move it; pinch or scroll with two fingers to zoom. Walls, doors, dividers and spaces are drawn in 2D: right-click (or 2) shows that place there">Drag to turn · Shift-drag to move · scroll to zoom · right-click: draw here in 2D</span>
-      <span class="hint onlywalk" title="Esc frees the mouse; click the view to look again. Walls, doors, dividers and spaces are drawn in 2D: right-click (or 2) shows that place there">Click to look · W A S D · Esc frees the mouse</span>
-      <span id="status" class="meta"></span>
-    </div>
-  </main>
 
-  <div id="menu" role="menu" aria-label="What can be done here" hidden></div>
-  <div id="toast" hidden></div>
+    <!-- shown when a panel is hidden: brings it back -->
+    <button id="show-navigator" type="button" class="panel-reveal left btn-icon" hidden aria-label="Show the navigator" data-key="[">
+      <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#panel-left-open"/></svg>
+    </button>
+    <button id="show-inspector" type="button" class="panel-reveal right btn-icon" hidden aria-label="Show the inspector" data-key="]">
+      <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#panel-right-open"/></svg>
+    </button>
+  </div>
+
+  <!-- the status bar: what the tool expects, where the pointer is, what is chosen, who is
+       editing, whether it is saved -->
+  <footer id="statusbar" class="statusbar">
+    <div id="sb-hint" class="sb-hint" aria-live="polite"></div>
+    <div id="sb-job" class="sb-item sb-job" hidden aria-live="polite"></div>
+    <div id="sb-cursor" class="sb-item sb-cursor"></div>
+    <div id="sb-selection" class="sb-item"></div>
+    <div id="sb-lock" class="sb-item sb-lock"></div>
+    <div id="sb-save" class="sb-item sb-save" aria-live="polite"></div>
+  </footer>
+
+  <div id="menu" class="menu" role="menu" aria-label="What can be done here" hidden></div>
+  <div id="toast" role="status" hidden></div>
 
   <script type="module" src="review/main.js"></script>
 </body>

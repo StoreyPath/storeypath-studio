@@ -1,41 +1,44 @@
-/* Share an area (sample.js): the rectangle on the plan, and the dialog. */
+/* Share an area (sample.js): the rectangle on the plan, and the dialog. Tokens: theme.css. */
 #map.sharing svg.pane { cursor: crosshair; }
 .share-preview { pointer-events: none; }
-.share-preview .share-rect { fill: rgba(11, 107, 203, .12); stroke: var(--accent); stroke-width: 2; stroke-dasharray: 7 4;
+.share-preview .share-rect { fill: rgba(59, 130, 246, .12); stroke: #3b82f6; stroke-width: 2; stroke-dasharray: 7 4;
   vector-effect: non-scaling-stroke; }
-.share-preview .share-rect.too-big { fill: rgba(198, 40, 69, .12); stroke: var(--danger); }
+.share-preview .share-rect.too-big { fill: rgba(217, 45, 58, .12); stroke: #d92d3a; }
 
-dialog.sample { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 18px 22px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); overflow: auto; }
-dialog.sample[open] { display: flex; flex-direction: column; gap: 10px; }
-dialog.sample::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.sample { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--border-strong); border-radius: var(--r-xl); background: var(--overlay); color: var(--text); overflow: auto;
+  box-shadow: var(--shadow-lg); }
+dialog.sample[open] { display: flex; flex-direction: column; gap: var(--sp-3); }
+dialog.sample::backdrop { background: var(--scrim); }
 dialog.sample p { margin: 0; }
-dialog.sample .sample-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-dialog.sample h2 { margin: 0; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }
-dialog.sample h3 { margin: 4px 0 0; font-size: 14px; }
-dialog.sample textarea { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; }
-dialog.sample .sample-status { font-size: 13px; }
-dialog.sample .sample-status.error { color: var(--danger); }
+dialog.sample .meta { color: var(--text-muted); font-size: var(--fs-sm); }
+dialog.sample .sample-head { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+dialog.sample h2 { margin: 0; font-size: var(--fs-xl); }
+dialog.sample h3 { margin: var(--sp-1) 0 0; font-size: var(--fs-md); }
+dialog.sample textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+dialog.sample .field { color: var(--text-muted); }
+dialog.sample .sample-status { font-size: var(--fs-md); }
+dialog.sample .sample-status.error { color: var(--danger-text); }
 dialog.sample.busy .sample-pictures { opacity: .55; }
-.sample-pictures { display: grid; grid-template-columns: 1fr 1.3fr; gap: 10px; align-items: start; }
+.sample-pictures { display: grid; grid-template-columns: 1fr 1.3fr; gap: var(--sp-3); align-items: start; }
 .sample-pictures figure { margin: 0; min-width: 0; }
 .sample-pictures figure.zoomed { grid-column: 1 / -1; }
 .sample-pictures img { display: block; width: 100%; height: auto; max-height: 52vh; object-fit: contain; background: #fff;
-  border: 1px solid var(--line); border-radius: 4px; cursor: zoom-in; }
+  border: 1px solid var(--border); border-radius: var(--r-sm); cursor: zoom-in; }
 .sample-pictures figure.zoomed img { max-height: none; cursor: zoom-out; }
-.sample-pictures figcaption { font-size: 12px; color: var(--muted); margin-top: 3px; }
-.sample-list { list-style: none; margin: 4px 0 0; padding: 0; max-height: 220px; overflow: auto;
-  border: 1px solid var(--line); border-radius: 6px; }
-.sample-list li { display: grid; grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr); gap: 10px; align-items: center;
-  padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.sample-pictures figcaption { font-size: var(--fs-sm); color: var(--text-muted); margin-top: 4px; }
+.sample-list { list-style: none; margin: var(--sp-1) 0 0; padding: 0; max-height: 220px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--r-md); }
+.sample-list li { display: grid; grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr); gap: var(--sp-3); align-items: center;
+  padding: 4px var(--sp-2); border-bottom: 1px solid var(--border-subtle); font-size: var(--fs-md); }
 .sample-list li:last-child { border-bottom: 0; }
 .sample-list label { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .sample-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sample-list li.out .sample-text { text-decoration: line-through; color: var(--muted); }
-.sample-kind { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.sample-list li.out .sample-text { text-decoration: line-through; color: var(--text-muted); }
+.sample-kind { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .sample-list .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-dialog.sample details summary { cursor: pointer; font-size: 13px; margin-top: 6px; }
-.sample-buttons { justify-content: flex-end; gap: 8px; }
+dialog.sample details summary { cursor: pointer; font-size: var(--fs-md); margin-top: 6px; }
+.sample-buttons { display: flex; justify-content: flex-end; gap: var(--sp-2); }
 @media (max-width: 700px) {
   .sample-pictures { grid-template-columns: 1fr; }
   .sample-list li { grid-template-columns: 1fr auto; }

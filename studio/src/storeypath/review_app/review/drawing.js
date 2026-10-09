@@ -3,23 +3,29 @@
 // spaces as drawn walls do); the floor is read again at once. Plan coordinates are local
 // metres, as the spaces are. Also: what is under the pointer (a door, a line drawn here),
 // taking away what was drawn, and a door's, window's or opening's size.
+//
+// The tools (tools.js): Wall (W), Space (R), Divide (D), Door / window / opening (O). The
+// Stairs and lifts tool (vertical.js) draws its shape with the space's corners here.
 
 import { viewOnly } from "./access.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
-import { $, svg } from "./dom.js";
-import { assetShape, drawGuides, placeAsset, placing } from "./items.js";
+import { $, el, svg } from "./dom.js";
 import { openFloor, refreshProject } from "./floor.js";
 import { toast } from "./notify.js";
-import { settle } from "../fit.js";
 import { selectItem } from "./selection.js";
-import { BASE, inRing, rings, state, toSegment, typeOf, view3d } from "./state.js";
-import { setTool } from "./tools.js";
+import { BASE, inRing, rings, state, toSegment, view3d } from "./state.js";
+import { setTool, tool } from "./tools.js";
 import { dirty3d } from "./view3d.js";
 import * as vertical from "./vertical.js";
 
 export const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
 export const LINES = { wall: "wall", divide: "divider" }; // the tools that draw a line, and what it is
+const OPENING_NAMES = { door: "Door", window: "Window", opening: "Opening" };
+
+state.openingKind = "door"; // what the opening tool adds
+state.openingWidth = null; // its width (null: its kind's)
+const shaping = () => state.tool === "space" || state.tool === "stairs"; // a shape drawn corner by corner
 
 /** The floor's wall edges (and the walls drawn here), for snapping to. */
 function wallSegments() {
@@ -81,8 +87,11 @@ export function snapWall(p, from = state.wallStart) {
   return p;
 }
 
+/** The width an opening of ``kind`` is added with. */
+const widthOf = (kind = state.openingKind) => state.openingWidth ?? WIDTHS[kind];
+
 /** A door or window placed on the wall nearest the point: along it, in its middle. */
-export function openingAt(p, wide = WIDTHS[state.tool]) {
+export function openingAt(p, wide = widthOf()) {
   const width = Math.min(Math.max(Number(wide) || 0.9, 0.3), 6);
   const near = nearestOnWalls(p, Math.max(1.0, 12 / state.view.k));
   if (!near) return null;
@@ -99,23 +108,15 @@ export function clearPreview() {
   for (const id of ["preview", "preview-print"]) $(id).replaceChildren();
 }
 
+/** What the tool in use would add, at ``p``, drawn on the plan (and on the print beside it). */
 export function preview(p) {
   if (state.busy) return;
   const r = 5 / state.view.k;
   let shapes = [];
-  if (state.tool === "place") {
-    const t = typeOf(state.placeType);
-    if (t) { // where it would go: drawn to walls and other items, kept in the room
-      const got = settle({ want: { at: p, rot: 0 }, last: null, ...placing(p, t.code), free: state.alt });
-      drawGuides(got?.guides);
-      shapes.push(() => assetShape({ x: (got?.at ?? p)[0], y: (got?.at ?? p)[1], rotation: got?.rot ?? 0 }, t,
-        got ? "asset-ghost" : "asset-ghost refused"));
-    }
-  } else if (state.tool === "space") {
+  if (shaping()) {
     const end = snapWall(p);
     const pts = [...state.corners, end];
     const closing = state.corners.length >= 3 && closesSpace(end);
-    shapes = [];
     if (pts.length >= 2) {
       const d = `M${pts.map(([x, y]) => `${x},${y}`).join("L")}${closing ? "Z" : ""}`;
       shapes.push(() => svg("path", { d, class: "space-outline" }));
@@ -129,9 +130,9 @@ export function preview(p) {
         () => svg("circle", { cx: state.wallStart[0], cy: state.wallStart[1], r })]
       : [];
     shapes.push(() => svg("circle", { cx: end[0], cy: end[1], r }));
-  } else {
+  } else if (state.tool === "opening") {
     const span = openingAt(p);
-    if (span) shapes = [() => svg("line", { x1: span[0][0], y1: span[0][1], x2: span[1][0], y2: span[1][1], class: state.tool })];
+    if (span) shapes = [() => svg("line", { x1: span[0][0], y1: span[0][1], x2: span[1][0], y2: span[1][1], class: state.openingKind })];
   }
   for (const id of ["preview", "preview-print"]) $(id).replaceChildren(...shapes.map((make) => make()));
 }
@@ -142,9 +143,10 @@ function closesSpace(p) {
   return Boolean(first) && Math.hypot(p[0] - first[0], p[1] - first[1]) <= 10 / state.view.k;
 }
 
-/** The space being drawn, closed and saved; the floor is read again with it. */
+/** The space being drawn, closed and saved; the floor is read again with it (a lift or
+ * stairs: vertical.js sends it typed). */
 export function closeSpace() {
-  if (vertical.drawn(state.corners)) return; // vertical.js: a lift or stairs, drawn typed
+  if (state.tool === "stairs") return vertical.drawn(state.corners);
   const ring = state.corners;
   if (ring.length < 3) return toast("A space needs at least three corners", true);
   state.corners = [];
@@ -158,12 +160,13 @@ export function backCorner() {
   state.corners.pop();
   state.wallStart = state.corners.at(-1) ?? null;
   clearPreview();
+  emit("tool-progress");
 }
 
+/** A click of a drawing tool on the plan. */
 export function toolClick(p) {
   if (state.busy) return;
-  if (state.tool === "place") return placeAsset(state.placeType, p);
-  if (state.tool === "space") {
+  if (shaping()) {
     const at = snapWall(p);
     if (state.corners.length >= 3 && closesSpace(at)) return closeSpace();
     const last = state.corners.at(-1);
@@ -171,6 +174,7 @@ export function toolClick(p) {
     state.corners.push(at);
     state.wallStart = at; // the next corner squares to this one
     preview(p);
+    emit("tool-progress");
     return;
   }
   if (state.tool in LINES) {
@@ -178,17 +182,19 @@ export function toolClick(p) {
     if (!state.wallStart) {
       state.wallStart = at;
       preview(p);
+      emit("tool-progress");
       return;
     }
     const line = [state.wallStart, at];
     state.wallStart = null;
+    emit("tool-progress");
     if (Math.hypot(at[0] - line[0][0], at[1] - line[0][1]) < 0.1) return;
     const kind = LINES[state.tool];
     submitEdit({ add: { [kind]: line } }, kind === "wall" ? "Adding the wall…" : "Dividing the space…");
-  } else {
+  } else if (state.tool === "opening") {
     const span = openingAt(p);
     if (!span) return toast("Click on a wall (or nearer one)", true);
-    submitEdit({ add: { opening: { type: state.tool, span } } }, `Adding the ${state.tool}…`);
+    submitEdit({ add: { opening: { type: state.openingKind, span } } }, `Adding the ${state.openingKind}…`);
   }
 }
 
@@ -240,6 +246,13 @@ export function drawnNear(p, px = 8) {
   return best ? { kind: best.kind, at: best.at, length: best.length, line: best.line } : null;
 }
 
+/** The length of a drawn line chosen ({kind, at}), or null. */
+export function drawnLength(item) {
+  const list = item.kind === "wall" ? state.floor?.edits?.walls : state.floor?.edits?.dividers;
+  const w = (list || []).find(([a, b]) => `${(a[0] + b[0]) / 2},${(a[1] + b[1]) / 2}` === item.at.join(","));
+  return w ? Math.hypot(w[1][0] - w[0][0], w[1][1] - w[0][1]) : null;
+}
+
 /** The space drawn here (its ring, as saved) a point is in, or null. */
 export function drawnSpaceAt(p) {
   return (state.floor?.edits?.spaces || []).find((ring) => inRing(p, ring)) || null;
@@ -283,16 +296,35 @@ export function openingMeta(d) {
 
 const fmt = (v) => (v == null ? "" : Number(v).toFixed(2));
 
-export function fillSizeForm(form, d) {
+/** A form of a door's, window's or opening's sizes; ``done`` after it is sent. */
+export function sizeForm(d, { done = () => {}, compact = false } = {}) {
+  const row = (name, label, min, max, cls = "") => el("label", { class: `size-row ${cls}`.trim() }, el("span", {}, label),
+    el("span", { class: "size-input" }, el("input", { name, type: "number", min, max, step: "0.05", placeholder: "as drawn",
+      inputmode: "decimal" }), el("span", { class: "unit" }, "m")));
+  const form = el("form", { class: `size-form${compact ? " compact" : ""}`, autocomplete: "off" },
+    row("width", "Width", "0.3", "8"), row("sill", "Sill", "0", "3", "sill"), row("height", "Height", "0.3", "10"),
+    el("div", { class: "size-actions" },
+      el("button", { type: "submit", class: "btn-primary btn-sm" }, "Change size"),
+      el("button", { type: "button", class: "btn-sm as-drawn", "data-tip": "Back to the size the drawing gives it" }, "Size as drawn")));
   form.elements.width.value = fmt(d.width);
   form.elements.sill.value = fmt(d.sill);
   form.elements.height.value = fmt(d.height);
   form.querySelector(".sill").hidden = d.type !== "window";
   form.querySelector(".as-drawn").hidden = d.drawn || !d.resize;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    done();
+    resize(d, sizesFrom(form, d));
+  });
+  form.querySelector(".as-drawn").addEventListener("click", () => {
+    done();
+    resize(d, { width: null, sill: null, height: null });
+  });
+  return form;
 }
 
 /** The sizes to keep: a field left as it was keeps what it was given (or as drawn). */
-export function sizesFrom(form, d) {
+function sizesFrom(form, d) {
   const given = d.drawn ? { width: null, sill: d.sill ?? null, height: d.height ?? null } : { width: null, sill: null, height: null, ...(d.resize || {}) };
   const out = {};
   for (const key of ["width", "sill", "height"]) {
@@ -323,18 +355,20 @@ export function addOpening(type, p) {
 
 export function startSpace(p) {
   setTool("space");
+  if (state.tool !== "space") return;
   const at = snapWall(p);
   state.corners = [at];
   state.wallStart = at;
   preview(p);
+  emit("tool-progress");
 }
 
-export function startLine(tool, p) {
-  setTool(tool);
+export function startLine(kind, p) {
+  setTool(kind);
+  if (state.tool !== kind) return;
   state.wallStart = snapWall(p);
   preview(p);
-  toast(tool === "wall" ? "Wall: click where it ends (it snaps to walls). Esc to stop."
-    : "Divide: click where the line ends, right across the space. Esc to stop.");
+  emit("tool-progress");
 }
 
 /** What is chosen (a door, window, opening or line drawn here) deleted or taken away;
@@ -356,8 +390,68 @@ export async function deleteItem() {
     toast(`${openingName(d)}: ${d.ignored ? "deleted" : "restored"}`);
     if (d.ignored && !state.showHidden) selectItem(null);
     else selectItem(item);
-    emit("spaces", [d.id]);
   } catch (e) {
     toast(`Not saved: ${e.message}`, true);
   }
+}
+
+// ---- the tools ---------------------------------------------------------------------------
+
+const ON_PLAN = (label) => () => `${label} is drawn on the plan`;
+const lineHint = (label, what) => () => (state.wallStart
+  ? `Click where the ${what} ends · it snaps to walls and squares up · Esc: start again`
+  : `Click where the ${what} starts · ${label === "Divide" ? "right across the space: it becomes two zones, no wall" : "it snaps to walls"}`);
+
+/** Esc in a drawing tool: the line or shape under way given up first. */
+const giveUp = () => {
+  if (!state.wallStart && !state.corners.length) return false;
+  state.wallStart = null;
+  state.corners = [];
+  clearPreview();
+  emit("tool-progress");
+  return true;
+};
+
+const drawingPlan = { hover: preview, click: toolClick, dblclick: () => { if (shaping() && state.corners.length >= 3) closeSpace(); } };
+
+export function setupDrawing() {
+  tool({ id: "wall", label: "Wall", icon: "brick-wall", key: "w", group: "draw", edits: true, drawing: true,
+    wrongView: ON_PLAN("A wall"), hint: lineHint("Wall", "wall"), escape: giveUp, plan: drawingPlan, stop: clearPreview });
+  tool({ id: "space", label: "Space", icon: "vector-square", key: "r", group: "draw", edits: true, drawing: true,
+    words: "room area draw a space polygon colonnade",
+    wrongView: ON_PLAN("A space"), escape: giveUp, plan: drawingPlan, stop: clearPreview,
+    hint: () => (state.corners.length >= 3 ? "Click the next corner · click the first, double-click or Enter to close it · Backspace takes a corner back"
+      : state.corners.length ? "Click the next corner (corners snap to walls) · Backspace takes it back"
+        : "Click its corners: they snap to walls · for an area the drawing encloses nowhere"),
+    keys: { enter: () => closeSpace(), backspace: () => backCorner() } });
+  tool({ id: "divide", label: "Divide", icon: "square-split-horizontal", key: "d", group: "draw", edits: true, drawing: true,
+    words: "split zone dividing line", wrongView: ON_PLAN("A dividing line"), hint: lineHint("Divide", "line"), escape: giveUp,
+    plan: drawingPlan, stop: clearPreview });
+  tool({ id: "opening", label: "Door, window, opening", icon: "door-open", key: "o", group: "draw", edits: true, drawing: true,
+    words: "door window opening doorway",
+    wrongView: ON_PLAN("A door, window or opening"), plan: drawingPlan, stop: clearPreview,
+    hint: () => `Click on a wall where the ${state.openingKind} goes · ${(widthOf()).toFixed(2)} m wide`,
+    options: () => {
+      const kinds = el("div", { class: "segmented", role: "radiogroup", "aria-label": "What to add" },
+        ...Object.entries(OPENING_NAMES).map(([kind, name]) => {
+          const b = el("button", { type: "button", role: "radio", "aria-checked": String(state.openingKind === kind),
+            "data-tip": kind === "opening" ? "A way through, no door" : `A ${kind}` }, name);
+          b.addEventListener("click", () => {
+            state.openingKind = kind;
+            state.openingWidth = null;
+            emit("tool-options");
+            emit("tool-progress");
+          });
+          return b;
+        }));
+      const width = el("input", { type: "number", min: "0.3", max: "6", step: "0.05", "aria-label": "Width in metres",
+        value: widthOf().toFixed(2) });
+      width.addEventListener("change", () => {
+        const v = Number(width.value);
+        state.openingWidth = Number.isFinite(v) && v >= 0.3 && v <= 6 ? v : null;
+        width.value = widthOf().toFixed(2);
+        emit("tool-progress");
+      });
+      return [kinds, el("label", { class: "to-group" }, el("span", { class: "to-label" }, "Width"), width, el("span", { class: "to-label" }, "m"))];
+    } });
 }

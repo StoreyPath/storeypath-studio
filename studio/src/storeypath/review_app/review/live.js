@@ -6,12 +6,11 @@
 import { editableByAccess } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
-import { $ } from "./dom.js";
 import { renderAssets } from "./items.js";
 import { say, toast } from "./notify.js";
-import { renderPlan, styleSpace } from "./plan.js";
-import { select, selectAsset, selectItem } from "./selection.js";
-import { BASE, pathData, reviewSpaces, state, view3d } from "./state.js";
+import { renderPlan } from "./plan.js";
+import { keepChosen } from "./selection.js";
+import { BASE, reviewSpaces, state, view3d } from "./state.js";
 import { carry, dirty3d, update3d } from "./view3d.js";
 
 // what is to be read again: everything, or what these IDs are of; and whether a read is under way
@@ -61,6 +60,8 @@ export function togetherHooks() {
     reload: () => refreshFloor(null),
     elsewhere: heardElsewhere,
     showLock: () => emit("access"),
+    presence: () => emit("presence"),
+    steps: () => emit("steps"),
   };
 }
 
@@ -92,18 +93,10 @@ export async function refreshFloor(change) {
       entry.review = reviewSpaces().length;
       emit("project");
     }
-    renderPlan(); // (the chosen door or drawn line stays chosen: state.item)
-    // the space chosen: kept while it is there; its editor shown again only when it changed
-    if (state.selected && !state.byId.has(state.selected)) select(null);
-    else if (state.selected) {
-      const s = state.byId.get(state.selected);
-      styleSpace(s);
-      $("spaces").append(state.paths.get(s.id));
-      $("print-selected").setAttribute("d", pathData(s.geometry));
-    }
-    if (state.asset && !(floor.items || []).some((a) => a.id === state.asset)) selectAsset(null);
-    else renderAssets();
-    if (state.item?.kind === "door" && !floor.doors.some((d) => d.id === state.item.id)) selectItem(null);
+    renderPlan();
+    // what is chosen: kept while it is there; the inspector shown again only when it changed
+    keepChosen();
+    renderAssets();
     emit("floor", { refreshed: true, changedHere });
     // in 3D at once: the items (that floor's alone) and the rooms' labels; walls and doors
     // changed (the floor read again, a door deleted): that floor built again

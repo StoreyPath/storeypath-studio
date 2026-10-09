@@ -58,6 +58,11 @@ function savedMode() {
 export const color = (type) => TYPE_COLORS[type] || TYPE_COLORS.unspecified;
 export const code = (id) => id.split("-").at(-1);
 export const title = (s) => [s.name, s.number].filter(Boolean).join(" ") || "Unnamed space";
+/** A type as a name on its own (a heading, a list): its first letter capital ("Meeting room"). */
+export const typeName = (type) => {
+  const t = typeLabel(type);
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 export { typeLabel };
 
 export const tucked = (s) => s.hidden || s.ignored;

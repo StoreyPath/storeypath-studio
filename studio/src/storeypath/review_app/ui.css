@@ -1,0 +1,217 @@
+/* StoreyPath Studio's components: the pieces every page is made of (buttons, fields,
+   segmented switches, menus, tooltips, keys, avatars, badges, toasts). Colours and sizes
+   are theme.css's tokens only. A page adds its own layout on top. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: var(--fs-md) / var(--lh) var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+[hidden] { display: none !important; }
+::selection { background: var(--accent-soft); }
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
+h1, h2, h3, h4 { margin: 0; font-weight: var(--fw-semibold); }
+
+/* thin scrollbars in the panels */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--r-full); border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ---- icons (icons/lucide.svg) ---------------------------------------------------------- */
+.icon {
+  flex: none; fill: none; stroke: currentColor; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round; vertical-align: middle;
+}
+
+/* ---- focus: visible for keys, never for clicks ------------------------------------------ */
+:focus { outline: none; }
+:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ---- buttons ---------------------------------------------------------------------------- */
+button, .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  min-height: var(--hit); padding: 0 var(--sp-3);
+  font: inherit; font-weight: var(--fw-medium); color: var(--text); line-height: 1.2; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+  cursor: pointer; text-decoration: none; user-select: none; -webkit-user-select: none;
+  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
+}
+button:hover:not(:disabled):not([aria-disabled="true"]), .btn:hover { background: var(--surface-3); border-color: var(--border-strong); text-decoration: none; }
+button:active:not(:disabled):not([aria-disabled="true"]) { background: var(--surface-4); }
+button:disabled, button[aria-disabled="true"] { opacity: .45; cursor: default; }
+.btn-primary, button.primary {
+  background: var(--accent); border-color: transparent; color: var(--text-on-accent);
+}
+.btn-primary:hover:not(:disabled), button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: transparent; }
+.btn-danger { color: var(--danger-text); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: transparent; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn-ghost:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--surface-3); border-color: transparent; color: var(--text); }
+.btn-icon { width: var(--hit); padding: 0; }
+.btn-sm { min-height: var(--hit-sm); padding: 0 var(--sp-2); font-size: var(--fs-sm); border-radius: var(--r-sm); }
+.btn-sm.btn-icon { width: var(--hit-sm); padding: 0; }
+.btn-block { width: 100%; }
+button.active, .btn.active, button[aria-pressed="true"].toggle {
+  background: var(--accent-soft); border-color: transparent; color: var(--accent-text);
+}
+.btn-link { background: none; border: 0; padding: 0; min-height: 0; color: var(--accent-text); font-weight: var(--fw-medium); }
+.btn-link:hover:not(:disabled) { background: none; text-decoration: underline; }
+
+/* a group of choices, one chosen: View 2D | 3D | Walk, Real | Model… */
+.segmented {
+  display: inline-flex; align-items: stretch; padding: 2px; gap: 2px;
+  background: var(--surface-0); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.segmented > button {
+  min-height: calc(var(--hit) - 6px); padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-muted); font-size: var(--fs-sm);
+}
+.segmented > button:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--surface-3); color: var(--text); border: 0; }
+.segmented > button[aria-pressed="true"], .segmented > button[aria-checked="true"], .segmented > button.active {
+  background: var(--surface-4); color: var(--text); box-shadow: var(--shadow-sm);
+}
+.segmented.block { display: flex; }
+.segmented.block > button { flex: 1; }
+
+/* ---- fields ----------------------------------------------------------------------------- */
+input[type="text"], input[type="search"], input[type="number"], input:not([type]), select, textarea {
+  font: inherit; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  min-height: var(--hit); padding: 0 var(--sp-3); width: 100%;
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+textarea { padding: var(--sp-2) var(--sp-3); }
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--border-strong); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input:disabled, select:disabled, textarea:disabled { opacity: .6; cursor: default; }
+input::placeholder, textarea::placeholder { color: var(--text-faint); }
+select {
+  appearance: none; -webkit-appearance: none; padding-right: 28px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat;
+}
+input[type="number"] { -moz-appearance: textfield; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.field { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* a switch: an on/off setting, as a row (label left, switch right) */
+.switch { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); min-height: var(--hit); cursor: pointer; }
+.switch input { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 30px; height: 18px; margin: 0;
+  border-radius: var(--r-full); background: var(--surface-4); border: 1px solid var(--border-strong); cursor: pointer;
+  transition: background var(--dur-fast); }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-muted); transition: transform var(--dur-fast) var(--ease), background var(--dur-fast); }
+.switch input:checked { background: var(--accent); border-color: transparent; }
+.switch input:checked::after { transform: translateX(12px); background: #fff; }
+.switch input:focus-visible { box-shadow: var(--focus-ring); }
+
+/* ---- keys ------------------------------------------------------------------------------- */
+kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px;
+  font: var(--fw-semibold) 10.5px / 1 var(--font-ui); color: var(--text-muted);
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--r-xs);
+}
+kbd + kbd { margin-left: 2px; }
+
+/* ---- menus and popovers ----------------------------------------------------------------- */
+.popover, .menu {
+  position: fixed; z-index: var(--z-popover); min-width: 220px; max-width: 360px;
+  background: var(--overlay); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg); padding: var(--sp-1);
+}
+.menu { display: flex; flex-direction: column; font-size: var(--fs-md); }
+.menu .menu-heading { padding: var(--sp-2) var(--sp-3) 0; font-weight: var(--fw-semibold); }
+.menu .menu-meta { padding: 0 var(--sp-3) var(--sp-2); color: var(--text-muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.menu-section { padding: var(--sp-2) var(--sp-2) var(--sp-1); color: var(--text-faint); font-size: var(--fs-xs);
+  text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-semibold); }
+.tooltip .tip-or { color: #8b8f99; margin: 0 2px; }
+.menu hr, .menu .menu-sep { border: 0; border-top: 1px solid var(--border); margin: var(--sp-1) 0; }
+.menu > button, .menu .menu-item {
+  display: flex; align-items: center; justify-content: flex-start; gap: var(--sp-2); width: 100%;
+  min-height: 30px; padding: 0 var(--sp-2); border: 0; border-radius: var(--r-sm);
+  background: none; color: inherit; text-align: left; font-weight: 400;
+}
+.menu > button .icon, .menu .menu-item .icon { color: var(--text-muted); }
+.menu > button .label, .menu .menu-item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.menu > button:hover:not(:disabled):not([aria-disabled="true"]), .menu > button:focus-visible,
+.menu .menu-item:hover:not(:disabled):not([aria-disabled="true"]), .menu .menu-item:focus-visible {
+  background: var(--accent); color: var(--text-on-accent); box-shadow: none; border: 0;
+}
+.menu > button:hover:not(:disabled) .icon, .menu > button:focus-visible .icon, .menu .menu-item:hover:not(:disabled) .icon,
+.menu .menu-item:focus-visible .icon { color: inherit; }
+.menu > button:hover:not(:disabled) .key, .menu > button:focus-visible .key, .menu .menu-item:hover:not(:disabled) .key,
+.menu .menu-item:focus-visible .key { color: inherit; opacity: .85; }
+.menu > button.danger, .menu .menu-item.danger { color: var(--danger-text); }
+.menu > button.danger:hover:not(:disabled), .menu .menu-item.danger:hover:not(:disabled),
+.menu > button.danger:focus-visible, .menu .menu-item.danger:focus-visible { background: var(--danger); color: #fff; }
+.menu > button:disabled, .menu .menu-item[aria-disabled="true"], .menu .menu-item:disabled { color: var(--text-faint); opacity: 1; }
+.menu .key { margin-left: auto; padding-left: var(--sp-4); color: var(--text-faint); font-size: var(--fs-xs); white-space: nowrap; }
+
+/* ---- the tooltip (tooltip.js): a control's name and its key ------------------------------ */
+.tooltip {
+  position: fixed; z-index: var(--z-tooltip); pointer-events: none; max-width: 300px;
+  display: flex; align-items: center; gap: var(--sp-2); padding: 5px var(--sp-2);
+  background: #08090b; color: #f2f3f5; border-radius: var(--r-sm); box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm); line-height: 1.35; opacity: 0; transform: translateY(2px);
+  transition: opacity var(--dur-fast), transform var(--dur-fast);
+}
+.tooltip.shown { opacity: 1; transform: none; }
+.tooltip .tip-text { display: flex; flex-direction: column; gap: 2px; }
+.tooltip .tip-why { color: #b7bac2; font-size: var(--fs-xs); }
+.tooltip kbd { background: #23252b; border-color: #3a3d45; color: #e3e5e9; }
+:root[data-theme="light"] .tooltip { background: #1b1d22; }
+
+/* ---- people ----------------------------------------------------------------------------- */
+.avatar {
+  --hue: 210;
+  width: 24px; height: 24px; border-radius: 50%; flex: none; display: inline-grid; place-items: center;
+  font-size: var(--fs-xs); font-weight: var(--fw-bold); color: hsl(var(--hue) 70% 90%); background: hsl(var(--hue) 38% 34%);
+  border: 2px solid var(--surface-1);
+}
+:root[data-theme="light"] .avatar { color: hsl(var(--hue) 55% 26%); background: hsl(var(--hue) 70% 86%); }
+.avatar.editing { box-shadow: 0 0 0 2px var(--select); }
+
+/* ---- badges and pills ------------------------------------------------------------------- */
+.badge {
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 18px; height: 18px; padding: 0 6px;
+  border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1;
+  background: var(--surface-4); color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.badge.warn { background: var(--warning-soft); color: var(--warning-text); }
+.badge.danger { background: var(--danger-soft); color: var(--danger-text); }
+.badge.accent { background: var(--accent-soft); color: var(--accent-text); }
+.badge.ok { background: var(--success-soft); color: var(--success-text); }
+.pill {
+  display: inline-flex; align-items: center; gap: var(--sp-1); height: 22px; padding: 0 var(--sp-2);
+  border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: var(--fw-semibold);
+  background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border);
+}
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; display: inline-block; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); }
+
+/* ---- toast: a message a moment, at the foot of the page ---------------------------------- */
+#toast {
+  position: fixed; left: 50%; bottom: calc(var(--status-h, 0px) + 16px); transform: translateX(-50%);
+  z-index: var(--z-toast); pointer-events: none; max-width: min(560px, 90vw);
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-lg); background: var(--overlay); color: var(--text);
+  border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); font-size: var(--fs-md); white-space: pre-line;
+}
+#toast.error { background: var(--danger); border-color: transparent; color: #fff; }
+
+/* ---- dialogs ---------------------------------------------------------------------------- */
+dialog.dialog {
+  padding: 0; border: 1px solid var(--border-strong); border-radius: var(--r-xl); background: var(--overlay); color: var(--text);
+  box-shadow: var(--shadow-lg); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
+}
+dialog.dialog::backdrop { background: var(--scrim); }

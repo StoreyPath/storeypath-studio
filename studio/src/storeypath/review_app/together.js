@@ -4,8 +4,9 @@
 // what), who is viewing and who is editing the floor (one editor a floor at a time: the
 // first change takes it; Done editing, or leaving the floor, lets it go; an admin may
 // take it over), and the progress of jobs. Each person undoes and redoes their own
-// changes (the buttons, ⌘Z and ⇧⌘Z / Ctrl+Z and Ctrl+Y), and the History panel lists
-// who changed what on the floor, live.
+// changes (the buttons; ⌘Z and ⇧⌘Z / Ctrl+Z and Ctrl+Y are Review's keys: step()), and
+// the History drawer lists who changed what on the floor, live. Review's top bar shows
+// who is here (presence()), its status bar who is editing, a banner when someone else is.
 
 import { ProjectStream } from "./stream.js";
 
@@ -36,7 +37,6 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
-const firstName = (p) => (p?.name || p?.username || "Someone").split(" ")[0];
 const isMe = (p) => Boolean(p && live.me && p.id === live.me.id);
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -52,29 +52,24 @@ export function avatar(p, cls = "") {
 // ---- the stream -----------------------------------------------------------------------
 
 /** Start: ``hooks`` are Review's (request, toast, floor, editableByAccess, changed, elsewhere,
- * reload, showLock, status). */
+ * reload, showLock, status, presence). */
 export function setupTogether({ code, base, me, hooks }) {
   Object.assign(live, { code, base, me, hooks });
   $("undo").addEventListener("click", () => step(false));
   $("redo").addEventListener("click", () => step(true));
   $("history-open").addEventListener("click", () => showHistory(!live.historyOpen));
   $("history-close").addEventListener("click", () => showHistory(false));
-  document.addEventListener("keydown", (e) => {
-    const typing = e.target.closest?.("input, select, textarea, [contenteditable]");
-    if (typing || !(e.metaKey || e.ctrlKey) || e.altKey) return;
-    const key = e.key.toLowerCase();
-    if (key === "z" || key === "y") {
-      e.preventDefault();
-      step(key === "y" || (key === "z" && e.shiftKey));
-    }
-  });
   // leaving the page: the floor let go (when it is ours), as leaving it for another does
   window.addEventListener("pagehide", () => leave(live.floor));
-  // the banner and the History panel below the toolbar, however many rows it takes
-  const toolbar = $("toolbar");
-  new ResizeObserver(() => $("map").style.setProperty("--below-toolbar", `${toolbar.offsetTop + toolbar.offsetHeight + 8}px`))
-    .observe(toolbar);
 }
+
+/** Who is on the floor shown: who is editing it ({who, since}, or null), whether that is
+ * the person, and who else is viewing it. */
+export function presence() {
+  return { lock: live.lock, mine: Boolean(live.lock && isMe(live.lock.who)), viewing: live.viewing.slice(), me: live.me };
+}
+
+export const historyOpen = () => live.historyOpen;
 
 /** The stream opened on the floor shown (the one before it closed, and let go when ours). */
 export function onFloor(floor, lock) {
@@ -144,45 +139,44 @@ function leave(floor, { said = false } = {}) {
 function render() {
   const editor = live.lock?.who;
   const others = live.viewing.filter((p) => p.id !== editor?.id);
-  const marks = [
-    editor && !isMe(editor) ? avatar(editor, "editing") : null,
-    ...others.slice(0, 5).map((p) => avatar(p)),
-    others.length > 5 ? el("span", { class: "more" }, `+${others.length - 5}`) : null,
-  ];
-  const words = [editor && !isMe(editor) ? `${firstName(editor)} editing` : null,
-    others.length ? `${others.slice(0, 2).map(firstName).join(", ")}${others.length > 2 ? ` and ${others.length - 2} more` : ""} viewing` : null]
-    .filter(Boolean).join(" · ");
-  $("presence").replaceChildren(...[...marks, words ? el("span", { class: "who" }, words) : null].filter(Boolean));
-  $("presence").hidden = !words;
+  const mark = (p, what, cls = "") => {
+    const a = avatar(p, cls);
+    a.removeAttribute("title");
+    a.dataset.tip = `${p.name || p.username} · ${what}`;
+    a.setAttribute("aria-label", a.dataset.tip);
+    return a;
+  };
+  $("presence").replaceChildren(...[
+    editor && !isMe(editor) ? mark(editor, `editing since ${clock(live.lock.since)}`, "editing") : null,
+    ...others.slice(0, 4).map((p) => mark(p, "viewing")),
+    others.length > 4 ? el("span", { class: "more", "data-tip": others.slice(4).map((p) => p.name || p.username).join(", ") }, `+${others.length - 4}`) : null,
+  ].filter(Boolean));
 
   const banner = $("lock-banner");
   if (editor && !isMe(editor) && live.hooks.editableByAccess()) {
     const take = live.me?.role === "admin" || live.me?.local
-      ? el("button", { type: "button", onclick: takeOver, title: "Edit it yourself: they can no longer save changes to it" }, "Take over")
+      ? el("button", { type: "button", class: "btn-sm", onclick: takeOver, "data-tip": "Edit it yourself: they can no longer save changes to it" }, "Take over")
       : null;
     banner.className = "lock-banner other";
     banner.replaceChildren(...[avatar(editor, "editing"),
-      el("span", {}, el("strong", {}, editor.name), ` is editing this floor since ${clock(live.lock.since)} — you can look; you can edit when they are done`),
+      el("span", { class: "lb-text" }, el("strong", {}, editor.name), ` is editing this floor since ${clock(live.lock.since)}: you can look, and edit when they are done`),
       take].filter(Boolean));
-    banner.hidden = false;
-  } else if (editor && isMe(editor)) {
-    banner.className = "lock-banner mine";
-    banner.replaceChildren(el("span", { class: "dot", "aria-hidden": "true" }), el("span", {}, "You are editing this floor"),
-      el("button", { type: "button", onclick: doneEditing, title: "Let others edit it: your next change takes it again" }, "Done editing"));
     banner.hidden = false;
   } else {
     banner.hidden = true;
   }
+  live.hooks.presence?.();
 }
 
-async function doneEditing() {
+/** The person done editing the floor: others may edit it (their next change takes it again). */
+export async function doneEditing() {
   await leave(live.floor, { said: true });
   live.lock = null;
   render();
   live.hooks.showLock();
 }
 
-async function takeOver() {
+export async function takeOver() {
   const who = live.lock?.who?.name || "they";
   if (!confirm(`Take over this floor from ${who}? They can no longer save changes to it, and are told so.`)) return;
   try {
@@ -230,13 +224,18 @@ function showSteps() {
   const { undo, redo } = live.steps;
   $("undo").disabled = !undo;
   $("redo").disabled = !redo;
-  $("undo").title = undo ? `Undo: ${undo.line} (⌘Z / Ctrl+Z)` : "Nothing of yours to undo on this floor";
-  $("redo").title = redo ? `Redo: ${redo.line.replace(/^undid: /, "")} (⇧⌘Z / Ctrl+Y)` : "Nothing of yours to redo on this floor";
+  $("undo").dataset.tip = undo ? `Undo: ${undo.line}` : "Nothing of yours to undo on this floor";
+  $("redo").dataset.tip = redo ? `Redo: ${redo.line.replace(/^undid: /, "")}` : "Nothing of yours to redo on this floor";
+  live.hooks.steps?.(live.steps);
 }
+
+/** What the person would undo and redo now ({undo, redo}: {line} or null). */
+export const steps = () => live.steps;
 
 let stepping = false;
 
-async function step(redo) {
+/** The person's latest change on the floor undone (``redo``: their latest undoing redone). */
+export async function step(redo) {
   if (stepping || !live.floor) return;
   if (!live.hooks.editableByAccess()) return live.hooks.toast("View only: you may look at this floor, not change it", true);
   if (lockedByOther()) return live.hooks.toast(`${live.lock.who.name} is editing this floor: you can edit when they are done`, true);
@@ -260,11 +259,16 @@ async function step(redo) {
 
 // ---- the History panel -----------------------------------------------------------------------
 
-function showHistory(on) {
+/** The History drawer open (or closed). */
+export function showHistory(on) {
   live.historyOpen = on;
   $("history").hidden = !on;
+  $("history-open").setAttribute("aria-pressed", String(on));
   $("history-open").classList.toggle("active", on);
-  if (on) loadHistory();
+  if (on) {
+    loadHistory();
+    $("history-close").focus({ preventScroll: true });
+  }
 }
 
 function loadHistorySoon() {

@@ -6,6 +6,7 @@ import { request } from "./api.js";
 import { $, svg } from "./dom.js";
 import * as finish from "./finish.js";
 import { say } from "./notify.js";
+import { isChosen } from "./selection.js";
 import { BASE, code, color, divided, extent, matches, pathData, rings, state, tucked, union, units, visible } from "./state.js";
 
 const DRAWING_ORDER = ["other", "outlines", "doors", "walls"]; // bottom to top
@@ -202,7 +203,8 @@ export function styleSpace(s) {
   path.style.display = visible(s) ? "" : "none";
   path.classList.toggle("tucked", tucked(s));
   path.classList.toggle("review", s.reasons.length > 0);
-  path.classList.toggle("selected", s.id === state.selected);
+  path.classList.toggle("selected", isChosen(s.id));
+  path.classList.toggle("focus", s.id === state.focus);
   path.classList.toggle("dim", !matches(s, state.filter));
   const label = state.labels.get(s.id);
   label.dataset.name = s.name || "";
@@ -218,11 +220,17 @@ export function restyle() {
 
 // ---- view: pan, zoom, labels ---------------------------------------------
 
+const viewListeners = new Set();
+
+/** ``fn()`` whenever the plan's view moves (what is written in the screen's pixels: placed again). */
+export const onViewChange = (fn) => viewListeners.add(fn);
+
 export function updateView() {
   const { k, tx, ty } = state.view;
   $("world").setAttribute("transform", `matrix(${k} 0 0 ${-k} ${tx} ${ty})`);
   $("world-print").setAttribute("transform", `matrix(${k} 0 0 ${-k} ${tx} ${ty})`); // the same view, side by side
   placeLabels();
+  for (const fn of viewListeners) fn();
 }
 
 // Side by side, the floor is split the way it shows larger: a wide floor above and
@@ -292,16 +300,39 @@ export function showCursor(pane, sx, sy) {
   );
 }
 
+// Over the drawing as printed, the drawing's own text is under the labels: a room's label
+// is not written again where the print already says it (its name and number are in the
+// text drawn in it); where Studio reads it otherwise (a person corrected it, or it was
+// read from a short form), Studio's is written on a tag that covers the print's; where the
+// drawing has no text, Studio's is written as everywhere else. Over the drawing's lines,
+// its room labels are hidden while Studio's are shown (CSS: #map.lined).
+
+const words = (text) => (text || "").toUpperCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean);
+
+/** How a room's label shows over the print: "same" (the print says it), "differs", "none"
+ * (the print has no text in it). */
+export function asPrinted(s) {
+  const drawn = words(s.drawing_label);
+  if (!drawn.length) return "none";
+  const ours = [...words(s.name), ...words(s.number)];
+  if (!ours.length) return "same"; // nothing of ours to add over its text
+  const have = new Set(drawn);
+  return ours.every((w) => have.has(w)) ? "same" : "differs";
+}
+
 let labelFrame = 0;
 export function placeLabels() {
   if (labelFrame) return;
   labelFrame = requestAnimationFrame(() => {
     labelFrame = 0;
     const { k, tx, ty } = state.view;
+    const printed = state.drawingMode === "print" && !state.side && Boolean(state.underlay.print);
     for (const s of units()) {
       const label = state.labels.get(s.id);
       if (!label) continue;
-      if (!visible(s)) {
+      const how = printed ? asPrinted(s) : "none";
+      label.classList.toggle("tag", how === "differs");
+      if (!visible(s) || how === "same") {
         label.replaceChildren();
         continue;
       }
@@ -360,19 +391,73 @@ export function fit() {
   centerOn(bounds, scaleFor(bounds));
 }
 
-export function focusSpace(s) {
-  const b = state.bounds.get(s.id);
+/** A space brought into view when it is not (well) in it: at about a third of the view,
+ * never zoomed out beyond the whole floor; moved there smoothly (``always``: centred on it
+ * even when it is in view, as reviewing one room after another does). */
+export function flyToSpace(s, { always = false } = {}) {
+  const b = state.bounds.get(s?.id);
   const floor = floorBounds();
   if (!b || !floor) return;
   const { k, tx, ty } = state.view;
   const { w, h } = viewport();
+  if (!w || !h) return;
   const [sx0, sy0, sx1, sy1] = [b[0] * k + tx, -b[3] * k + ty, b[2] * k + tx, -b[1] * k + ty];
   const inView = sx0 >= 0 && sy0 >= 0 && sx1 <= w && sy1 <= h && sx1 - sx0 >= 60;
-  if (inView) return;
-  // The space at about a third of the view, never zoomed out beyond the whole floor.
-  const pad = Math.max(b[2] - b[0], b[3] - b[1]);
+  if (inView && !always) return;
+  const pad = Math.max(b[2] - b[0], b[3] - b[1], 2);
   const around = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
-  centerOn(b, Math.max(scaleFor(floor), scaleFor(around, 20)));
+  const nk = Math.max(scaleFor(floor), scaleFor(around, 20));
+  animateTo({ k: nk, tx: w / 2 - ((b[0] + b[2]) / 2) * nk, ty: h / 2 + ((b[1] + b[3]) / 2) * nk });
+}
+
+let flight = 0;
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** The view moved to ``to`` ({k, tx, ty}) smoothly: zooming in log steps, the point in the
+ * middle travelling straight; at once when motion is reduced, or the plan is hidden. */
+export function animateTo(to, ms = 360) {
+  cancelAnimationFrame(flight);
+  const from = { ...state.view };
+  const { w, h } = viewport();
+  if (reduced() || !w || !h) {
+    state.view = to;
+    return updateView();
+  }
+  // the world point at the middle of the view, before and after
+  const mid = (v) => [(w / 2 - v.tx) / v.k, (v.ty - h / 2) / v.k];
+  const [a, b] = [mid(from), mid(to)];
+  const t0 = performance.now();
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / ms), e = ease(t);
+    const k = Math.exp(Math.log(from.k) + (Math.log(to.k) - Math.log(from.k)) * e);
+    const c = [a[0] + (b[0] - a[0]) * e, a[1] + (b[1] - a[1]) * e];
+    state.view = { k, tx: w / 2 - c[0] * k, ty: h / 2 + c[1] * k };
+    updateView();
+    if (t < 1) flight = requestAnimationFrame(step);
+    else {
+      state.view = to;
+      updateView();
+    }
+  };
+  flight = requestAnimationFrame(step);
+}
+
+/** The view's flight stopped (the person moved the plan themselves). */
+export const stopFlight = () => cancelAnimationFrame(flight);
+
+/** Zoomed about the middle of the view (the zoom buttons, + and −). */
+export function zoomBy(factor) {
+  const { w, h } = viewport();
+  stopFlight();
+  zoomAt(w / 2, h / 2, factor);
+}
+
+/** The plan moved by (dx, dy) pixels (the arrows). */
+export function panBy(dx, dy) {
+  stopFlight();
+  state.view = { ...state.view, tx: state.view.tx + dx, ty: state.view.ty + dy };
+  updateView();
 }
 
 export function zoomAt(sx, sy, factor) {

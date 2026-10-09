@@ -163,6 +163,7 @@ COPY docker/models/${MODEL} /opt/storeypath/models/${MODEL}
 COPY storeypath-viewer/viewer/vendor/LICENSE-maplibre-gl.txt storeypath-viewer/viewer/vendor/LICENSE-jszip.markdown /usr/share/storeypath/licenses/
 COPY storeypath-viewer/viewer/vendor/three/LICENSE /usr/share/storeypath/licenses/LICENSE-three.js.txt
 COPY storeypath-viewer/viewer/vendor/n8ao/LICENSE /usr/share/storeypath/licenses/LICENSE-n8ao.txt
+COPY studio/src/storeypath/review_app/icons/LICENSE-lucide.txt /usr/share/storeypath/licenses/LICENSE-lucide.txt
 COPY docker/start.sh /usr/local/bin/storeypath-start
 RUN cp /opt/llama/LICENSE /usr/share/storeypath/licenses/LICENSE-llama.cpp.txt \
     && cp /opt/storeypath/lib/python3*/site-packages/storeypath-*.dist-info/licenses/LICENSE \
@@ -200,7 +201,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
 LABEL org.opencontainers.image.title="StoreyPath Studio" \
       org.opencontainers.image.description="Turn DWG/DXF floor plans into portable indoor maps with stable IDs; runs offline" \
       org.opencontainers.image.source="https://github.com/StoreyPath/storeypath-studio" \
-      org.opencontainers.image.licenses="Apache-2.0 AND PostgreSQL AND GPL-2.0-or-later AND GPL-3.0-or-later AND MIT AND BSD-3-Clause"
+      org.opencontainers.image.licenses="Apache-2.0 AND PostgreSQL AND GPL-2.0-or-later AND GPL-3.0-or-later AND MIT AND BSD-3-Clause AND ISC"
 # tini passes docker stop's SIGTERM on to the start script, which stops Studio, then
 # the database; the command is Studio's (`docker run … storeypath/studio users list`)
 ENTRYPOINT ["tini", "--", "storeypath-start"]

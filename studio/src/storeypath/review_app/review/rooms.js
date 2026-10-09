@@ -7,7 +7,7 @@ import { viewOnly } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
 import * as finish from "./finish.js";
-import { toast } from "./notify.js";
+import { say, toast } from "./notify.js";
 import { placeLabels, styleSpace } from "./plan.js";
 import { select } from "./selection.js";
 import { BASE, code, reviewSpaces, state, title, typeOf, units, visible, within } from "./state.js";
@@ -84,6 +84,63 @@ function shown(spaces) {
 /** Rooms changed at once (finish.js: every room of a type finished): shown as saved. */
 export function updatedSpaces(spaces) {
   shown(spaces);
+}
+
+// ---- corrections, a field at a time ------------------------------------------------------
+// A room's correction holds its type, name and number as a person set them (each left out:
+// as detected). A field set back to what was detected leaves the correction; the last one
+// gone, the room is as detected again (a reset). Accepting it as it is checks it: off the
+// list to review (but for a missing type).
+
+const FIELDS = ["type", "name", "number"];
+
+/** The correction a room would have with ``changes`` ({type?, name?, number?}). */
+export function correctionWith(s, changes) {
+  const c = { ...(s.correction || {}) };
+  for (const k of FIELDS) {
+    if (!(k in changes)) continue;
+    const v = typeof changes[k] === "string" ? changes[k].trim() : changes[k];
+    const detected = s.detected[k] ?? (k === "type" ? null : "");
+    if (v === null || v === undefined || v === detected) delete c[k];
+    else c[k] = v;
+  }
+  for (const k of Object.keys(c)) if (!FIELDS.includes(k)) delete c[k];
+  return c;
+}
+
+const sameCorrection = (a, b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+
+/** A room's type, name or number corrected (``changes``), saved at once. */
+export async function correct(s, changes, options = {}) {
+  const c = correctionWith(s, changes);
+  const had = s.correction || null;
+  if (had && sameCorrection(c, had)) return s;
+  if (!had && !Object.keys(c).length) return s; // as detected, and it was
+  if (!Object.keys(c).length) return saveSpace({ reset: true }, s.id, options); // the last correction taken away
+  return saveSpace({ correction: c }, s.id, options);
+}
+
+/** A room accepted as it is (its corrections kept): checked. */
+export function accept(s, options = {}) {
+  return saveSpace({ correction: s.correction ? correctionWith(s, {}) : {} }, s.id, options);
+}
+
+/** A room as detected again: its type, name and number corrections taken away. */
+export function useDetected(s) {
+  return saveSpace({ reset: true }, s.id);
+}
+
+/** Each of ``spaces`` changed by ``fn(space)`` (a promise each, one after another: a change
+ * each, undone one at a time), saying how far it is; then said in a toast. */
+export async function forEach(spaces, fn, saying) {
+  let done = 0;
+  for (const s of spaces) {
+    say(`${saying}: ${done + 1} of ${spaces.length}…`);
+    const got = await fn(s);
+    if (got) done++;
+  }
+  say("");
+  return done;
 }
 
 export function nextToReview(step = 1) {
