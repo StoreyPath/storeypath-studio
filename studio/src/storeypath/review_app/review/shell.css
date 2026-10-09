@@ -83,6 +83,11 @@ a.crumb:hover { background: var(--surface-3); color: var(--text); text-decoratio
   position: relative; min-height: 0;
   display: grid; grid-template-columns: var(--rail-w) var(--nav-now) minmax(0, 1fr) var(--insp-now);
 }
+/* each in its own column, whether the others are shown or not */
+#rail { grid-column: 1; grid-row: 1; }
+#navigator { grid-column: 2; grid-row: 1; }
+#map { grid-column: 3; grid-row: 1; }
+#inspector { grid-column: 4; grid-row: 1; }
 body.nav-hidden .workspace { --nav-now: 0px; }
 body.insp-hidden .workspace { --insp-now: 0px; }
 body.nav-hidden #navigator, body.insp-hidden #inspector { display: none; }
@@ -207,6 +212,11 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* ---- view only, and someone else editing ------------------------------------------------ */
 body.view-only .edit-only { display: none !important; }
 body.locked .edit-only:not(.rail button) { opacity: .45; pointer-events: none; }
+
+/* ---- smaller windows: narrower panels (a width set by dragging stays) ---------------------- */
+@media (max-width: 1366px) {
+  :root { --nav-w: 248px; --insp-w: 300px; }
+}
 
 /* ---- narrow windows: the panels over the canvas ------------------------------------------ */
 @media (max-width: 1100px) {

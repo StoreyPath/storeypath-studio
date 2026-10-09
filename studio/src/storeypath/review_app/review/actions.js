@@ -251,7 +251,7 @@ export function setupActions() {
   command({ id: "edit.copy-id", title: "Copy the ID of what is chosen", group: "Edit", icon: "copy", words: "tag clipboard",
     when: () => Boolean(state.selected || state.asset || state.item?.id), why: () => "Choose a room, an item or a door first",
     run: () => copyId(state.selected || state.asset || state.item.id) });
-  command({ id: "edit.escape", title: "Put away", group: "Edit", keys: ["escape"], palette: false, run: escape });
+  command({ id: "edit.escape", title: "Close, give up or let go (the nearest first)", group: "Edit", keys: ["escape"], palette: false, run: escape });
 
   // ---- floors --------------------------------------------------------------------------------------
   command({ id: "floor.up", title: "The floor above", group: "Floors", icon: "arrow-up", keys: ["pageup"], when: () => Boolean(state.floor),

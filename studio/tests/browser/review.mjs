@@ -264,11 +264,15 @@ test("review mode: N starts it, a number sets a likely type, the count goes down
     "⌘Z / Ctrl+Z undid it", 8000, n0);
 });
 
-test("the panels hide and come back with [ and ]", async () => {
+test("the panels hide and come back with [ and ]; the canvas takes their room", async () => {
+  const width = () => R(() => document.getElementById("map").getBoundingClientRect().width);
+  const w0 = await width();
   await press("[");
   truly(await R(() => document.body.classList.contains("nav-hidden")), "[ hides the navigator");
   await press("]");
   truly(await R(() => document.body.classList.contains("insp-hidden")), "] hides the inspector");
+  const w1 = await width();
+  truly(w1 > w0 + 400, `the canvas is wider: ${w0} → ${w1}`);
   await press("[");
   await press("]");
   truly(await R(() => !document.body.classList.contains("nav-hidden") && !document.body.classList.contains("insp-hidden")), "both back");

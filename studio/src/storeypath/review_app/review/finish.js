@@ -151,12 +151,11 @@ export function editor(s) {
     rows.push(field("Walls", "wall", s.wall_finish, now.wall,
       s.wall_finish ? "chosen here: each wall's face towards it" : "as its type: each wall's face towards it"));
   } else rows.push(el("div", { class: "meta" }, `Walls: its space's (${finishOf(now.wall)?.name ?? now.wall})`));
-  if (may) {
-    const all = api.units().filter((u) => u.type === s.type && !u.ignored).length;
+  const all = api.units().filter((u) => u.type === s.type && !u.ignored).length;
+  if (may && all > 1) {
     const apply = el("button", { type: "button", class: "fin-apply btn-sm btn-ghost",
       title: `Give every ${s.type.replaceAll("_", " ")} on this floor this room's floor${s.kind === "space" ? " and walls" : ""}: one change, undone as one` },
     `Apply to every ${s.type.replaceAll("_", " ")} on this floor (${all})`);
-    apply.disabled = all < 2;
     apply.addEventListener("click", () => applyToType(s));
     rows.push(apply);
   }
@@ -336,6 +335,8 @@ export function setup(given) {
     options: brushes,
     start: () => {
       paint.on = true;
+      paint.colouredBefore = colourBy; // the plan shows what is painted: by floor finish, while painting
+      if (colourBy !== "finish") colourRoomsBy("finish");
       $("map")?.classList.add("painting");
       api.stopTools();
       api.showWalk();
@@ -343,6 +344,8 @@ export function setup(given) {
     stop: () => {
       paint.on = false;
       paint.dropper = false;
+      if (paint.colouredBefore && paint.colouredBefore !== colourBy) colourRoomsBy(paint.colouredBefore);
+      paint.colouredBefore = null;
       closePicker();
       $("map")?.classList.remove("painting");
       api.showWalk();

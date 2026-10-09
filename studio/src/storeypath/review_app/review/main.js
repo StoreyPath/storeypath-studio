@@ -49,6 +49,9 @@ import { draggable3d, setupView3d, showWalk } from "./view3d.js";
 
 setupTooltips();
 setupLayout();
+// who moves with Tab sees where the keys are on the canvas too (a click there does not ring it)
+document.addEventListener("keydown", (e) => { if (e.key === "Tab") document.body.classList.add("tabbing"); }, true);
+document.addEventListener("pointerdown", () => document.body.classList.remove("tabbing"), true);
 setupPlan();
 setupPointer();
 setupMenu();

@@ -3,8 +3,8 @@
 // another floor is found too), floors, and every command (commands.js) with its key.
 // Arrows move, Enter runs, Esc closes.
 
-import { canRun, allCommands, whyNot } from "./commands.js";
-import { $, el, icon } from "./dom.js";
+import { canRun, allCommands, getCommand, whyNot } from "./commands.js";
+import { $, el, icon, save, saved } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { findAsset, showAsset } from "./items.js";
 import { keysOf, kbd } from "./keys.js";
@@ -12,6 +12,18 @@ import { toast } from "./notify.js";
 import { select, selectAsset } from "./selection.js";
 import { code, color, state, title, typeLabel, typeOf, units, visible } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js";
+
+// with nothing typed: what was run from here last, then what is most asked for
+const SUGGESTED = ["review.start", "tool.place", "tool.wall", "view.3d", "view.walk", "edit.history", "share.export",
+  "view.side", "view.labels", "panel.view", "help.keys"];
+const recent = () => {
+  try {
+    return JSON.parse(saved("storeypath.review.recent") || "[]").filter((id) => getCommand(id));
+  } catch {
+    return [];
+  }
+};
+const remember = (id) => save("storeypath.review.recent", JSON.stringify([id, ...recent().filter((x) => x !== id)].slice(0, 5)));
 
 let dialog = null;
 let results = [];
@@ -79,8 +91,11 @@ function sources(q) {
     const sc = score(q, `${c.title} ${c.group} ${c.words || ""}`);
     if (sc <= 0) continue;
     const ok = canRun(c);
-    out.push({ group: "Commands", score: sc * 1.1 + (ok ? 1 : 0), icon: c.icon || "command", title: c.title, sub: ok ? c.group : whyNot(c),
-      keys: keysOf(c.id).slice(0, 1), disabled: !ok, run: () => c.run() });
+    out.push({ group: "Commands", id: c.id, score: sc * 1.1 + (ok ? 1 : 0), icon: c.icon || "command", title: c.title, sub: ok ? c.group : whyNot(c),
+      keys: keysOf(c.id).slice(0, 1), disabled: !ok, run: () => {
+        remember(c.id);
+        c.run();
+      } });
   }
   return out;
 }
@@ -92,7 +107,12 @@ function render(q) {
   const found = sources(q.trim());
   // without words: the commands, by group; with: the best of each kind, the best kind first
   let shown;
-  if (!q.trim()) shown = found.filter((r) => r.group === "Commands" && !r.disabled).slice(0, 14);
+  if (!q.trim()) {
+    const byId = new Map(found.filter((r) => r.group === "Commands" && !r.disabled).map((r) => [r.id, r]));
+    const last = recent().map((id) => byId.get(id)).filter(Boolean).map((r) => ({ ...r, group: "Recent" }));
+    const picked = new Set(last.map((r) => r.id));
+    shown = [...last, ...SUGGESTED.filter((id) => !picked.has(id)).map((id) => byId.get(id)).filter(Boolean).map((r) => ({ ...r, group: "Suggested" }))];
+  }
   else {
     const best = new Map();
     for (const r of found) best.set(r.group, Math.max(best.get(r.group) || 0, r.score));
@@ -106,7 +126,7 @@ function render(q) {
   shown.forEach((r, i) => {
     if (r.group !== group) {
       group = r.group;
-      parts.push(el("li", { class: "pl-group", role: "presentation" }, q.trim() ? group : "Commands"));
+      parts.push(el("li", { class: "pl-group", role: "presentation" }, group));
     }
     const li = el("li", { class: `pl-item${i === active ? " active" : ""}${r.disabled ? " disabled" : ""}`, role: "option", id: `pl-${i}`,
       "aria-selected": String(i === active), "aria-disabled": r.disabled ? "true" : null },

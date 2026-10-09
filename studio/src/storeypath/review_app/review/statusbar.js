@@ -62,7 +62,9 @@ function renderSelection() {
 }
 
 function renderCursor(p) {
-  $("sb-cursor").textContent = p && view3d.mode === "2d" ? `${p[0].toFixed(2)}, ${p[1].toFixed(2)} m` : "";
+  const from = state.wallStart;
+  const long = p && from && state.tool ? ` · ${Math.hypot(p[0] - from[0], p[1] - from[1]).toFixed(2)} m long` : "";
+  $("sb-cursor").textContent = p && view3d.mode === "2d" ? `${p[0].toFixed(2)}, ${p[1].toFixed(2)} m${long}` : "";
 }
 
 function renderLock() {

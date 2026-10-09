@@ -8,7 +8,8 @@
   color: var(--canvas-text);
 }
 #svg { width: 100%; height: 100%; display: block; cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; }
-#svg:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+#svg:focus-visible { box-shadow: none; }
+body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #map[data-tool="pan"] .pane, #map.panning .pane, #map.space-held .pane { cursor: grab; }
 #map .pane.dragging, #map.space-held .pane.dragging { cursor: grabbing; }
 

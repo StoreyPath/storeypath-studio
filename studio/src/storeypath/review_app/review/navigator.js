@@ -28,6 +28,7 @@ import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people ty
 
 const TABS = ["rooms", "items", "view"];
 const open = new Set(JSON.parse(saved("storeypath.review.groups") || "[]")); // the groups opened
+const shownFor = new Set(); // groups opened to show the room chosen (not remembered)
 const LIMIT = 500; // rows in a group, at most (a filter finds the rest)
 
 // ---- tabs ----------------------------------------------------------------------------
@@ -108,14 +109,16 @@ function renderRoomList() {
   const groups = roomGroups(shown);
   const filtering = Boolean(state.filter);
   const parts = groups.map((g) => {
-    const expanded = filtering || open.has(g.key);
+    const expanded = filtering || open.has(g.key) || shownFor.has(g.key);
     const head = el("button", { type: "button", class: "group-head", "aria-expanded": String(expanded) },
       icon("chevron-right", { size: 14, cls: "chev" }), g.swatch, el("span", { class: "group-name" }, g.name),
       g.rooms.some((s) => s.reasons.length) ? el("span", { class: "group-flag", "data-tip": "Some need a look" }) : null,
       el("span", { class: "count" }, String(g.rooms.length)));
     head.addEventListener("click", () => {
-      if (open.has(g.key)) open.delete(g.key);
-      else open.add(g.key);
+      if (open.has(g.key) || shownFor.has(g.key)) {
+        open.delete(g.key);
+        shownFor.delete(g.key);
+      } else open.add(g.key);
       save("storeypath.review.groups", JSON.stringify([...open]));
       renderRoomList();
     });
@@ -135,9 +138,19 @@ function renderRoomList() {
 }
 
 function markRooms() {
+  // the room chosen (one): its group opened for the while, when it is closed
+  const one = state.selected && state.byId.get(state.selected);
+  if (one && !document.querySelector(`#room-groups .room-row[data-id="${CSS.escape(one.id)}"]`)) {
+    const key = finish.colouredBy() === "finish" ? `finish:${finish.shown(one).floor}` : `type:${one.type}`;
+    if (!shownFor.has(key) && !open.has(key)) {
+      shownFor.clear();
+      shownFor.add(key);
+      renderRoomList();
+    }
+  }
   for (const b of document.querySelectorAll("#room-groups .room-row")) b.setAttribute("aria-pressed", String(isChosen(b.dataset.id)));
   const first = document.querySelector("#room-groups .room-row[aria-pressed='true']");
-  first?.scrollIntoView({ block: "nearest" });
+  if (first && !first.contains(document.activeElement)) first.scrollIntoView({ block: "nearest" });
 }
 
 function renderRooms() {
@@ -198,7 +211,7 @@ function renderItems() {
   const pane = $("pane-items");
   if (!pane.dataset.made) {
     pane.dataset.made = "1";
-    const input = el("input", { id: "item-find", type: "search", placeholder: "Find an item by its tag", autocomplete: "off",
+    const input = el("input", { id: "item-find", type: "search", placeholder: "Find by tag", autocomplete: "off",
       "aria-label": "Find an item by its tag (7K2Q-XM9F-4DP: either case, with or without its hyphens), on any floor" });
     const go = () => {
       const typed = input.value;

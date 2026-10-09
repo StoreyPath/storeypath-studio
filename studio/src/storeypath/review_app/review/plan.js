@@ -355,7 +355,9 @@ export function placeLabels() {
       const sy = -s.label_point[1] * k + ty;
       const max = Math.max(3, Math.floor(w / 7.5));
       const fitText = (text) => (text.length > max ? text.slice(0, max - 1) + "…" : text);
-      const lines = [label.dataset.name, label.dataset.number].filter(Boolean);
+      let lines = [label.dataset.name, label.dataset.number].filter(Boolean);
+      // a name that does not fit, beside a number that does: the number (rooms go by it)
+      if (lines.length === 2 && lines[0].length > max && lines[1].length <= max) lines = [lines[1]];
       const both = lines.length === 2 && h >= 34;
       const shown = both ? lines : lines.slice(0, 1);
       label.replaceChildren(...shown.map((text, i) => {
