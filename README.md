@@ -560,9 +560,20 @@ in an hour or two):
 
 ```sh
 git clone https://github.com/StoreyPath/storeypath-gpu-helper.git && cd storeypath-gpu-helper
+./fetch-vision.sh fp8                                     # once: the model for vLLM, checksum-verified
+docker build --platform linux/amd64 -f Dockerfile.vllm -t storeypath/gpu-helper:vllm .
+# or, for an NVIDIA driver older than vLLM needs: llama.cpp
 ./fetch-vision.sh                                         # once: 19 GB, checksum-verified
 docker build --platform linux/amd64 -t storeypath/gpu-helper .
 ```
+
+Two builds of the same model, Gemma 4 31B: **vLLM** (`storeypath/gpu-helper:vllm`), about
+four times as many rooms a minute (some 90 on one GPU against 22, with the same answers),
+for NVIDIA driver 575 or newer (535 or newer on a data-center GPU such as an A100 or H100),
+taking 44 GB of the card by default; and **llama.cpp** (`storeypath/gpu-helper`), for any
+driver from 525. Studio sends the vLLM build 16 questions at once
+(`STOREYPATH_VISION_PARALLEL=16`, or the helper's *places at once* on the GPU helpers
+page); it learns the model's name from the helper. The helper's README has the details.
 
 llama.cpp is compiled for every GPU generation from A100 on by default;
 `--build-arg CUDA_ARCHITECTURES="80-real;90-real"` builds for A100 and H100 alone,
@@ -628,8 +639,8 @@ serve the same one) and a *Test* that sends it a sample room.
 | Its log | `docker logs storeypath-gpu` |
 
 Studio works the same without a helper, and a project read with one reads the same
-again without (the answers are kept with it). The helper's engine is llama.cpp; vLLM
-may replace it, as measurements decide ([its Dockerfile](https://github.com/StoreyPath/storeypath-gpu-helper/blob/main/Dockerfile)).
+again without (the answers are kept with it). The helper runs on vLLM where the driver
+allows, else on llama.cpp ([its README](https://github.com/StoreyPath/storeypath-gpu-helper)).
 
 ### Symbol spotting: research use only
 
