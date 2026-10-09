@@ -522,7 +522,7 @@ The node names it; its `extras` say what it is: `material`, `view`, and `type` a
 | `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces, and their tops and undersides, full height |
 | `parapet`, `parapetTop` | `wall`, `wallTop` | `full` | the parapets, likewise |
 | `skirting` | `skirting` | | a skirting board along every face of the walls and parapets, and under windows |
-| `heads` | `wallPlain` | `full` | the wall over doors, doorways and windows |
+| `heads`, `headTop` | `wallPlain`, `wallTop` | `full` | the wall over doors, doorways and windows, and its top |
 | `sills` | `wallPlain` | | the wall under windows |
 | `sillBoard` | `sillBoard` | | a board on each window's sill |
 | `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
@@ -548,7 +548,7 @@ The walls and parapets cut low are not in the file: they are `wall`, `wallTop`,
 1 − `cutHeight`), shown with `view` `cut`, the tops with the material `wallCut`.
 Texture coordinates (`TEXCOORD_0`) are only on what has a texture: the floor
 finishes (metres east and north) and the walls' and parapets' faces (v = 1 − the
-height above the floor, in metres). What is built of boxes (`heads`, `sills`,
+height above the floor, in metres). What is built of boxes (`heads`, `headTop`, `sills`,
 `glass`, `frame`, `door`, `doorFrame`, `trim`, `handle`, `skirting`, `sillBoard`,
 `lights`) shares its corners between its faces and has no normals: flat-shaded, as
 glTF draws a mesh without them.

@@ -71,6 +71,7 @@ export const PIECES = {
   parapetLow: { material: "wall", view: "cut" },
   parapetCut: { material: "wallCut", view: "cut" },
   heads: { material: "wallPlain", view: "full" }, // over doors and windows
+  headTop: { material: "wallTop", view: "full" }, // their tops, as the walls' tops
   sills: { material: "wallPlain" },
   glass: { material: "glass", view: "full" },
   frame: { material: "frame", view: "full" }, // round the glass
@@ -478,15 +479,23 @@ export function buildPieces(plan, options = {}) {
       obstacles.push([ring[i][0], -ring[i][1], ring[i + 1][0], -ring[i + 1][1]]);
     }
   }
-  for (const { way, len, ux, un, depth: thickness, at, open: range } of openings) {
+  for (const { way, len, ux, un, depth: thickness, at, corners, open: range } of openings) {
     const { type } = way;
-    // (the wall over and under it a little into the wall each side: no slit at its jambs)
+    // (the wall over and under it a little into the wall each side: no slit at its jambs;
+    // the top of the wall over it as the walls' tops)
     const a = at(0), b = at(len), a2 = at(-0.02), b2 = at(len + 0.02);
-    // the lines along the wall go on over it, and under a window, along both its faces
+    const over = (from) => {
+      box("heads", a2, b2, from, wallHeight, thickness, FACE.all & ~FACE.top);
+      box("headTop", a2, b2, from, wallHeight, thickness, FACE.top);
+    };
+    // the lines along the wall go on over it, and under a window: along each face, from
+    // a jamb's corner at one end to the other jamb's in line with it
     const lines = range && set("wall").edges;
     if (lines) {
-      for (const side of [-1, 1]) {
-        const [p, q] = [at(0, (side * thickness) / 2), at(len, (side * thickness) / 2)];
+      const along = (c) => (c[0] - way.a[0]) * ux + (c[1] - way.a[1]) * un, across = (c) => -(c[0] - way.a[0]) * un + (c[1] - way.a[1]) * ux;
+      for (const p of corners.filter((c) => along(c) < len / 2)) {
+        const q = corners.find((c) => along(c) > len / 2 && Math.abs(across(c) - across(p)) < 0.01);
+        if (!q) continue;
         if (range.hi < wallHeight - 0.03) lines.push(p[0], e + wallHeight, -p[1], q[0], e + wallHeight, -q[1]);
         if (range.lo > 0.01) lines.push(p[0], e, -p[1], q[0], e, -q[1]);
       }
@@ -505,7 +514,7 @@ export function buildPieces(plan, options = {}) {
           }
         }
       }
-      if (head < wallHeight - 0.01) box("heads", a2, b2, head, wallHeight, thickness);
+      if (head < wallHeight - 0.01) over(head);
       box("glass", a, b, sill, head, GLASS);
       // the frame: along the sill and the head, at each side, and a mullion about
       // every metre between
@@ -520,7 +529,7 @@ export function buildPieces(plan, options = {}) {
       obstacles.push([way.a[0], -way.a[1], way.b[0], -way.b[1]]); // you cannot walk through a window
     } else if (type === "door") {
       const top = range.hi;
-      if (top < wallHeight - 0.01) box("heads", a2, b2, top, wallHeight, thickness);
+      if (top < wallHeight - 0.01) over(top);
       // the frame: a jamb each side and a head, standing a little proud of the wall
       const c = Math.min(CASING, len / 4), depth = thickness + 0.03;
       box("doorFrame", a, at(c), 0, top, depth);
@@ -560,7 +569,7 @@ export function buildPieces(plan, options = {}) {
         if (solid) leverHandles(from, [dx, dn], w, box);
       }
     } else if (range) { // a doorway: a way through with no door
-      box("heads", a2, b2, range.hi, wallHeight, thickness);
+      over(range.hi);
     }
   }
 

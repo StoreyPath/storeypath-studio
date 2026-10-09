@@ -80,7 +80,7 @@ export class Materials {
     const flat = { flatShading: true };
     this.wall = this.#finish("plaster");
     this.wallPlain = new THREE.MeshStandardMaterial({ color: 0xeae7e1, roughness: 0.9, ...flat }); // no texture coordinates
-    this.wallTop = new THREE.MeshStandardMaterial({ color: 0xd9d5cd, roughness: 0.9 });
+    this.wallTop = new THREE.MeshStandardMaterial({ color: 0xd9d5cd, roughness: 0.9, ...flat }); // (and over openings: boxes)
     this.wallCut = new THREE.MeshStandardMaterial({ color: 0x3a3a3f, roughness: 0.8 });
     this.slab = new THREE.MeshStandardMaterial({ color: 0xcfcbc3, roughness: 0.9 });
     this.ceiling = new THREE.MeshStandardMaterial({
