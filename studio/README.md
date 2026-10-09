@@ -357,7 +357,11 @@ plan's view stay as they are from one to another. The 3D world is Studio's packa
 the floor's building as it is now (not recorded as an export), built the first time
 and kept: switching is instant, and nothing is drawn while the plan is shown. Walking
 starts in the room or before the item chosen, else where the 3D view (or the plan) was
-looking, and shows the room you are in.
+looking, and shows the room you are in. In 3D and walking the toolbar's *Look* draws the
+floor *Real* (finished by what each room is, soft shadows) or as a white *Model* with
+its edges drawn, and *Quality* is *Auto* (Low on integrated, virtual or software
+graphics, or when High draws slowly), *High* or *Low*: kept in the browser, and the
+same on *Navigate*.
 
 Editing in 3D and walking, for whoever may edit the floor (the same requests as on the
 plan: the floor's lock, undo and history as for any change):

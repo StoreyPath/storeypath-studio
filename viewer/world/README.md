@@ -2,8 +2,8 @@
 
 `@storeypath/viewer-world` is the viewer's `StoreyPathWorld` (a building from a
 StoreyPath package as a 3D world: the dollhouse view, or a walk through it; see
-[../README.md](../README.md)) made into one ES module, with three.js and JSZip
-inside it, and declarations for TypeScript. An application installs it and needs
+[../README.md](../README.md)) made into one ES module, with three.js, JSZip and
+N8AO (its ambient occlusion) inside it, and declarations for TypeScript. An application installs it and needs
 nothing else: no import map, no CDN, nothing downloaded at run time. That is how
 wayfinder shows its floors in 3D.
 
@@ -11,8 +11,8 @@ wayfinder shows its floors in 3D.
 import { webglSupport } from "@storeypath/viewer-world/support";   // small: no three.js
 
 if (webglSupport().ok) {
-  const { StoreyPathWorld } = await import("@storeypath/viewer-world"); // ~820 kB, loaded only now
-  const world = new StoreyPathWorld(element);
+  const { StoreyPathWorld } = await import("@storeypath/viewer-world"); // ~1 MB, loaded only now
+  const world = new StoreyPathWorld(element); // the real look, quality auto: Low on weak graphics
   await world.open(await (await fetch("/files/headquarters.storeypath")).arrayBuffer());
   world.select("K7Q2XM-RUH-HQ-F02-0142");
 } else {

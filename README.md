@@ -381,11 +381,15 @@ gives.
 ## Walk through it
 
 Every package opens as a 3D world, straight from Studio, with nothing downloaded:
-the walls at the thickness they were drawn, parapets around roofs and terraces,
-doorways you walk through, windows with
-sills and glass, floors finished by what each room is — wood in offices and
-bedrooms, tile in bathrooms and kitchens, stone in lobbies and stairs — under a
-sun that casts real shadows.
+the walls at the thickness they were drawn, with skirting, parapets around roofs
+and terraces, doorways you walk through, doors with architraves and handles,
+windows with sills, boards and glass, furniture with its chairs, floors finished by
+what each room is — carpet tiles in offices, terrazzo in lobbies, polished concrete
+in corridors, porcelain in restrooms and kitchens, oak in homes — under a sun that
+casts soft shadows, with ambient occlusion where surfaces meet. Two looks, one
+click apart: **Real** (the default) or **Model**, white like an architect's model
+with its edges drawn; and **Quality** Auto (Low on integrated, virtual or software
+graphics), High or Low.
 
 | Dollhouse: orbit it, one floor or all | Walk: first person, like a game |
 |---|---|

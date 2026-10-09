@@ -4,8 +4,10 @@ Read-only web viewer engines for StoreyPath packages, to embed in any web app. I
 does no editing of its own; packages are made with [StoreyPath Studio](../studio),
 whose Review edits on top of the 3D world through its [editing API](#the-3d-world).
 
-- **`StoreyPathWorld`**, the 3D world: walls, doorways, windows and floor finishes
-  built from the package, with sunlight and shadows. Orbit it as a dollhouse (one
+- **`StoreyPathWorld`**, the 3D world: walls, doorways, windows, skirting,
+  architraves, furniture and floor finishes built from the package, with sunlight
+  and soft shadows, in one of two looks (real, or an architectural model) at the
+  quality the machine can draw. Orbit it as a dollhouse (one
   floor or all, cut away, x-ray) or walk through it in the first person. Built on
   [three.js](https://threejs.org).
 - **`StoreyPathViewer`**, the map view: floors on a map, search, and spaces
@@ -56,6 +58,8 @@ install `three` and `jszip` alongside it.
 | `labels` | `true` | room names in the dollhouse view |
 | `showHidden` | `false` | spaces marked hidden or ignored in Studio |
 | `items` | `null` | furniture and equipment: `true`, `false`, or `null`: shown when one floor is |
+| `style` | `"real"` | the look: `"real"` or `"model"` ([below](#looks-and-quality)) |
+| `quality` | `"auto"` | `"auto"`, `"high"` or `"low"` ([below](#looks-and-quality)) |
 | `explode` | `0` | m between floors in the dollhouse view |
 | `slab`, `doorHead`, `windowSill`, `windowHead`, `cutHeight` | `0.22`, `2.1`, `0.9`, `2.2`, `1.25` | m |
 
@@ -75,6 +79,8 @@ install `three` and `jszip` alongside it.
 | `flyRoute({ seconds })` | take the camera along the way shown, the floors it is not on faded meanwhile (a promise); `clearRoute()` takes it away; `route` is the way shown |
 | `reload(source, { floors })` | read the package again and build only `floors` again (default: all of the building shown), where they stand: the view, mode, floor shown, selection, walker and a way shown are kept |
 | `pause()`, `resume()` | stop drawing while the page hides the world (kept as it is), and draw again at once |
+| `setStyle("real" \| "model")`, `setQuality("auto" \| "high" \| "low")` | the look and the quality ([below](#looks-and-quality)): nothing is built again |
+| `ready()` | a promise, resolved once the look is drawn as it will stay: its finishes painted, its passes loaded |
 | `destroy()` | |
 
 **Editing on top of it** (what Studio's Review does in 3D and walking; the world
@@ -94,15 +100,19 @@ Properties: `target` (where the dollhouse view looks, `{ x, z }`), `paused`, `dr
 Properties: `package`, `building`, `floor`, `mode`, `selected`, `room` (the space
 the walker is in), `walkFloor`, `atStairs`, `walking` (mouse taken), `player`
 (`{ x, z, dx, dz, floor }`, for a minimap), `prebuilt` (the floors shown from the
-package's pre-built 3D), `items` (whether items are drawn now).
+package's pre-built 3D), `items` (whether items are drawn now), `look` (`{ style,
+quality, drawn, why }`: below).
 
 Items (format 0.6: desks, photocopiers, access points, sofas, TVs, …) are drawn
-in their type's colour as simple shapes of their kind, on their floor, where they
+in their type's colour as shapes of their kind (a desk with its chair on five
+spokes, and what goes with its grade: visitors' chairs, a return, a credenza), on
+their floor, where they
 stand in their building (format 0.7: `local`, put on the map by the building's
 placement, as its walls are; older packages: their point and heading on the map).
-They cost nothing until shown: their geometry is made (or taken from the
-pre-built file) the first time a floor shows them, detailed when one floor is
-shown, a box each when more are, in two meshes a floor (below the cut, and above
+They cost nothing until shown: their geometry is made the first time a floor
+shows them (a copy of one template a kind and size: a thousand desks in
+milliseconds), detailed when one floor is shown, a box each when more are (taken
+from the pre-built file when there is one), in two meshes a floor (below the cut, and above
 it: on a wall, under the ceiling). A click on one chooses it, as on a room
 (`select` with the item's feature); the walker bumps into those on the floor.
 
@@ -121,7 +131,42 @@ Events: `load`, `buildingchange`, `floorchange`, `modechange`, `select`
 the mouse taken at the crosshair: what `pointAt` says is there, with `button`,
 `altKey`, `shiftKey`; cancelable — unless a listener calls `preventDefault()`, what
 was clicked is selected), `itemdragstart`, `itemdrag`, `itemdragend` (with
-`cancelled`) and `reload` (`{ floors }`).
+`cancelled`), `reload` (`{ floors }`) and `lookchange` (`look`, when the look or
+quality changed, or auto chose Low).
+
+### Looks and quality
+
+The world is drawn in a **look** and at a **quality**; switching either swaps its
+materials, lights and passes on what is built, and builds nothing again.
+
+| Look (`style`) | |
+|---|---|
+| `"real"` (default) | real but clean: floors finished by what each room is — carpet tiles in offices and meeting rooms, terrazzo in lobbies, polished concrete with its joints in corridors, porcelain tiles in restrooms and kitchens, concrete in plant rooms and stores, oak in homes — painted here (High: with normal and roughness maps, and a far larger tint so nothing visibly repeats) off the page's thread; plaster walls, painted joinery, metal handles; furniture rough or metallic part by part |
+| `"model"` | an architectural model: white clay, floors lightly tinted by room type, dark lines along the edges of walls, frames, doors and furniture |
+
+| Quality (`quality`) | |
+|---|---|
+| `"high"` | ambient occlusion where surfaces meet ([N8AO](https://github.com/N8python/n8ao), at half resolution), multisampled edges, a 4096 px shadow map, finer finishes; the screen's pixels up to 1.5 a CSS pixel (3.6 million at most) |
+| `"low"` | none of these: a 2048 px shadow map, plain finishes, a pixel a CSS pixel; for integrated graphics, virtual desktops and software renderers |
+| `"auto"` (default) | Low on a software, virtual or integrated renderer (as the browser names it), or when High's frames take over 40 ms once the building has been shown; else High. `look.drawn` says which, `look.why` why Low (`"software"`, `"virtual"`, `"integrated"`, `"slow"`) |
+
+Either way: soft shadows from the sun, fitted round what is shown (on a big floor,
+round what is looked at, and walking round the walker) and drawn again only when
+what casts them or their frame changes; walking, the ceiling keeps the sun out but
+at the windows, and the ceiling panels nearest the walker light its room. Skirting,
+architraves, handles, window boards, ceiling panels and the furniture are geometry
+(build.js), the same in every look and quality.
+
+```js
+const world = new StoreyPathWorld("#world"); // real, auto: sensible with no controls at all
+world.addEventListener("lookchange", (e) => console.log(e.detail)); // { style, quality, drawn, why }
+world.setStyle("model");
+world.setQuality("low");
+```
+
+On a Mac (M-series, headless Chrome, 1600 × 1000): a floor of a thousand offices
+and desks draws in about 3.5 ms a frame at High and 2 ms at Low (campus HQ: 2–3 ms
+and under 2 ms), and is first built as quickly as before the looks.
 
 Rooms' labels show where there is room for them on the screen (a room at least
 56 px across), and are placed again only when the view moves: a floor of a thousand
