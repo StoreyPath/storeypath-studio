@@ -176,6 +176,12 @@ func (p *Package) Validate() []Problem {
 		}
 	}
 	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
+	// an item's ID: an asset's tag (0.8), else the project's code, -I and six digits
+	assetIDs := minor(m.FormatVersion) >= assetIDsFrom
+	itemForm := IsItemID
+	if !assetIDs {
+		itemForm = isLegacyItemID
+	}
 
 	counts := map[string]int{"location": len(p.Locations), "buildings": len(p.Buildings), "floors": len(p.Floors),
 		"spaces": len(p.Spaces), "zones": len(p.Zones), "openings": len(p.Openings)}
@@ -205,10 +211,14 @@ func (p *Package) Validate() []Problem {
 		if len(kinds) > 1 {
 			add(ProblemDuplicateID, fileOf(kinds[0]), id, "duplicate ID %s", id)
 		}
-		if kinds[0] == "item" { // the project's and its own number: where it is, is data
-			if !IsItemID(id) {
+		if kinds[0] == "item" { // an asset's tag (before 0.8, the project's and its number): where it is, is data
+			switch {
+			case !itemForm(id) && assetIDs:
+				add(ProblemBadID, itemsFile, id, "%s: not an item ID (four, four and three symbols of Crockford's "+
+					"base32, the last its check: 7K2Q-XM9F-4DP)", id)
+			case !itemForm(id):
 				add(ProblemBadID, itemsFile, id, "%s: not an item ID (the project's code, -I and six digits)", id)
-			} else if !strings.HasPrefix(id, project+"-") {
+			case !assetIDs && !strings.HasPrefix(id, project+"-"):
 				add(ProblemWrongProject, itemsFile, id, "%s: project segment is not the package's project %s", id, project)
 			}
 			continue
@@ -482,7 +492,7 @@ func (p *Package) Validate() []Problem {
 			retired[id] = true
 		}
 		for _, mv := range c.MovedAway {
-			if _, here := p.kinds[mv.ID]; here || !IsItemID(mv.ID) {
+			if _, here := p.kinds[mv.ID]; here || !itemForm(mv.ID) {
 				add(ProblemChanges, changesFile, mv.ID, "%s: %s is listed as moved away but is not an item gone from here", changesFile, mv.ID)
 			}
 			if _, here := p.kinds[mv.Building]; here || !strings.HasPrefix(mv.Building, project+"-") {
@@ -497,9 +507,6 @@ func (p *Package) Validate() []Problem {
 		}
 		if a, b := c.PreviousSequence, m.Export.PreviousSequence; (a == nil) != (b == nil) || (a != nil && *a != *b) {
 			add(ProblemChanges, changesFile, "", "%s: previous_sequence does not match the manifest's", changesFile)
-		}
-		if n := m.Export.NextItem; n != nil && *n < 1 {
-			add(ProblemValue, FileManifest, "", "export.next_item %d is not a number an item can have", *n)
 		}
 		if c.Sequence != m.Export.Sequence {
 			add(ProblemChanges, changesFile, "", "%s: sequence does not match the manifest", changesFile)

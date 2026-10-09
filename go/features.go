@@ -153,10 +153,11 @@ type Unit struct {
 }
 
 // Item is a piece of furniture or equipment placed on a floor (items.geojson,
-// format 0.6): a desk, a photocopier, an access point, a sofa, a TV. Its ID is the
-// project's code and its own number (K7Q2XM-I000142), not its place: carried to
-// another room or floor it keeps it, and where it stands is in Floor, Space and
-// Zone. Its geometry is its footprint.
+// format 0.6): a desk, a photocopier, an access point, a sofa, a TV. Its ID is an
+// asset's tag (format 0.8: 7K2Q-XM9F-4DP, IsItemID; before, the project's code and
+// its own number, K7Q2XM-I000142), not its place nor its project's: carried to
+// another room, floor or building it keeps it, and where it stands is in Floor,
+// Space and Zone. Its geometry is its footprint.
 type Item struct {
 	ID       string
 	Geometry *Geometry

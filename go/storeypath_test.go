@@ -146,8 +146,9 @@ func TestItemsAndTheirCatalogue(t *testing.T) {
 	var zoned *Item
 	for _, it := range p.ItemsOn(hq[0].ID) {
 		types = append(types, it.Type)
-		if it.Floor != hq[0].ID || !IsItemID(it.ID) || p.Item(it.ID) != it {
-			t.Errorf("%s: floor %s, an item ID %v, found by ID %v", it.ID, it.Floor, IsItemID(it.ID), p.Item(it.ID) == it)
+		// (format 0.6: the project's code and its number; an asset's tag from 0.8)
+		if it.Floor != hq[0].ID || !isLegacyItemID(it.ID) || p.Item(it.ID) != it {
+			t.Errorf("%s: floor %s, an item ID %v, found by ID %v", it.ID, it.Floor, isLegacyItemID(it.ID), p.Item(it.ID) == it)
 		}
 		if f, ok := p.Get(it.ID); !ok || f.(*Item) != it {
 			t.Errorf("Get does not find item %s", it.ID)
@@ -254,12 +255,124 @@ func TestTheCatalogueFindsATypeByItsCode(t *testing.T) {
 	}
 }
 
-func TestItemIDs(t *testing.T) {
-	for id, want := range map[string]bool{"K7Q2XM-I000142": true, "K7Q2XM-I00014": false, "K7Q2XM-RUH": false,
-		"K7Q2XM-I000142-X": false, "k7q2xm-I000142": false, "I000142": false} {
-		if IsItemID(id) != want {
-			t.Errorf("IsItemID(%q) = %v", id, !want)
+// assetIDs is spec/conformance/asset-ids.json: items' IDs every reader checks and
+// reads the same way.
+type assetIDs struct {
+	Alphabet string `json:"alphabet"`
+	Check    []struct {
+		Symbols string `json:"symbols"`
+		Check   string `json:"check"`
+	} `json:"check"`
+	Valid         []string `json:"valid"`
+	WrongSymbol   []string `json:"wrong_symbol"`
+	Swapped       []string `json:"swapped"`
+	SwappedUnseen []string `json:"swapped_unseen"`
+	NotIDs        []string `json:"not_ids"`
+	Typed         []struct {
+		Text string  `json:"text"`
+		ID   *string `json:"id"`
+	} `json:"typed"`
+}
+
+func TestItemIDsAreReadAsEveryReaderReadsThem(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(corpus, "asset-ids.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v assetIDs
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Alphabet != ItemIDAlphabet || len(v.Valid) == 0 || len(v.WrongSymbol) == 0 || len(v.Typed) == 0 {
+		t.Fatalf("alphabet %q, %d valid, %d wrong, %d typed", v.Alphabet, len(v.Valid), len(v.WrongSymbol), len(v.Typed))
+	}
+	if c, ok := ItemCheckSymbol("7K2QXM9F4D"); !ok || c != 'P' { // FORMAT.md's worked example
+		t.Errorf("the check symbol of 7K2QXM9F4D: %c %v", c, ok)
+	}
+	for _, c := range v.Check {
+		if got, ok := ItemCheckSymbol(c.Symbols); !ok || string(got) != c.Check {
+			t.Errorf("ItemCheckSymbol(%q) = %c %v, want %s", c.Symbols, got, ok, c.Check)
 		}
+	}
+	for _, bad := range []string{"7K2QXM9F4", "7K2QXM9F4DP", "7k2qxm9f4d", "7K2QXM9F4O"} {
+		if _, ok := ItemCheckSymbol(bad); ok {
+			t.Errorf("ItemCheckSymbol(%q): a check symbol", bad)
+		}
+	}
+	for _, id := range append(append([]string{}, v.Valid...), v.SwappedUnseen...) {
+		if !IsItemID(id) {
+			t.Errorf("IsItemID(%q) = false", id)
+		}
+	}
+	for _, id := range append(append(append([]string{}, v.WrongSymbol...), v.Swapped...), v.NotIDs...) {
+		if IsItemID(id) {
+			t.Errorf("IsItemID(%q) = true", id)
+		}
+	}
+	for _, c := range v.Typed {
+		got, ok := NormalizeItemID(c.Text)
+		if want := c.ID; ok != (want != nil) || (ok && got != *want) {
+			t.Errorf("NormalizeItemID(%q) = %q %v, want %v", c.Text, got, ok, want)
+		}
+	}
+}
+
+func TestAnItemIDIsNotAPlaceID(t *testing.T) {
+	if _, err := ParseID("7K2Q-XM9F-4DP"); err == nil || !strings.Contains(err.Error(), "an item's ID") {
+		t.Errorf("ParseID of an item's ID: %v", err)
+	}
+	if id, err := ParseID("7K2Q-XM9F-4DK"); err != nil || id.Level() != LevelBuilding { // its check wrong
+		t.Errorf("ParseID(7K2Q-XM9F-4DK): %v %v", id, err)
+	}
+	for id, want := range map[string]bool{"K7Q2XM-I000142": true, "K7Q2XM-I00014": false, "K7Q2XM-RUH": false,
+		"K7Q2XM-I000142-X": false, "k7q2xm-I000142": false, "I000142": false, "7K2Q-XM9F-4DP": false} {
+		if isLegacyItemID(id) != want {
+			t.Errorf("isLegacyItemID(%q) = %v", id, !want)
+		}
+	}
+	if IsItemID("K7Q2XM-I000142") {
+		t.Error("an item's ID of format 0.7 taken for one of 0.8")
+	}
+}
+
+func TestAnItemIDOfFormat08IsAnAssetsTag(t *testing.T) {
+	// campus-hq (format 0.8): an item's ID with a symbol wrong, two swapped, or the
+	// project's number of before is not an item's ID; a tag of its own, nothing of the
+	// project in it, is.
+	first := func() string {
+		var id string
+		zipFrom(t, "campus-hq.storeypath", editJSON(FileItems, func(doc map[string]any) {
+			id = features(doc)[0].(map[string]any)["id"].(string)
+		}), zip.Deflate)
+		return id
+	}()
+	whole := strings.ReplaceAll(first, "-", "")
+	at := 0
+	for whole[at] == whole[at+1] || (whole[at] == '0' && whole[at+1] == 'Z') || (whole[at] == 'Z' && whole[at+1] == '0') {
+		at++
+	}
+	swapped := whole[:at] + string(whole[at+1]) + string(whole[at]) + whole[at+2:]
+	wrong := first[:12] + "0"
+	if first[12] == '0' {
+		wrong = first[:12] + "1"
+	}
+	replacing := func(with string) func(string, []byte) []byte {
+		return func(name string, data []byte) []byte {
+			if strings.HasPrefix(name, "world/") {
+				return data
+			}
+			return bytes.ReplaceAll(data, []byte(first), []byte(with))
+		}
+	}
+	for _, other := range []string{wrong, swapped[:4] + "-" + swapped[4:8] + "-" + swapped[8:], "ZZZZZZ-I000001",
+		strings.ToLower(first)} {
+		problems := rewriteFrom(t, "campus-hq.storeypath", replacing(other)).Validate()
+		if len(problems) != 1 || problems[0].Code != ProblemBadID || problems[0].ID != other {
+			t.Errorf("%s for %s: %v", other, first, problems)
+		}
+	}
+	if problems := rewriteFrom(t, "campus-hq.storeypath", replacing("ZZZZ-ZZZZ-ZZA")).Validate(); len(problems) != 0 {
+		t.Errorf("a tag of its own: %v", problems)
 	}
 }
 
@@ -692,8 +805,8 @@ func TestIDs(t *testing.T) {
 	if _, err := ParseID(longest); err != nil || len(longest) != maxIDLength {
 		t.Errorf("the longest ID (%d characters): %v", len(longest), err)
 	}
-	if id := strings.Repeat("A", 16) + "-I000001"; !IsItemID(id) || len(id) != maxItemIDLength {
-		t.Errorf("the longest item ID %s", id)
+	if id := strings.Repeat("A", 16) + "-I000001"; !isLegacyItemID(id) || len(id) != maxLegacyItemIDLength {
+		t.Errorf("the longest item ID of format 0.7 %s", id)
 	}
 }
 
