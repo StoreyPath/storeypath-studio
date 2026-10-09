@@ -11,6 +11,7 @@
 // may find the way in it; the server checks.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { lookOptions, setupLook } from "./look.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search); // (none in a test)
@@ -41,6 +42,7 @@ const state = {
   fitWay: false, // the plan fitted to the way on it (else to the floor)
   world: null, // the 3D world, made when first shown
   worldShows: null, // the building the 3D world has open
+  look: null, // its look's and quality's controls
   asking: 0, // the latest way asked for: an older answer is dropped
 };
 
@@ -246,6 +248,8 @@ async function start() {
   for (const b of $("view-mode").querySelectorAll("button")) b.addEventListener("click", () => setView(b.dataset.view));
   $("fit").addEventListener("click", () => fitPlan());
   $("fly").addEventListener("click", () => fly());
+  // the 3D view's look and quality, remembered in this browser (look.js)
+  state.look = setupLook({ styles: [...$("look").querySelectorAll("button")], quality: $("quality") }, () => state.world);
   if (!CODE) {
     message("No project: open this page from a project's page (Navigate).");
     return;
@@ -486,7 +490,8 @@ async function drawWorld() {
   try {
     if (!state.world) {
       const { StoreyPathWorld } = await import(WORLD);
-      state.world = new StoreyPathWorld($("world3d"), { labels: true });
+      state.world = new StoreyPathWorld($("world3d"), { labels: true, ...lookOptions() });
+      state.look?.attach(state.world);
     }
     if (state.worldShows !== state.building) {
       note.textContent = "Building the 3D view…";

@@ -10,6 +10,7 @@ import { accountMenu, sentAway, whoami } from "./account.js";
 import { TYPE_COLORS, typeLabel } from "./theme.js";
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
+import { lookOptions, setupLook } from "./look.js";
 import { PAGE, followJob as followOnStream, heardLocked, lockedByOther, onFloor, setupTogether } from "./together.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -713,6 +714,8 @@ function setupMap() {
   for (const b of document.querySelectorAll("#view-mode button")) {
     b.addEventListener("click", () => setView(b.dataset.view));
   }
+  // the 3D view's look and quality, remembered in this browser (look.js)
+  view3d.look = setupLook({ styles: [...document.querySelectorAll("#look button")], quality: $("quality") }, () => view3d.world);
   setup3dPointer();
   $("show-hidden").addEventListener("change", (e) => {
     view3d.world?.setShowHidden(e.target.checked);
@@ -2005,9 +2008,11 @@ function setupAssets() {
 // mode: "2d", "3d" or "walk" (shown: not 2d); busy: the build under way (a promise); again:
 // asked for while it was, so done once more after it; stale: the building to be built again
 // whole; dirty: floors to read again; from: the view before (where walking starts); plan:
-// the middle of the plan's view then; pointer: the last pointer over the 3D view
+// the middle of the plan's view then; pointer: the last pointer over the 3D view; look:
+// its look's and quality's controls
 const view3d = { world: null, building: null, stale: true, shown: false, mode: "2d", busy: null, again: false,
-  picking: false, dirty: new Set(), from: "2d", plan: null, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0 };
+  picking: false, dirty: new Set(), from: "2d", plan: null, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0,
+  look: null };
 const REACH_3D = 0.3; // m: how near a wall or an item the magnet takes an item in 3D (fit.js)
 const WALKING = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ShiftLeft", "ShiftRight"]);
 const buildingOf = (floorId) => floorId.split("-").slice(0, 3).join("-"); // a floor's building: its ID's first parts
@@ -2091,7 +2096,8 @@ async function build3d() {
   try {
     if (!view3d.world) {
       const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
-      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden });
+      view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden, ...lookOptions() });
+      view3d.look.attach(view3d.world);
       setup3d(view3d.world);
     }
     if (view3d.stale || view3d.building !== building) {

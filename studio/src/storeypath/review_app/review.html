@@ -215,6 +215,19 @@
           <option value="off">off</option>
         </select>
       </label>
+      <span class="look only3dwalk" title="How the 3D view is drawn: Real, floors finished by what each room is, plaster walls and soft shadows; Model, white, like an architect's model, its edges drawn">Look
+        <span class="segmented" id="look" role="group" aria-label="Look">
+          <button type="button" data-style="real">Real</button>
+          <button type="button" data-style="model">Model</button>
+        </span>
+      </span>
+      <label class="only3dwalk" title="High: soft shadows where surfaces meet, smooth edges. Low: quickest, for built-in, virtual or software graphics. Auto: Low on those, or when High draws slowly; else High">Quality
+        <select id="quality">
+          <option value="auto">Auto</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
       <label><input type="checkbox" id="show-labels" checked> Labels</label>
       <label title="Show what was deleted (and hidden), to bring it back"><input type="checkbox" id="show-hidden"> Show deleted</label>
       <!-- navigate.html: the way between two places of the floor's building (its address follows the floor shown) -->

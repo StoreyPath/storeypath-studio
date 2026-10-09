@@ -75,6 +75,12 @@ body.navigate #panel { width: 360px; }
 #view-mode button { border: 0; border-radius: 0; padding: 5px 12px; }
 #view-mode button + button { border-left: 1px solid var(--line); }
 #view-mode button.active, #floors button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+/* the 3D view's look (Real or Model) and quality */
+#bar .look { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+#look { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#look button { border: 0; border-radius: 0; padding: 4px 10px; }
+#look button + button { border-left: 1px solid var(--line); }
+#look button.active { background: var(--accent); color: var(--accent-text); }
 #floors { display: flex; gap: 6px; flex-wrap: wrap; }
 #floors button { padding: 4px 10px; font-size: 13px; }
 #floors button.on-route:not(.active) { border-color: var(--route); box-shadow: inset 0 0 0 1px var(--route); }

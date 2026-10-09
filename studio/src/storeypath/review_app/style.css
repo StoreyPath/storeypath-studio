@@ -277,6 +277,12 @@ select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1
 #map.in3d .only2d { display: none !important; }
 #map:not(.in3d) .only3d, #map.walking .only3d { display: none !important; }
 #map:not(.walking) .onlywalk { display: none !important; }
+#map:not(.in3d) .only3dwalk { display: none !important; }
+/* the 3D view's look (Real or Model) and quality */
+#toolbar .look { font-size: 13px; display: flex; gap: 6px; align-items: center; padding: 0 4px; }
+#look { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#toolbar #look button { border: 0; border-radius: 0; padding: 3px 9px; }
+#look button + button { border-left: 1px solid var(--line); }
 #map.placing #world3d { cursor: crosshair; }
 a.subtle { align-self: flex-start; font-size: 12px; color: var(--muted); text-decoration: none; }
 a.subtle:hover { color: var(--accent); text-decoration: underline; }

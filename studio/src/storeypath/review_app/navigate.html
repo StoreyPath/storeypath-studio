@@ -68,6 +68,19 @@
       <nav id="floors" aria-label="Floors"></nav>
       <span class="grow"></span>
       <button id="fit" type="button" class="only-plan" title="Show the whole floor; press again for the way on it alone">Fit</button>
+      <span class="look only-3d" title="How the 3D view is drawn: Real, floors finished by what each room is, plaster walls and soft shadows; Model, white, like an architect's model, its edges drawn">Look
+        <span class="segmented" id="look" role="group" aria-label="Look">
+          <button type="button" data-style="real">Real</button>
+          <button type="button" data-style="model">Model</button>
+        </span>
+      </span>
+      <label class="look only-3d" title="High: soft shadows where surfaces meet, smooth edges. Low: quickest, for built-in, virtual or software graphics. Auto: Low on those, or when High draws slowly; else High">Quality
+        <select id="quality">
+          <option value="auto">Auto</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
       <button id="fly" type="button" class="only-3d" title="Move the 3D view along the way" disabled>Fly along</button>
     </div>
     <div id="panes" class="plan">

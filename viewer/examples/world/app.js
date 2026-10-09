@@ -1,8 +1,10 @@
 // A walk-through page built on StoreyPathWorld: orbit the building as a
 // dollhouse, or walk through it in the first person. Open with ?pkg=<url>.
 // Other parameters: building=<id>, floor=<id>, mode=walk, xray=1, cutaway=1, hidden=1,
-// items=1 or 0 (furniture and equipment; without it, shown when one floor is). The
-// toggles are kept in the address as they change, so a reload shows the same.
+// items=1 or 0 (furniture and equipment; without it, shown when one floor is),
+// style=real or model, quality=auto, high or low (without them, as this browser last
+// had them, here or in Studio). The toggles are kept in the address as they change, so
+// a reload shows the same.
 
 import { StoreyPathWorld } from "../../src/world/world.js";
 import { TYPE_COLORS, typeLabel } from "../../src/theme.js";
@@ -10,16 +12,41 @@ import { TYPE_COLORS, typeLabel } from "../../src/theme.js";
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const flag = (name) => (params.get(name) === "1" ? true : params.get(name) === "0" ? false : null);
-const world = new StoreyPathWorld("#world", { showHidden: params.get("hidden") === "1", items: flag("items") });
+// the look and quality, kept in this browser as Studio keeps them (its look.js)
+const LOOK = { style: "storeypath.world.style", quality: "storeypath.world.quality" };
+const kept = (key) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const keep = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // not kept: nothing else changes
+  }
+};
+const world = new StoreyPathWorld("#world", { showHidden: params.get("hidden") === "1", items: flag("items"),
+  style: params.get("style") ?? kept(LOOK.style) ?? "real", quality: params.get("quality") ?? kept(LOOK.quality) ?? "auto" });
 window.storeypathWorld = world; // for the console
 let showMap = true;
 
-/** A toggle kept in the address (null: taken out of it). */
+/** A toggle kept in the address (true or false: 1 or 0; a word as it is; null: taken out of it). */
 function remember(name, value) {
   const url = new URL(location.href);
   if (value === null) url.searchParams.delete(name);
-  else url.searchParams.set(name, value ? "1" : "0");
+  else url.searchParams.set(name, typeof value === "string" ? value : value ? "1" : "0");
   history.replaceState(null, "", url);
+}
+
+/** The look's buttons and the quality as the world draws them (Auto: the quality it chose). */
+function renderLook() {
+  const { style, quality, drawn } = world.look;
+  for (const b of $("look").children) b.classList.toggle("active", b.dataset.style === style);
+  $("quality").value = quality;
+  $("quality").options[0].textContent = quality === "auto" ? `Auto (${drawn === "low" ? "Low" : "High"})` : "Auto";
 }
 
 /** The Items box says whether items are drawn now: as asked, or as the view has them. */
@@ -84,7 +111,7 @@ world.addEventListener("floorchange", () => {
 world.addEventListener("modechange", ({ detail: { mode } }) => {
   const walking = mode === "walk";
   document.body.classList.toggle("walking", walking);
-  for (const b of document.querySelectorAll(".segmented button")) b.classList.toggle("active", b.dataset.mode === mode);
+  for (const b of $("mode").children) b.classList.toggle("active", b.dataset.mode === mode);
   $("hud").hidden = !walking;
   $("minimap").hidden = !walking || !showMap;
   $("details").hidden = true;
@@ -287,7 +314,21 @@ requestAnimationFrame(drawMinimap);
 
 // ---- input ------------------------------------------------------------------------------
 
-for (const b of document.querySelectorAll(".segmented button")) b.onclick = () => world.setMode(b.dataset.mode);
+for (const b of $("mode").children) b.onclick = () => world.setMode(b.dataset.mode);
+for (const b of $("look").children) {
+  b.onclick = () => {
+    world.setStyle(b.dataset.style);
+    keep(LOOK.style, b.dataset.style);
+    remember("style", b.dataset.style);
+  };
+}
+$("quality").onchange = (e) => {
+  world.setQuality(e.target.value);
+  keep(LOOK.quality, e.target.value);
+  remember("quality", e.target.value);
+};
+world.addEventListener("lookchange", renderLook);
+renderLook();
 $("enter-button").onclick = () => world.startWalking();
 $("enter").onclick = (e) => {
   if (e.target === $("enter")) world.startWalking();
