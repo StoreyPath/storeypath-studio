@@ -11,6 +11,7 @@ import { TYPE_COLORS, typeLabel } from "./theme.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "./fit.js";
 import * as vertical from "./vertical.js"; // vertical.js: lifts and stairs drawn, and linked through the floors
+import * as finish from "./finish.js"; // finish.js: floors and walls finished (pickers, Paint in 3D, colour by finish)
 import { lookOptions, setupLook } from "./look.js";
 import { PAGE, followJob as followOnStream, heardLocked, lockedByOther, onFloor, setupTogether } from "./together.js";
 
@@ -494,7 +495,7 @@ const units = () => (state.floor?.spaces || []).filter((s) => !divided(s));
 function styleSpace(s) {
   const path = state.paths.get(s.id);
   if (!path || divided(s)) return;
-  path.style.fill = color(s.type);
+  path.style.fill = finish.fill(s) ?? color(s.type); // (coloured by floor finish: its finish's tone)
   path.style.display = visible(s) ? "" : "none";
   path.classList.toggle("tucked", tucked(s));
   path.classList.toggle("review", s.reasons.length > 0);
@@ -873,6 +874,8 @@ function renderLists() {
 }
 
 function renderLegend() {
+  const byFinish = finish.legend(units().filter(visible)); // (coloured by floor finish: the finishes in use)
+  if (byFinish) return $("legend").replaceChildren(...byFinish);
   const counts = new Map();
   for (const s of units().filter(visible)) counts.set(s.type, (counts.get(s.type) || 0) + 1);
   const types = state.project.types.filter((t) => counts.has(t));
@@ -972,6 +975,7 @@ function renderEditor() {
   $("ed-area").textContent = `${s.area} m²${s.correction ? " · corrected" : ""}`;
   updateEditorState();
   vertical.editor(s); // vertical.js: the floors a lift or stairs serves
+  finish.editor(s); // finish.js: its floor and walls
 }
 
 // ---- capacity: how many people a space or zone is meant to seat --------------------
@@ -1054,9 +1058,25 @@ async function saveSpace(body, id = state.selected) {
   fillFloorSelect();
   const flagged = "hidden" in body ? (body.hidden ? "hidden" : "shown again")
     : "ignored" in body ? (body.ignored ? "deleted" : "restored")
-    : "capacity" in body ? (body.capacity === null ? "capacity from its desks" : `seats ${body.capacity}`) : null;
+    : "capacity" in body ? (body.capacity === null ? "capacity from its desks" : `seats ${body.capacity}`) : finish.said(body);
   toast(flagged ? `${title(updated)}: ${flagged}` : body.reset ? "Corrections removed" : `Saved ${code(updated.id)}`);
   if (!visible(updated) && state.selected === updated.id) select(null);
+}
+
+/** Rooms changed at once (finish.js: every room of a type finished): shown as saved. */
+function updatedSpaces(spaces) {
+  for (const s of spaces) {
+    const i = state.floor.spaces.findIndex((x) => x.id === s.id);
+    if (i < 0) continue;
+    state.floor.spaces[i] = s;
+    state.byId.set(s.id, s);
+    styleSpace(s);
+    sync3dSpace(s);
+  }
+  placeLabels();
+  renderLists();
+  renderLegend();
+  renderEditor();
 }
 
 function nextToReview() {
@@ -1124,6 +1144,7 @@ function planPoint(sx, sy) {
 function setTool(tool) {
   if (tool && state.tool !== tool && viewOnly()) return;
   state.tool = tool && state.tool !== tool ? tool : null;
+  if (state.tool && finish.painting()) finish.setPaint(false); // a tool instead of painting
   state.wallStart = null;
   state.corners = [];
   if (state.tool !== "place") {
@@ -1676,6 +1697,7 @@ function setupPanel() {
     if (e.key === "Escape") {
       if (!$("menu").hidden) closeMenu();
       else if (typing) e.target.blur();
+      else if (finish.escape()) return; // the finish picker, or painting, put away
       else if (state.tool) setTool(null);
       else if (state.asset) selectAsset(null);
       else if (state.item) selectItem(null);
@@ -2086,6 +2108,7 @@ async function setView(mode) {
   view3d.world?.ghost(null);
   showWalk();
   if (!view3d.shown) {
+    if (finish.painting()) finish.setPaint(false); // (painting is in 3D and walking)
     view3d.world?.pause(); // kept as it is, for the next time
     return;
   }
@@ -2209,7 +2232,7 @@ function walkFrom() {
 
 /** Items carried in 3D by a drag: only by who may change the floor, and not while placing. */
 function draggable3d() {
-  view3d.world?.setDraggable(editable() && state.tool !== "place");
+  view3d.world?.setDraggable(editable() && state.tool !== "place" && !finish.painting());
 }
 
 /** An item as the 3D world takes it: where it stands (the plan's metres) and its type's size. */
@@ -2230,13 +2253,16 @@ function update3d() {
   if (state.tool === "place") aimSoon();
 }
 
-/** A room as corrected here, in 3D: its label at once, its floor's finish by its type. */
+/** A room as corrected here, in 3D: its label at once, its floor's and walls' finishes in
+ * place (nothing built again), the floor built again when its type changed. */
 function sync3dSpace(s) {
   const w = view3d.world;
   const p = w?.package?.get(s.id)?.properties;
   if (!p) return;
-  const now = { name: s.name || null, number: s.number || null, type: s.type, hidden: Boolean(s.hidden), ignored: Boolean(s.ignored) };
-  const was = { name: p.name || null, number: p.number || null, type: p.type, hidden: Boolean(p.hidden), ignored: Boolean(p.ignored) };
+  const now = { name: s.name || null, number: s.number || null, type: s.type, hidden: Boolean(s.hidden), ignored: Boolean(s.ignored),
+    floor_finish: s.floor_finish ?? null, wall_finish: s.wall_finish ?? null };
+  const was = { name: p.name || null, number: p.number || null, type: p.type, hidden: Boolean(p.hidden), ignored: Boolean(p.ignored),
+    floor_finish: p.floor_finish ?? null, wall_finish: p.wall_finish ?? null };
   if (Object.keys(now).some((k) => now[k] !== was[k])) w.updateSpace(s.id, now);
 }
 
@@ -2261,6 +2287,11 @@ function setup3d(world) {
     if (id !== state.selected && (id === null || state.byId.has(id))) select(id);
   });
   world.addEventListener("pick", (e) => {
+    if (finish.painting()) { // painted (or taken up), not chosen
+      e.preventDefault();
+      if (editable()) finish.pick(e.detail);
+      return;
+    }
     if (state.tool !== "place" || !state.placeType) return;
     e.preventDefault(); // placed, not chosen
     const p = e.detail;
@@ -2363,6 +2394,7 @@ function showWalk() {
   $("walk-enter").hidden = !walking || locked || !w || w.mode !== "walk";
   $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
   $("walk-keys").textContent = !locked ? "" : state.tool === "place" ? "Click: place it at the cross · Alt: as it is · Esc: free the mouse"
+    : finish.painting() ? "Click: paint the floor or wall at the cross · Alt-click: take up its finish · Esc: free the mouse"
     : editable() ? "Click: choose · R [ ] turn · Del delete · 2: here in 2D · Esc: free the mouse"
       : "Click: choose · 2: here in 2D · Esc: free the mouse";
   if (locked && state.tool === "place") followCross();
@@ -2611,5 +2643,16 @@ setupPanel();
 setupAssets();
 vertical.setup({ state, BASE, request, followJob, openFloor, fillFloorSelect, saveSpace, toast, el, setTool, snapWall, // vertical.js
   planPoint, viewOnly, readable, select });
+finish.setup({ state, BASE, request, toast, el, saveSpace, viewOnly, units, title, updated: updatedSpaces, // finish.js
+  restyle: () => {
+    for (const s of state.floor?.spaces || []) styleSpace(s);
+    renderLegend();
+  },
+  // painting: no drawing or placing tool at once, and nothing dragged
+  stopTools: () => {
+    if (finish.painting() && state.tool) setTool(null);
+    draggable3d();
+  },
+  showWalk: () => showWalk() });
 window.storeypathReview = { state, view3d }; // for the console (and the browser checks)
 start();

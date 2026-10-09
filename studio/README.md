@@ -703,6 +703,32 @@ its items' types are not in the catalogue).
 A space's or zone's capacity is the number set in review, else the workplaces of the
 items standing in it; its grade is the highest grade among its desks.
 
+## Floors and walls
+
+What each room's floor and walls are finished in (format 0.9,
+[finishes.py](src/storeypath/finishes.py), spec/FORMAT.md "Finishes"): one of
+StoreyPath's 50 finishes (carpets, vinyl, porcelain, marble, terrazzo, wood, concrete,
+rubber, raised floor; paints, wallpapers, tiles, mosaic, wood slats and panels, stone),
+a fixed set in `spec/finishes.json`, or, given none, its type's (offices carpet,
+lobbies marble, restrooms porcelain with white wall tiles…). They are a room's
+corrections like any other: saved at once, in the history, undone and redone, by whoever
+may edit the floor (its lock), seen live by others, kept through every re-read, exported
+with each space (`floor_finish`, `wall_finish`) and zone (`floor_finish`; its walls are
+its space's).
+
+- **The plan (2D):** a room's editor shows its **Floor** and **Walls**: click one for a
+  grid of swatches by kind, its type's first. *Apply to every office on this floor* gives
+  every room of its type the same, as one change (undone as one). *Colour: by floor
+  finish* fills the plan with the finishes' tones, the legend listing them.
+- **3D and walking:** **Paint** shows a palette: choose a floor finish and a wall finish,
+  then click a floor (that room's floor) or a wall (the walls of the room on the side you
+  clicked: each side of a wall is its own room's); walking, the cross. Alt/Option-click,
+  or *Dropper*, takes up the finishes where you click. The room changes at once, in
+  place.
+- Calls: `POST /api/projects/<code>/objects/<id>` `{"floor_finish": code or null,
+  "wall_finish": …}`; `POST …/floors/<id>/finishes` `{"type": "office"}` or `{"ids":
+  […]}` with `floor_finish` and/or `wall_finish`: many rooms at once, one change.
+
 ## Navigation
 
 Every package carries its building's walking network (`navigation.json`, format 0.8:
