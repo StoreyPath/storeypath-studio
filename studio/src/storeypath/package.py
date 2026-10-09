@@ -20,6 +20,8 @@ FORMAT_VERSION = "0.8.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
+# items' IDs are asset tags from 0.8 (7K2Q-XM9F-4DP; before: the project's code, -I and six digits)
+ASSET_IDS_FROM = (0, 8)
 
 FILES = {
     "location": "location.geojson",
@@ -245,6 +247,9 @@ class OpeningFeature(Feature[OpeningProps]):
 
 
 class ItemFeature(Feature[ItemProps]):
+    id: str = Field(description=(
+        "its asset ID (format 0.8): ten random symbols of Crockford's base32 and a check symbol, 4-4-3 "
+        "(7K2Q-XM9F-4DP), of no project or place: carried anywhere, it keeps it"))
     geometry: PolygonGeometry = Field(description="its footprint, on the map")
 
 
@@ -275,10 +280,6 @@ class ExportInfo(_Model):
     sequence: int = Field(description="1 for the project's first export, then 2, 3, …")
     exported_at: datetime
     previous_sequence: int | None = Field(None, description=PREVIOUS_SEQUENCE)
-    next_item: int | None = Field(None, ge=1, description=(
-        "the number the project gives the next item placed in any of its buildings (format 0.7): every lower "
-        "number may be taken, by an item of another building or one retired. A system continuing the "
-        "project from this package numbers its new items from it"))
 
 
 class SourceInfo(_Model):

@@ -178,27 +178,21 @@ def test_a_workspace_of_an_earlier_studio_goes_on_from_what_it_kept(campus, tmp_
     assert changes["previous_sequence"] == 2 and desk.id in changes["changed"]
 
 
-def _without_next_item(source, out):
-    """A copy of a package as a Studio before format 0.7's next item number wrote it."""
-    with zipfile.ZipFile(source) as z, zipfile.ZipFile(out, "w") as w:
-        for info in z.infolist():
-            data = z.read(info)
-            if info.filename == "manifest.json":
-                m = json.loads(data)
-                del m["export"]["next_item"]
-                data = json.dumps(m).encode()
-            w.writestr(info.filename, data)
-    return out
-
-
 def _opened(data, code):
     return Workspace.load(next((data / code).glob("*.spproj")))
 
 
-def test_items_are_numbered_after_every_building_of_the_project(campus, tmp_path):
-    # A Studio continuing one building's package numbers its new items after the
-    # project's (the manifest's next_item), not after that building's alone: opening
-    # the other building's package then adds its items beside them.
+def _drawn(monkeypatch, *ids):
+    """What new_item_id draws next: these IDs' symbols, in order (then nothing)."""
+    from storeypath import ids as ids_module
+
+    symbols = iter("".join(i.replace("-", "")[:10] for i in ids))
+    monkeypatch.setattr(ids_module.secrets, "choice", lambda alphabet: next(symbols))
+
+
+def test_a_studio_continuing_one_buildings_package_adds_items_beside_the_others(campus, tmp_path):
+    # A Studio continuing one building's package gives its new items IDs of their own:
+    # opening the other building's package then adds its items beside them.
     from storeypath.bundle import open_file
 
     ws, _, hq, annex = campus
@@ -206,20 +200,22 @@ def test_items_are_numbered_after_every_building_of_the_project(campus, tmp_path
     annex_desk = ws.add_item("DESK-SENIOR", *_ground(ws, annex))
     m = export_package(ws, tmp_path / "hq.storeypath", building=hq)
     export_package(ws, tmp_path / "annex.storeypath", building=annex)
-    assert m.export.next_item == 3
+    assert "next_item" not in m.export.model_dump()
     data = tmp_path / "B"
     open_file(data, tmp_path / "hq.storeypath")
     b = _opened(data, ws.id)
     f_id, x, y = _ground(b, hq)
     copier = b.add_item("COPIER", f_id, x + 1, y)
-    assert copier.id == f"{ws.id}-I000003"
+    assert copier.id not in ws.items
     b.save(next((data / ws.id).glob("*.spproj")))
     open_file(data, tmp_path / "annex.storeypath")
     b = _opened(data, ws.id)
     assert b.items[copier.id].type == "COPIER" and b.items[annex_desk.id].type == "DESK-SENIOR"
 
 
-def test_items_moved_away_and_retired_are_counted_when_a_package_does_not_say(campus, tmp_path):
+def test_no_id_a_package_held_is_given_to_a_new_item(campus, tmp_path, monkeypatch):
+    # The project opened from a package that holds no item: one moved away, one retired.
+    # Their IDs are the project's still: a new item is never given one.
     from storeypath.bundle import open_file
 
     ws, _, hq, annex = campus
@@ -229,33 +225,38 @@ def test_items_moved_away_and_retired_are_counted_when_a_package_does_not_say(ca
     _carry(desk, _ground(ws, annex))
     tv.status = "retired"
     export_package(ws, tmp_path / "hq-2.storeypath", building=hq)
-    old = _without_next_item(tmp_path / "hq-2.storeypath", tmp_path / "old.storeypath")
-    assert validate_package(old) == []
-    open_file(tmp_path / "B", old)  # it holds no item: one moved away, one retired
-    assert _opened(tmp_path / "B", ws.id).next_item_seq == 3
+    open_file(tmp_path / "B", tmp_path / "hq-2.storeypath")
+    b = _opened(tmp_path / "B", ws.id)
+    assert desk.id not in b.items  # (in the Annex: its package was not opened)
+    _drawn(monkeypatch, desk.id, tv.id, "ZZZZ-ZZZZ-ZZA")
+    assert b.add_item("COPIER", *_ground(b, hq)).id == "ZZZZ-ZZZZ-ZZA"
 
 
 def test_a_package_whose_item_has_the_id_of_another_item_here_is_refused(campus, tmp_path):
-    # Two Studios numbering items apart (a package of a Studio before next_item): the
-    # ANNEX's desk and the copier added here have one ID. Nothing is changed here.
+    # The ANNEX's desk, in its package, has the ID of the copier added here in the HQ:
+    # two items with one ID. Nothing is changed here.
     from storeypath.bundle import ItemClash, open_file
 
     ws, _, hq, annex = campus
     ws.add_item("DESK-JUNIOR", *_ground(ws, hq))
-    ws.add_item("DESK-SENIOR", *_ground(ws, annex))
-    export_package(ws, tmp_path / "hq.storeypath", building=hq)
-    export_package(ws, tmp_path / "annex.storeypath", building=annex)
+    desk = ws.add_item("DESK-SENIOR", *_ground(ws, annex))
+    export_package(ws, tmp_path / "hq.storeypath", building=hq, bake=False)
+    export_package(ws, tmp_path / "annex.storeypath", building=annex, bake=False)
     data = tmp_path / "B"
-    open_file(data, _without_next_item(tmp_path / "hq.storeypath", tmp_path / "old-hq.storeypath"))
+    open_file(data, tmp_path / "hq.storeypath")
     path = next((data / ws.id).glob("*.spproj"))
     b = Workspace.load(path)
     f_id, x, y = _ground(b, hq)
     copier = b.add_item("COPIER", f_id, x + 1, y)
-    assert copier.id == f"{ws.id}-I000002"
     b.save(path)
     before = path.read_bytes()
+    clash = tmp_path / "annex-clash.storeypath"
+    with zipfile.ZipFile(tmp_path / "annex.storeypath") as z, zipfile.ZipFile(clash, "w") as w:
+        for info in z.infolist():
+            w.writestr(info, z.read(info).replace(desk.id.encode(), copier.id.encode()))
+    assert validate_package(clash) == []
     with pytest.raises(ItemClash, match="two items with one ID"):
-        open_file(data, tmp_path / "annex.storeypath")
+        open_file(data, clash)
     assert path.read_bytes() == before
 
 
@@ -673,20 +674,22 @@ def test_a_building_added_to_a_placed_site_moves_no_other(campus):
 
 
 def test_a_project_saved_as_new_gives_its_items_its_own_ids(campus, tmp_path):
+    # An asset is one project's: the copy's items have new IDs, on the copy's floors.
+    from storeypath.ids import is_item_id
+
     ws, _, hq, _ = campus
     desk = ws.add_item("DESK-MANAGER", *_ground(ws, hq))
     gone = ws.add_item("TV", *_ground(ws, hq))
     gone.status = "retired"
     copy = ws.save_as_new_project(tmp_path / "copy.spproj", "Copy")
-    number = desk.id.split("-")[1]
-    assert set(copy.items) == {f"{copy.id}-{number}", f"{copy.id}-{gone.id.split('-')[1]}"}
-    moved = copy.items[f"{copy.id}-{number}"]
-    assert moved.id == f"{copy.id}-{number}" and moved.floor_id == f"{copy.id}-DEMO-HQ-F00"
-    assert copy.next_item_seq == ws.next_item_seq and copy.readings == ws.readings
+    assert len(copy.items) == 2 and not set(copy.items) & set(ws.items) and all(map(is_item_id, copy.items))
+    moved = next(it for it in copy.items.values() if it.type == "DESK-MANAGER")
+    tv = next(it for it in copy.items.values() if it.type == "TV")
+    assert moved.floor_id == f"{copy.id}-DEMO-HQ-F00" and (moved.x, moved.y) == (desk.x, desk.y)
+    assert tv.status == "retired" and copy.readings == ws.readings
     export_package(copy, tmp_path / "copy-hq.storeypath", building=f"{copy.id}-DEMO-HQ")
     changes, items = _read(tmp_path / "copy-hq.storeypath")
-    assert items == {moved.id} and moved.id in changes["added"]
-    assert f"{copy.id}-{gone.id.split('-')[1]}" in changes["all_retired"]
+    assert items == {moved.id} and moved.id in changes["added"] and tv.id in changes["all_retired"]
     assert Workspace.load(tmp_path / "copy.spproj").items == copy.items
 
 

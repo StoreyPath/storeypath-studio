@@ -61,8 +61,12 @@ PROJECT-LOCATION-BUILDING-FLOOR-OBJECT        K7Q2XM-RUH-HQ-F02-0142
   (`…-F01-0023`, `…-F02-0023`) when Studio finds them there itself. What links them
   across floors is their `stack` (0.8, Stacks): one drawn on a floor by hand has a code
   of its own, and the same stack.
-- An ID is ASCII and at most 84 characters long (five segments of at most 16); an
-  item's ID is the project's code, `-I` and six digits (Items).
+- An ID is ASCII and at most 84 characters long (five segments of at most 16).
+- Items (furniture and equipment) are not places: an item's ID is an asset ID, ten
+  random symbols and a check symbol, `7K2Q-XM9F-4DP` (Asset IDs), of no project and no
+  place. A place's ID never has that form (Studio's project codes are six symbols, and
+  it refuses a building code that would give one): a reader taking an ID apart into
+  its segments refuses an asset ID.
 
 Importing systems should store our ID as the key of their own mapping, and use
 `changes.json` on each new export to add, update and remove mappings.
@@ -204,7 +208,7 @@ position (openings).
   "retired": ["…"],           // IDs removed since then
   "all_retired": ["…"],       // every ID this building has ever retired
   "moved_away": [             // items carried since to another building (0.7)
-    { "id": "K7Q2XM-I000142", "building_id": "K7Q2XM-RUH-ANNEX" } ]
+    { "id": "7K2Q-XM9F-4DP", "building_id": "K7Q2XM-RUH-ANNEX" } ]
 }
 ```
 
@@ -236,13 +240,14 @@ Items are the furniture and equipment people place on floors: desks (by grade:
 a manager's, a junior staff member's), central photocopiers, wireless access points,
 sofas, TVs. `items.geojson` holds them; `catalogue.json` says what each type is.
 
-**An item's ID does not say where it is.** It is the project's code and the item's
-own number, `I` and six digits: `K7Q2XM-I000142`. A desk carried to another office,
-or another floor, keeps its ID; where it stands is in its properties. Like every ID,
-an item's is never issued again once it is retired.
+**An item's ID does not say where it is, nor whose it is.** It is an asset ID, the
+tag on the asset: ten random symbols and a check symbol, `7K2Q-XM9F-4DP` (Asset IDs,
+below). A desk carried to another office, another floor or another building keeps its
+ID; where it stands is in its properties, and the project it is of is the package's.
+Like every ID, an item's is never issued again once it is retired.
 
 ```json
-{ "type": "Feature", "id": "K7Q2XM-I000142",
+{ "type": "Feature", "id": "7K2Q-XM9F-4DP",
   "geometry": { "type": "Polygon", "coordinates": [ … ] },     // its footprint, on the map
   "properties": {
     "kind": "item", "type": "DESK-MANAGER", "category": "furniture", "name": "Manager's desk",
@@ -294,17 +299,50 @@ Items are for asset management: where things are, and where they have been. They
 are not inventory: nothing in a package says who holds what. An inventory system
 keys its own records to the items' IDs, as every system keys its own to StoreyPath's.
 
-`manifest.json → export.next_item` (0.7) is the number the project gives the next item
-placed in any of its buildings; every lower number may be taken, by an item of another
-building or a retired one. A system continuing the project from one building's package
-numbers new items from it.
-
 Items go through `changes.json` as everything else: one moved, turned or given other
 details in its building is `changed`, so a system can keep the history of where each
 item has been. An item is in the package of the building it stands in. One carried
 to another building since this building was last exported is listed in `moved_away`
 with the building it went to: it is not retired, and that building's package holds it
 (as `changed`, with its new floor and position) when that building is next exported.
+
+### Asset IDs (0.8)
+
+An asset ID is ten random symbols and a check symbol of Crockford's base32, whose
+alphabet is `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (no I, L, O or U), written in upper
+case in groups of four, four and three joined by hyphens: `7K2Q-XM9F-4DP`. Packages
+hold it only so (`^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{3}$`,
+with its check symbol right), and systems should keep it so.
+
+**Random.** The ten symbols are 50 random bits, from a cryptographically secure source.
+A system issuing them checks a new one against every one it has issued (Studio: its
+database's items, by their key) and draws again when it is taken. Between systems that
+do not share their IDs, a clash is unlikely: two that issue 100,000 assets each give
+one the same ID with a chance of about 1 in 110,000. An asset is one project's: a
+reader that meets the same asset ID in packages of two projects (the manifests'
+`project.id`) refuses the later one, as a clash, not the same asset. In packages of one
+project it is the same asset, carried from building to building (`moved_away`).
+
+**The check symbol** is Luhn mod 32 over the ten symbols' values (their places in the
+alphabet: `0` is 0, `A` 10, `Z` 31). From the left, the 2nd, 4th, 6th, 8th and 10th
+values are doubled: a doubled value *v* is 2*v* when that is below 32, else 2*v* − 31
+(its two base-32 digits added). The ten are added; the check symbol's value is
+(32 − sum mod 32) mod 32. Checked so, the eleven (the check symbol not doubled) add up to
+a multiple of 32. For `7K2QXM9F4D`, the values 7 19 2 23 29 20 9 15 4 13 become
+7 7 2 15 29 9 9 30 4 26, whose sum 138 is 10 mod 32: the check value is 22, `P`, and
+the ID `7K2Q-XM9F-4DP`. The check catches every symbol mistyped, and every two
+neighbouring symbols swapped but a `0` and a `Z` (`…0Z…` for `…Z0…`, as Luhn's 09
+and 90): then it is right still.
+
+**What people type.** Where a person gives an asset ID (a search box, a command line,
+a call made for a person), a reader reads it so: letters in either case; `O` as `0`,
+`I` and `L` as `1`; hyphens, spaces, tabs and line breaks left out wherever they are;
+then eleven symbols whose check symbol is right are the asset ID, written as above.
+Anything else, or more than 64 characters as typed, is not an asset ID. An ID read
+from a package is never read so: it is written as above, or it is not an ID.
+
+`spec/conformance/asset-ids.json` holds check symbols, IDs right and wrong, and what
+people type with what it reads as, for every reader to agree on.
 
 ## Stacks (0.8)
 
@@ -595,8 +633,12 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
   network (Navigation), and the rule by which every reader finds the same way on it.
 - Spaces' `stack` (Stacks): which lifts, stairs and escalators on different floors are
   one, worked out from their codes and outlines, or set by a person.
+- Items' IDs are asset IDs (Items, Asset IDs): `7K2Q-XM9F-4DP`, random with a check
+  symbol, of no project, where they were the project's code and the item's number
+  (`K7Q2XM-I000142`). `manifest.json → export.next_item` is gone: a reader ignores it
+  in a package that has it. A package of 0.6 or 0.7 holds items by their IDs then.
 - A reader of 0.7 refuses a 0.8 package (Versioning); a reader of 0.8 reads 0.7 and
-  earlier ones as before (no stacks, no network).
+  earlier ones as before (no stacks, no network, items by the project's numbers).
 
 ## Changes from 0.6
 
@@ -612,7 +654,7 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
 - Spaces' and zones' `capacity`, `capacity_from` and `grade` (Capacity); the
   catalogue's `workplaces` and `grade`.
 - `changes.json` is about the building: `previous_sequence` is the last export that held
-  it, `all_retired` its own; `manifest.json → export.next_item`.
+  it, `all_retired` its own; `manifest.json → export.next_item` (until 0.8).
 - Readers refuse a package of a newer minor version (Versioning), and check more: one
   placement for each building, items' headings, zones listed by their own space,
   finite numbers, case-sensitive keys.
@@ -620,7 +662,8 @@ StoreyPath's viewer draws each piece with its own, by `material` and `type`.
 ## Changes from 0.5
 
 - `items.geojson` and `catalogue.json`: furniture and equipment, with IDs of their own
-  that do not change when they move (Items). Readers of 0.5 ignore them.
+  that do not change when they move (Items): until 0.8, the project's code, `-I` and
+  six digits (`K7Q2XM-I000142`). Readers of 0.5 ignore them.
 - Pre-built 3D: each floor's items in pieces of their own, and the extras' `builder`
   and `items`. A viewer builds a floor itself from a file of an earlier builder.
 
@@ -642,7 +685,9 @@ a TV, a bed and a wayfinding kiosk; lifts and stairs through the Headquarters' t
 floors (their stacks), and a corridor divided into two zones. `routes.json` holds ways
 on the first two that every reader must find the same (Navigation, Routing): the same
 nodes, changes of floor, legs and steps, and the same lengths and times to a
-centimetre and a tenth of a second. The others are packages of earlier formats, which
+centimetre and a tenth of a second. `asset-ids.json` holds asset IDs (Asset IDs) every
+reader must check and read the same: check symbols, IDs right, wrong by a symbol or
+two swapped, and what people type. The others are packages of earlier formats, which
 readers still read: `campus` (0.6, the whole campus, with items), `campus-world` and `simple-office-world` (pre-built in 3D: a reader reads
 them as it reads `campus` and `simple-office`, and the viewer shows them as it shows
 those), `campus-whole-1`, `campus-part`, `campus-whole-3` (0.4), `simple-office`,

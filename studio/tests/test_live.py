@@ -50,7 +50,7 @@ def test_a_change_goes_to_who_may_see_its_floor(team):
         vera.until(lambda k, d: k == "change" and d["kind"] == "add")
         assert team("khalid", "POST", f"items/{item['id']}", {"floor_id": team.hq1})[0] == 200
         carried = vera.until(lambda k, d: k == "change" and d["kind"] == "carry")[-1][1]
-        assert carried["floor"] == team.hq0 and carried["line"] == f"carried Junior staff desk …-{item['id'][-7:]} to Floor 1"
+        assert carried["floor"] == team.hq0 and carried["line"] == f"carried Junior staff desk {item['id']} to Floor 1"
         floors = {sara.until(lambda k, d: k == "change" and d["kind"] == "carry")[-1][1]["floor"],
                   sara.until(lambda k, d: k == "change" and d["kind"] == "carry")[-1][1]["floor"]}
         assert floors == {team.hq0, team.hq1}

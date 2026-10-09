@@ -19,13 +19,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .ids import (
-    ITEM_CODE_RE,
     child_id,
     default_floor_code,
     format_object_code,
     generate_project_code,
+    is_item_id,
     make_id,
-    make_item_id,
+    new_item_id,
     parse_id,
     validate_segment,
 )
@@ -253,11 +253,11 @@ class Project(BaseModel):
 
 class Item(BaseModel):
     """A piece of furniture or equipment placed on a floor (catalogue.py: its type).
-    Its ID is the project's and its own number, not its place: carried to another
-    room or floor, it keeps it. Taken away, it is retired, and its ID is never
-    issued again."""
+    Its ID is an asset's tag (ids.new_item_id), not its place nor its project's:
+    carried to another room, floor or building, it keeps it. Taken away, it is
+    retired, and its ID is never issued again."""
 
-    id: str  # PROJECT-I000142
+    id: str  # 7K2Q-XM9F-4DP
     type: str  # catalogue type code
     floor_id: str
     x: float  # local metres, the floor's frame (as the spaces)
@@ -280,7 +280,6 @@ class Workspace(BaseModel):
     vision: dict[str, dict[str, Any]] = Field(default_factory=dict)  # what the vision model saw, per room shape
     exports: list[ExportRecord] = Field(default_factory=list)
     items: dict[str, Item] = Field(default_factory=dict)  # furniture and equipment, by ID
-    next_item_seq: int = 1
 
     # ---- files -------------------------------------------------------------
 
@@ -303,9 +302,9 @@ class Workspace(BaseModel):
 
     def save_as_new_project(self, path: str | Path, name: str) -> Workspace:
         """A copy that is a *different* project: new project code, fresh history. Every
-        ID is the new project's: its objects', and its items' (each keeping its own
-        number) on the new project's floors. What texts were read as is kept (it is
-        by text, not by ID)."""
+        ID is the new project's: its objects', and its items' (each a new tag: an asset
+        is one project's) on the new project's floors. What texts were read as is kept
+        (it is by text, not by ID)."""
         copy = Workspace.model_validate(self.model_dump())
         old, new = self.project.code, generate_project_code()
 
@@ -321,10 +320,11 @@ class Workspace(BaseModel):
             for i, r in copy.objects.items()
         }
         copy.overrides = {recode(i): o for i, o in copy.overrides.items()}
-        copy.items = {
-            recode(i): it.model_copy(update={"id": recode(i), "floor_id": recode(it.floor_id) if it.floor_id else ""})
-            for i, it in copy.items.items()
-        }
+        items, copy.items = copy.items, {}
+        for it in items.values():
+            new_id = copy.new_item_id(lambda i: i in items)
+            copy.items[new_id] = it.model_copy(update={"id": new_id,
+                                                       "floor_id": recode(it.floor_id) if it.floor_id else ""})
         copy.exports = []
         copy.save(path)
         return copy
@@ -367,8 +367,6 @@ class Workspace(BaseModel):
 
     def add_location(self, code: str, name: str, address: str | None = None) -> str:
         validate_segment(code)
-        if ITEM_CODE_RE.match(code):
-            raise ValueError(f"location code {code} has the form of an item's (I and six digits): choose another")
         if any(loc.code == code for loc in self.locations):
             raise ValueError(f"location code {code} already used in this project")
         self.locations.append(Location(code=code, name=name, address=address))
@@ -379,6 +377,8 @@ class Workspace(BaseModel):
         loc = self.location(location_id)
         if any(b.code == code for b in loc.buildings):
             raise ValueError(f"building code {code} already used in {location_id}")
+        if is_item_id(f"{location_id}-{code}"):  # (only of a project whose code is four symbols)
+            raise ValueError(f"{location_id}-{code} would read as an item's ID: choose another building code")
         if loc.placement is not None:  # on the map: its buildings stay where they are on it
             from .export import settle
 
@@ -443,14 +443,21 @@ class Workspace(BaseModel):
         return code
 
     def add_item(self, type_code: str, floor_id: str, x: float, y: float, rotation: float = 0.0,
-                 values: dict | None = None) -> Item:
-        """A new item on a floor, with the next item number of the project."""
+                 values: dict | None = None, taken=None) -> Item:
+        """A new item on a floor, with a new ID: one no item of the project has, nor
+        any ``taken(id)`` says is in use (in Studio's database)."""
         self.floor(floor_id)  # raises when there is no such floor
-        item = Item(id=make_item_id(self.id, self.next_item_seq), type=type_code, floor_id=floor_id,
+        item = Item(id=self.new_item_id(taken), type=type_code, floor_id=floor_id,
                     x=x, y=y, rotation=rotation % 360, values=dict(values or {}))
-        self.next_item_seq += 1
         self.items[item.id] = item
         return item
+
+    def new_item_id(self, taken=None) -> str:
+        """An ID for a new item: drawn again while an item of the project has it (or a
+        package of the project held it: one carried to a building whose package was not
+        opened here), or ``taken(id)`` says one elsewhere has."""
+        held = set(self.exports[-1].items_held or []) if self.exports else set()
+        return new_item_id(lambda i: i in self.items or i in held or (taken is not None and taken(i)))
 
     def floor_items(self, floor_id: str, *, include_retired: bool = False) -> list[Item]:
         return [i for i in self.items.values()

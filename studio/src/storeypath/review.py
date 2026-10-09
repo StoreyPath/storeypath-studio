@@ -57,7 +57,6 @@ from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
-from .ids import make_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .stacks import NOT_LINKED, STACK_TYPES
 from .types import SpaceType
@@ -131,6 +130,11 @@ class ProjectFile:
                 self._ws, self._stamp = ws, self._on_disk()
             return result
 
+    def item_taken(self, item_id: str) -> bool:
+        """Whether an item outside the project has this ID: none it knows of (the file
+        is the project alone)."""
+        return False
+
     def _path(self, src) -> Path:
         path = self.path.parent / src.path
         if not path.exists():
@@ -170,6 +174,11 @@ class StoredProject:
 
     def change(self, fn, by=None, editor=None):
         return self.store.change(self.code, fn, by=by, editor=editor)
+
+    def item_taken(self, item_id: str) -> bool:
+        """Whether an item of any project of this Studio has this ID (its database's
+        items, by their key)."""
+        return self.store.item_taken(item_id)
 
     def drawing_key(self, src) -> tuple:
         name = drawing_name(src.path)
@@ -426,9 +435,9 @@ class Review:
             "doors": [self._door(ws, r, f.edits.resized) for r in objects if r.kind == "opening"],
             # for drawing walls and doors onto: the walls as found, and what was drawn
             "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
-            # furniture and equipment on the floor, retired ones too (to be restored)
-            "items": [self._item(i, cat) for i in sorted(ws.floor_items(floor_id, include_retired=True),
-                                                          key=lambda i: i.id)],
+            # furniture and equipment on the floor, retired ones too (to be restored), in
+            # the order they were placed (the last on top: their IDs are in no order)
+            "items": [self._item(i, cat) for i in ws.floor_items(floor_id, include_retired=True)],
         }
 
     # ---- items: furniture and equipment ---------------------------------------------
@@ -479,20 +488,20 @@ class Review:
 
     def add_item(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres),
-        numbered after every item of the project."""
+        with a new ID: drawn again while an item of the project, or of any project of
+        this Studio, has it."""
         cat = self.catalogue()
 
         def fn(ws: Workspace):
             self._floor(ws, floor_id)
             values = self._item_values(body.get("type"), body.get("values"), cat)
             x, y = _number(body, "x"), _number(body, "y")
-            it = Item(id=make_item_id(ws.id, ws.next_item_seq), type=body["type"], floor_id=floor_id, x=x, y=y,
+            it = Item(id=ws.new_item_id(self.source.item_taken), type=body["type"], floor_id=floor_id, x=x, y=y,
                       rotation=_number(body, "rotation", 0.0) % 360, values=values)
             ch = Changes(part="item", kind="add", targets=[it.id], floors={floor_id},
                          before={"item": None}, after={"item": _dump(it)},
                          more={"label": _type_name(cat, it.type), "changes": ["add"]})
             ch.items[it.id] = it
-            ch.project = {"next_item_seq": ws.next_item_seq + 1}
             return ch, it
 
         return self._item(self._change(fn, by, editor), cat)

@@ -56,7 +56,7 @@ from typing import Any, Callable
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from ..errors import Locked, NotFound
+from ..errors import Conflict, Locked, NotFound
 from ..workspace import (ExportRecord, FloorEdits, Item, Location, ObjectRecord, Override, Project, Reading,
                          Workspace)
 from . import CHANNEL, Database
@@ -224,7 +224,7 @@ class Changes:
     then to the project kept in memory. Each mapping is key -> the new value, or None
     for one taken away. And what history records of it."""
 
-    project: dict | None = None  # name, created_at, next_item_seq, format_version
+    project: dict | None = None  # name, created_at, format_version
     tree: list[Location] | None = None  # the locations after, when any of the tree changed
     nodes: list[tuple] = field(default_factory=list)  # (table, key, row or None) of the tree to write
     edits: dict[str, FloorEdits] = field(default_factory=dict)  # floor ID -> its drawn edits alone
@@ -259,8 +259,6 @@ class Changes:
             p = self.project
             update["project"] = Project(code=base.project.code, name=p.get("name", base.project.name),
                                         created_at=p.get("created_at", base.project.created_at))
-            if "next_item_seq" in p:
-                update["next_item_seq"] = p["next_item_seq"]
             if "format_version" in p:
                 update["format_version"] = p["format_version"]
         if self.tree is not None:
@@ -376,7 +374,6 @@ _LOAD = f"""
 SELECT p.version, json_build_object(
   'format', 'storeypath-workspace', 'format_version', p.format_version,
   'project', json_build_object('code', p.code, 'name', p.name, 'created_at', p.created_at),
-  'next_item_seq', p.next_item_seq,
   'locations', COALESCE((SELECT json_agg(json_build_object(
       'code', l.code, 'name', l.name, 'address', l.address, 'placement', l.placement, 'site_origin', l.site_origin,
       'buildings', COALESCE((SELECT json_agg(json_build_object(
@@ -483,6 +480,12 @@ class ProjectStore:
             row = conn.execute("SELECT version FROM projects WHERE code = %s", (code,)).fetchone()
         return row[0] if row else None
 
+    def item_taken(self, item_id: str) -> bool:
+        """Whether an item of any project here has this ID (the items' key): a new item's
+        ID is drawn again when it has."""
+        with self.db.connection() as conn:
+            return conn.execute("SELECT EXISTS (SELECT 1 FROM items WHERE id = %s)", (item_id,)).fetchone()[0]
+
     def name(self, code: str) -> str:
         with self.db.connection() as conn:
             row = conn.execute("SELECT name FROM projects WHERE code = %s", (code,)).fetchone()
@@ -554,14 +557,13 @@ class ProjectStore:
             with self.db.transaction() as conn:
                 if create is not None:
                     row = conn.execute(
-                        "INSERT INTO projects (code, name, created_at, next_item_seq, format_version) "
-                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING version",
-                        (code, create.project.name, create.project.created_at, create.next_item_seq,
-                         create.format_version)).fetchone()
+                        "INSERT INTO projects (code, name, created_at, format_version) "
+                        "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING version",
+                        (code, create.project.name, create.project.created_at, create.format_version)).fetchone()
                     if row is None:
                         raise ProjectExists(code)
                     version = row[0]
-                    base = Workspace(project=create.project, next_item_seq=create.next_item_seq)
+                    base = Workspace(project=create.project)
                 else:
                     row = conn.execute("UPDATE projects SET version = version + 1, changed_at = now() "
                                        "WHERE code = %s RETURNING version", (code,)).fetchone()
@@ -698,13 +700,21 @@ class ProjectStore:
             if gone:
                 cur.executemany("DELETE FROM items WHERE project = %s AND id = %s", gone)
             if put:
+                # an item's ID is the key of its row in the whole Studio: an asset is one
+                # project's, and one of another project here is never written over
+                other = cur.execute("SELECT id FROM items WHERE id = ANY(%s) AND project <> %s ORDER BY id LIMIT 1",
+                                    ([row[1] for row in put], code)).fetchone()
+                if other is not None:
+                    raise Conflict(f"item {other[0]} is an item of another project here: an item's ID is one "
+                                   "project's. Nothing was changed")
                 cur.executemany(
                     "INSERT INTO items (project, id, floor, type, x, y, rotation, details, status, created_at, "
                     "retired_at, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (project, id) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, "
+                    "ON CONFLICT (id) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, "
                     "x = EXCLUDED.x, y = EXCLUDED.y, rotation = EXCLUDED.rotation, details = EXCLUDED.details, "
                     "status = EXCLUDED.status, created_at = EXCLUDED.created_at, retired_at = EXCLUDED.retired_at, "
-                    "changed_by = EXCLUDED.changed_by, changed_at = now(), version = items.version + 1", put)
+                    "changed_by = EXCLUDED.changed_by, changed_at = now(), version = items.version + 1 "
+                    "WHERE items.project = EXCLUDED.project", put)
             gone = [(code, t) for t, r in ch.readings.items() if r is None]
             put = [_reading_row(code, t, r) for t, r in ch.readings.items() if r is not None]
             if gone:
@@ -1145,8 +1155,6 @@ def diff(ws: Workspace, base: Workspace, scope=None) -> Changes:
         p["name"] = ws.project.name
     if ws.project.created_at != base.project.created_at:
         p["created_at"] = ws.project.created_at
-    if ws.next_item_seq != base.next_item_seq:
-        p["next_item_seq"] = ws.next_item_seq
     if ws.format_version != base.format_version:
         p["format_version"] = ws.format_version
     ch.project = p or None

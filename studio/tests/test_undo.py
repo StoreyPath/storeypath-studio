@@ -68,15 +68,15 @@ def test_every_correction_is_undone_and_redone(team):
     assert rows[6]["redoes"] == rows[7]["seq"] and rows[0]["redoes"] == rows[13]["seq"]
 
 
-def test_an_item_added_and_undone_is_retired_and_its_number_never_given_again(team):
+def test_an_item_added_and_undone_is_retired_and_its_id_never_given_again(team):
     status, a = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "DESK-MANAGER", "x": 12, "y": 4})
     assert status == 200
     status, done = team("khalid", "POST", "undo", {"floor": team.hq0})
-    assert status == 200 and done["line"] == f"placed Manager's desk …-{a['id'][-7:]}"
+    assert status == 200 and done["line"] == f"placed Manager's desk {a['id']}"
     ws = team.studio.workspace(team.code)
     assert ws.items[a["id"]].status == "retired" and ws.items[a["id"]].retired_at is not None
     _, b = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "DESK-JUNIOR", "x": 14, "y": 4})
-    assert b["id"] != a["id"] and int(b["id"][-6:]) == int(a["id"][-6:]) + 1
+    assert b["id"] != a["id"] and a["id"] in team.studio.workspace(team.code).items  # (kept: never drawn again)
     assert team("khalid", "POST", "redo", {})[0] == 409  # a new change: nothing to redo
     # moved, turned, given another type, carried, deleted: each undone back
     item = b["id"]
@@ -87,7 +87,7 @@ def test_an_item_added_and_undone_is_retired_and_its_number_never_given_again(te
         status, done = team("khalid", "POST", "undo", {})
         assert status == 200, done
         assert team.studio.workspace(team.code).items[item].model_dump(exclude={"retired_at"}) == before
-    assert done["line"] == f"deleted Junior staff desk …-{item[-7:]}"
+    assert done["line"] == f"deleted Junior staff desk {item}"
     # redo: the item placed again (the same one: never a new number)
     assert team("khalid", "POST", "redo", {})[0] == 200
     assert team.studio.workspace(team.code).items[item].status == "retired"
@@ -178,7 +178,7 @@ def test_the_history_says_who_did_what_and_what_was_undone(team):
     status, h = team("vera", "GET", f"history?floor={team.hq0}&n=10")
     assert status == 200
     shown = [(e["who"]["name"], e["line"], e["undone"]) for e in h["entries"]]
-    desk = f"Manager's desk …-{item['id'][-7:]}"
+    desk = f"Manager's desk {item['id']}"
     assert shown[:4] == [("Khalid Engineer", f"undid: moved {desk}", False), ("Khalid Engineer", f"moved {desk}", True),
                          ("Khalid Engineer", f"placed {desk}", False),
                          ("Khalid Engineer", f"deleted {s.name} {s.number}", False)]

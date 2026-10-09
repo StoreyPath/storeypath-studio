@@ -12,7 +12,8 @@ project with the project in ``studio/``; it opens as it did.)
 Opening a project file gives the project back as it was. Opening a package
 rebuilds its building from what the package holds: the same project code and
 IDs, the spaces, zones and openings with their names, numbers, types and flags,
-the walls, the placement, the items where they stand in the building, the IDs
+the walls, the placement, the items where they stand in the building (those of a
+package before format 0.8 given asset IDs, made from theirs there), the IDs
 retired, and its export number, so the next export follows on from it (a system
 that applied it takes that one as the next). Into a project that is here
 already, the building is added, or put in place of the one there (the others
@@ -38,9 +39,9 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import build_features, compared, item_number, settle
-from .ids import format_object_code, is_item_id, parse_id
-from .package import FILES, Manifest
+from .export import build_features, compared, settle
+from .ids import format_object_code, is_item_id, is_legacy_item_id, item_id_for_legacy, parse_id
+from .package import ASSET_IDS_FROM, FILES, Manifest, version_tuple
 from .workspace import (
     Building,
     ExportRecord,
@@ -81,8 +82,8 @@ class ProjectExists(Exception):
 
 
 class ItemClash(ValueError):
-    """A package's item has the ID of another item of the project here (two Studios
-    numbered items apart): the package is not opened."""
+    """A package's item has the ID of another item of the project here: the package is
+    not opened."""
 
 
 # ---- a project to send ---------------------------------------------------------
@@ -195,6 +196,7 @@ def read_file(source: Path) -> Incoming:
         if WORKSPACE_FILE in names:
             ws = Workspace.model_validate_json(z.read(WORKSPACE_FILE))
             _within_project(ws)
+            _as_assets(ws)
             how = "project"
         else:
             errors = validate_package(source)
@@ -329,6 +331,23 @@ def _within_project(ws: Workspace) -> None:
         p = f.source.profile
         if p != AUTO and (re.search(r"[\\/]", p) or Path(p).suffix.lower() in (".yaml", ".yml")):
             f.source.profile = AUTO
+
+
+def _as_assets(ws: Workspace) -> None:
+    """A project file of a Studio before format 0.8: its items, numbered by the project
+    then (K7Q2XM-I000142), given asset IDs made from those, as its packages are when
+    opened; one retired is left out (its ID is never in use again). Its exports keep
+    the IDs they held: the next lists those as retired, and the new ones as added."""
+    if not any(is_legacy_item_id(i) for i in ws.items):
+        return
+    items = {}
+    for i, it in ws.items.items():
+        if not is_legacy_item_id(i):
+            items[i] = it
+        elif it.status == "active":
+            new = item_id_for_legacy(i)
+            items[new] = it.model_copy(update={"id": new})
+    ws.items = items
 
 
 def find_project(data: Path, code: str) -> Path | None:
@@ -482,7 +501,7 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
                 and _building_of(mine) not in ours:
             raise ItemClash(f"the package's item {i} is a {it.type} in {_building_of(it)}, and the item {i} "
                             f"here is a {mine.type} in {_building_of(mine) or 'no building'}: two items with one "
-                            "ID (the project's items were numbered apart). Nothing was opened")
+                            "ID. Nothing was opened")
     held, known = last_packages(here)  # as it was before the package
     theirs, their_known = last_packages(pkg)
     now = utcnow()
@@ -531,7 +550,6 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
                 mine.status, mine.retired_at = "retired", now  # (one in another building here is left as it is)
         else:
             here.items[i] = it
-    here.next_item_seq = max(here.next_item_seq, pkg.next_item_seq)
     # each of its buildings is next compared with the package (as the package rebuilt
     # here), unless the last package of that building here is a later one: whatever the
     # order the packages are opened in, and the same one opened twice
@@ -706,7 +724,16 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                                               ignored=bool(p.get("ignored")) or None, capacity=capacity)
     # furniture and equipment, back where the package has them: where each stands in
     # its building (0.7); from an earlier package, its map position and heading (where
-    # its front faces on earth) back to the building's frame
+    # its front faces on earth) back to the building's frame. An item of a package
+    # before 0.8 (numbered by the project then: K7Q2XM-I000142) is given an asset's ID,
+    # made from that one (the same whichever of its packages is opened); the package's
+    # export holds it by its ID then, which the next export lists as retired.
+    legacy = version_tuple(manifest.format_version) < ASSET_IDS_FROM
+
+    def old_item(i: str) -> bool:
+        return legacy and is_legacy_item_id(i)
+
+    retagged: dict[str, str] = {}  # an item's ID here -> its ID in the package
     if "items" in manifest.files and manifest.files["items"] in z.namelist():
         for f in json.loads(z.read(manifest.files["items"]))["features"]:
             p = f["properties"]
@@ -716,22 +743,22 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                 local = to_local[p["building_id"]]
                 x, y = local.point(p["display_point"])
                 rotation = (180.0 - (p["heading"] - local.p.bearing)) % 360
-            ws.items[f["id"]] = Item(id=f["id"], type=p["type"], floor_id=p["floor_id"], x=x, y=y,
-                                     rotation=round(rotation, 2), values=dict(p.get("values") or {}),
-                                     created_at=exported_at)
+            i = item_id_for_legacy(f["id"]) if old_item(f["id"]) else f["id"]
+            if i != f["id"]:
+                retagged[i] = f["id"]
+            ws.items[i] = Item(id=i, type=p["type"], floor_id=p["floor_id"], x=x, y=y,
+                               rotation=round(rotation, 2), values=dict(p.get("values") or {}), created_at=exported_at)
     for rid in changes.get("all_retired") or []:
         # kept so that their IDs are never given again; what they were is not known
         if is_item_id(rid):
             ws.items.setdefault(rid, Item(id=rid, type="", floor_id="", x=0.0, y=0.0, status="retired",
                                           retired_at=exported_at))
             continue
+        if old_item(rid):  # in the export below, as the package has it: no item is given that ID
+            continue
         ws.objects.setdefault(rid, ObjectRecord(id=rid, kind="space", type="unspecified", type_source="package",
                                                 geometry={"type": "Point", "coordinates": [0.0, 0.0]},
                                                 status="retired", retired_at=exported_at))
-    # new items are numbered after every number the project gave: the next it says (an
-    # earlier package does not), and after the items it has, retired and moved away
-    given = [*ws.items, *(m["id"] for m in changes.get("moved_away") or []), *(changes.get("all_retired") or [])]
-    ws.next_item_seq = max([manifest.export.next_item or 1, *(item_number(i) + 1 for i in given if is_item_id(i))])
 
     # a building not on the map stands where the package's site plan has it: its
     # anchor (the drawing point at the site's centre) and turn give its position
@@ -778,16 +805,17 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         location = b_id.rsplit("-", 1)[0]
         held[b_id] = LastPackage(
             sequence=manifest.export.sequence,
-            objects={i: h for i, h in hashes.items() if i in (location, b_id) or i.startswith(b_id + "-")
-                     or (i in ws.items and ws.items[i].floor_id.startswith(b_id + "-"))},
+            # its items by their IDs in the package
+            objects={retagged.get(i, i): h for i, h in hashes.items() if i in (location, b_id)
+                     or i.startswith(b_id + "-") or (i in ws.items and ws.items[i].floor_id.startswith(b_id + "-"))},
             # what it retired; an item's building is not known (from 0.7 there is one)
-            retired=sorted(i for i in retired if i.startswith(b_id + "-") or is_item_id(i)))
+            retired=sorted(i for i in retired if i.startswith(b_id + "-") or is_item_id(i) or old_item(i)))
     moved = [m["id"] for m in changes.get("moved_away") or []]
     ws.exports.append(ExportRecord(
         sequence=manifest.export.sequence, exported_at=exported_at, file=file_name,
         buildings=sorted(buildings) if manifest.scope is not None else None, held=held,
-        items_held=sorted({i for i, it in ws.items.items() if it.status == "active"} | set(moved)
-                          | {i for i in retired if is_item_id(i)})))
+        items_held=sorted({retagged.get(i, i) for i, it in ws.items.items() if it.status == "active"} | set(moved)
+                          | {i for i in retired if is_item_id(i) or old_item(i)})))
     return ws
 
 
