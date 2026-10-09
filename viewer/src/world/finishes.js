@@ -269,6 +269,14 @@ export function finishes() {
     return done(color, n, fine, { rough, macro: 0.06 });
   }
 
+  /** A field of n² sampled between its pixels (wrapping), at (u, v). */
+  const at = (field, n, u, v) => {
+    const x0 = Math.floor(u), y0 = Math.floor(v), tx = u - x0, ty = v - y0;
+    const i0 = ((x0 % n) + n) % n, i1 = (i0 + 1) % n, r0 = (((y0 % n) + n) % n) * n, r1 = ((((y0 + 1) % n) + n) % n) * n;
+    const a = field[r0 + i0] + (field[r0 + i1] - field[r0 + i0]) * tx, b = field[r1 + i0] + (field[r1 + i1] - field[r1 + i0]) * tx;
+    return a + (b - a) * ty;
+  };
+
   /** Marble tiles (``tile_m`` square): veins where a smooth noise crosses its middle (long,
    * branching curves), finer ones from another, clouded; each tile its own part of them,
    * with fine joints. */
@@ -276,9 +284,10 @@ export function finishes() {
     const base = hex(p.base), veinColor = hex(p.vein), strength = p.veins ?? 0.6;
     const count = Math.max(1, Math.round(size / (p.tile_m || 0.8))), t = n / count;
     const joint = Math.max(1, Math.round((0.0015 * n) / size));
-    const main = fbm(n, 2, 5, rnd, 0.5), thin = fbm(n, 4, 4, rnd, 0.55), cloud = fbm(n, 3, 4, rnd);
+    // (noise longer one way than the other: veins run long, each tile turned its own way)
+    const main = fbm(n, 3, 4, rnd, 0.5, 2), thin = fbm(n, 7, 3, rnd, 0.5, 4), cloud = fbm(n, 3, 4, rnd);
     const tilesOf = Array.from({ length: count * count }, () => ({ dx: Math.floor(rnd() * n), dy: Math.floor(rnd() * n),
-      tone: 1 + (rnd() - 0.5) * 0.05 }));
+      tone: 1 + (rnd() - 0.5) * 0.05, turn: rnd() * Math.PI }));
     const px = n / 1024;
     const color = image(n), rough = new Float32Array(n * n), height = new Float32Array(n * n);
     for (let y = 0; y < n; y++) {
@@ -290,9 +299,15 @@ export function finishes() {
           height[i] = -1;
           continue;
         }
-        const tile = tilesOf[cy * count + cx], j = ((y + tile.dy) % n) * n + ((x + tile.dx) % n);
-        const ridge = Math.abs(main[j] - 0.5) * 2, fineRidge = Math.abs(thin[j] - 0.5) * 2;
-        const w = band(ridge, 0.012, 260 * px) * 0.95 + band(ridge, 0.05, 40 * px) * 0.25 + band(fineRidge, 0.006, 400 * px) * 0.45;
+        const tile = tilesOf[cy * count + cx];
+        // (a tile's joints part it from the next: its veins need not run on into it)
+        const lx = x - cx * t, ly = y - cy * t, c = Math.cos(tile.turn), sn = Math.sin(tile.turn);
+        const u = lx * c - ly * sn + tile.dx, v = lx * sn + ly * c + tile.dy;
+        const j = (((Math.floor(v) % n) + n) % n) * n + (((Math.floor(u) % n) + n) % n);
+        // a main vein, a soft haze round it, and finer veins branching near it
+        const ridge = Math.abs(at(main, n, u, v) - 0.5) * 2, fineRidge = Math.abs(at(thin, n, u, v) - 0.5) * 2;
+        const w = band(ridge, 0.007, 300 * px) * 0.8 + clamp01(1 - ridge / 0.07) ** 3 * 0.18
+          + band(fineRidge, 0.004, 420 * px) * 0.4 * clamp01(1 - ridge / 0.3);
         const s = tile.tone * (1 + (cloud[j] - 0.5) * 0.1);
         set(color, i, ...mix([base[0] * s, base[1] * s, base[2] * s], veinColor, Math.min(1, w * strength)));
         rough[i] = 0.1 + (cloud[j] - 0.5) * 0.04;

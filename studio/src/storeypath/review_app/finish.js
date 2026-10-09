@@ -125,9 +125,10 @@ export function editor(s) {
   const el = api.el, may = !api.viewOnly();
   const space = spaceOf(s), now = shown(s);
   const field = (label, applies, own, code, note) => {
-    const button = el("button", { type: "button", class: "fin-field", disabled: !may,
+    const button = el("button", { type: "button", class: "fin-field",
       title: may ? `Choose what its ${label.toLowerCase()} ${applies === "floor" ? "is" : "are"} finished in` : "View only" },
     swatch(code, 26), el("span", { class: "fin-name" }, finishOf(code)?.name ?? code));
+    button.disabled = !may; // (a property: el() would set the attribute, which disables it whatever its value)
     button.addEventListener("click", () => picker(button, { applies, current: own ?? null,
       typeDefault: applies === "floor" ? (space ? floorFinish({ type: s.type }, space) : defaultFinish("floor", s.type))
         : defaultFinish("wall", s.type),
@@ -143,9 +144,10 @@ export function editor(s) {
   } else rows.push(el("div", { class: "meta" }, `Walls: its space's (${finishOf(now.wall)?.name ?? now.wall})`));
   if (may) {
     const all = api.units().filter((u) => u.type === s.type && !u.ignored).length;
-    const apply = el("button", { type: "button", class: "fin-apply", disabled: all < 2,
+    const apply = el("button", { type: "button", class: "fin-apply",
       title: `Give every ${s.type.replaceAll("_", " ")} on this floor this room's floor${s.kind === "space" ? " and walls" : ""}: one change, undone as one` },
-    `Apply to every ${plural(s.type)} on this floor (${all})`);
+    `Apply to every ${s.type.replaceAll("_", " ")} on this floor (${all})`);
+    apply.disabled = all < 2;
     apply.addEventListener("click", () => applyToType(s));
     rows.push(apply);
   }
@@ -212,11 +214,20 @@ function brushes() {
   return el("div", { class: "fin-brushes" }, brush("floor"), brush("wall"), dropper);
 }
 
+/** The palette just under the toolbar (which wraps to two rows on a narrow window). */
+function placePalette() {
+  const panel = $("paint-panel"), bar = $("toolbar"), map = $("map");
+  if (!panel || panel.hidden || !bar || !map) return;
+  const top = Math.max(12, bar.getBoundingClientRect().bottom - map.getBoundingClientRect().top + 8);
+  Object.assign(panel.style, { top: `${top}px`, maxHeight: `calc(100% - ${top + 96}px)` }); // (clear of the walking HUD)
+}
+
 function renderPalette() {
   const panel = $("paint-panel");
   if (!panel) return;
   panel.hidden = !paint.on;
   if (!paint.on) return;
+  placePalette();
   const el = api.el;
   const section = (applies) => [
     el("div", { class: "fin-section", id: `fin-grid-${applies}` }, applies === "floor" ? "Floors" : "Walls"),
@@ -321,6 +332,7 @@ export function setup(given) {
   place?.after(button);
   $("drawing-label")?.after(colour);
   $("map").append(el("div", { id: "paint-panel", class: "paint-panel", hidden: "" }));
+  window.addEventListener("resize", placePalette);
   document.addEventListener("pointerdown", (e) => {
     if (popover && !e.target.closest?.(".fin-picker") && !e.target.closest?.(".fin-field")) closePicker();
   }, true);

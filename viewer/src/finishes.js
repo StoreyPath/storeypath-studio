@@ -382,7 +382,7 @@ export const FINISHES = {
       "group": "stone",
       "name": "Marble, white",
       "name_ar": "رخام أبيض",
-      "tone": "#e2e2df",
+      "tone": "#e2e1de",
       "roughness": 0.12,
       "size_m": 1.6,
       "paint": {
@@ -399,7 +399,7 @@ export const FINISHES = {
       "group": "stone",
       "name": "Marble, beige",
       "name_ar": "رخام بيج",
-      "tone": "#d9caad",
+      "tone": "#dcceb1",
       "roughness": 0.12,
       "size_m": 1.6,
       "paint": {
@@ -416,7 +416,7 @@ export const FINISHES = {
       "group": "stone",
       "name": "Marble, black",
       "name_ar": "رخام أسود",
-      "tone": "#2f2f30",
+      "tone": "#2b2b2d",
       "roughness": 0.1,
       "size_m": 1.6,
       "paint": {
