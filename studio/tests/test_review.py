@@ -251,7 +251,7 @@ def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     from storeypath.samples import write_floor_dxf
 
     base, app = studio
-    _, created = call(f"{base}/api/projects", {"name": "Large building"})
+    _, created = call(f"{base}/api/projects", {"name": "Headquarters"})
     code = created["code"]
     for n in (0, 1):
         write_floor_dxf(tmp_path / f"level-{n}.dxf", office_floor(n), origin=(100.0, 50.0), title=f"LEVEL {n} PLAN")
@@ -296,7 +296,7 @@ def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     status, job = add("level-1.dxf", location="North campus", building="Workshop", ordinal=0)
     wait(base, job)
     ws = app.workspace(code)
-    assert [loc.name for loc in ws.locations] == ["Large building", "North campus"]
+    assert [loc.name for loc in ws.locations] == ["Headquarters", "North campus"]
     assert ws.locations[1].code == "NORTH" and [b.name for b in ws.locations[1].buildings] == ["Workshop"]
 
 def test_the_whole_workflow_in_the_browser(studio, tmp_path):

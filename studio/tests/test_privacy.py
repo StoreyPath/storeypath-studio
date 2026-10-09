@@ -94,7 +94,7 @@ def test_private_copy_from_the_command_line(tmp_path):
 
 
 def test_rooms_named_for_a_role_stay_and_names_go(tmp_path):
-    # A large building's rooms: "DR. OFFICE" is a room, "DR. KHALID" a person; the printer
+    # A building's rooms: "DR. OFFICE" is a room, "DR. KHALID" a person; the printer
     # and plot style a sheet was set up with name a computer and its owner.
     from storeypath.privacy import words
 

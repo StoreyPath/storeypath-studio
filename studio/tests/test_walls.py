@@ -387,7 +387,7 @@ def test_a_flight_of_stairs_is_found_by_its_treads():
 
 def test_slivers_broken_off_a_room_are_not_rooms(monkeypatch):
     # Putting a room's outline back on the wall lines can, at a very sharp corner,
-    # break hairline slivers off it (a large building floor had five, the smallest with
+    # break hairline slivers off it (a large floor had five, the smallest with
     # nothing in it at all): only the room is kept.
     import storeypath.walls as walls
     from shapely.geometry import Polygon
