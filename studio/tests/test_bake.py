@@ -60,7 +60,7 @@ def test_a_floors_items_are_pre_built_apart_from_the_rest(converted):
     with zipfile.ZipFile(d / "out.storeypath") as z:
         gltf = _gltf(z.read(f"world/{f_id}.glb"))
     x = gltf["scenes"][0]["extras"]["storeypath"]
-    assert x["builder"] == 3 and x["items"] == sorted([desk.id, ap.id])  # (as the package has them: by ID)
+    assert x["builder"] == 4 and x["items"] == sorted([desk.id, ap.id])  # (as the package has them: by ID)
     nodes = {n["name"]: n for n in gltf["nodes"]}
     assert {"items:light", "items:light:high"} <= set(nodes)  # the desk below the cut, the AP above
     assert not {"items", "items:high"} & set(nodes)

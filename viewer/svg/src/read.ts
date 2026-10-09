@@ -6,7 +6,7 @@ import type { PackageLike } from "./package.js";
 
 export const FORMAT = "storeypath-package";
 /** The format version this viewer reads, any patch of it (spec/FORMAT.md, "Versioning"). */
-export const FORMAT_VERSION = "0.8";
+export const FORMAT_VERSION = "0.9";
 export const SUPPORTED_MAJOR_VERSION = Number(FORMAT_VERSION.split(".")[0]);
 
 const VERSION = /^(\d+)\.(\d+)(\.\d+)?([-+][0-9A-Za-z.-]+)?$/;

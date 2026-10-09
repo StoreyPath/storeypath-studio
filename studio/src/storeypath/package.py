@@ -16,12 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.8.0"
+FORMAT_VERSION = "0.9.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
 # items' IDs are asset tags from 0.8 (7K2Q-XM9F-4DP; before: the project's code, -I and six digits)
 ASSET_IDS_FROM = (0, 8)
+# rooms' floor and wall finishes from 0.9 (spec/finishes.json)
+FINISHES_FROM = (0, 9)
 
 FILES = {
     "location": "location.geojson",
@@ -118,6 +120,14 @@ Grade = Literal["president", "c_level", "director", "manager", "section_head", "
 
 DRAWING_LABEL = ("the text written in it on the drawing, as written (its lines joined by a line break; "
                  "never changed in review): a key to match on, beside the ID")
+FLOOR_FINISH = ("what its floor is finished in (format 0.9): a code of StoreyPath's floor finishes (FORMAT.md, "
+                "Finishes); null for its type's default (a zone's: its space's, else its type's). A reader that does "
+                "not know a code shows the default")
+WALL_FINISH = ("what its walls are finished in (format 0.9), on each wall's face towards it: a code of StoreyPath's "
+               "wall finishes (FORMAT.md, Finishes); null for its type's default. A reader that does not know a code "
+               "shows the default")
+FloorFinish = Annotated[str, Field(pattern=r"^FLOOR(-[A-Z0-9]+)+$", max_length=40)]
+WallFinish = Annotated[str, Field(pattern=r"^WALL(-[A-Z0-9]+)+$", max_length=40)]
 
 
 class SpaceProps(_Props):
@@ -139,6 +149,8 @@ class SpaceProps(_Props):
     stack: str | None = Field(None, description=(
         "a lift's, stairs', escalator's (or a ramp's between floors) stack (format 0.8): the same key on every "
         "floor the same one serves (the ID of its space on the lowest of them), no other's; null for any other space"))
+    floor_finish: FloorFinish | None = Field(None, description=FLOOR_FINISH)
+    wall_finish: WallFinish | None = Field(None, description=WALL_FINISH)
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 
@@ -156,6 +168,7 @@ class ZoneProps(_Props):
     capacity: int | None = Field(None, ge=0, description=CAPACITY)
     capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
     grade: Grade | None = Field(None, description=GRADE)
+    floor_finish: FloorFinish | None = Field(None, description=FLOOR_FINISH)
     hidden: bool = Field(False, description="real, but not shown unless asked for")
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 

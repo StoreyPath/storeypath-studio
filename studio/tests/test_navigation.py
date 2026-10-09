@@ -14,6 +14,7 @@ from storeypath.assets import asset_dir
 from storeypath.export import export_package
 from storeypath.navigation import (CORNER_SLACK_M, MARGIN_M, ROOM_PENALTY_S, Graph, NoRoute, build_network, label_of, route,
                                    walking_region)
+from storeypath.package import FORMAT_VERSION
 from storeypath.samples import build_demo
 from storeypath.stacks import NOT_LINKED, stack_of, stacks
 from storeypath.validate import validate_package
@@ -287,7 +288,7 @@ def test_a_package_carries_its_network_and_stacks(demo, tmp_path):
     ws, hq = demo
     out = tmp_path / "hq.storeypath"
     manifest = export_package(ws, out, building=hq, record=False, bake=False)
-    assert manifest.format_version == "0.8.0" and manifest.files["navigation"] == "navigation.json"
+    assert manifest.format_version == FORMAT_VERSION and manifest.files["navigation"] == "navigation.json"
     assert validate_package(out) == []
     with zipfile.ZipFile(out) as z:
         nav = json.loads(z.read("navigation.json"))

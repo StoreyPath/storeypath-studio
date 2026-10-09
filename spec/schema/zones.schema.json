@@ -277,6 +277,21 @@
           "description": "who it is laid out for (format 0.7): the highest grade among the desks standing in it (president, c_level, director, manager, section_head, senior, junior); null without one",
           "title": "Grade"
         },
+        "floor_finish": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^FLOOR(-[A-Z0-9]+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what its floor is finished in (format 0.9): a code of StoreyPath's floor finishes (FORMAT.md, Finishes); null for its type's default (a zone's: its space's, else its type's). A reader that does not know a code shows the default",
+          "title": "Floor Finish"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for",

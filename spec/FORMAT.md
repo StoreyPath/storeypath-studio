@@ -1,4 +1,4 @@
-# StoreyPath package format — version 0.8
+# StoreyPath package format — version 0.9
 
 A StoreyPath package (`*.storeypath`) describes one building of a project: the
 building, its location, its floors, the spaces on each floor (offices, corridors,
@@ -118,11 +118,13 @@ MultiPolygon, for drawing or modelling the floor; they rise to the ceiling),
 **space** — `type`, `name`, `number`, `drawing_label`, `floor_id`, `area_m2`,
 `display_point` (a good spot for its label), `zones`, `outdoor` (open to the sky: a terrace or balcony with no
 windows of its own; a glazed veranda is not), `capacity`, `capacity_from`, `grade`
-(Capacity), `stack` (Stacks), `hidden`, `ignored`. Geometry: Polygon or MultiPolygon.
-A space is what walls, doors and windows enclose: walls stand on its edges.
+(Capacity), `stack` (Stacks), `floor_finish` and `wall_finish` (Finishes), `hidden`, `ignored`.
+Geometry: Polygon or MultiPolygon. A space is what walls, doors and windows enclose:
+walls stand on its edges.
 
 **zone** — `type`, `name`, `number`, `drawing_label`, `space_id`, `floor_id`, `area_m2`,
-`display_point`, `capacity`, `capacity_from`, `grade`, `hidden`, `ignored`. Geometry: Polygon or MultiPolygon. A zone is a
+`display_point`, `capacity`, `capacity_from`, `grade`, `floor_finish` (Finishes), `hidden`, `ignored`. Geometry:
+Polygon or MultiPolygon. A zone is a
 part of a space used for one thing, with no wall between it and the rest of the
 space: a majlis and a dining area in one hall, a passage running into a living room,
 team areas in an open office. The zones of a space divide it exactly (together they
@@ -505,6 +507,120 @@ With *d* = *w*·*r* and *c* = *w*ₓ*r*ᵧ − *w*ᵧ*r*ₓ: `ahead` when *d* > 
 A way that cannot be found (none, or none without stairs) is said to be none; an ID
 the network does not have is an error.
 
+## Finishes (0.9)
+
+What a room's floor and walls are finished in: carpet tiles, porcelain, marble, oak
+planks, paint, wallpaper, wall tiles… A space may name its floor's finish
+(`floor_finish`) and its walls' (`wall_finish`), a zone its floor's (`floor_finish`: a
+zone has no walls of its own), each a code of StoreyPath's finishes below: a fixed set
+every reader has, the same in every package. They are what a person chose in review;
+null is the room's type's default (Defaults).
+
+```json
+"properties": { "kind": "space", "type": "lobby", "floor_finish": "FLOOR-MARBLE-WHITE",
+                "wall_finish": "WALL-STONE", … }
+```
+
+- **The floor** of a space shows its `floor_finish`, else its type's default. A zone
+  shows its own, else its space's, else its type's default (a hall divided into zones
+  finished as one, and one of them otherwise).
+- **The walls.** A wall stands between two rooms (or a room and the outside): each side of
+  it, each face, is finished as the room it faces is: the `wall_finish` of the space on
+  that side (a zone's walls are its space's), else that space's type's default; a face
+  towards no room (the building's outside, the jambs of openings), as `exterior` in the
+  list. The wall over a door or a window, and under a window, is the wall.
+- **A code a reader does not know** (one a later version adds) is shown as the type's
+  default; a reader refuses only a code not of the form of a floor's (`FLOOR-` and
+  capital letters, digits and hyphens: `^FLOOR(-[A-Z0-9]+)+$`, at most 40 characters)
+  or a wall's (`^WALL(-[A-Z0-9]+)+$`). Codes are kept for good: a finish is never
+  renamed to another code, nor its code given to another.
+
+`spec/finishes.json` is the list as data, for every reader: each finish's `code`, what it
+`applies` to (`floor` or `wall`), its `group`, its English and Arabic names (`name`,
+`name_ar`), its colour on the whole (`tone`, `#rrggbb`: what to fill a room with on a plan
+coloured by finish, or show before a texture), how rough it is (`roughness`, 0–1) and what
+StoreyPath's viewer paints it with (`size_m`, the metres its image covers, and `paint`: a
+kind of painter and its values; nothing is downloaded); and the defaults by type, and the
+exterior's finish. The viewer has it as `viewer/src/finishes.js`, the Go module as
+`go/finishes.json` (Finishes(), FloorFinishOf, WallFinishOf), Studio as it is.
+
+Floors:
+
+| Code | Name | الاسم | Group |
+|---|---|---|---|
+| `FLOOR-CARPET-CHARCOAL` | Carpet tiles, charcoal | بلاط سجاد، فحمي | Carpet |
+| `FLOOR-CARPET-GREY` | Carpet tiles, mid grey | بلاط سجاد، رمادي متوسط | Carpet |
+| `FLOOR-CARPET-BLUEGREY` | Carpet tiles, blue-grey | بلاط سجاد، رمادي مزرق | Carpet |
+| `FLOOR-CARPET-WARMGREY` | Carpet tiles, warm grey | بلاط سجاد، رمادي دافئ | Carpet |
+| `FLOOR-CARPET-NAVY` | Carpet tiles, navy | بلاط سجاد، كحلي | Carpet |
+| `FLOOR-CARPET-BEIGE` | Carpet tiles, beige | بلاط سجاد، بيج | Carpet |
+| `FLOOR-CARPET-GREEN` | Carpet tiles, green | بلاط سجاد، أخضر | Carpet |
+| `FLOOR-CARPET-BURGUNDY` | Carpet tiles, burgundy | بلاط سجاد، عنابي | Carpet |
+| `FLOOR-CARPET-PATTERN` | Patterned carpet, grey and blue | سجاد منقوش، رمادي وأزرق | Carpet |
+| `FLOOR-CARPET-PRAYER` | Prayer carpet, rows | سجاد صلاة بصفوف | Carpet |
+| `FLOOR-VINYL-GREY` | Vinyl sheet, grey | فينيل لفائف، رمادي | Vinyl |
+| `FLOOR-VINYL-BLUE` | Vinyl sheet, clinic blue | فينيل لفائف، أزرق طبي | Vinyl |
+| `FLOOR-LVT-OAK` | Vinyl planks, light oak look | ألواح فينيل بمظهر البلوط الفاتح | Vinyl |
+| `FLOOR-LVT-WALNUT` | Vinyl planks, walnut look | ألواح فينيل بمظهر الجوز | Vinyl |
+| `FLOOR-PORCELAIN-WHITE` | Porcelain tiles 60×60, white | بلاط بورسلان 60×60، أبيض | Porcelain tiles |
+| `FLOOR-PORCELAIN-GREY` | Porcelain tiles 60×60, light grey | بلاط بورسلان 60×60، رمادي فاتح | Porcelain tiles |
+| `FLOOR-PORCELAIN-BEIGE` | Porcelain tiles 60×60, beige | بلاط بورسلان 60×60، بيج | Porcelain tiles |
+| `FLOOR-PORCELAIN-DARK` | Porcelain tiles 60×120, dark grey | بلاط بورسلان 60×120، رمادي داكن | Porcelain tiles |
+| `FLOOR-MARBLE-WHITE` | Marble, white | رخام أبيض | Marble and terrazzo |
+| `FLOOR-MARBLE-BEIGE` | Marble, beige | رخام بيج | Marble and terrazzo |
+| `FLOOR-MARBLE-BLACK` | Marble, black | رخام أسود | Marble and terrazzo |
+| `FLOOR-TERRAZZO-LIGHT` | Terrazzo, light | تيرازو فاتح | Marble and terrazzo |
+| `FLOOR-TERRAZZO-DARK` | Terrazzo, dark | تيرازو داكن | Marble and terrazzo |
+| `FLOOR-WOOD-OAK` | Oak planks, light | ألواح بلوط فاتح | Wood |
+| `FLOOR-WOOD-WALNUT` | Walnut planks | ألواح جوز | Wood |
+| `FLOOR-WOOD-HERRINGBONE` | Oak herringbone | باركيه بلوط بنقش عظم السمكة | Wood |
+| `FLOOR-CONCRETE-POLISHED` | Polished concrete | خرسانة مصقولة | Concrete and resin |
+| `FLOOR-CONCRETE` | Concrete | خرسانة | Concrete and resin |
+| `FLOOR-EPOXY-GREY` | Epoxy, grey | إيبوكسي رمادي | Concrete and resin |
+| `FLOOR-RUBBER` | Rubber, anti-slip studs | مطاط مانع للانزلاق | Technical |
+| `FLOOR-RAISED-ACCESS` | Raised access floor | أرضية مرفوعة | Technical |
+
+Walls:
+
+| Code | Name | الاسم | Group |
+|---|---|---|---|
+| `WALL-PAINT-WHITE` | Paint, white | دهان أبيض | Paint |
+| `WALL-PAINT-OFFWHITE` | Paint, warm off-white | دهان أبيض دافئ | Paint |
+| `WALL-PAINT-GREY` | Paint, light grey | دهان رمادي فاتح | Paint |
+| `WALL-PAINT-SAND` | Paint, sand | دهان رملي | Paint |
+| `WALL-PAINT-BLUE` | Paint, pale blue | دهان أزرق فاتح | Paint |
+| `WALL-PAINT-GREEN` | Paint, pale green | دهان أخضر فاتح | Paint |
+| `WALL-PAINT-CHARCOAL` | Paint, accent dark grey | دهان رمادي داكن | Paint |
+| `WALL-PAINT-NAVY` | Paint, accent navy | دهان كحلي | Paint |
+| `WALL-PAINT-TERRACOTTA` | Paint, accent terracotta | دهان تيراكوتا | Paint |
+| `WALL-PAPER-LINEN` | Wallpaper, linen beige | ورق جدران، كتان بيج | Wallpaper |
+| `WALL-PAPER-STRIPES` | Wallpaper, grey stripes | ورق جدران، خطوط رمادية | Wallpaper |
+| `WALL-PAPER-GEOMETRIC` | Wallpaper, geometric | ورق جدران، نقش هندسي | Wallpaper |
+| `WALL-PAPER-DAMASK` | Wallpaper, damask | ورق جدران، دمشقي | Wallpaper |
+| `WALL-TILE-WHITE` | Wall tiles 30×60, white | بلاط جدران 30×60، أبيض | Tiles |
+| `WALL-TILE-GREY` | Wall tiles 30×60, grey | بلاط جدران 30×60، رمادي | Tiles |
+| `WALL-TILE-MOSAIC` | Mosaic tiles, blue | فسيفساء زرقاء | Tiles |
+| `WALL-WOOD-SLATS` | Oak slats | شرائح بلوط | Wood and stone |
+| `WALL-WOOD-WALNUT` | Walnut panels | ألواح جوز للجدران | Wood and stone |
+| `WALL-STONE` | Stone cladding | تكسية حجرية | Wood and stone |
+
+**Defaults** (a room given none; a type a reader does not know, as `unspecified`; the
+building's outside: `WALL-PAINT-WHITE`):
+
+| Types | Floor | Walls |
+|---|---|---|
+| `bedroom`, `living_room`, `dining_room`, `dressing_room` | `FLOOR-WOOD-OAK` | `WALL-PAINT-WHITE` |
+| `corridor` | `FLOOR-PORCELAIN-GREY` | `WALL-PAINT-WHITE` |
+| `elevator`, `stairs`, `escalator`, `ramp` | `FLOOR-TERRAZZO-LIGHT` | `WALL-PAINT-WHITE` |
+| `kitchen`, `balcony`, `terrace` | `FLOOR-PORCELAIN-BEIGE` | `WALL-PAINT-WHITE` |
+| `lobby` | `FLOOR-MARBLE-BEIGE` | `WALL-PAINT-WHITE` |
+| `meeting_room` | `FLOOR-CARPET-WARMGREY` | `WALL-PAINT-WHITE` |
+| `office`, `room`, `open_area` | `FLOOR-CARPET-BLUEGREY` | `WALL-PAINT-WHITE` |
+| `parking` | `FLOOR-EPOXY-GREY` | `WALL-PAINT-WHITE` |
+| `prayer_room` | `FLOOR-CARPET-GREEN` | `WALL-PAINT-WHITE` |
+| `restroom`, `bathroom`, `laundry` | `FLOOR-PORCELAIN-WHITE` | `WALL-TILE-WHITE` |
+| `storage`, `utility`, `shaft`, `unspecified`, `open_to_below` | `FLOOR-CONCRETE` | `WALL-PAINT-WHITE` |
+
 ## One building per package
 
 From 0.7 a package holds exactly one building: `manifest.json → scope` names it.
@@ -557,11 +673,11 @@ The node names it; its `extras` say what it is: `material`, `view`, and `type` a
 | `volume:<type>` | `volume` | `xray` | each space of that `type` as a volume, up to its ceiling (to its parapets, when open to the sky) |
 | `ceiling` | `ceiling` | `walk` | the ceiling, over every space but those open to the sky |
 | `lights` | `lightPanel` | `walk` | ceiling panels, 60 cm square, about every 2.4 m in each space or zone (none in shafts and lifts): their faces down |
-| `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces, and their tops and undersides, full height |
+| `wall`, `wallTop` | `wall`, `wallTop` | `full` | the walls' faces (with those of the wall over and under openings), and their tops and undersides, full height |
 | `parapet`, `parapetTop` | `wall`, `wallTop` | `full` | the parapets, likewise |
 | `skirting` | `skirting` | | a skirting board along every face of the walls and parapets, and under windows |
-| `heads`, `headTop` | `wallPlain`, `wallTop` | `full` | the wall over doors, doorways and windows, and its top |
-| `sills` | `wallPlain` | | the wall under windows |
+| `heads`, `headTop` | `wallPlain`, `wallTop` | `full` | the wall over doors, doorways and windows: under it and its ends (its faces are `wall`'s), and its top |
+| `sills` | `wallPlain` | | the wall under windows: its ends (its faces are `wall`'s) |
 | `sillBoard` | `sillBoard` | | a board on each window's sill |
 | `glass`, `frame` | `glass`, `frame` | `full` | windows: the glass, and its frame and mullions |
 | `door`, `doorFrame` | `door`, `doorFrame` | `full` | door leaves, open as the plan draws them, and their frames |
@@ -593,7 +709,11 @@ glTF draws a mesh without them.
 
 The floor finishes and volumes have a vertex attribute `_ROOM` (unsigned integer),
 an index into `rooms` below: the space or zone each vertex belongs to, so that a
-click on a floor tells which room it is. The items' pieces have `_ITEM`, an index
+click on a floor tells which room it is. The walls' and parapets' faces (builder 4) have
+it too: the space each face faces (Finishes), or a value past the end of `rooms` (65535,
+or 4294967295 for a floor of more than 65534 rooms and zones) for a face towards none. A
+viewer draws each triangle in the finish of its room (a floor's, a wall's), from the
+package's properties: the file holds no finish, so it stays right when they change. The items' pieces have `_ITEM`, an index
 into `items` below, likewise; their colours are the vertices' (`COLOR_0`: their
 type's colour, and shades of it), how rough and how metallic each is `_FINISH`
 (unsigned bytes, normalised: roughness, metalness), and they have no normals
@@ -606,7 +726,7 @@ draws each piece with its own, by `material` and `type`, in the look it is asked
 |---|---|
 | `project_id`, `building_id`, `floor_id` | what it is |
 | `export_sequence` | the export it was built for: a file whose sequence is not the manifest's is stale; build that floor instead |
-| `builder` | the version of StoreyPath's builder that made it: 3 since skirting, architraves, handles, window boards, ceiling panels and the finer furniture; 2 since items (format 0.6); a viewer builds a floor itself from a file of another version (a file without it is of 1, and has no items) |
+| `builder` | the version of StoreyPath's builder that made it: 4 since the room each wall's face faces (`_ROOM` on `wall` and `parapet`, and the faces of the wall over and under openings in `wall`); 3 since skirting, architraves, handles, window boards, ceiling panels and the finer furniture; 2 since items (format 0.6); a viewer builds a floor itself from a file of another version (a file without it is of 1, and has no items) |
 | `origin` | `lon`, `lat`, `kx`, `ky`: the frame above |
 | `options` | the sizes it was built with, in metres: `slab` (thickness), `doorHead`, `windowSill`, `windowHead`, `wallThickness` (where the floor gives none), `cutHeight` |
 | `elevation`, `wall_height` | the floor's elevation, and how high its walls rise above it |
@@ -636,6 +756,17 @@ draws each piece with its own, by `material` and `type`, in the look it is asked
   3D), when the exporter could build them. Nothing else changes: a reader of 0.4
   read a 0.5 package as it is, ignoring the folder (readers of 0.7 and later refuse a
   newer minor version instead: Versioning).
+
+## Changes from 0.8
+
+- Spaces' `floor_finish` and `wall_finish`, zones' `floor_finish` (Finishes): what a
+  room's floor and walls are finished in, codes of StoreyPath's fixed set
+  (`spec/finishes.json`); null, the type's default; a code a reader does not know, the
+  type's default too.
+- Pre-built 3D of builder 4: the walls' faces say which room each faces (`_ROOM`), and
+  the faces of the wall over and under openings are in `wall`.
+- A reader of 0.8 refuses a 0.9 package (Versioning); a reader of 0.9 reads 0.8 and
+  earlier ones as before (every room as its type).
 
 ## Changes from 0.7
 
@@ -692,7 +823,11 @@ nothing else; the desk moved away; the TV retired; every item's `local` as it wa
 then the Annex's, the desk in it. They have items: desks of several grades (one in a
 zone, one in a building turned on the map), a photocopier, two access points, a sofa,
 a TV, a bed and a wayfinding kiosk; lifts and stairs through the Headquarters' three
-floors (their stacks), and a corridor divided into two zones. `routes.json` holds ways
+floors (their stacks), a corridor divided into two zones, and finishes (0.9) on some of
+the Headquarters' rooms: the reception in white marble with stone walls, the meeting room
+in oak herringbone with oak slats, an office in navy carpet with linen wallpaper, a
+restroom in dark porcelain with mosaic, the divided hall's walls pale green and its two
+zones' floors grey vinyl and light terrazzo; every other room as its type. `routes.json` holds ways
 on the first two that every reader must find the same (Navigation, Routing): the same
 nodes, changes of floor, legs and steps, and the same lengths and times to a
 centimetre and a tenth of a second. `asset-ids.json` holds asset IDs (Asset IDs) every
@@ -716,7 +851,7 @@ newer than it, and ignores unknown files, properties, and `objects.csv` rows of 
 does not know (as 0.6 added items), with the IDs of those rows where `changes.json` lists
 them. Before 1.0 a minor version may change what a package means (0.4's `scope`, 0.7's
 one building per package), so a reader refuses a package of a newer minor version
-(0.9 for a reader of 0.8), saying it must be updated; a newer patch version (0.8.1)
+(0.10 for a reader of 0.9), saying it must be updated; a newer patch version (0.9.1)
 only adds properties and is read. From 1.0, a reader reads any package of its major
 version. A format version is ASCII `major.minor`, an optional `.patch`, and an optional
 `-` or `+` suffix (`^[0-9]+\.[0-9]+(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?$`); a reader refuses

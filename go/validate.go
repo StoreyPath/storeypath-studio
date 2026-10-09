@@ -59,7 +59,7 @@ const (
 	ProblemItem          = "ITEM"           // an item is on a floor not in the package (or not of its building), or in a space or zone not on its floor; from 0.7, without its position in its building, or with a map position or heading away from it
 	ProblemItemType      = "ITEM_TYPE"      // an item's type is not in the package's catalogue
 	ProblemPlacement     = "PLACEMENT"      // a building of the package, or one an item stands in, has no placement in the manifest
-	ProblemValue         = "VALUE"          // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format
+	ProblemValue         = "VALUE"          // a value the format does not allow: a type the manifest's types do not list, a negative capacity, a grade, mount, category or colour not of the format, a finish's code not of the form of a floor's or a wall's (format 0.9)
 	ProblemNavigation    = "NAVIGATION"     // (0.8) the walking network names a building, floor, space or zone not in the package, holds a node twice, or an edge joins a node it does not have (or two nodes another edge joins), or has no line
 	ProblemItemElsewhere = "ITEM_ELSEWHERE" // (ValidateAcross) an item's ID is an item of another project, in another package
 )
@@ -174,6 +174,13 @@ func (p *Package) Validate() []Problem {
 		}
 		if s.Grade != nil && !slices.Contains(grades, *s.Grade) {
 			add(ProblemValue, file, id, "%s: grade %q is not one of %s", id, *s.Grade, strings.Join(grades, ", "))
+		}
+	}
+	// a finish (0.9): a code of the form of a floor's or a wall's (one this module does
+	// not know, a later version's, is read as the type's default)
+	finished := func(file, id, applies string, code *string) {
+		if code != nil && !wellFormedFinish(*code, applies) {
+			add(ProblemValue, file, id, "%s: %s_finish %q is not a %s finish's code", id, applies, clip(*code), applies)
 		}
 	}
 	oneBuilding := minor(m.FormatVersion) >= oneBuildingFrom
@@ -315,6 +322,8 @@ func (p *Package) Validate() []Problem {
 		}
 		typed("space", spacesFile, s.ID, s.Type)
 		seated(spacesFile, s.ID, s.Seating)
+		finished(spacesFile, s.ID, "floor", s.FloorFinish)
+		finished(spacesFile, s.ID, "wall", s.WallFinish)
 		geometryOf(s.ID, s.Geometry, spacesFile, false, add)
 	}
 	for _, z := range p.Zones {
@@ -326,6 +335,7 @@ func (p *Package) Validate() []Problem {
 		}
 		typed("zone", zonesFile, z.ID, z.Type)
 		seated(zonesFile, z.ID, z.Seating)
+		finished(zonesFile, z.ID, "floor", z.FloorFinish)
 		geometryOf(z.ID, z.Geometry, zonesFile, false, add)
 	}
 	for _, o := range p.Openings {

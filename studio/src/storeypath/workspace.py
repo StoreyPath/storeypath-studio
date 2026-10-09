@@ -204,6 +204,10 @@ class Override(BaseModel):
     # set by a person: the ID of a space on another floor it is linked with, or "" for
     # linked with none; None: linked as found (same object code, or footprints overlapping)
     stack: str | None = Field(None, max_length=100)
+    # what its floor and (a space's) walls are finished in (format 0.9): codes of
+    # spec/finishes.json (finishes.py); None: its type's default
+    floor_finish: str | None = Field(None, max_length=40)
+    wall_finish: str | None = Field(None, max_length=40)
 
 
 class Reading(BaseModel):
@@ -481,14 +485,18 @@ class Workspace(BaseModel):
             "number": ((o.number or None) if o and o.number is not None else record.number),
             # corrected, or checked by a person: a correction that sets its type, name or
             # number, or nothing at all (accepted as it is); with a capacity (or a link to
-            # other floors), accepted as it is says so with hidden false (nothing is hidden
-            # as detected). A capacity alone is not a check: how many a room seats says
-            # nothing of what it is; nor a lift's link alone.
+            # other floors, or finishes), accepted as it is says so with hidden false
+            # (nothing is hidden as detected). A capacity alone is not a check: how many a
+            # room seats says nothing of what it is; nor a lift's link alone, nor finishes.
             "corrected": o is not None and (o.type is not None or o.name is not None or o.number is not None
-                                            or (o.capacity is None and o.stack is None) or o.hidden is False),
+                                            or (o.capacity is None and o.stack is None and o.floor_finish is None
+                                                and o.wall_finish is None) or o.hidden is False),
             "hidden": bool(o and o.hidden),
             "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
             "capacity": o.capacity if o is not None else None,
+            # what its floor and walls are finished in, set by a person (format 0.9); None: as its type
+            "floor_finish": o.floor_finish if o is not None else None,
+            "wall_finish": o.wall_finish if o is not None and record.kind == "space" else None,
         }
 
     def review_reasons(self, record: ObjectRecord) -> list[str]:

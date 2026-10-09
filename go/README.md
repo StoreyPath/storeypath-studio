@@ -70,6 +70,14 @@ for _, b := range pkg.Buildings {
   are one.
 - Navigation (format 0.8): the building's walking network (`Navigation()`, nil for
   a package without one) and the way on it (`Route`, below).
+- Finishes (format 0.9): each space's `FloorFinish` and `WallFinish` and each zone's
+  `FloorFinish`, codes of StoreyPath's fixed set (`Finishes()`: the 50 floor and wall
+  finishes with their names in English and Arabic, tones and groups, and the defaults
+  by type, embedded from `finishes.json`, a copy of spec/finishes.json); what a room
+  shows: `Space.FloorFinishOf`, `Space.WallFinishOf`, `Zone.FloorFinishOf(space)` (its
+  own, a zone's space's, else its type's; a code this module does not know, its
+  type's), `FinishOf`, `DefaultFinish`. `Validate` refuses a code not of the form of a
+  floor's or a wall's (`VALUE`).
 - One building per package (format 0.7): `Manifest.Scope` names it; `Holds` says
   whether a package holds a building. Older packages may hold several, or a whole
   project; a StoreyPath project file (`.storeypath-project`) is refused by `Read`.
@@ -97,7 +105,7 @@ Properties a later format version adds are ignored, as the format asks, and so a
 is reported by `Validate` (`VERSION`), and `CheckVersion` says so from the
 manifest's `format_version` alone: what is not a format version (`major.minor`,
 a `.patch` if any, then a `-` or `+` suffix if any: ASCII digits and letters),
-another major version, or before 1.0 a newer minor one (0.9 for this 0.8
+another major version, or before 1.0 a newer minor one (0.10 for this 0.9
 reader), with a message to update the reader. `ReadManifest` reads the manifest
 alone, so a server can refuse a package before reading the rest of it:
 

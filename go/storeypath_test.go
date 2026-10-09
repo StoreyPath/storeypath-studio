@@ -1434,26 +1434,26 @@ func TestAPackageNewerThanTheReaderIsRefused(t *testing.T) {
 	// Before 1.0 a minor version may change what a package means: a newer one is
 	// refused with a message to update the reader; older ones and newer patches are read.
 	for v, ok := range map[string]bool{FormatVersion: true, "0.7.0": true, "0.6.0": true, "0.4.1": true, "0.8.9": true,
-		"0.9.0": false, "0.10.0": false, "1.0.0": false} {
+		"0.9.7": true, "0.10.0": false, "1.0.0": false} {
 		if err := CheckVersion(v); (err == nil) != ok {
 			t.Errorf("%s: %v", v, err)
 		}
 	}
-	newer := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = "0.9.0" }))
+	newer := rewriteFrom(t, "campus-hq.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = "0.10.0" }))
 	problems := newer.Validate()
 	if !slices.Contains(codes(problems), ProblemVersion) || !strings.Contains(problems[0].Message, "update the reader") {
-		t.Errorf("0.9.0: %v", problems)
+		t.Errorf("0.10.0: %v", problems)
 	}
 }
 
 func TestAFormatVersionIsReadStrictly(t *testing.T) {
-	// Read loosely, "0.9a.0" and "0.9-rc1" were 0.0 and 0.9 read as 0.0: a
-	// newer package read, without the rules of 0.8. What is not a format
+	// Read loosely, "0.10a.0" and "0.10-rc1" were 0.0 and 0.10 read as 0.0: a
+	// newer package read, without the rules of 0.9. What is not a format
 	// version is refused, and every rule applies to it.
 	for v, want := range map[string]string{
 		"0.7.0": "", "0.6.0": "", "0.4.1": "", "0.7.9": "", "0.7": "", "0.7.0-rc1": "", "0.7.0+build.5": "", "0.07.0": "",
-		"0.8.0": "", "0.8": "", "0.8-rc1": "", "0.8.1+build.2": "",
-		"0.9.0": "newer", "0.9": "newer", "0.9-rc1": "newer", "0.10.0": "newer", "0.99999999999999999999.0": "newer",
+		"0.8.0": "", "0.8": "", "0.8-rc1": "", "0.8.1+build.2": "", "0.9.0": "", "0.9": "", "0.9-rc1": "", "0.9.1+build.2": "",
+		"0.10.0": "newer", "0.10": "newer", "0.10-rc1": "newer", "0.11.0": "newer", "0.99999999999999999999.0": "newer",
 		"1.0.0": "unsupported", "99999999999999999999.0.0": "unsupported",
 		"0.8a.0": "not a format version", "0.x": "not a format version", "0.-1.0": "not a format version",
 		"0. 8.0": "not a format version", "0.1_0.0": "not a format version", "": "not a format version",
@@ -1468,8 +1468,8 @@ func TestAFormatVersionIsReadStrictly(t *testing.T) {
 		}
 	}
 	// campus (0.6: two buildings, items with no position in their building) labelled
-	// so: not read as 0.0, but refused, and held to 0.8's rules
-	for _, v := range []string{"0.9a.0", "0.9-rc1"} {
+	// so: not read as 0.0, but refused, and held to 0.9's rules
+	for _, v := range []string{"0.10a.0", "0.10-rc1"} {
 		p := rewriteFrom(t, "campus.storeypath", editJSON(FileManifest, func(doc map[string]any) { doc["format_version"] = v }))
 		if got := codes(p.Validate()); !slices.Contains(got, ProblemVersion) || !slices.Contains(got, ProblemScope) {
 			t.Errorf("campus as %s: %v", v, got)
@@ -1488,7 +1488,7 @@ func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
 		case FileManifest:
 			var doc map[string]any
 			json.Unmarshal(d, &doc)
-			doc["format_version"] = "0.9.0"
+			doc["format_version"] = "0.10.0"
 			d, _ = json.Marshal(doc)
 		}
 		return d
@@ -1497,7 +1497,7 @@ func TestTheManifestAloneTellsWhetherToReadAPackage(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 	m, err := ReadManifest(bytes.NewReader(data), int64(len(data)), DefaultLimits)
-	if err != nil || m.Project.ID != open(t, "campus-hq.storeypath").Manifest.Project.ID || m.FormatVersion != "0.9.0" ||
+	if err != nil || m.Project.ID != open(t, "campus-hq.storeypath").Manifest.Project.ID || m.FormatVersion != "0.10.0" ||
 		CheckVersion(m.FormatVersion) == nil {
 		t.Errorf("ReadManifest: %+v %v", m, err)
 	}

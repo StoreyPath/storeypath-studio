@@ -133,9 +133,9 @@ test("a package of a newer minor version, or of no version, is refused; older on
       return e.message;
     }
   };
-  for (const v of ["0.8.0", "0.8.12", "0.8", "0.7.0", "0.6.0", "0.3.1", "0.8.1-rc.1", "0.8.0+build.5"]) equal(await said(v), "read", v);
-  for (const v of ["0.9.0", "0.9", "0.99.0", "0.9.0-rc1", "1.0.0", "2.7.0"]) {
-    equal(await said(v), `This package is format ${v}, newer than this viewer's 0.8: update the viewer.`, v);
+  for (const v of ["0.9.0", "0.9.12", "0.9", "0.8.0", "0.7.0", "0.6.0", "0.3.1", "0.9.1-rc.1", "0.9.0+build.5"]) equal(await said(v), "read", v);
+  for (const v of ["0.10.0", "0.10", "0.99.0", "0.10.0-rc1", "1.0.0", "2.7.0"]) {
+    equal(await said(v), `This package is format ${v}, newer than this viewer's 0.9: update the viewer.`, v);
   }
   for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
     "٠.٧", "０.７", 0.7, null, undefined]) {

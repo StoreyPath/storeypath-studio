@@ -28,8 +28,11 @@ register(`data:text/javascript,${encodeURIComponent(`
     return path ? { url: ${JSON.stringify(vendor)} + path, shortCircuit: true } : next(specifier, context);
   }`)}`);
 const { FORMAT_VERSION, loadPackage } = await import("../../src/package.js");
-const { BUILDER, buildItems, buildPieces, ceilingPanels, inside, itemExtent, originOf, planFloor, setItems, toLocal } =
-  await import("../../src/world/build.js");
+const { BUILDER, buildItems, buildPieces, ceilingPanels, groupByFinish, inside, itemExtent, originOf, planFloor, roomFinder,
+  setItems, toLocal } = await import("../../src/world/build.js");
+const { FINISHES, EXTERIOR, defaultFinish, finishOf, floorFinish, wallFinish } = await import("../../src/finishes.js");
+const { finishes, seedOf } = await import("../../src/world/finishes.js");
+const { TYPE_COLORS } = await import("../../src/theme.js");
 const { toLonLat } = await import("../../src/world/frame.js");
 const { qualityFor } = await import("../../src/world/gpu.js");
 const { isItemId } = await import("../../src/ids.js");
@@ -65,11 +68,11 @@ test("a package of a newer minor version, or of no version, is refused; older on
     return loadPackage(bytes).then((pkg) => (pkg.manifest.format_version === version ? "read" : "read, another version"),
       (e) => e.message);
   };
-  for (const v of ["0.8.0", "0.8.12", "0.8", "0.7.0", "0.6.0", "0.3.1", "0.8.1-rc.1", "0.8.0+build.5"]) {
+  for (const v of ["0.9.0", "0.9.12", "0.9", "0.8.0", "0.7.0", "0.6.0", "0.3.1", "0.9.1-rc.1", "0.9.0+build.5"]) {
     truly(await said(v) === "read", `${v}: ${await said(v)}`);
   }
-  for (const v of ["0.9.0", "0.9", "0.99.0", "0.9.0-rc1", "1.0.0", "2.7.0"]) {
-    const want = `This package is format ${v}, newer than this viewer's 0.8: update the viewer.`;
+  for (const v of ["0.10.0", "0.10", "0.99.0", "0.10.0-rc1", "1.0.0", "2.7.0"]) {
+    const want = `This package is format ${v}, newer than this viewer's 0.9: update the viewer.`;
     truly(await said(v) === want, `${v}: ${await said(v)}`);
   }
   for (const v of ["", ".7", "0x0.7", "0.7.", "v0.7.0", "0.8a.0", "0.7.0.1", " 0.7.0", "0.7.0\n", "0.7.0-", "-1.7",
@@ -98,7 +101,7 @@ test("the baker writes each floor as binary glTF: its pieces, rooms and obstacle
       "glass", "frame", "heads", "sills", "floor:shaft:hidden", "obstacles", "skirting", "trim", "handle", "sillBoard",
       "lights"]) truly(node(name), `no ${name}`);
     truly(!node("wallLow") && !node("wallCut"), "the walls cut low are made from the full ones, not stored");
-    truly(x.builder === BUILDER && BUILDER === 3, `builder ${x.builder}`);
+    truly(x.builder === BUILDER && BUILDER === 4, `builder ${x.builder}`);
     truly(node("lights").extras.view === "walk" && node("trim").extras.view === "full" && !node("skirting").extras.view,
       "panels show walking, architraves not in the cutaway, skirting always");
     // boxes (frames, doors, skirting, …) share their corners and have no normals: flat-shaded, as items are
@@ -128,7 +131,7 @@ for (const name of ["campus", "campus-hq"]) test(`the baker writes a floor's ite
     const held = { campus: 9, "campus-hq": 10 }[name]; // campus-hq: and a kiosk
     // an item's ID: an asset's tag (format 0.8), the project's number before (campus: 0.6)
     const itemId = name === "campus" ? (id) => /^[A-Z0-9]+-I\d{6}$/.test(id) : isItemId;
-    truly(x.builder === 3 && x.items.length === held && x.items.every(itemId), JSON.stringify(x.items));
+    truly(x.builder === 4 && x.items.length === held && x.items.every(itemId), JSON.stringify(x.items));
     const node = (name) => json.nodes.find((n) => n.name === name);
     // drawn in detail, they are built from their templates (in milliseconds), not read
     truly(!node("items") && !node("items:high"), "the detailed items are not in the file");
@@ -325,8 +328,9 @@ test("a floor's details: skirting along its walls, architraves and lever handles
   const { plan } = await hqGround();
   const pieces = Object.fromEntries(buildPieces(plan).pieces.map((p) => [p.name, p]));
   // each door: its frame (three boxes); a box each side up and over it (4 faces each: not against the wall, nor under);
-  // three boxes a handle, each side of each leaf; each window's sill (a box) and its board (5 faces: not underneath)
-  const doors = triangles(pieces.doorFrame) / 36, windows = triangles(pieces.sills) / 12;
+  // three boxes a handle, each side of each leaf; each window's sill (a box, its faces the wall's: 4 faces) and its
+  // board (5 faces: not underneath)
+  const doors = triangles(pieces.doorFrame) / 36, windows = triangles(pieces.sills) / 8;
   truly(doors > 5 && triangles(pieces.trim) === doors * 6 * 8, `${doors} doors, ${triangles(pieces.trim)} architraves' triangles`);
   truly(triangles(pieces.handle) % 72 === 0 && triangles(pieces.handle) >= doors * 72, `handles: ${triangles(pieces.handle)} triangles`);
   truly(windows > 5 && triangles(pieces.sillBoard) === windows * 10, `${windows} windows, boards: ${triangles(pieces.sillBoard)}`);
@@ -431,6 +435,125 @@ test("a building across the antimeridian is built as anywhere else, a building's
     items += plan.items.length;
   }
   truly(items === hq.items.length, `its items: ${items} of ${hq.items.length}`);
+});
+
+
+// ---- finishes (format 0.9) ----------------------------------------------------------
+
+test("the finishes: the spec's list as it is, a painter for each, a default of its kind for every type", async () => {
+  const spec = JSON.parse(readFileSync(join(root, "../../spec/finishes.json"), "utf8"));
+  truly(JSON.stringify(FINISHES) === JSON.stringify(spec), "viewer/src/finishes.js is not spec/finishes.json: node spec/finishes.mjs");
+  const { viewerModule } = await import("../../../spec/finishes.mjs");
+  truly(readFileSync(join(root, "../src/finishes.js"), "utf8") === viewerModule(spec), "viewer/src/finishes.js was edited by hand");
+  const kinds = new Set(finishes().kinds), groups = new Map(FINISHES.groups.map((g) => [g.code, g.applies]));
+  const codes = new Set();
+  for (const f of FINISHES.finishes) {
+    truly(!codes.has(f.code) && kinds.has(f.paint.kind) && groups.get(f.group) === f.applies && f.name && f.name_ar
+      && /^#[0-9a-f]{6}$/.test(f.tone) && f.code.startsWith(`${f.applies.toUpperCase()}-`) && finishOf(f.code) === f, f.code);
+    codes.add(f.code);
+  }
+  truly(codes.size >= 40 && codes.size <= 60, `${codes.size} finishes`);
+  for (const type of Object.keys(TYPE_COLORS)) {
+    truly(finishOf(defaultFinish("floor", type))?.applies === "floor" && finishOf(defaultFinish("wall", type))?.applies === "wall", type);
+  }
+  truly(finishOf(EXTERIOR)?.applies === "wall" && defaultFinish("floor", "a later type") === defaultFinish("floor", "unspecified"),
+    "the exterior, an unknown type");
+});
+
+test("every finish paints an image that tiles, near its tone, with its roughness in its normal map's alpha", () => {
+  const f = finishes(), n = 128, slow = [];
+  for (const fin of FINISHES.finishes) {
+    const t = performance.now();
+    const r = f.paint(fin.paint.kind, fin.paint, fin.size_m, seedOf(fin.code), n, true);
+    slow.push([fin.code, performance.now() - t]);
+    truly(r.color.length === n * n * 4 && r.normal.length === n * n * 4, `${fin.code}: sizes`);
+    const c = r.color;
+    // the step across each edge, against the largest step within: no seam a tile wider than the rest
+    const step = (a, b, down) => {
+      let sum = 0;
+      for (let k = 0; k < n; k++) {
+        const i = down ? (k * n + a) * 4 : (a * n + k) * 4, j = down ? (k * n + b) * 4 : (b * n + k) * 4;
+        sum += Math.abs(c[i] - c[j]) + Math.abs(c[i + 1] - c[j + 1]) + Math.abs(c[i + 2] - c[j + 2]);
+      }
+      return sum / n;
+    };
+    for (const down of [true, false]) {
+      let most = 0;
+      for (let a = 0; a + 1 < n; a++) most = Math.max(most, step(a, a + 1, down));
+      truly(step(n - 1, 0, down) <= most * 1.1 + 2, `${fin.code}: a seam ${down ? "across" : "down"} (${step(n - 1, 0, down).toFixed(1)} vs ${most.toFixed(1)})`);
+    }
+    const mean = [0, 1, 2].map((k) => { let m = 0; for (let i = 0; i < n * n; i++) m += c[i * 4 + k]; return m / (n * n); });
+    const tone = [1, 3, 5].map((k) => parseInt(fin.tone.slice(k, k + 2), 16));
+    truly(mean.every((v, k) => Math.abs(v - tone[k]) <= 14), `${fin.code}: ${mean.map(Math.round)} is not its tone ${tone}`);
+    let alpha = 0;
+    for (let i = 3; i < r.normal.length; i += 4) alpha += r.normal[i];
+    truly(alpha > 0 && r.color.every((v, i) => i % 4 !== 3 || v === 255), `${fin.code}: roughness in alpha, colour opaque`);
+  }
+  const slowest = slow.sort((a, b) => b[1] - a[1])[0];
+  truly(slowest[1] < 200, `${slowest[0]} took ${slowest[1].toFixed(0)} ms at ${n} px`);
+});
+
+test("a room's finishes: its own, a zone's space's, its type's; a code not known, or for the other side, its type's", () => {
+  truly(floorFinish({ type: "office" }) === defaultFinish("floor", "office") && wallFinish({ type: "restroom" }) === "WALL-TILE-WHITE",
+    "as its type");
+  truly(floorFinish({ type: "office", floor_finish: "FLOOR-CARPET-NAVY" }) === "FLOOR-CARPET-NAVY"
+    && wallFinish({ type: "office", wall_finish: "WALL-STONE" }) === "WALL-STONE", "its own");
+  const space = { type: "open_area", floor_finish: "FLOOR-WOOD-OAK" };
+  truly(floorFinish({ type: "corridor" }, space) === "FLOOR-WOOD-OAK" && floorFinish({ type: "corridor", floor_finish: "FLOOR-RUBBER" }, space)
+    === "FLOOR-RUBBER" && floorFinish({ type: "corridor" }, { type: "office" }) === defaultFinish("floor", "corridor"), "a zone");
+  truly(floorFinish({ type: "lobby", floor_finish: "FLOOR-LATER-ONE" }) === defaultFinish("floor", "lobby")
+    && wallFinish({ type: "lobby", wall_finish: "FLOOR-CARPET-NAVY" }) === defaultFinish("wall", "lobby"), "not known");
+});
+
+test("each face of a wall is the room it faces: both sides of a wall between two rooms, the outside none", async () => {
+  const pkg = await loadPackage(readFileSync(join(packages, "campus-hq.storeypath")));
+  for (const floor of pkg.floorsOf(HQ)) {
+    const plan = planFloor(pkg, floor, originOf(pkg, HQ));
+    const { pieces, rooms } = buildPieces(plan);
+    const wall = pieces.find((q) => q.name === "wall").geometry, find = roomFinder(plan.rooms);
+    const pos = wall.getAttribute("position"), nor = wall.getAttribute("normal"), room = wall.getAttribute("_room");
+    const faced = new Set();
+    let both = 0, outside = 0;
+    for (let v = 0; v < pos.count; v += 3) { // each triangle: the room a little off it is the one it says
+      const x = (pos.getX(v) + pos.getX(v + 1) + pos.getX(v + 2)) / 3, z = (pos.getZ(v) + pos.getZ(v + 1) + pos.getZ(v + 2)) / 3;
+      const nx = nor.getX(v), nz = nor.getZ(v), id = rooms[room.getX(v)];
+      truly(room.getX(v) === room.getX(v + 1) && room.getX(v) === room.getX(v + 2), "a triangle of two rooms");
+      const off = (d) => find(x + nx * d, -(z + nz * d));
+      const here = off(0.05) ?? off(0.25);
+      truly((here?.id ?? undefined) === id, `${floor.id}: a face at ${x.toFixed(2)},${z.toFixed(2)} says ${id}, faces ${here?.id}`);
+      if (!id) {
+        outside++;
+        continue;
+      }
+      faced.add(id);
+      // behind it, through the wall: another room (or the outside), never its own
+      const behind = [0.12, 0.2, 0.3, 0.45].map((d) => off(-plan.thickness - d)).find(Boolean);
+      if (behind && behind.id !== id) both++;
+    }
+    truly(plan.rooms.every((r) => faced.has(r.id)), `${floor.id}: rooms no wall faces: ${plan.rooms.filter((r) => !faced.has(r.id)).map((r) => r.id)}`);
+    truly(both > 100 && outside > 50, `${floor.id}: ${both} faces with another room behind them, ${outside} outside`);
+  }
+});
+
+test("a piece drawn a finish at a time: its triangles ordered by finish, in groups; moved again in place", async () => {
+  const { plan } = await hqGround();
+  const { pieces, rooms } = buildPieces(plan);
+  const g = pieces.find((q) => q.name === "wall").geometry;
+  const tris = g.getAttribute("position").count / 3;
+  const typeOf = (i) => (rooms[i] ? plan.rooms.find((r) => r.id === rooms[i])?.type ?? "zone" : "outside");
+  const codes = groupByFinish(g, typeOf);
+  truly(codes.length > 3 && g.groups.length === codes.length && g.index.count === tris * 3, `groups ${g.groups.length}`);
+  const index = g.index, room = g.getAttribute("_room");
+  for (const [k, grp] of g.groups.entries()) { // every triangle of a group is of its finish
+    for (let i = grp.start; i < grp.start + grp.count; i += 3) truly(typeOf(room.getX(index.getX(i))) === codes[k], "a triangle elsewhere");
+  }
+  const array = index.array, seen = new Set(Array.from(array, (v, i) => (i % 3 === 0 ? v : -1)).filter((v) => v >= 0));
+  truly(seen.size === tris, "every triangle once");
+  // one room's walls in another finish: the same index, its triangles moved
+  const office = plan.rooms.find((r) => r.type === "office").id;
+  const again = groupByFinish(g, (i) => (rooms[i] === office ? "NAVY" : typeOf(i)));
+  truly(g.index.array === array && again.includes("NAVY") && g.groups.length === again.length, "moved in place");
+  truly(groupByFinish(g, () => "ONE").length === 1 && g.groups.length === 0, "one finish: no groups");
 });
 
 // ---- in Chrome ----------------------------------------------------------------
@@ -1306,7 +1429,8 @@ test("the look: real, at the quality the machine gets (Low here: a software rend
     const meshes = () => {
       const out = {};
       world.scene.getObjectByName(floor).traverse((m) => {
-        if (m.isMesh && m.userData.material) out[m.name] = { geometry: m.geometry.uuid, material: m.material.uuid,
+        // (a piece drawn a finish at a time has a material a finish)
+        if (m.isMesh && m.userData.material) out[m.name] = { geometry: m.geometry.uuid, material: [].concat(m.material).map((x) => x.uuid).join(),
           lines: m.children.filter((l) => l.isLineSegments && l.visible).length };
       });
       return out;
@@ -1315,7 +1439,7 @@ test("the look: real, at the quality the machine gets (Low here: a software rend
     const real = { meshes: meshes(), finished: Boolean(office().map), colours: await picture(world) };
     world.setStyle("model");
     await world.ready();
-    const model = { meshes: meshes(), clay: world.scene.getObjectByName(floor).getObjectByName("wall").material.map === null,
+    const model = { meshes: meshes(), clay: [].concat(world.scene.getObjectByName(floor).getObjectByName("wall").material).every((m) => !m.map),
       colours: await picture(world) };
     world.setQuality("high");
     await world.ready();
@@ -1427,6 +1551,80 @@ test("the way, a ghost, items given and a choice in the model look at High quali
   }, lifted, PICTURE);
   truly(r.route.length === 2 && r.route.every(Boolean) && r.ghost && r.given && r.lines === 1 && r.lit && r.aimed && r.colours > 20,
     JSON.stringify(r));
+});
+
+
+test("finishes in 3D: each room's floor and walls as the package says; changed in place, nothing built again", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const group = world.scene.getObjectByName(floor);
+    const finishesOf = (name) => [].concat(group.getObjectByName(name).material).map((m) => m.userData.finish);
+    const lobby = world.package.spacesOn(floor).find((s) => s.properties.type === "lobby" && s.properties.floor_finish);
+    const office = world.package.spacesOn(floor).find((s) => s.properties.floor_finish === "FLOOR-CARPET-NAVY");
+    const plain = world.package.spacesOn(floor).find((s) => s.properties.type === "office" && !s.properties.floor_finish);
+    const before = { lobby: finishesOf("floor:lobby"), offices: finishesOf("floor:office"), walls: finishesOf("wall"),
+      geometry: group.getObjectByName("wall").geometry.uuid, finishOf: world.finishOf(office.id) };
+    world.updateSpace(plain.id, { floor_finish: "FLOOR-WOOD-WALNUT", wall_finish: "WALL-PAINT-TERRACOTTA" });
+    await window.frames(2);
+    const after = { offices: finishesOf("floor:office"), walls: finishesOf("wall"), geometry: group.getObjectByName("wall").geometry.uuid,
+      same: group.getObjectByName(floor) === null, finishOf: world.finishOf(plain.id) };
+    world.updateSpace(plain.id, { floor_finish: null, wall_finish: null });
+    await window.frames(2);
+    const back = { offices: finishesOf("floor:office"), walls: finishesOf("wall") };
+    // the model look: tinted by the finishes' tones
+    world.setStyle("model");
+    const model = finishesOf("wall");
+    world.setStyle("real");
+    return { before, after, back, model, lobby: lobby.properties.floor_finish };
+  }, floor);
+  truly(r.before.lobby.includes("FLOOR-MARBLE-WHITE") && r.lobby === "FLOOR-MARBLE-WHITE", `the lobby: ${r.before.lobby}`);
+  truly(r.before.offices.includes("FLOOR-CARPET-NAVY") && r.before.offices.includes("FLOOR-CARPET-BLUEGREY"), `offices: ${r.before.offices}`);
+  for (const code of ["WALL-STONE", "WALL-PAPER-LINEN", "WALL-WOOD-SLATS", "WALL-TILE-MOSAIC", "WALL-PAINT-WHITE"]) {
+    truly(r.before.walls.includes(code), `walls: ${r.before.walls} (no ${code})`);
+  }
+  truly(JSON.stringify(r.before.finishOf) === JSON.stringify({ floor: "FLOOR-CARPET-NAVY", wall: "WALL-PAPER-LINEN" }), JSON.stringify(r.before.finishOf));
+  truly(r.after.offices.includes("FLOOR-WOOD-WALNUT") && r.after.walls.includes("WALL-PAINT-TERRACOTTA")
+    && r.after.geometry === r.before.geometry, `changed in place: ${JSON.stringify(r.after)}`);
+  truly(JSON.stringify(r.after.finishOf) === JSON.stringify({ floor: "FLOOR-WOOD-WALNUT", wall: "WALL-PAINT-TERRACOTTA" }), "finishOf");
+  truly(r.back.offices.join() === r.before.offices.join() && r.back.walls.sort().join() === r.before.walls.sort().join(), "back as it was");
+  truly(r.model.length === r.before.walls.length, "the model look: a material a finish too");
+});
+
+test("painting: a wall aimed at says so, and which room is on its side; a floor, its room; Alt goes with the click", async () => {
+  const floor = await openFloor("/campus-hq.storeypath");
+  const r = await page.run(async (floor) => {
+    const world = window.world;
+    const office = world.package.spacesOn(floor).find((s) => s.properties.floor_finish === "FLOOR-CARPET-NAVY");
+    const o = world.toLocal(office.properties.display_point);
+    // walking in the office, looking level at its wall: the office's side of it
+    world.setMode("walk", { at: o, heading: 0 });
+    await window.frames();
+    const wall = world.pointAt();
+    world.camera.rotation.set(-0.9, 0, 0, "YXZ");
+    const ground = world.pointAt();
+    world.setMode("dollhouse");
+    // a click on its floor, from above, Alt held: the pick says so
+    world.select(office.id);
+    await new Promise((res) => setTimeout(res, 1200));
+    world.select(null, { go: false });
+    const p = world.camera.position.clone().set(o.x, world.package.get(floor).properties.elevation, o.z).project(world.camera);
+    const box = world.renderer.domElement.getBoundingClientRect();
+    window.painted = [];
+    window.paintPick = (e) => { window.painted.push(e.detail); e.preventDefault(); };
+    world.addEventListener("pick", window.paintPick);
+    return { id: office.id, wall, ground, x: box.left + ((p.x + 1) / 2) * box.width, y: box.top + ((1 - p.y) / 2) * box.height };
+  }, floor);
+  truly(r.wall?.wall === true && r.wall.room === r.id && r.wall.space === r.id, `the wall: ${JSON.stringify(r.wall)}`);
+  truly(r.ground?.wall === false && r.ground.space === r.id && r.ground.room === r.id, `the floor: ${JSON.stringify(r.ground)}`);
+  await page.click(r.x, r.y, { altKey: true });
+  const picked = await page.run(() => {
+    window.world.removeEventListener("pick", window.paintPick);
+    return { picks: window.painted, selected: window.world.selected };
+  });
+  const p = picked.picks[0];
+  truly(picked.picks.length === 1 && p.space === r.id && p.wall === false && p.altKey === true && picked.selected === null,
+    `the click: ${JSON.stringify(picked)}`);
 });
 
 test("destroy empties the container", async () => {

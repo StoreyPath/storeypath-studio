@@ -69,6 +69,11 @@ type Space struct {
 	// space, and in older packages. A system keys its own lifts and stairs to the
 	// spaces' IDs; Stack says which of them are one.
 	Stack *string `json:"stack"`
+	// FloorFinish and WallFinish (format 0.9): what its floor and its walls (each wall's
+	// face towards it) are finished in, codes of Finishes(); nil for its type's
+	// default (FloorFinishOf, WallFinishOf), as is a code this module does not know.
+	FloorFinish *string `json:"floor_finish"`
+	WallFinish  *string `json:"wall_finish"`
 	// Hidden: real, but not shown unless asked for. Ignored: judged not worth
 	// anything by a person; best left out.
 	Hidden  bool `json:"hidden"`
@@ -104,8 +109,11 @@ type Zone struct {
 	Area         float64 `json:"area_m2"`
 	Label        LonLat  `json:"display_point"`
 	Seating
-	Hidden  bool `json:"hidden"`
-	Ignored bool `json:"ignored"`
+	// FloorFinish (format 0.9): what its floor is finished in; nil for its space's, else
+	// its type's (FloorFinishOf). A zone's walls are its space's.
+	FloorFinish *string `json:"floor_finish"`
+	Hidden      bool    `json:"hidden"`
+	Ignored     bool    `json:"ignored"`
 }
 
 // Opening is a door, a window, or a way through with no door (openings.geojson);

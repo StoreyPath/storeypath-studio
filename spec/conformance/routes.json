@@ -5,54 +5,54 @@
   {
    "name": "the kiosk to an office upstairs",
    "package": "campus-hq.storeypath",
-   "from": "ABF8-8QTY-5VQ",
-   "to": "5PAJ7M-DEMO-HQ-F01-0069",
+   "from": "E33G-XX6M-4W4",
+   "to": "PZG39S-DEMO-HQ-F01-0069",
    "accessible": false,
    "expect": {
-    "from": "ABF8-8QTY-5VQ",
-    "to": "5PAJ7M-DEMO-HQ-F01-0069",
+    "from": "E33G-XX6M-4W4",
+    "to": "PZG39S-DEMO-HQ-F01-0069",
     "accessible": false,
     "nodes": [
-     "kiosk:ABF8-8QTY-5VQ",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0002",
-     "door:5PAJ7M-DEMO-HQ-F00-0048",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0041@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0040@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0039@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0038@5PAJ7M-DEMO-HQ-F00-0001",
-     "room:5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0045@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0044@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0030@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0029@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0031",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0005",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0005",
-     "door:5PAJ7M-DEMO-HQ-F00-0036",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0004",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F01",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0004",
-     "door:5PAJ7M-DEMO-HQ-F01-0095",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0066",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0066",
-     "door:5PAJ7M-DEMO-HQ-F01-0090",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0088@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0089@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0093@5PAJ7M-DEMO-HQ-F01-0181",
-     "door:5PAJ7M-DEMO-HQ-F01-0093",
-     "approach:5PAJ7M-DEMO-HQ-F01-0093@5PAJ7M-DEMO-HQ-F01-0069",
-     "room:5PAJ7M-DEMO-HQ-F01-0069"
+     "kiosk:E33G-XX6M-4W4",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0002",
+     "door:PZG39S-DEMO-HQ-F00-0048",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0041@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0040@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0039@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0038@PZG39S-DEMO-HQ-F00-0001",
+     "room:PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0045@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0044@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0030@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0029@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0031",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0005",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0005",
+     "door:PZG39S-DEMO-HQ-F00-0036",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0004",
+     "stairs:0004@PZG39S-DEMO-HQ-F00",
+     "stairs:0004@PZG39S-DEMO-HQ-F01",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0004",
+     "door:PZG39S-DEMO-HQ-F01-0095",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0066",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0066",
+     "door:PZG39S-DEMO-HQ-F01-0090",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0088@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0089@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0093@PZG39S-DEMO-HQ-F01-0181",
+     "door:PZG39S-DEMO-HQ-F01-0093",
+     "approach:PZG39S-DEMO-HQ-F01-0093@PZG39S-DEMO-HQ-F01-0069",
+     "room:PZG39S-DEMO-HQ-F01-0069"
     ],
     "metres": 78.99,
     "seconds": 70.0,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         169.0,
@@ -138,7 +138,7 @@
       "metres": 49.75
      },
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "points": [
        [
         129.0,
@@ -195,10 +195,10 @@
     "changes": [
      {
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
-      "from_node": "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-      "to_node": "stairs:0004@5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
+      "from_node": "stairs:0004@PZG39S-DEMO-HQ-F00",
+      "to_node": "stairs:0004@PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up"
      }
@@ -206,17 +206,17 @@
     "steps": [
      {
       "kind": "start",
-      "node": "kiosk:ABF8-8QTY-5VQ",
+      "node": "kiosk:E33G-XX6M-4W4",
       "node_kind": "kiosk",
-      "place": "5PAJ7M-DEMO-HQ-F00-0002",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0002",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start at the kiosk in RECEPTION 017"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 50,
-      "along": "5PAJ7M-DEMO-HQ-F00-0001",
+      "along": "PZG39S-DEMO-HQ-F00-0001",
       "to": "stairs",
       "place": null,
       "text": "Walk 50 m along CORRIDOR to the stairs"
@@ -224,25 +224,25 @@
      {
       "kind": "take",
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up",
       "text": "Take the stairs up to Floor 1"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "metres": 26,
-      "along": "5PAJ7M-DEMO-HQ-F01-0063",
+      "along": "PZG39S-DEMO-HQ-F01-0063",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
       "text": "Walk 26 m along CORRIDOR to OFFICE 112"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "side": "left",
       "text": "OFFICE 112 is on your left"
      }
@@ -252,54 +252,54 @@
   {
    "name": "the kiosk to an office upstairs, without stairs",
    "package": "campus-hq.storeypath",
-   "from": "ABF8-8QTY-5VQ",
-   "to": "5PAJ7M-DEMO-HQ-F01-0069",
+   "from": "E33G-XX6M-4W4",
+   "to": "PZG39S-DEMO-HQ-F01-0069",
    "accessible": true,
    "expect": {
-    "from": "ABF8-8QTY-5VQ",
-    "to": "5PAJ7M-DEMO-HQ-F01-0069",
+    "from": "E33G-XX6M-4W4",
+    "to": "PZG39S-DEMO-HQ-F01-0069",
     "accessible": true,
     "nodes": [
-     "kiosk:ABF8-8QTY-5VQ",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0002",
-     "door:5PAJ7M-DEMO-HQ-F00-0048",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0041@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0040@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0039@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0038@5PAJ7M-DEMO-HQ-F00-0001",
-     "room:5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0045@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0044@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0030@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0029@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0031",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0005",
-     "approach:5PAJ7M-DEMO-HQ-F00-0027@5PAJ7M-DEMO-HQ-F00-0005",
-     "door:5PAJ7M-DEMO-HQ-F00-0027",
-     "approach:5PAJ7M-DEMO-HQ-F00-0027@5PAJ7M-DEMO-HQ-F00-0023",
-     "lift:0023@5PAJ7M-DEMO-HQ-F00",
-     "lift:0023@5PAJ7M-DEMO-HQ-F01",
-     "approach:5PAJ7M-DEMO-HQ-F01-0086@5PAJ7M-DEMO-HQ-F01-0023",
-     "door:5PAJ7M-DEMO-HQ-F01-0086",
-     "approach:5PAJ7M-DEMO-HQ-F01-0086@5PAJ7M-DEMO-HQ-F01-0066",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0066",
-     "door:5PAJ7M-DEMO-HQ-F01-0090",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0088@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0089@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0093@5PAJ7M-DEMO-HQ-F01-0181",
-     "door:5PAJ7M-DEMO-HQ-F01-0093",
-     "approach:5PAJ7M-DEMO-HQ-F01-0093@5PAJ7M-DEMO-HQ-F01-0069",
-     "room:5PAJ7M-DEMO-HQ-F01-0069"
+     "kiosk:E33G-XX6M-4W4",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0002",
+     "door:PZG39S-DEMO-HQ-F00-0048",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0041@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0040@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0039@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0038@PZG39S-DEMO-HQ-F00-0001",
+     "room:PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0045@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0044@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0030@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0029@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0031",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0005",
+     "approach:PZG39S-DEMO-HQ-F00-0027@PZG39S-DEMO-HQ-F00-0005",
+     "door:PZG39S-DEMO-HQ-F00-0027",
+     "approach:PZG39S-DEMO-HQ-F00-0027@PZG39S-DEMO-HQ-F00-0023",
+     "lift:0023@PZG39S-DEMO-HQ-F00",
+     "lift:0023@PZG39S-DEMO-HQ-F01",
+     "approach:PZG39S-DEMO-HQ-F01-0086@PZG39S-DEMO-HQ-F01-0023",
+     "door:PZG39S-DEMO-HQ-F01-0086",
+     "approach:PZG39S-DEMO-HQ-F01-0086@PZG39S-DEMO-HQ-F01-0066",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0066",
+     "door:PZG39S-DEMO-HQ-F01-0090",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0088@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0089@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0093@PZG39S-DEMO-HQ-F01-0181",
+     "door:PZG39S-DEMO-HQ-F01-0093",
+     "approach:PZG39S-DEMO-HQ-F01-0093@PZG39S-DEMO-HQ-F01-0069",
+     "room:PZG39S-DEMO-HQ-F01-0069"
     ],
     "metres": 74.71,
     "seconds": 89.0,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         169.0,
@@ -381,7 +381,7 @@
       "metres": 47.61
      },
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "points": [
        [
         126.5,
@@ -434,10 +434,10 @@
     "changes": [
      {
       "by": "lift",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
-      "from_node": "lift:0023@5PAJ7M-DEMO-HQ-F00",
-      "to_node": "lift:0023@5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
+      "from_node": "lift:0023@PZG39S-DEMO-HQ-F00",
+      "to_node": "lift:0023@PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up"
      }
@@ -445,17 +445,17 @@
     "steps": [
      {
       "kind": "start",
-      "node": "kiosk:ABF8-8QTY-5VQ",
+      "node": "kiosk:E33G-XX6M-4W4",
       "node_kind": "kiosk",
-      "place": "5PAJ7M-DEMO-HQ-F00-0002",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0002",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start at the kiosk in RECEPTION 017"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 48,
-      "along": "5PAJ7M-DEMO-HQ-F00-0001",
+      "along": "PZG39S-DEMO-HQ-F00-0001",
       "to": "lift",
       "place": null,
       "text": "Walk 48 m along CORRIDOR to the lift"
@@ -463,25 +463,25 @@
      {
       "kind": "take",
       "by": "lift",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up",
       "text": "Take the lift up to Floor 1"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "metres": 24,
-      "along": "5PAJ7M-DEMO-HQ-F01-0063",
+      "along": "PZG39S-DEMO-HQ-F01-0063",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
       "text": "Walk 24 m along CORRIDOR to OFFICE 112"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "side": "left",
       "text": "OFFICE 112 is on your left"
      }
@@ -491,60 +491,60 @@
   {
    "name": "the kiosk to an office two floors up, without stairs",
    "package": "campus-hq.storeypath",
-   "from": "ABF8-8QTY-5VQ",
-   "to": "5PAJ7M-DEMO-HQ-F02-0138",
+   "from": "E33G-XX6M-4W4",
+   "to": "PZG39S-DEMO-HQ-F02-0138",
    "accessible": true,
    "expect": {
-    "from": "ABF8-8QTY-5VQ",
-    "to": "5PAJ7M-DEMO-HQ-F02-0138",
+    "from": "E33G-XX6M-4W4",
+    "to": "PZG39S-DEMO-HQ-F02-0138",
     "accessible": true,
     "nodes": [
-     "kiosk:ABF8-8QTY-5VQ",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0002",
-     "door:5PAJ7M-DEMO-HQ-F00-0048",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0041@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0040@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0039@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0038@5PAJ7M-DEMO-HQ-F00-0001",
-     "room:5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0045@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0044@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0030@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0029@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0031",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0005",
-     "approach:5PAJ7M-DEMO-HQ-F00-0027@5PAJ7M-DEMO-HQ-F00-0005",
-     "door:5PAJ7M-DEMO-HQ-F00-0027",
-     "approach:5PAJ7M-DEMO-HQ-F00-0027@5PAJ7M-DEMO-HQ-F00-0023",
-     "lift:0023@5PAJ7M-DEMO-HQ-F00",
-     "lift:0023@5PAJ7M-DEMO-HQ-F02",
-     "approach:5PAJ7M-DEMO-HQ-F02-0145@5PAJ7M-DEMO-HQ-F02-0023",
-     "door:5PAJ7M-DEMO-HQ-F02-0145",
-     "approach:5PAJ7M-DEMO-HQ-F02-0145@5PAJ7M-DEMO-HQ-F02-0125",
-     "approach:5PAJ7M-DEMO-HQ-F02-0149@5PAJ7M-DEMO-HQ-F02-0125",
-     "door:5PAJ7M-DEMO-HQ-F02-0149",
-     "approach:5PAJ7M-DEMO-HQ-F02-0149@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0147@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0148@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0162@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0155@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0163@5PAJ7M-DEMO-HQ-F02-0122",
-     "room:5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0156@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0157@5PAJ7M-DEMO-HQ-F02-0122",
-     "approach:5PAJ7M-DEMO-HQ-F02-0158@5PAJ7M-DEMO-HQ-F02-0122",
-     "door:5PAJ7M-DEMO-HQ-F02-0158",
-     "approach:5PAJ7M-DEMO-HQ-F02-0158@5PAJ7M-DEMO-HQ-F02-0138",
-     "room:5PAJ7M-DEMO-HQ-F02-0138"
+     "kiosk:E33G-XX6M-4W4",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0002",
+     "door:PZG39S-DEMO-HQ-F00-0048",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0041@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0040@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0039@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0038@PZG39S-DEMO-HQ-F00-0001",
+     "room:PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0045@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0044@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0030@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0029@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0031",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0005",
+     "approach:PZG39S-DEMO-HQ-F00-0027@PZG39S-DEMO-HQ-F00-0005",
+     "door:PZG39S-DEMO-HQ-F00-0027",
+     "approach:PZG39S-DEMO-HQ-F00-0027@PZG39S-DEMO-HQ-F00-0023",
+     "lift:0023@PZG39S-DEMO-HQ-F00",
+     "lift:0023@PZG39S-DEMO-HQ-F02",
+     "approach:PZG39S-DEMO-HQ-F02-0145@PZG39S-DEMO-HQ-F02-0023",
+     "door:PZG39S-DEMO-HQ-F02-0145",
+     "approach:PZG39S-DEMO-HQ-F02-0145@PZG39S-DEMO-HQ-F02-0125",
+     "approach:PZG39S-DEMO-HQ-F02-0149@PZG39S-DEMO-HQ-F02-0125",
+     "door:PZG39S-DEMO-HQ-F02-0149",
+     "approach:PZG39S-DEMO-HQ-F02-0149@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0147@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0148@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0162@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0155@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0163@PZG39S-DEMO-HQ-F02-0122",
+     "room:PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0156@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0157@PZG39S-DEMO-HQ-F02-0122",
+     "approach:PZG39S-DEMO-HQ-F02-0158@PZG39S-DEMO-HQ-F02-0122",
+     "door:PZG39S-DEMO-HQ-F02-0158",
+     "approach:PZG39S-DEMO-HQ-F02-0158@PZG39S-DEMO-HQ-F02-0138",
+     "room:PZG39S-DEMO-HQ-F02-0138"
     ],
     "metres": 98.21,
     "seconds": 108.3,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         169.0,
@@ -626,7 +626,7 @@
       "metres": 47.61
      },
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F02",
+      "floor_id": "PZG39S-DEMO-HQ-F02",
       "points": [
        [
         126.5,
@@ -707,10 +707,10 @@
     "changes": [
      {
       "by": "lift",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F02",
-      "from_node": "lift:0023@5PAJ7M-DEMO-HQ-F00",
-      "to_node": "lift:0023@5PAJ7M-DEMO-HQ-F02",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F02",
+      "from_node": "lift:0023@PZG39S-DEMO-HQ-F00",
+      "to_node": "lift:0023@PZG39S-DEMO-HQ-F02",
       "floors": 2,
       "direction": "up"
      }
@@ -718,17 +718,17 @@
     "steps": [
      {
       "kind": "start",
-      "node": "kiosk:ABF8-8QTY-5VQ",
+      "node": "kiosk:E33G-XX6M-4W4",
       "node_kind": "kiosk",
-      "place": "5PAJ7M-DEMO-HQ-F00-0002",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0002",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start at the kiosk in RECEPTION 017"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 48,
-      "along": "5PAJ7M-DEMO-HQ-F00-0001",
+      "along": "PZG39S-DEMO-HQ-F00-0001",
       "to": "lift",
       "place": null,
       "text": "Walk 48 m along CORRIDOR to the lift"
@@ -736,25 +736,25 @@
      {
       "kind": "take",
       "by": "lift",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F02",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F02",
       "floors": 2,
       "direction": "up",
       "text": "Take the lift up to Floor 2"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F02",
+      "floor_id": "PZG39S-DEMO-HQ-F02",
       "metres": 44,
-      "along": "5PAJ7M-DEMO-HQ-F02-0122",
+      "along": "PZG39S-DEMO-HQ-F02-0122",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F02-0138",
+      "place": "PZG39S-DEMO-HQ-F02-0138",
       "text": "Walk 44 m along CORRIDOR to OFFICE 207"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F02-0138",
-      "floor_id": "5PAJ7M-DEMO-HQ-F02",
+      "place": "PZG39S-DEMO-HQ-F02-0138",
+      "floor_id": "PZG39S-DEMO-HQ-F02",
       "side": "right",
       "text": "OFFICE 207 is on your right"
      }
@@ -764,32 +764,32 @@
   {
    "name": "the entrance to the meeting room",
    "package": "campus-hq.storeypath",
-   "from": "door:5PAJ7M-DEMO-HQ-F00-0043",
-   "to": "5PAJ7M-DEMO-HQ-F00-0003",
+   "from": "door:PZG39S-DEMO-HQ-F00-0043",
+   "to": "PZG39S-DEMO-HQ-F00-0003",
    "accessible": false,
    "expect": {
-    "from": "door:5PAJ7M-DEMO-HQ-F00-0043",
-    "to": "5PAJ7M-DEMO-HQ-F00-0003",
+    "from": "door:PZG39S-DEMO-HQ-F00-0043",
+    "to": "PZG39S-DEMO-HQ-F00-0003",
     "accessible": false,
     "nodes": [
-     "door:5PAJ7M-DEMO-HQ-F00-0043",
-     "approach:5PAJ7M-DEMO-HQ-F00-0043@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0041@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0040@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0039@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0038@5PAJ7M-DEMO-HQ-F00-0001",
-     "room:5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0045@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0037",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0003",
-     "room:5PAJ7M-DEMO-HQ-F00-0003"
+     "door:PZG39S-DEMO-HQ-F00-0043",
+     "approach:PZG39S-DEMO-HQ-F00-0043@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0041@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0040@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0039@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0038@PZG39S-DEMO-HQ-F00-0001",
+     "room:PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0045@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0037",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0003",
+     "room:PZG39S-DEMO-HQ-F00-0003"
     ],
     "metres": 29.75,
     "seconds": 22.9,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         173.0,
@@ -847,25 +847,25 @@
     "steps": [
      {
       "kind": "start",
-      "node": "door:5PAJ7M-DEMO-HQ-F00-0043",
+      "node": "door:PZG39S-DEMO-HQ-F00-0043",
       "node_kind": "entrance",
-      "place": "5PAJ7M-DEMO-HQ-F00-0001",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0001",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start at the entrance into CORRIDOR"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 30,
-      "along": "5PAJ7M-DEMO-HQ-F00-0001",
+      "along": "PZG39S-DEMO-HQ-F00-0001",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F00-0003",
+      "place": "PZG39S-DEMO-HQ-F00-0003",
       "text": "Walk 30 m along CORRIDOR to MEETING ROOM 004"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F00-0003",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0003",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "side": "left",
       "text": "MEETING ROOM 004 is on your left"
      }
@@ -875,53 +875,53 @@
   {
    "name": "an office to the open office upstairs",
    "package": "campus-hq.storeypath",
-   "from": "5PAJ7M-DEMO-HQ-F00-0013",
-   "to": "5PAJ7M-DEMO-HQ-F01-0064",
+   "from": "PZG39S-DEMO-HQ-F00-0013",
+   "to": "PZG39S-DEMO-HQ-F01-0064",
    "accessible": false,
    "expect": {
-    "from": "5PAJ7M-DEMO-HQ-F00-0013",
-    "to": "5PAJ7M-DEMO-HQ-F01-0064",
+    "from": "PZG39S-DEMO-HQ-F00-0013",
+    "to": "PZG39S-DEMO-HQ-F01-0064",
     "accessible": false,
     "nodes": [
-     "room:5PAJ7M-DEMO-HQ-F00-0013",
-     "approach:5PAJ7M-DEMO-HQ-F00-0028@5PAJ7M-DEMO-HQ-F00-0013",
-     "door:5PAJ7M-DEMO-HQ-F00-0028",
-     "approach:5PAJ7M-DEMO-HQ-F00-0028@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0031",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0005",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0005",
-     "door:5PAJ7M-DEMO-HQ-F00-0036",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0004",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F01",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0004",
-     "door:5PAJ7M-DEMO-HQ-F01-0095",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0066",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0066",
-     "door:5PAJ7M-DEMO-HQ-F01-0090",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0088@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0089@5PAJ7M-DEMO-HQ-F01-0181",
-     "room:5PAJ7M-DEMO-HQ-F01-0063",
-     "approach:5PAJ7M-DEMO-HQ-F01-0103@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0096@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0104@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0097@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0098@5PAJ7M-DEMO-HQ-F01-0181",
-     "room:5PAJ7M-DEMO-HQ-F01-0182",
-     "approach:5PAJ7M-DEMO-HQ-F01-0099@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0100@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0107@5PAJ7M-DEMO-HQ-F01-0181",
-     "door:5PAJ7M-DEMO-HQ-F01-0107",
-     "approach:5PAJ7M-DEMO-HQ-F01-0107@5PAJ7M-DEMO-HQ-F01-0064",
-     "room:5PAJ7M-DEMO-HQ-F01-0064"
+     "room:PZG39S-DEMO-HQ-F00-0013",
+     "approach:PZG39S-DEMO-HQ-F00-0028@PZG39S-DEMO-HQ-F00-0013",
+     "door:PZG39S-DEMO-HQ-F00-0028",
+     "approach:PZG39S-DEMO-HQ-F00-0028@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0031",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0005",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0005",
+     "door:PZG39S-DEMO-HQ-F00-0036",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0004",
+     "stairs:0004@PZG39S-DEMO-HQ-F00",
+     "stairs:0004@PZG39S-DEMO-HQ-F01",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0004",
+     "door:PZG39S-DEMO-HQ-F01-0095",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0066",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0066",
+     "door:PZG39S-DEMO-HQ-F01-0090",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0088@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0089@PZG39S-DEMO-HQ-F01-0181",
+     "room:PZG39S-DEMO-HQ-F01-0063",
+     "approach:PZG39S-DEMO-HQ-F01-0103@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0096@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0104@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0097@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0098@PZG39S-DEMO-HQ-F01-0181",
+     "room:PZG39S-DEMO-HQ-F01-0182",
+     "approach:PZG39S-DEMO-HQ-F01-0099@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0100@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0107@PZG39S-DEMO-HQ-F01-0181",
+     "door:PZG39S-DEMO-HQ-F01-0107",
+     "approach:PZG39S-DEMO-HQ-F01-0107@PZG39S-DEMO-HQ-F01-0064",
+     "room:PZG39S-DEMO-HQ-F01-0064"
     ],
     "metres": 71.18,
     "seconds": 63.9,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         135.0,
@@ -971,7 +971,7 @@
       "metres": 17.94
      },
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "points": [
        [
         129.0,
@@ -1064,10 +1064,10 @@
     "changes": [
      {
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
-      "from_node": "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-      "to_node": "stairs:0004@5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
+      "from_node": "stairs:0004@PZG39S-DEMO-HQ-F00",
+      "to_node": "stairs:0004@PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up"
      }
@@ -1075,17 +1075,17 @@
     "steps": [
      {
       "kind": "start",
-      "node": "room:5PAJ7M-DEMO-HQ-F00-0013",
+      "node": "room:PZG39S-DEMO-HQ-F00-0013",
       "node_kind": "room",
-      "place": "5PAJ7M-DEMO-HQ-F00-0013",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0013",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start in OFFICE 001"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 18,
-      "along": "5PAJ7M-DEMO-HQ-F00-0005",
+      "along": "PZG39S-DEMO-HQ-F00-0005",
       "to": "stairs",
       "place": null,
       "text": "Walk 18 m through ELEV. LOBBY to the stairs"
@@ -1093,25 +1093,25 @@
      {
       "kind": "take",
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up",
       "text": "Take the stairs up to Floor 1"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "metres": 50,
-      "along": "5PAJ7M-DEMO-HQ-F01-0063",
+      "along": "PZG39S-DEMO-HQ-F01-0063",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F01-0064",
+      "place": "PZG39S-DEMO-HQ-F01-0064",
       "text": "Walk 50 m along CORRIDOR to OPEN OFFICE 117"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F01-0064",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0064",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "side": "left",
       "text": "OPEN OFFICE 117 is on your left"
      }
@@ -1121,57 +1121,57 @@
   {
    "name": "the kiosk to a desk in a zone of the divided hall",
    "package": "campus-hq.storeypath",
-   "from": "ABF8-8QTY-5VQ",
-   "to": "V3GZ-R2DN-5R6",
+   "from": "E33G-XX6M-4W4",
+   "to": "Z563-0B7M-ZZ7",
    "accessible": false,
    "expect": {
-    "from": "ABF8-8QTY-5VQ",
-    "to": "V3GZ-R2DN-5R6",
+    "from": "E33G-XX6M-4W4",
+    "to": "Z563-0B7M-ZZ7",
     "accessible": false,
     "nodes": [
-     "kiosk:ABF8-8QTY-5VQ",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0002",
-     "door:5PAJ7M-DEMO-HQ-F00-0048",
-     "approach:5PAJ7M-DEMO-HQ-F00-0048@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0041@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0040@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0039@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0038@5PAJ7M-DEMO-HQ-F00-0001",
-     "room:5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0045@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0037@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0044@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0030@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0029@5PAJ7M-DEMO-HQ-F00-0001",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0001",
-     "door:5PAJ7M-DEMO-HQ-F00-0031",
-     "approach:5PAJ7M-DEMO-HQ-F00-0031@5PAJ7M-DEMO-HQ-F00-0005",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0005",
-     "door:5PAJ7M-DEMO-HQ-F00-0036",
-     "approach:5PAJ7M-DEMO-HQ-F00-0036@5PAJ7M-DEMO-HQ-F00-0004",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-     "stairs:0004@5PAJ7M-DEMO-HQ-F01",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0004",
-     "door:5PAJ7M-DEMO-HQ-F01-0095",
-     "approach:5PAJ7M-DEMO-HQ-F01-0095@5PAJ7M-DEMO-HQ-F01-0066",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0066",
-     "door:5PAJ7M-DEMO-HQ-F01-0090",
-     "approach:5PAJ7M-DEMO-HQ-F01-0090@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0088@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0089@5PAJ7M-DEMO-HQ-F01-0181",
-     "room:5PAJ7M-DEMO-HQ-F01-0063",
-     "approach:5PAJ7M-DEMO-HQ-F01-0103@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0096@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0104@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0097@5PAJ7M-DEMO-HQ-F01-0181",
-     "approach:5PAJ7M-DEMO-HQ-F01-0098@5PAJ7M-DEMO-HQ-F01-0181",
-     "room:5PAJ7M-DEMO-HQ-F01-0182"
+     "kiosk:E33G-XX6M-4W4",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0002",
+     "door:PZG39S-DEMO-HQ-F00-0048",
+     "approach:PZG39S-DEMO-HQ-F00-0048@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0041@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0040@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0039@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0038@PZG39S-DEMO-HQ-F00-0001",
+     "room:PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0045@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0037@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0044@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0030@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0029@PZG39S-DEMO-HQ-F00-0001",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0001",
+     "door:PZG39S-DEMO-HQ-F00-0031",
+     "approach:PZG39S-DEMO-HQ-F00-0031@PZG39S-DEMO-HQ-F00-0005",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0005",
+     "door:PZG39S-DEMO-HQ-F00-0036",
+     "approach:PZG39S-DEMO-HQ-F00-0036@PZG39S-DEMO-HQ-F00-0004",
+     "stairs:0004@PZG39S-DEMO-HQ-F00",
+     "stairs:0004@PZG39S-DEMO-HQ-F01",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0004",
+     "door:PZG39S-DEMO-HQ-F01-0095",
+     "approach:PZG39S-DEMO-HQ-F01-0095@PZG39S-DEMO-HQ-F01-0066",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0066",
+     "door:PZG39S-DEMO-HQ-F01-0090",
+     "approach:PZG39S-DEMO-HQ-F01-0090@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0088@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0089@PZG39S-DEMO-HQ-F01-0181",
+     "room:PZG39S-DEMO-HQ-F01-0063",
+     "approach:PZG39S-DEMO-HQ-F01-0103@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0096@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0104@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0097@PZG39S-DEMO-HQ-F01-0181",
+     "approach:PZG39S-DEMO-HQ-F01-0098@PZG39S-DEMO-HQ-F01-0181",
+     "room:PZG39S-DEMO-HQ-F01-0182"
     ],
     "metres": 93.19,
     "seconds": 80.7,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "points": [
        [
         169.0,
@@ -1257,7 +1257,7 @@
       "metres": 49.75
      },
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "points": [
        [
         129.0,
@@ -1330,10 +1330,10 @@
     "changes": [
      {
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
-      "from_node": "stairs:0004@5PAJ7M-DEMO-HQ-F00",
-      "to_node": "stairs:0004@5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
+      "from_node": "stairs:0004@PZG39S-DEMO-HQ-F00",
+      "to_node": "stairs:0004@PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up"
      }
@@ -1341,17 +1341,17 @@
     "steps": [
      {
       "kind": "start",
-      "node": "kiosk:ABF8-8QTY-5VQ",
+      "node": "kiosk:E33G-XX6M-4W4",
       "node_kind": "kiosk",
-      "place": "5PAJ7M-DEMO-HQ-F00-0002",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "place": "PZG39S-DEMO-HQ-F00-0002",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "text": "Start at the kiosk in RECEPTION 017"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F00",
+      "floor_id": "PZG39S-DEMO-HQ-F00",
       "metres": 50,
-      "along": "5PAJ7M-DEMO-HQ-F00-0001",
+      "along": "PZG39S-DEMO-HQ-F00-0001",
       "to": "stairs",
       "place": null,
       "text": "Walk 50 m along CORRIDOR to the stairs"
@@ -1359,25 +1359,25 @@
      {
       "kind": "take",
       "by": "stairs",
-      "from_floor_id": "5PAJ7M-DEMO-HQ-F00",
-      "to_floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "from_floor_id": "PZG39S-DEMO-HQ-F00",
+      "to_floor_id": "PZG39S-DEMO-HQ-F01",
       "floors": 1,
       "direction": "up",
       "text": "Take the stairs up to Floor 1"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "metres": 40,
-      "along": "5PAJ7M-DEMO-HQ-F01-0063",
+      "along": "PZG39S-DEMO-HQ-F01-0063",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-HQ-F01-0182",
+      "place": "PZG39S-DEMO-HQ-F01-0182",
       "text": "Walk 40 m along CORRIDOR to HALL"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F01-0182",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0182",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "side": "ahead",
       "text": "HALL is ahead"
      }
@@ -1387,21 +1387,21 @@
   {
    "name": "an office to itself",
    "package": "campus-hq.storeypath",
-   "from": "5PAJ7M-DEMO-HQ-F01-0069",
-   "to": "5PAJ7M-DEMO-HQ-F01-0069",
+   "from": "PZG39S-DEMO-HQ-F01-0069",
+   "to": "PZG39S-DEMO-HQ-F01-0069",
    "accessible": false,
    "expect": {
-    "from": "5PAJ7M-DEMO-HQ-F01-0069",
-    "to": "5PAJ7M-DEMO-HQ-F01-0069",
+    "from": "PZG39S-DEMO-HQ-F01-0069",
+    "to": "PZG39S-DEMO-HQ-F01-0069",
     "accessible": false,
     "nodes": [
-     "room:5PAJ7M-DEMO-HQ-F01-0069"
+     "room:PZG39S-DEMO-HQ-F01-0069"
     ],
     "metres": 0.0,
     "seconds": 0.0,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "points": [
        [
         143.0,
@@ -1415,16 +1415,16 @@
     "steps": [
      {
       "kind": "start",
-      "node": "room:5PAJ7M-DEMO-HQ-F01-0069",
+      "node": "room:PZG39S-DEMO-HQ-F01-0069",
       "node_kind": "room",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "text": "Start in OFFICE 112"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-HQ-F01-0069",
-      "floor_id": "5PAJ7M-DEMO-HQ-F01",
+      "place": "PZG39S-DEMO-HQ-F01-0069",
+      "floor_id": "PZG39S-DEMO-HQ-F01",
       "side": "here",
       "text": "You are at OFFICE 112"
      }
@@ -1434,37 +1434,37 @@
   {
    "name": "the Annex's entrance to the president's desk",
    "package": "campus-annex.storeypath",
-   "from": "door:5PAJ7M-DEMO-ANNEX-F00-0043",
-   "to": "NJBE-J230-G2J",
+   "from": "door:PZG39S-DEMO-ANNEX-F00-0043",
+   "to": "BM2M-MRYD-9C3",
    "accessible": false,
    "expect": {
-    "from": "door:5PAJ7M-DEMO-ANNEX-F00-0043",
-    "to": "NJBE-J230-G2J",
+    "from": "door:PZG39S-DEMO-ANNEX-F00-0043",
+    "to": "BM2M-MRYD-9C3",
     "accessible": false,
     "nodes": [
-     "door:5PAJ7M-DEMO-ANNEX-F00-0043",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0043@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0041@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0040@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0039@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0038@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "room:5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0045@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0037@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0044@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0030@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0029@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0031@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0028@5PAJ7M-DEMO-ANNEX-F00-0002",
-     "door:5PAJ7M-DEMO-ANNEX-F00-0028",
-     "approach:5PAJ7M-DEMO-ANNEX-F00-0028@5PAJ7M-DEMO-ANNEX-F00-0007",
-     "room:5PAJ7M-DEMO-ANNEX-F00-0007"
+     "door:PZG39S-DEMO-ANNEX-F00-0043",
+     "approach:PZG39S-DEMO-ANNEX-F00-0043@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0041@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0040@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0039@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0038@PZG39S-DEMO-ANNEX-F00-0002",
+     "room:PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0045@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0037@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0044@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0030@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0029@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0031@PZG39S-DEMO-ANNEX-F00-0002",
+     "approach:PZG39S-DEMO-ANNEX-F00-0028@PZG39S-DEMO-ANNEX-F00-0002",
+     "door:PZG39S-DEMO-ANNEX-F00-0028",
+     "approach:PZG39S-DEMO-ANNEX-F00-0028@PZG39S-DEMO-ANNEX-F00-0007",
+     "room:PZG39S-DEMO-ANNEX-F00-0007"
     ],
     "metres": 43.75,
     "seconds": 33.7,
     "legs": [
      {
-      "floor_id": "5PAJ7M-DEMO-ANNEX-F00",
+      "floor_id": "PZG39S-DEMO-ANNEX-F00",
       "points": [
        [
         173.0,
@@ -1542,25 +1542,25 @@
     "steps": [
      {
       "kind": "start",
-      "node": "door:5PAJ7M-DEMO-ANNEX-F00-0043",
+      "node": "door:PZG39S-DEMO-ANNEX-F00-0043",
       "node_kind": "entrance",
-      "place": "5PAJ7M-DEMO-ANNEX-F00-0002",
-      "floor_id": "5PAJ7M-DEMO-ANNEX-F00",
+      "place": "PZG39S-DEMO-ANNEX-F00-0002",
+      "floor_id": "PZG39S-DEMO-ANNEX-F00",
       "text": "Start at the entrance into CORRIDOR"
      },
      {
       "kind": "walk",
-      "floor_id": "5PAJ7M-DEMO-ANNEX-F00",
+      "floor_id": "PZG39S-DEMO-ANNEX-F00",
       "metres": 44,
-      "along": "5PAJ7M-DEMO-ANNEX-F00-0002",
+      "along": "PZG39S-DEMO-ANNEX-F00-0002",
       "to": "destination",
-      "place": "5PAJ7M-DEMO-ANNEX-F00-0007",
+      "place": "PZG39S-DEMO-ANNEX-F00-0007",
       "text": "Walk 44 m along CORRIDOR to OFFICE 001"
      },
      {
       "kind": "arrive",
-      "place": "5PAJ7M-DEMO-ANNEX-F00-0007",
-      "floor_id": "5PAJ7M-DEMO-ANNEX-F00",
+      "place": "PZG39S-DEMO-ANNEX-F00-0007",
+      "floor_id": "PZG39S-DEMO-ANNEX-F00",
       "side": "left",
       "text": "OFFICE 001 is on your left"
      }

@@ -1,11 +1,12 @@
 """The conformance corpus: what every reader of the format (Studio's Python, the Go
 module in go/, the viewer's JavaScript) must read the same way.
 
-Packages of this format (0.8: one building per package, with its walking network),
-made by ``campus``: one project, the demo campus (two buildings placed on the map,
-with lifts and stairs through their floors, one floor's corridor divided into two
-zones by a line drawn in review and named there, CORRIDOR and HALL, and furniture and
-equipment, furnish below), exported a building at a time:
+Packages of this format (0.9: one building per package, with its walking network and
+its rooms' finishes), made by ``campus``: one project, the demo campus (two buildings
+placed on the map, with lifts and stairs through their floors, one floor's corridor
+divided into two zones by a line drawn in review and named there, CORRIDOR and HALL,
+furniture and equipment, furnish below, and some rooms' floors and walls finished in
+review, finish below), exported a building at a time:
 
 - packages/campus-hq.storeypath (export 1) and campus-annex.storeypath (export 2):
   the Headquarters with desks of several grades in offices (two in one office, one
@@ -163,6 +164,7 @@ def campus(work: Path) -> None:
     ws.overrides[west.id] = Override(type="corridor", name="CORRIDOR")
     ws.overrides[east.id] = Override(type="open_area", name="HALL")
     furnish(ws)
+    finish(ws, west.parent, west.id, east.id)  # (the space divided: its zones, under an ID of its own)
     ws.exports = []  # the demo's own exports aside: these are the project's first
     hq, annex = (make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings)
     export_package(ws, out / "campus-hq.storeypath", building=hq, bake=False)
@@ -309,6 +311,33 @@ def asset_ids() -> None:
     assert not any(map(is_item_id, wrong + swapped + not_ids))
     (HERE / "asset-ids.json").write_text(json.dumps(doc, indent=1) + "\n")
     print(f"wrote asset-ids.json ({len(valid)} IDs, {len(wrong)} with a symbol wrong, {len(swapped)} swapped)")
+
+
+def finish(ws, hall: str, west: str, east: str) -> None:
+    """Finishes (format 0.9) set in review on some of the Headquarters' rooms: on its
+    ground floor, the reception in white marble with stone walls, the meeting room in oak
+    herringbone with oak slats, an office in navy carpet with linen wallpaper, a restroom
+    in dark porcelain with mosaic; on its first floor, the divided hall's walls pale green,
+    its corridor zone in grey vinyl and its HALL in light terrazzo. Every other room is
+    as its type."""
+    from storeypath.workspace import Override
+
+    floors = {f"{b.code}-{f.code}": fid for _, b, f, fid in ws.iter_floors()}
+
+    def first(floor: str, kind: str):
+        return min((r for r in ws.floor_objects(floors[floor]) if r.kind == "space" and ws.effective(r)["type"] == kind),
+                   key=lambda r: r.id)
+
+    def give(object_id: str, **finishes) -> None:
+        ws.overrides[object_id] = (ws.overrides.get(object_id) or Override()).model_copy(update=finishes)
+
+    give(first("HQ-F00", "lobby").id, floor_finish="FLOOR-MARBLE-WHITE", wall_finish="WALL-STONE")
+    give(first("HQ-F00", "meeting_room").id, floor_finish="FLOOR-WOOD-HERRINGBONE", wall_finish="WALL-WOOD-SLATS")
+    give(first("HQ-F00", "office").id, floor_finish="FLOOR-CARPET-NAVY", wall_finish="WALL-PAPER-LINEN")
+    give(first("HQ-F00", "restroom").id, floor_finish="FLOOR-PORCELAIN-DARK", wall_finish="WALL-TILE-MOSAIC")
+    give(hall, wall_finish="WALL-PAINT-GREEN")
+    give(west, floor_finish="FLOOR-VINYL-GREY")
+    give(east, floor_finish="FLOOR-TERRAZZO-LIGHT")
 
 
 def furnish(ws) -> None:

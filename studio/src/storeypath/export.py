@@ -41,6 +41,7 @@ from .package import (
 )
 from .levels import DEFAULT_PARAPET_M
 from .navigation import NAVIGATION_FILE, navigation_file
+from . import finishes
 from .stacks import stack_of
 from .types import OpeningType, SpaceType
 from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, utcnow
@@ -402,6 +403,8 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "zones": list(r.zones), "outdoor": r.id in sky,
                                  "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
                                  "stack": stack.get(r.id),
+                                 "floor_finish": finishes.known(eff["floor_finish"], "floor"),
+                                 "wall_finish": finishes.known(eff["wall_finish"], "wall"),
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
@@ -415,6 +418,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
                                  "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
+                                 "floor_finish": finishes.known(eff["floor_finish"], "floor"),
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )

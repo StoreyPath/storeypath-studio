@@ -266,6 +266,36 @@
           "description": "a lift's, stairs', escalator's (or a ramp's between floors) stack (format 0.8): the same key on every floor the same one serves (the ID of its space on the lowest of them), no other's; null for any other space",
           "title": "Stack"
         },
+        "floor_finish": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^FLOOR(-[A-Z0-9]+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what its floor is finished in (format 0.9): a code of StoreyPath's floor finishes (FORMAT.md, Finishes); null for its type's default (a zone's: its space's, else its type's). A reader that does not know a code shows the default",
+          "title": "Floor Finish"
+        },
+        "wall_finish": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^WALL(-[A-Z0-9]+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what its walls are finished in (format 0.9), on each wall's face towards it: a code of StoreyPath's wall finishes (FORMAT.md, Finishes); null for its type's default. A reader that does not know a code shows the default",
+          "title": "Wall Finish"
+        },
         "hidden": {
           "default": false,
           "description": "real, but not shown unless asked for (a shaft, a plant room)",
