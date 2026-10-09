@@ -418,7 +418,21 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0}#w,
 <script src="/jszip.min.js"></script>
 <script type="module">
   import * as sp from "/dist/world.js";
-  window.sp = sp;
+  // every world made here, so that none draws between tests (drawn in software, an idle
+  // world would keep a CPU busy): paused after each test, drawing again before the next
+  const worlds = new Set();
+  class World extends sp.StoreyPathWorld {
+    constructor(...args) {
+      super(...args);
+      worlds.add(this);
+    }
+    destroy() {
+      worlds.delete(this);
+      super.destroy();
+    }
+  }
+  window.sp = { ...sp, StoreyPathWorld: World };
+  window.idle = (on) => worlds.forEach((w) => (on ? w.pause() : w.resume()));
   window.frames = (n = 2) => new Promise((res) => {
     const step = () => (n-- > 0 ? requestAnimationFrame(step) : res());
     step();
@@ -1250,11 +1264,14 @@ test("destroy empties the container", async () => {
 let failed = 0;
 for (const t of tests) {
   try {
+    await page.run(() => window.idle?.(false));
     await t.fn();
     console.log(`ok    ${t.name}`);
   } catch (e) {
     failed++;
     console.log(`FAIL  ${t.name}\n      ${e.message}`);
+  } finally {
+    await page.run(() => window.idle?.(true)).catch(() => {});
   }
 }
 if (page.errors.length) {

@@ -139,43 +139,71 @@ const CHROMES = [
 ];
 
 /** Headless Chrome and one page in it; with ``webgl``, WebGL drawn in software
- * (SwiftShader), for the 3D world's tests. */
-export async function launch({ webgl = false } = {}) {
+ * (SwiftShader), for the 3D world's tests ("gpu": on the graphics card). Driven over a pipe (--remote-debugging-pipe),
+ * so that when this process ends, however it ends (killed too), the pipe closes and
+ * Chrome quits with it; and killed on exit, on Ctrl-C or SIGTERM, and after ``timeout``
+ * seconds (the run failing then): no Chrome left drawing on its own. */
+export async function launch({ webgl = false, timeout = 600 } = {}) {
   const chrome = CHROMES.find((c) => c && existsSync(c));
   if (!chrome) throw new Error("no Chrome or Chromium found: set CHROME to one");
   const profile = mkdtempSync(join(tmpdir(), "sp-svg-test-"));
-  const proc = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+  const proc = spawn(chrome, ["--headless=new", "--remote-debugging-pipe", `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
-    ...(webgl ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] : ["--disable-gpu"]), "about:blank"],
-  { stdio: ["ignore", "ignore", "pipe"] });
-  const wsUrl = await new Promise((resolve, reject) => {
-    let said = "";
-    proc.stderr.on("data", (d) => {
-      said += d;
-      const m = said.match(/DevTools listening on (ws:\/\/\S+)/);
-      if (m) resolve(m[1]);
-    });
-    proc.on("exit", () => reject(new Error(`Chrome exited: ${said}`)));
+    ...(webgl === "gpu" ? ["--use-angle=metal", "--ignore-gpu-blocklist"] : webgl ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+      : ["--disable-gpu"]), "about:blank"],
+  { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] });
+  let said = "";
+  proc.stderr.on("data", (d) => {
+    said = (said + d).slice(-4000);
   });
-  const ws = new WebSocket(wsUrl);
-  await new Promise((r) => ws.addEventListener("open", r, { once: true }));
-  let next = 0;
+  const kill = () => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+    try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may still hold it */ }
+  };
+  const signalled = (code) => () => {
+    kill();
+    process.exit(code);
+  };
+  const onInt = signalled(130), onTerm = signalled(143);
+  process.on("exit", kill); // (an error nothing caught ends the process: this too)
+  process.once("SIGINT", onInt);
+  process.once("SIGTERM", onTerm);
+  const watchdog = setTimeout(() => {
+    console.error(`Chrome killed: the run took more than ${timeout} s`);
+    kill();
+    process.exit(1);
+  }, timeout * 1000);
+  watchdog.unref();
+
+  // the protocol: JSON messages, each ended by a NUL, written to fd 3 and read from fd 4
+  const toChrome = proc.stdio[3], fromChrome = proc.stdio[4];
+  let next = 0, pending = Buffer.alloc(0);
   const waiting = new Map();
   const listeners = [];
-  ws.addEventListener("message", (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && waiting.has(m.id)) {
-      const { resolve, reject } = waiting.get(m.id);
-      waiting.delete(m.id);
-      m.error ? reject(new Error(`${m.error.message} ${m.error.data ?? ""}`)) : resolve(m.result);
-    } else if (m.method) {
-      for (const l of listeners) l(m);
+  fromChrome.on("data", (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    for (let end = pending.indexOf(0); end >= 0; end = pending.indexOf(0)) {
+      const m = JSON.parse(pending.subarray(0, end).toString("utf8"));
+      pending = pending.subarray(end + 1);
+      if (m.id && waiting.has(m.id)) {
+        const { resolve, reject } = waiting.get(m.id);
+        waiting.delete(m.id);
+        m.error ? reject(new Error(`${m.error.message} ${m.error.data ?? ""}`)) : resolve(m.result);
+      } else if (m.method) {
+        for (const l of listeners) l(m);
+      }
     }
   });
+  proc.on("exit", () => {
+    for (const { reject } of waiting.values()) reject(new Error(`Chrome exited: ${said}`));
+    waiting.clear();
+  });
+  toChrome.on("error", () => {}); // (Chrome gone: the calls waiting are refused above)
   const call = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return reject(new Error(`Chrome exited: ${said}`));
     const id = ++next;
     waiting.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    toChrome.write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + "\0");
   });
   const { targetId } = await call("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await call("Target.attachToTarget", { targetId, flatten: true });
@@ -228,9 +256,11 @@ export async function launch({ webgl = false } = {}) {
       await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode });
     },
     close() {
-      ws.close();
-      proc.kill();
-      try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may still hold it */ }
+      clearTimeout(watchdog);
+      process.off("exit", kill);
+      process.off("SIGINT", onInt);
+      process.off("SIGTERM", onTerm);
+      kill();
     },
   };
   return page;
