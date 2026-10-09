@@ -4,7 +4,7 @@ room and what kind. Code keeps the exact geometry and IDs; the model answers the
 judgement calls (a garden or a sheet frame is not a room; a bed makes a bedroom).
 
 The model is any OpenAI-compatible chat endpoint that takes images: llama.cpp's
-llama-server or vLLM on a GPU (the GPU helper, docker/gpu-helper), or a hosted
+llama-server or vLLM on a GPU (the GPU helper, storeypath-gpu-helper), or a hosted
 service; or several helpers serving the same model, the questions spread over them.
 
     STOREYPATH_VISION_URL    e.g. https://gpu1:8105/v1 (none: no vision); several,

@@ -421,7 +421,7 @@ otherwise do:
 
 | | Without a GPU | With a GPU |
 |---|---|---|
-| Images | `ghcr.io/storeypath/studio` ([docker/Dockerfile](docker/Dockerfile)) | the same Studio, and the GPU helper ([docker/gpu-helper](docker/gpu-helper/Dockerfile)) on the machine with the GPU |
+| Images | `ghcr.io/storeypath/studio` ([docker/Dockerfile](docker/Dockerfile)) | the same Studio, and the GPU helper ([storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper)) on the machine with the GPU |
 | Reads the drawing | rules | rules |
 | Reads the texts (room names, titles, notes, levels) | the language model, Qwen3.5-4B, on the CPU | the same |
 | Looks at the plan (is it a room? merged rooms; a type from what is drawn) | no: those are left to a person in review | the vision model, Gemma 4 31B, on the GPU helper |
@@ -527,9 +527,9 @@ their checksums, and baked in.
 
 | | Studio | GPU helper (optional) |
 |---|---|---|
-| Built from | [docker/Dockerfile](docker/Dockerfile) | [docker/gpu-helper/Dockerfile](docker/gpu-helper/Dockerfile) |
+| Built from | [docker/Dockerfile](docker/Dockerfile) | [storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper), a repository of its own |
 | Published | `ghcr.io/storeypath/studio`, amd64 and arm64, by [the release workflow](.github/workflows/release.yml) for each version tag | not published: build it yourself (amd64) |
-| Models fetched first | `docker/fetch-models.sh`: Qwen3.5-4B (2.7 GB) | `docker/fetch-vision.sh`: Gemma 4 31B, 4-bit (about 18 GB) and its image encoder (about 1 GB) |
+| Models fetched first | `docker/fetch-models.sh`: Qwen3.5-4B (2.7 GB) | its `fetch-vision.sh`: Gemma 4 31B, 4-bit (about 18 GB) and its image encoder (about 1 GB) |
 | Inside | Studio; its database, PostgreSQL 17 with PostGIS 3; LibreDWG's `dwg2dxf` for DWG; llama.cpp's `llama-server` for the CPU (it picks the fastest CPU code at start); the language model; Node.js for pre-built 3D; the viewers | llama.cpp's `llama-server` built for CUDA (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) with NVIDIA's CUDA runtime, and the vision model: nothing else |
 | Starts | its database, then Studio; the language model loads in the background | the vision model on the GPU (a minute or two); Studio uses it once it answers |
 
@@ -545,12 +545,14 @@ smaller image with a smaller model ([The language model](#the-language-model)).
 
 ### Build the GPU helper
 
-On any machine with internet (an Apple Silicon Mac builds it too, through Docker
-Desktop's x86 emulation, in an hour or two):
+From its own repository, [storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper), on any machine with
+internet (an Apple Silicon Mac builds it too, through Docker Desktop's x86 emulation,
+in an hour or two):
 
 ```sh
-docker/fetch-vision.sh                                    # once: 19 GB, checksum-verified
-docker build --platform linux/amd64 -f docker/gpu-helper/Dockerfile -t storeypath/gpu-helper .
+git clone https://github.com/StoreyPath/storeypath-gpu-helper.git && cd storeypath-gpu-helper
+./fetch-vision.sh                                         # once: 19 GB, checksum-verified
+docker build --platform linux/amd64 -t storeypath/gpu-helper .
 ```
 
 llama.cpp is compiled for every GPU generation from A100 on by default;
@@ -618,7 +620,7 @@ serve the same one) and a *Test* that sends it a sample room.
 
 Studio works the same without a helper, and a project read with one reads the same
 again without (the answers are kept with it). The helper's engine is llama.cpp; vLLM
-may replace it, as measurements decide ([docker/gpu-helper/Dockerfile](docker/gpu-helper/Dockerfile)).
+may replace it, as measurements decide ([its Dockerfile](https://github.com/StoreyPath/storeypath-gpu-helper/blob/main/Dockerfile)).
 
 ### Symbol spotting: research use only
 
@@ -701,10 +703,10 @@ demo/` builds a sample project to try; [studio/](studio) has every command and
 setting. Also, as you need them:
 
 - **Vision**: `uv sync --extra vision`, and `STOREYPATH_VISION_URL` set to a vision
-  model's endpoint. To serve Gemma 4 yourself on an NVIDIA GPU, fetch it with
-  `docker/fetch-vision.sh` and run a CUDA build of `llama-server` with it and its
-  `--mmproj`, as [docker/gpu-helper/start.sh](docker/gpu-helper/start.sh) does (or
-  run the GPU helper's image).
+  model's endpoint. To serve Gemma 4 yourself on an NVIDIA GPU, fetch it with the
+  GPU helper's `fetch-vision.sh` and run a CUDA build of `llama-server` with it and its
+  `--mmproj`, as its [start.sh](https://github.com/StoreyPath/storeypath-gpu-helper/blob/main/start.sh) does (or run the GPU helper's
+  image: [storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper)).
 - **The 2D plan page**: `npm ci && npm run build` in `storeypath-viewer/viewer/svg` (Studio offers
   *2D plan* once it is built).
 - **Pre-built 3D in packages**: Node.js 20.6 or newer on the `PATH`.

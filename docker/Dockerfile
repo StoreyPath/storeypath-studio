@@ -2,7 +2,7 @@
 # or arm64). No GPU needed: the language model runs on the CPU. No network needed at
 # run time: the model is fetched before the build and baked in, and Studio's database,
 # PostgreSQL 17 with PostGIS 3, runs inside. A GPU helps through the optional GPU
-# helper, a separate image (docker/gpu-helper/Dockerfile).
+# helper, a separate image (github.com/StoreyPath/storeypath-gpu-helper).
 #
 #   docker/fetch-models.sh                                  # once, before building
 #   docker build -f docker/Dockerfile -t storeypath/studio .
@@ -34,7 +34,7 @@
 #   docker load -i storeypath-studio.tar.gz
 #
 # Nothing in it reaches out; its command-line tool runs with --network none. Vision
-# models on GPU helpers (docker/gpu-helper), or any OpenAI-compatible one that takes
+# models on GPU helpers (storeypath-gpu-helper), or any OpenAI-compatible one that takes
 # images: -e STOREYPATH_VISION_URL=https://gpu1:8105/v1,https://gpu2:8105/v1 and
 # -e STOREYPATH_VISION_KEY=<the helpers' key>; views of the plans and texts of the
 # drawings are then sent to them.

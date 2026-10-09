@@ -19,10 +19,9 @@
 # answers at once), STOREYPATH_VISION_URL (other helpers, or more: comma-separated),
 # STOREYPATH_VOLUME, STOREYPATH_IMAGE and STOREYPATH_HELPER_IMAGE.
 #
-# The studio image is published (ghcr.io/storeypath/studio); the helper is built here,
-# with its model fetched first (docker/fetch-vision.sh):
-#
-#   docker compose -f docker/compose.yml --profile gpu build gpu-helper
+# The studio image is published (ghcr.io/storeypath/studio); the helper is built from
+# its own repository, https://github.com/StoreyPath/storeypath-gpu-helper, as storeypath/gpu-helper
+# (or STOREYPATH_HELPER_IMAGE names the image you built or loaded).
 
 name: storeypath
 
@@ -48,9 +47,6 @@ services:
   gpu-helper:
     profiles: [gpu]
     image: ${STOREYPATH_HELPER_IMAGE:-storeypath/gpu-helper}
-    build:
-      context: ..
-      dockerfile: docker/gpu-helper/Dockerfile
     environment:
       STOREYPATH_HELPER_KEY: ${STOREYPATH_HELPER_KEY:-}
       STOREYPATH_HELPER_SLOTS: ${STOREYPATH_HELPER_SLOTS:-2}

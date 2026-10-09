@@ -14,7 +14,7 @@ editor per floor at a time; the GPU model server as a separate, optional image.
 | Image | Holds | Needs |
 |---|---|---|
 | `storeypath/studio` | Studio (FastAPI on uvicorn, HTTPS by default), its own PostgreSQL 17 + PostGIS 3 (started by the image, data in `/data/pg`, reached over a Unix socket only), the small text model on the CPU (llama.cpp), LibreDWG, Node.js for 3D baking | nothing else: `docker run -v storeypath:/data -p 8080:8080 storeypath/studio` |
-| `storeypath/gpu-helper` (optional) | the vision model server, OpenAI-compatible, with its model baked in (engine: llama.cpp or vLLM, chosen by measurement) | a GPU; an API key that Studio sends |
+| `storeypath/gpu-helper` (optional; its own repository, StoreyPath/storeypath-gpu-helper) | the vision model server, OpenAI-compatible, with its model baked in (engine: llama.cpp or vLLM, chosen by measurement) | a GPU; an API key that Studio sends |
 
 - `STOREYPATH_DATABASE_URL`: use an external PostgreSQL (with PostGIS) instead of the
   image's own. Optional; never required.

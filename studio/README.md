@@ -551,7 +551,7 @@ also reads, in words, the rows of door and window schedules and the private text
 drawings, in place of the language model.
 
 The model is any OpenAI-compatible endpoint that takes images: the GPU helper
-([docker/gpu-helper](../docker/gpu-helper/Dockerfile): `llama-server` with Gemma 4
+([storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper): `llama-server` with Gemma 4
 31B, 4-bit, and its `--mmproj`), vLLM, or a hosted service; or several helpers
 serving the same model. Studio sends it views of the plan and texts from the
 drawings, so a hosted service sees them.
@@ -585,7 +585,7 @@ Studio starts from while the database has none.
 | `STOREYPATH_VISION_CA` | a certificate (PEM) helpers' certificates are checked against, in place of the system's authorities |
 
 The GPU helper serves on port 8105 and is set by its own environment
-([docker/gpu-helper/start.sh](../docker/gpu-helper/start.sh)):
+([its start.sh](https://github.com/StoreyPath/storeypath-gpu-helper/blob/main/start.sh)):
 
 | Environment | |
 |---|---|
