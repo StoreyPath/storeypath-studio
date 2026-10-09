@@ -188,76 +188,104 @@ building.
 
 ### Review: correct, complete, check
 
-*Review* on a floor opens the review editor: the floor drawn over its drawing.
+*Review* on a floor opens the review editor: the floor drawn over its drawing, in the
+middle; the **tools** on the left (each with its key, shown in its tooltip); the
+**navigator** (Rooms, Items, View) beside them; the **inspector** of what is chosen on
+the right; a **top bar** that says where you are (project / building / floor: the
+floor's name is its menu, with how many rooms each floor has to review) and switches
+2D, 3D and Walk; and a **status bar** that says what the tool in use expects, where
+the pointer is, what is chosen, who is editing and whether everything is saved. The
+building's floors are stacked on the canvas, bottom right, to go from one to another
+(<kbd>PgUp</kbd> <kbd>PgDn</kbd>). <kbd>[</kbd> and <kbd>]</kbd> hide and show the
+navigator and the inspector, <kbd>\</kbd> both. <kbd>⌘K</kbd> (<kbd>Ctrl K</kbd>)
+finds anything: a room by its name, number, type or ID, an item by its tag, a floor,
+and every command with its key; <kbd>?</kbd> lists the keys.
 
-- **The drawing**: *as printed* (the drawing rendered as on paper, a pixel a
-  centimetre), as its *lines*, or *off*. *Side by side* puts the print on the left
-  and Studio's spaces on the right, moving together. *Open print* shows the print
-  full size in a new tab.
-- **To review** lists the spaces and zones that need a look, and why; *Next*
-  (<kbd>N</kbd>) goes through them. *All spaces* lists every one, with a filter.
-- **Click a space** to see its ID (*Copy*), the text written in it on the drawing,
-  why it is listed, and to correct its **type, name and number** (what Studio read is
-  shown beside each). *Save* keeps your correction, or accepts it as it is; *Use
-  detected* takes your correction away. **Capacity**: how many people it is meant to
-  seat (see below). **Delete** takes what is not a room (a sliver, the outside) out of
-  the plan, the lists and the 3D view; it keeps its ID (and is exported marked
-  `ignored`), and *Show deleted* shows it again, to restore.
-- **Draw what the drawing leaves out.** Right-click the plan:
+- **The drawing** (View): *as printed* (the drawing rendered as on paper, a pixel a
+  centimetre), as its *lines*, or *off*. *Side by side* puts the print beside
+  Studio's spaces, moving together. Each room is labelled once: as printed, the print
+  under Studio's labels is drawn without the drawing's texts, and <kbd>T</kbd> (Studio's
+  labels off) shows the drawing's own texts instead, to compare what Studio read with
+  what the drawing says. *Open print* (Share) shows the print full size in a new tab.
+- **To review** (Rooms) is how many spaces and zones need a look, and why; it starts
+  **review mode** (<kbd>N</kbd>): one room after another, brought to the middle of the
+  view, the inspector saying why it is flagged and its likely types — <kbd>1</kbd>–<kbd>9</kbd>
+  sets one, <kbd>Enter</kbd> accepts it as it is, either goes on to the next;
+  <kbd>N</kbd> and <kbd>P</kbd> go forward and back, <kbd>Esc</kbd> stops. Below it
+  every room, grouped by type (or by floor finish), with a filter.
+- **Click a space** (Select, <kbd>V</kbd>) to see in the inspector its ID (copy it),
+  the text written in it on the drawing, why it is listed, and to correct its **type,
+  name and number**: each is saved when it is changed, and says what was detected and
+  by whom (rules, the language model, vision, a person), with ↺ to go back to it.
+  *Accept as it is* checks it without a change; *Use detected* takes your corrections
+  away. **Capacity**: how many people it is meant to seat (see below). **Delete**
+  (<kbd>Del</kbd>) takes what is not a room (a sliver, the outside) out of the plan,
+  the lists and the 3D view; it keeps its ID (and is exported marked `ignored`), and
+  *Show deleted* (View) shows it again, to restore. Shift-click (or ⌘-click) adds rooms
+  to those chosen, and Shift-drag a band over them: their type and finishes are set
+  for all at once.
+- **Draw what the drawing leaves out**, with the tools (or right-click the plan:
+  what can be done there):
 
-  | | |
+  | Tool | |
   |---|---|
-  | *Add a door / a window / an opening here* | on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide |
-  | *Draw a wall from here* (<kbd>W</kbd>) | click its two ends; it snaps to walls and parts spaces as a drawn wall does |
-  | *Divide a space from here* (<kbd>V</kbd>) | a line right across a space with no wall: it becomes two zones |
-  | *Draw a space from here* (<kbd>S</kbd>) | click its corners (they snap to walls); the first again, a double-click or <kbd>Enter</kbd> closes it, <kbd>Backspace</kbd> takes a corner back. For an area the drawing encloses nowhere, such as a colonnade |
-  | *Change size…* (on a door, window or opening) | its width, sill and height; *Size as drawn* goes back |
-  | *Delete* / *Take it away* | a door, window or opening of the drawing is deleted (and can be restored); what you drew is taken away |
-  | *Place an item here…* | furniture and equipment (below) |
+  | *Wall* (<kbd>W</kbd>) | click its two ends; it snaps to walls and parts spaces as a drawn wall does |
+  | *Space* (<kbd>R</kbd>) | click its corners (they snap to walls); the first again, a double-click or <kbd>Enter</kbd> closes it, <kbd>Backspace</kbd> takes a corner back. For an area the drawing encloses nowhere, such as a colonnade |
+  | *Divide* (<kbd>D</kbd>) | a line right across a space with no wall: it becomes two zones |
+  | *Door, window, opening* (<kbd>O</kbd>) | a click on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide, or the width given in its options |
+  | *Stairs and lifts* (<kbd>L</kbd>) | stairs, a lift or an escalator: two corners and <kbd>Enter</kbd> for a rectangle, or its outline; added typed, then linked to the floors it serves |
+  | *Measure* (<kbd>M</kbd>) | a distance, or an area and its perimeter |
 
-  <kbd>D</kbd> and <kbd>O</kbd> add a door or an opening with a click on a wall,
-  <kbd>Del</kbd> deletes what is chosen, <kbd>Esc</kbd> stops, <kbd>F</kbd> fits the
-  floor in view. After each change the floor is read again, and what you drew is
-  kept with the floor through every re-read and every revised drawing.
-- **2D, 3D, Walk — one view.** The switch in the toolbar shows the floor as a plan,
-  as built (orbit it), or walks you through it, in the same place: the floor, what
-  you chose, the panel and the plan's view stay as they are, and switching is
-  instant once the building is built. Walking: click the view to look, <kbd>W A S
-  D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panel; the room you're in
-  is shown, and you start in the room you chose, or where the 3D view or the plan
-  was looking. In 3D and walking you edit as on the plan: a click chooses a room or
-  an item (walking: at the cross) and its editor opens; choose an item in *Place*
-  and click the floor (walking: aim the cross and click) — its ghost shows where it
-  will go, held in its room and lined up as on the plan; drag items in 3D;
-  <kbd>R</kbd>, <kbd>[</kbd> <kbd>]</kbd> and <kbd>Del</kbd> as on the plan.
-  Walls, doors, dividers and spaces are drawn on the plan: right-click (or
-  <kbd>2</kbd>) *Draw here in 2D* shows that place there. What changes — yours or
-  others' — shows in 3D at once; drawn walls when the floor has been read again.
-  *3D in its own window* opens the building on a page of its own.
-- **Re-read drawing** reads the floor's drawing again (a revised one too): IDs and
-  corrections are kept. A reading that would retire most of the floor's rooms is
-  held back, the floor unchanged, and Studio asks before applying it (*Read
-  anyway*).
-- **Share an area** (toolbar, on the plan; anyone who may see the floor): drag a
-  rectangle over a part of the floor Studio read wrong (at most 50 × 50 m), write
-  what went wrong, look at the preview and download `<id>.spsample`, a small file to
-  send to the StoreyPath team: the drawing in the area, the area as drawn and as
-  Studio read it, what Studio decided there and why, and what people corrected.
-  People's names, phone numbers, emails, the project's, site's, building's and floor's
-  names and codes, Studio's IDs and where the area is are taken out; the preview lists
-  every text taken out, each to keep or take out. Nothing is sent: the file is
-  downloaded ([Area samples](docs/AREA-SAMPLES.md)).
+  A door, window or opening chosen shows its **width, sill and height**; *Size as
+  drawn* goes back. <kbd>Del</kbd> deletes a door, window or opening of the drawing
+  (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
+  being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
+  held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the
+  floor is read again, and what you drew is kept with the floor through every re-read
+  and every revised drawing.
+- **2D, 3D, Walk — one view** (<kbd>2</kbd>, <kbd>3</kbd>, <kbd>4</kbd>), in the
+  same place: the floor, what you chose, the panels and the plan's view stay as they
+  are, and switching is instant once the building is built. In 3D the floor stack's
+  *All* shows every floor of the building. Walking: click the view to look, <kbd>W A S
+  D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panels; the room you're in
+  is shown, and you start in the room you chose, or where the 3D view or the plan was
+  looking. In 3D and walking you edit as on the plan: a click chooses a room or an
+  item (walking: at the cross) and the inspector shows it; the *Place* tool
+  (<kbd>I</kbd>) and *Paint finishes* (<kbd>P</kbd>) work there too; drag items in 3D;
+  <kbd>R</kbd>, <kbd>,</kbd> <kbd>.</kbd> and <kbd>Del</kbd> as on the plan. Walls,
+  doors, dividers and spaces are drawn on the plan: a drawing tool's key over a place
+  in 3D (or right-click, or <kbd>2</kbd>) shows that place there. What changes —
+  yours or others' — shows in 3D at once; drawn walls when the floor has been read
+  again. *3D in its own window* (Share) opens the building on a page of its own.
+- **Re-read drawing** (the inspector, with nothing chosen) reads the floor's drawing
+  again (a revised one too): IDs and corrections are kept. A reading that would retire
+  most of the floor's rooms is held back, the floor unchanged, and Studio asks before
+  applying it (*Read anyway*).
+- **Share an area** (the *Share an area* tool, <kbd>A</kbd>, or the Share menu; anyone
+  who may see the floor): drag a rectangle over a part of the floor Studio read wrong
+  (at most 50 × 50 m), write what went wrong, look at the preview and download
+  `<id>.spsample`, a small file to send to the StoreyPath team: the drawing in the area,
+  the area as drawn and as Studio read it, what Studio decided there and why, and what
+  people corrected. People's names, phone numbers, emails, the project's, site's,
+  building's and floor's names and codes, Studio's IDs and where the area is are taken
+  out; the preview lists every text taken out, each to keep or take out. Nothing is
+  sent: the file is downloaded ([Area samples](docs/AREA-SAMPLES.md)). The Share menu
+  also exports the building's package and downloads the project's file.
 
-Every change is saved to the project at once.
+Every change is saved to the project at once. *View* (the navigator) holds how the
+floor is shown: the drawing, side by side, labels, colours (by type or by floor
+finish), what was deleted, the 3D view's look and quality, and a light or dark
+interface.
 
 **Many people at once.** One person edits a floor at a time: the first change takes
-it, and everyone else on it sees *Khalid is editing this floor since 10:20 — you can
+it, and everyone else on it sees *Khalid is editing this floor since 10:20: you can
 look* with his changes appearing as he saves them (and who made each), until he is
-*Done editing*, leaves the floor, or leaves it alone for 15 minutes (an admin may take
-it over). Review's header shows who else is on the floor; a project's page, who is on
-which. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own changes — refused, naming who,
-when someone else changed the same thing since — and *History* lists who changed what
-on the floor, in words ([more](studio/README.md#many-people-at-once)).
+*Done editing* (the status bar), leaves the floor, or leaves it alone for 15 minutes
+(an admin may take it over). Review's top bar shows who else is on the floor; a
+project's page, who is on which. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
+changes — refused, naming who, when someone else changed the same thing since — and
+*History* lists who changed what on the floor, in words
+([more](studio/README.md#many-people-at-once)).
 
 ### Furniture and equipment
 
@@ -273,11 +301,12 @@ the floors in review.
   (floor, wall, ceiling) and a colour. Types are added or changed by editing that
   file; a type no longer used is marked `retired`, never removed, so its code stays
   with the items that have it and is never given to another type.
-- **Place** one by choosing its type in *Place* on the toolbar (or right-click,
-  *Place an item here…*) and clicking where it goes. Drag it to move it; <kbd>R</kbd>
-  turns it 90°, <kbd>[</kbd> and <kbd>]</kbd> by 15°, the arrows move it (Shift:
-  further), <kbd>Del</kbd> deletes it. Its panel changes its type, its turn, its floor
-  (carry it to another floor or building) and its details.
+- **Place** one with the *Place* tool (<kbd>I</kbd>): choose its type in the tool's
+  options and click where it goes (or right-click, *Place an item here…*). Drag it to
+  move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows
+  move it (Shift: further), <kbd>Del</kbd> deletes it. The inspector changes its type,
+  its turn, its floor (carry it to another floor or building) and its details; the
+  navigator's *Items* lists the floor's items by type.
 - **It stays in its room, and lines up.** An item belongs to the room it was placed
   in (right-clicked or clicked in): dragged, nudged or turned, it stops at that room's
   walls (a zone has no walls: the whole space holds it). Near a wall it turns square to
@@ -298,8 +327,8 @@ the floors in review.
   symbols and a check symbol (`7K2Q-XM9F-4DP`), of no place and no project. Carried to
   another office, floor or building, it keeps it; deleted, its ID is never issued
   again. It is written on the asset as it is: a person may type it in either case,
-  with or without its hyphens, O for 0 and I or L for 1 (Review's search box finds the
-  item, `storeypath item-id` reads it), and the check symbol catches a symbol mistyped
+  with or without its hyphens, O for 0 and I or L for 1 (Review's search, <kbd>⌘K</kbd>,
+  finds the item, `storeypath item-id` reads it), and the check symbol catches a symbol mistyped
   or two swapped.
 - **Who enters what.** Each type's details are fields owned by StoreyPath (what is
   physical: a colour, a size, a model) or by the system that manages the asset (an
@@ -378,7 +407,7 @@ gives.
   changes of floor, and short steps ready to show — "Walk 48 m along CORRIDOR to the
   lift", "Take the lift up to Floor 1", "OFFICE 112 is on your left" — each also a
   kind and values, for a system to word in its own language (Arabic).
-- **Navigate** in Studio (from a project's buildings, and from Review's toolbar):
+- **Navigate** in Studio (from a project's buildings, and from Review's *Find the way*):
   choose a start (a kiosk, an entrance, any room) and a destination, avoid stairs if
   need be, and see the steps, the route on each floor's plan and in 3D.
 - **Stairs and lifts the drawing missed** are drawn in Review with its *Stairs* and

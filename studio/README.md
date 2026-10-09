@@ -253,11 +253,11 @@ meanwhile are answered *busy* (409), from this Studio or another on the same dat
 page on) and sends each to the pages of those who may see it: Review redraws what
 changed where you are (the view, what you chose and what you are typing are kept;
 an editor whose space someone else changed shows the change) and says who did what
-(*Khalid Engineer deleted OFFICE 012*); its header shows who else is on the floor and
-who is editing it, small marks with their initials; a project's page shows who is on
-which floor. Jobs report their progress the same way.
+(*Khalid Engineer deleted OFFICE 012*); its top bar shows who else is on the floor and
+who is editing it, small marks with their initials (the status bar says it in words);
+a project's page shows who is on which floor. Jobs report their progress the same way.
 
-**Undo and redo, each person their own.** *Undo* and *Redo* in Review's toolbar (⌘Z
+**Undo and redo, each person their own.** *Undo* and *Redo* in Review's top bar (⌘Z
 and ⇧⌘Z, Ctrl+Z and Ctrl+Y) undo your latest change on the floor shown, and redo what
 you undid until you make another change. An undo is a change like any other: recorded
 as an undo of yours, it needs the floor (and edit on it), and it is refused, naming who
@@ -267,7 +267,7 @@ drawn and undone is taken away and the floor read again (its rooms' IDs as readi
 again gives them). A file opened in place of the project, or of a building, is a line
 no undo goes back over.
 
-**History.** *History* in Review lists who changed what on the floor, newest first, in
+**History.** *History* in Review (its drawer, from the top bar) lists who changed what on the floor, newest first, in
 words (*moved Manager's desk 7K2Q-XM9F-4DP*, *drew a wall*), what was undone marked, and
 what ⌘Z would undo; it follows changes as they come. Each person sees the history of
 what they may see.
@@ -337,33 +337,38 @@ storeypath validate acme.storeypath
 drawing — *as printed* (the drawing rendered as on paper, a pixel a centimetre,
 drawn once and kept beside the workspace until the drawing changes; *Open print*
 shows it full size; *Side by side* puts it beside Studio's spaces), or as its lines
-— with the spaces that need a look listed first: no type, no name or number, the
-labels of several rooms in one space (a doorway without a door block, or a missing
-wall), a space open to the outside, and what a model decided. Click a space to
-correct its type, name or number, accept it as it is (*Save*), set how many people
-it seats, or **delete** it (not there, or not worth anything: a sliver, the outside).
-A deleted space keeps its ID, is exported marked `ignored`, and comes back with
-*Show deleted*. Right-click the plan to draw the walls, dividing lines, doors,
-windows, openings and spaces the drawing leaves out, to resize a door, window or
-opening, or to place furniture and equipment; the keys are on the page (W wall, V
-divide, S space, D door, O opening, Del delete, N next to review, F fit). Every change
-is saved to the workspace file immediately, and *Re-read drawing* converts a revised
-drawing without leaving the page. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
+— with the spaces that need a look counted first (*To review*, gone through one by one
+in review mode: N): no type, no name or number, the labels of several rooms in one
+space (a doorway without a door block, or a missing wall), a space open to the
+outside, and what a model decided. Click a space to correct its type, name or number
+in the inspector (each saved as it is changed), accept it as it is, set how many
+people it seats, or **delete** it (not there, or not worth anything: a sliver, the
+outside). A deleted space keeps its ID, is exported marked `ignored`, and comes back
+with *Show deleted*. The tools on the left (or a right-click on the plan) draw the
+walls, dividing lines, doors, windows, openings, spaces, lifts and stairs the drawing
+leaves out, place furniture and equipment, paint floors and walls, measure, and share
+an area; a door, window or opening chosen is resized in the inspector. Each tool's
+key is in its tooltip, and ? lists them all (V select, H pan, W wall, R space, D
+divide, O door, window or opening, L stairs and lifts, I place, P paint, M measure, A
+share an area, G find the way; Del delete, N next to review, F fit, T the drawing's
+texts, ⌘K search). Every change is saved to the workspace file immediately, and
+*Re-read drawing* converts a revised drawing without leaving the page. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
 changes, and *History* lists who changed what on the floor; in Studio, others' changes
 appear as they are saved, and one person edits a floor at a time ([Many people at
 once](#many-people-at-once)).
 
-**2D, 3D and Walk** are one view, switched in the toolbar: the plan, the floor as built
-(orbit it: drag to turn, Shift-drag to move, scroll to zoom), or a walk through it
-(click the view to look, W A S D or the arrows to move, Shift to run, E and Q up and
-down at stairs and lifts, Esc frees the mouse for the panel and the toolbar). The
-floor, what is chosen, the panel (space and item editors, History, the lists) and the
-plan's view stay as they are from one to another. The 3D world is Studio's package of
+**2D, 3D and Walk** are one view, switched in the top bar (2, 3, 4): the plan, the floor
+as built (orbit it: drag to turn, Shift-drag to move, scroll to zoom; *All* in the floor
+stack shows every floor of the building), or a walk through it (click the view to look,
+W A S D or the arrows to move, Shift to run, E and Q, or PgUp and PgDn, up and down at
+stairs and lifts, Esc frees the mouse for the panels). The floor, what is chosen, the
+panels (the navigator, the inspector, History) and the plan's view stay as they are
+from one to another. The 3D world is Studio's package of
 the floor's building as it is now (not recorded as an export), built the first time
 and kept: switching is instant, and nothing is drawn while the plan is shown. Walking
 starts in the room or before the item chosen, else where the 3D view (or the plan) was
-looking, and shows the room you are in. In 3D and walking the toolbar's *Look* draws the
-floor *Real* (finished by what each room is, soft shadows) or as a white *Model* with
+looking, and shows the room you are in. In 3D and walking *Look* (in the navigator's
+View) draws the floor *Real* (finished by what each room is, soft shadows) or as a white *Model* with
 its edges drawn, and *Quality* is *Auto* (Low on integrated, virtual or software
 graphics, or when High draws slowly), *High* or *Low*: kept in the browser, and the
 same on *Navigate*.
@@ -373,11 +378,12 @@ plan: the floor's lock, undo and history as for any change):
 
 | | 3D | Walk |
 |---|---|---|
-| choose a room or an item (its editor opens) | click it | aim the cross at it and click |
-| place an item (*Place*: choose its type) | click the floor: its ghost follows the pointer | aim the cross at the floor and click: its ghost follows the cross |
+| choose a room or an item (the inspector shows it) | click it | aim the cross at it and click |
+| place an item (the *Place* tool, I: choose its type) | click the floor: its ghost follows the pointer | aim the cross at the floor and click: its ghost follows the cross |
 | move an item | drag it across the floor | — |
-| turn it, delete it | R (90°), [ and ] (15°), Del | the same |
-| draw walls, doors, dividers, spaces | right-click (or 2): *Draw here in 2D*, the plan centred there; W, V, S, D, O there with that tool | right-click (or 2) at the cross |
+| turn it, delete it | R (90°), , and . (15°), Del | the same |
+| paint floors and walls (*Paint finishes*, P) | click a floor or a wall; Alt-click takes up its finish | the same, at the cross |
+| draw walls, doors, dividers, spaces | right-click (or 2): *Draw here in 2D*, the plan centred there; W, R, D, O, L there with that tool | right-click (or 2) at the cross |
 
 An item placed or carried in 3D settles as on the plan (`fit.js`): its room's walls hold
 it, the magnet lines it up against a wall or an item near it, Alt places it as it is;
@@ -745,7 +751,7 @@ a few seconds. Studio, the Go module and the viewers find the same way on it
 (`spec/conformance/routes.json`).
 
 **Navigate** (`navigate.html?p=<code>&building=<id>`, reached from a building on the
-project page or Review's toolbar) finds the way between two places of a building, as a
+project page or Review's *Find the way*, G) finds the way between two places of a building, as a
 kiosk in its lobby would show it. Choose where to start (a wayfinding kiosk, an
 entrance or any room) and where to go (any room, by name or number), optionally
 avoiding stairs. The page lists the steps ("Walk 48 m along CORRIDOR to the lift",

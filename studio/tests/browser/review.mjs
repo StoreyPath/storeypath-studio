@@ -311,6 +311,114 @@ test("another page's change shows here at once (live), named in a toast when it 
   await until((id) => window.storeypathReview.state.byId.get(id).name === "OFFICE", "and taken back", 10000, office.id);
 });
 
+/** A plan point (metres) on the screen. */
+const screenOf = (p) => R((p) => {
+  const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+  return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+}, p);
+
+/** A room's box (plan metres). */
+const boxOf = (id) => R((id) => window.storeypathReview.state.bounds.get(id), id);
+
+test("a wall drawn with W across a room: the floor read again with it; chosen, it is taken away with Del", async () => {
+  await press("f");
+  await sleep(300);
+  const room = (await rooms()).find((s) => s.name === "RECEPTION");
+  const [x0, y0, x1, y1] = await boxOf(room.id);
+  const before = await R(() => (window.storeypathReview.state.floor.edits?.walls || []).length);
+  await press("w");
+  await page.click(...await screenOf([(x0 + x1) / 2, y0 + 0.4]));
+  await page.click(...await screenOf([(x0 + x1) / 2, y1 - 0.4]));
+  await until((n) => (window.storeypathReview.state.floor.edits?.walls || []).length === n + 1 && !window.storeypathReview.state.busy,
+    "the wall saved and the floor read again", 60000, before);
+  await press("Escape");
+  const wall = await R(() => window.storeypathReview.state.floor.edits.walls.at(-1));
+  await page.click(...await screenOf([(wall[0][0] + wall[1][0]) / 2, (wall[0][1] + wall[1][1]) / 2]));
+  await until(() => document.getElementById("inspector").dataset.kind === "drawn", "the wall drawn here, chosen");
+  await press("Delete");
+  await until((n) => (window.storeypathReview.state.floor.edits?.walls || []).length === n && !window.storeypathReview.state.busy,
+    "taken away", 60000, before);
+  noErrors("drawing a wall");
+});
+
+test("stairs drawn with L (two corners and Enter) are added typed; the inspector lists the floors they serve", async () => {
+  const room = (await rooms()).find((s) => s.name === "RECEPTION");
+  const [x0, y0, x1, y1] = await boxOf(room.id);
+  const before = (await rooms()).filter((s) => s.type === "stairs").length;
+  await press("l");
+  await page.click(...await screenOf([x0 + 0.6, y0 + 0.6]));
+  await page.click(...await screenOf([x0 + 3.2, y0 + 3.6]));
+  await press("Enter");
+  await until(async (n) => !window.storeypathReview.state.busy
+    && window.storeypathReview.state.floor.spaces.filter((s) => s.type === "stairs" && !(s.zones || []).length).length === n + 1,
+  "the stairs added, typed", 60000, before);
+  await until(() => document.querySelector("#ed-vertical .vt-floors li"), "the floors it serves, in the inspector", 15000);
+  await press("Escape");
+  await press("z", ["mod"]); // undone: taken away, the floor read again
+  await until(async (n) => !window.storeypathReview.state.busy
+    && window.storeypathReview.state.floor.spaces.filter((s) => s.type === "stairs" && !(s.zones || []).length).length === n,
+  "undone", 60000, before);
+});
+
+test("Paint on the plan: a room clicked gets the floor brush's finish; Alt-click takes up a finish", async () => {
+  const office = await officeNamed("007");
+  await press("p");
+  const brush = await R(() => document.querySelector(".fin-brush .fin-brush-text")?.lastChild?.textContent);
+  await page.click(...await roomAt(office.id));
+  await until((id) => window.storeypathReview.state.byId.get(id).floor_finish, "the floor painted", 8000, office.id);
+  await press("z", ["mod"]);
+  await until((id) => !window.storeypathReview.state.byId.get(id).floor_finish, "undone", 8000, office.id);
+  await press("Escape");
+  truly(brush, "the brush says its finish");
+});
+
+test("several rooms typed at once; deleted and restored with Show deleted", async () => {
+  await press("Escape");
+  const [a, b] = [await officeNamed("008"), await officeNamed("009")];
+  await page.click(...await roomAt(a.id));
+  await page.click(...await roomAt(b.id), { shiftKey: true });
+  await until(() => document.getElementById("inspector").dataset.kind === "spaces", "two rooms in the inspector");
+  await R(() => {
+    const s = document.querySelector("#inspector select");
+    s.value = "storage";
+    s.dispatchEvent(new Event("change"));
+  });
+  await until((ids) => ids.every((id) => window.storeypathReview.state.byId.get(id).type === "storage"), "both typed storage", 10000, [a.id, b.id]);
+  await press("z", ["mod"]);
+  await press("z", ["mod"]);
+  await until((ids) => ids.every((id) => window.storeypathReview.state.byId.get(id).type === "office"), "both undone", 10000, [a.id, b.id]);
+  await page.click(...await roomAt(a.id));
+  await press("Delete");
+  await until((id) => window.storeypathReview.state.byId.get(id).ignored, "deleted", 8000, a.id);
+  truly(await R((id) => window.storeypathReview.state.paths.get(id).style.display === "none", a.id), "out of the plan");
+  await R(() => window.storeypathReview.run("view.deleted"));
+  truly(await R((id) => window.storeypathReview.state.paths.get(id).style.display === "", a.id), "Show deleted shows it");
+  await page.click(...await roomAt(a.id));
+  await until(() => [...document.querySelectorAll("#inspector button")].some((x) => x.textContent.trim() === "Restore"), "its Restore");
+  await R(() => [...document.querySelectorAll("#inspector button")].find((x) => x.textContent.trim() === "Restore").click());
+  await until((id) => !window.storeypathReview.state.byId.get(id).ignored, "restored", 8000, a.id);
+  await R(() => window.storeypathReview.run("view.deleted"));
+  await press("Escape");
+});
+
+test("Share an area: a rectangle dragged opens the sample's preview; cancelled", async () => {
+  await press("a");
+  const p = await roomAt((await officeNamed("001")).id), q = await roomAt((await officeNamed("002")).id);
+  await page.drag([p[0] - 20, p[1] - 30], [q[0] + 20, q[1] + 30]);
+  await until(() => document.querySelector("dialog.sample[open] .sample-pictures img"), "the preview, its pictures", 60000);
+  await R(() => [...document.querySelectorAll("dialog.sample button")].find((b) => b.textContent === "Cancel").click());
+  await press("Escape");
+  noErrors("sharing an area");
+});
+
+test("the drawing read again: its progress in the status bar, the floor's rooms and IDs kept", async () => {
+  const ids = (await rooms()).map((s) => s.id).sort().join();
+  await R(() => window.storeypathReview.run("floor.reconvert"));
+  await until(() => !document.getElementById("sb-job").hidden, "the job says what it does", 10000);
+  await until(() => !window.storeypathReview.state.converting, "read again", 120000);
+  truly((await rooms()).map((s) => s.id).sort().join() === ids, "the same rooms, the same IDs");
+});
+
 test("3D and walking: built without an error, the floor stack offers All, 2 is back on the plan", async () => {
   await press("3");
   await until(() => window.storeypathReview.view3d.building && window.storeypathReview.view3d.mode === "3d" && !window.storeypathReview.view3d.busy,

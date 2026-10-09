@@ -272,7 +272,7 @@ export const painting = () => api.state.tool === "paint";
 /** The plan's click while painting: a room's floor (Shift: its walls; a zone's are its
  * space's), or its finishes taken up (Alt, or the dropper). */
 function paintOnPlan(p, e) {
-  const unit = api.spaceAt(p);
+  const unit = api.spaceAt(...p);
   if (!unit) return api.toast("Click a room to paint its floor", true);
   pick({ floor: api.state.floor.id, space: unit.id, room: unit.kind === "zone" ? unit.space_id : unit.id,
     wall: e.shiftKey, altKey: e.altKey });

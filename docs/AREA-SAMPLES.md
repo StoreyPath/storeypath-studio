@@ -20,9 +20,9 @@ tests, docs or commit messages, unless the owner says so for that sample.
 
 ## Making one
 
-**In Review** (the 2D view), anyone who may see the floor: *Share an area* in the
-toolbar, then drag a rectangle over the part of the plan to share (its size shows as
-it is dragged; more than 50 m a side, or an empty rectangle, is refused). A dialog
+**In Review** (the 2D view), anyone who may see the floor: the *Share an area* tool
+(A, or the Share menu), then drag a rectangle over the part of the plan to share (its
+size shows as it is dragged; more than 50 m a side, or an empty rectangle, is refused). A dialog
 shows the area as drawn and as Studio read it, every text that will be taken out (each
 can be kept) and the other texts (each can be taken out), and a note to write. *Download*
 saves `<id>.spsample` (an 8-letter random id). Nothing is sent anywhere: Studio runs
