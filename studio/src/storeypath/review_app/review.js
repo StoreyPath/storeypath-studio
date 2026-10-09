@@ -500,9 +500,9 @@ function styleSpace(s) {
   path.classList.toggle("selected", s.id === state.selected);
   path.classList.toggle("dim", !matches(s, state.filter));
   const label = state.labels.get(s.id);
-  label.replaceChildren();
   label.dataset.name = s.name || "";
   label.dataset.number = s.number || (s.name ? "" : code(s.id));
+  placeLabels(); // its label written again (once a frame, however many are restyled)
 }
 
 // ---- view: pan, zoom, labels ---------------------------------------------
