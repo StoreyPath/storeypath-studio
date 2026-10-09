@@ -35,7 +35,7 @@ async function until(fn, what, ms = 15000, ...args) {
 }
 
 let MOD = 4; // ⌘ on a Mac, Ctrl elsewhere (as keys.js has it)
-const KEYS = { Escape: 27, Enter: 13, Backspace: 8, Delete: 46, PageUp: 33, PageDown: 34, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+const KEYS = { Escape: 27, Enter: 13, Backspace: 8, Delete: 46, PageUp: 33, PageDown: 34, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, F10: 121 };
 
 /** A key pressed: ``key`` as KeyboardEvent.key; ``mods``: "shift", "mod", "alt" (a list). */
 async function press(key, mods = []) {
@@ -109,6 +109,8 @@ test("a room clicked on the plan is chosen: the inspector shows it, the status b
     hash: location.hash, type: document.getElementById("ed-type")?.value }));
   truly(shown.kind === "space" && shown.title === "OFFICE 012", JSON.stringify(shown));
   truly(shown.count === "1 room" && shown.hash.includes(office.id) && shown.type === "office", JSON.stringify(shown));
+  truly(await R(() => document.getElementById("toast").hidden || !document.getElementById("toast").classList.contains("error")),
+    "choosing a room says nothing went wrong");
 });
 
 test("Shift-click adds rooms; Shift-drag draws a band that chooses those it covers; Esc lets them go", async () => {
@@ -152,6 +154,27 @@ test("each tool is taken by its key: pressed in the rail, its options over the c
   await press("v");
   truly(!(await toolNow()), "V: the Select tool");
   noErrors("the tools");
+});
+
+test("the plan by the keys: the arrows move it, + and − zoom it, Space held and dragged moves it, Shift-F10 opens the menu", async () => {
+  const view = () => R(() => ({ ...window.storeypathReview.state.view }));
+  const v0 = await view();
+  await R(() => document.getElementById("svg").focus());
+  await press("ArrowLeft");
+  truly((await view()).tx > v0.tx, "← moves it");
+  await press("=");
+  truly((await view()).k > v0.k, "+ zooms in");
+  const v1 = await view();
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " });
+  await page.drag([700, 500], [760, 540]);
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  const v2 = await view();
+  truly(Math.abs(v2.tx - v1.tx - 60) < 2 && Math.abs(v2.ty - v1.ty - 40) < 2 && !(await R(() => window.storeypathReview.sel.kind)),
+    `Space-drag moved it, choosing nothing: ${JSON.stringify([v1, v2])}`);
+  await press("F10", ["shift"]);
+  truly(await R(() => !document.getElementById("menu").hidden && document.activeElement.closest("#menu")), "Shift-F10: the menu, its keys in it");
+  await press("Escape");
+  await press("f");
 });
 
 test("Measure: two points clicked, the distance between them", async () => {
@@ -436,6 +459,12 @@ test("3D and walking: built without an error, the floor stack offers All, 2 is b
   await until(() => window.storeypathReview.view3d.mode === "walk" && window.storeypathReview.view3d.world.mode === "walk", "walking", 20000);
   await press("w"); // the walker's: nothing of Review's
   truly(!(await toolNow()), "W walking is the walker's, not the Wall tool");
+  if (await R(() => typeof window.storeypathReview.view3d.world.setDoors === "function")) { // a world that opens doors
+    await R(() => window.storeypathReview.run("view.doors-auto"));
+    truly(await R(() => window.storeypathReview.view3d.world.doors === "manual"), "doors opened only by hand");
+    await R(() => window.storeypathReview.run("view.doors-auto"));
+    truly(await R(() => window.storeypathReview.view3d.world.doors === "auto"), "doors open as you walk into them");
+  }
   await press("2");
   await until(() => window.storeypathReview.view3d.mode === "2d", "2: back on the plan");
   noErrors("3D and walking");

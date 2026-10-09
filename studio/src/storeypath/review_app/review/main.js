@@ -10,7 +10,7 @@
 
 import { accountMenu, whoami } from "../account.js";
 import { setupTogether } from "../together.js";
-import { viewOnly } from "./access.js";
+import { editable, viewOnly } from "./access.js";
 import { setupActions } from "./actions.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
@@ -62,7 +62,7 @@ setupDrawing();
 vertical.setup({ state, BASE, request, followJob, openFloor, fillFloorSelect: () => emit("project"), saveSpace, toast, el, emit,
   tool, setTool, snapWall, preview, toolClick, backCorner, clearPreview, viewOnly, readable, select });
 setupItems();
-finish.setup({ state, BASE, request, toast, el, icon, emit, tool, setTool, saveSpace, viewOnly, units, title, spaceAt,
+finish.setup({ state, BASE, request, toast, el, icon, emit, tool, setTool, saveSpace, viewOnly, editable, units, title, spaceAt,
   updated: updatedSpaces,
   restyle: () => {
     restyle();

@@ -58,7 +58,7 @@ export function keysOf(id) {
 }
 
 const NAMES = { escape: "escape", esc: "escape", " ": "space", spacebar: "space", del: "delete", return: "enter",
-  "+": "=", add: "=", subtract: "-" };
+  "+": "=", add: "=", subtract: "-", apps: "contextmenu" };
 
 /** The chord a key press makes. Shift is kept for letters, digits and the named keys, and
  * left out for a character it makes (? is shift+/ on most keyboards: it is "?"). */

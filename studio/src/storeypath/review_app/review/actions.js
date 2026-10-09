@@ -14,11 +14,11 @@ import { buildingFloors } from "./floorstack.js";
 import { changeAsset, chosenAsset, copyId, renderAssets } from "./items.js";
 import { allBindings, kbd, reserve, setupKeys } from "./keys.js";
 import { panelShown, showPanel } from "./layout.js";
-import { closeMenu, menuOpen } from "./menu.js";
+import { closeMenu, menuOpen, openMenu } from "./menu.js";
 import { showTab } from "./navigator.js";
 import { toast } from "./notify.js";
 import { openPalette, paletteOpen } from "./palette.js";
-import { fit, panBy, renderPlan, restyle, showUnderlay, zoomBy } from "./plan.js";
+import { fit, panBy, planPoint, renderPlan, restyle, showUnderlay, viewport, zoomBy } from "./plan.js";
 import { forEach, setFlag } from "./rooms.js";
 import { reviewing, stopReview } from "./reviewmode.js";
 import { chosenSpaces, clearSelection, sel, selectSpaces } from "./selection.js";
@@ -248,6 +248,16 @@ export function setupActions() {
     when: () => Boolean(sel.kind) && editable(), why: () => (sel.kind ? whyNotEditable() : "Choose something first"), run: deleteChosen });
   command({ id: "edit.select-all", title: "Choose every room", group: "Edit", icon: "square-dashed", keys: ["mod+a"], when: () => Boolean(state.floor),
     run: () => selectSpaces(units().filter(visible).filter((s) => !s.ignored).map((s) => s.id)) });
+  // the right-click menu from the keys: at the room chosen (its label), else the middle of the view
+  command({ id: "edit.menu", title: "What can be done here (the right-click menu)", group: "Edit", keys: ["shift+f10", "contextmenu"],
+    palette: false, when: () => in2d() && editable(), why: () => (in2d() ? whyNotEditable() : NOT_2D()),
+    run: () => {
+      const { w, h, left, top } = viewport();
+      const s = state.selected && state.byId.get(state.selected);
+      const v = state.view;
+      const at = s ? [s.label_point[0] * v.k + v.tx, -s.label_point[1] * v.k + v.ty] : [w / 2, h / 2];
+      openMenu(left + at[0], top + at[1], planPoint(...at));
+    } });
   command({ id: "edit.copy-id", title: "Copy the ID of what is chosen", group: "Edit", icon: "copy", words: "tag clipboard",
     when: () => Boolean(state.selected || state.asset || state.item?.id), why: () => "Choose a room, an item or a door first",
     run: () => copyId(state.selected || state.asset || state.item.id) });

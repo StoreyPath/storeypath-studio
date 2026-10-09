@@ -131,7 +131,7 @@ export function picker(anchor, { applies, current, typeDefault, onPick, defaultL
 export function editor(s) {
   const box = api.el("div", { id: "ed-finishes", class: "fin-editor" });
   if (!s) return box;
-  const el = api.el, may = !api.viewOnly();
+  const el = api.el, may = api.editable(); // (asked without a word: the inspector is drawn often)
   const space = spaceOf(s), now = shown(s);
   const field = (label, applies, own, code, note) => {
     const button = el("button", { type: "button", class: "fin-field",
@@ -165,7 +165,7 @@ export function editor(s) {
 
 /** Several rooms' Floor and Walls, chosen for all at once (one change, undone as one). */
 export function many(spaces) {
-  const el = api.el, may = !api.viewOnly();
+  const el = api.el, may = api.editable(); // (asked without a word: the inspector is drawn often)
   const field = (label, applies) => {
     const codes = new Set(spaces.filter((s) => applies === "floor" || s.kind === "space").map((s) => shown(s)[applies]));
     const one = codes.size === 1 ? [...codes][0] : null;

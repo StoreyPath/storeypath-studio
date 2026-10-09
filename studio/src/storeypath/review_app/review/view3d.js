@@ -385,8 +385,7 @@ export function showWalk() {
   $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
   $("walk-keys").textContent = !locked ? "" : state.tool === "place" ? "Click: place it at the cross · Alt: as it is · Esc: free the mouse"
     : finish.painting() ? "Click: paint the floor or wall at the cross · Alt-click: take up its finish · Esc: free the mouse"
-    : view3d.doorAim ? `E or click: ${view3d.doorAim.open ? "close" : "open"} the door · Esc: free the mouse`
-      : editable() ? `Click: choose · R , . turn · Del delete · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`
+    : editable() ? `Click: choose · R , . turn · Del delete · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`
         : `Click: choose · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`;
   $("walk-doors").hidden = !doors();
   if (locked && state.tool === "place") followCross();
