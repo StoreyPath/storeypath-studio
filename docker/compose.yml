@@ -15,13 +15,17 @@
 # (the helper's port is not published); without the gpu profile it says the helper
 # does not answer, and works without vision. More settings, in docker/.env too:
 # STOREYPATH_PORT (8080), STOREYPATH_BIND (127.0.0.1; 0.0.0.0 for others on your
-# network), STOREYPATH_ALLOWED_HOSTS, STOREYPATH_HELPER_SLOTS (2: questions the helper
-# answers at once), STOREYPATH_VISION_URL (other helpers, or more: comma-separated),
-# STOREYPATH_VOLUME, STOREYPATH_IMAGE and STOREYPATH_HELPER_IMAGE.
+# network), STOREYPATH_ALLOWED_HOSTS, STOREYPATH_HELPER_SLOTS (questions the helper
+# answers at once: 2 for the llama.cpp image, 16 for the vLLM one), STOREYPATH_HELPER_GPU_MEMORY
+# (the vLLM image: GB of the card it takes, 44 by default, or auto: what is free when it starts), STOREYPATH_VISION_URL (other
+# helpers, or more: comma-separated), STOREYPATH_VOLUME, STOREYPATH_IMAGE and
+# STOREYPATH_HELPER_IMAGE.
 #
 # The studio image is published (ghcr.io/storeypath/studio); the helper is built from
-# its own repository, https://github.com/StoreyPath/storeypath-gpu-helper, as storeypath/gpu-helper
-# (or STOREYPATH_HELPER_IMAGE names the image you built or loaded).
+# its own repository, https://github.com/StoreyPath/storeypath-gpu-helper: storeypath/gpu-helper:vllm (vLLM,
+# about four times faster; NVIDIA driver 575 or newer, or 535 or newer on a data-center GPU),
+# the one to take where the driver allows (STOREYPATH_HELPER_IMAGE=storeypath/gpu-helper:vllm
+# and STOREYPATH_HELPER_SLOTS=16), or storeypath/gpu-helper (llama.cpp, any driver from 525).
 
 name: storeypath
 
@@ -50,6 +54,7 @@ services:
     environment:
       STOREYPATH_HELPER_KEY: ${STOREYPATH_HELPER_KEY:-}
       STOREYPATH_HELPER_SLOTS: ${STOREYPATH_HELPER_SLOTS:-2}
+      STOREYPATH_HELPER_GPU_MEMORY: ${STOREYPATH_HELPER_GPU_MEMORY:-}
     expose:
       - "8105"
     deploy:
