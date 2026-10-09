@@ -300,6 +300,7 @@ a.subtle:hover { color: var(--accent); text-decoration: underline; }
 body.walking #toast { bottom: 128px; }
 #walk-keys:empty, #walk-meta:empty { display: none; }
 .walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
+#toolbar { z-index: 6; } /* over the view and its Click to look: the toolbar works with the mouse free */
 .walk-enter .card {
   max-width: min(420px, calc(100% - 32px)); padding: 16px 18px; border-radius: 12px; background: var(--panel);
   border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); font-size: 13px;
