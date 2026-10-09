@@ -79,7 +79,7 @@ select { padding-right: 8px; max-width: 260px; }
 #controls {
   top: 16px; right: 16px;
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 8px 14px 8px 8px; max-width: calc(100vw - 32px);
+  padding: 8px 14px 8px 8px; max-width: min(1080px, calc(100vw - 360px)); /* clear of the title: a second row else */
 }
 #controls label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; user-select: none; }
 #controls .explode input { width: 80px; }
@@ -147,7 +147,7 @@ kbd {
 
 @media (max-width: 720px) {
   #top { right: auto; }
-  #controls { top: auto; bottom: 16px; right: 16px; left: 16px; gap: 10px; }
+  #controls { top: auto; bottom: 16px; right: 16px; left: 16px; gap: 10px; max-width: none; }
   #details { bottom: 96px; left: 16px; right: 16px; width: auto; }
   #minimap { width: 140px; height: 140px; bottom: 96px; }
   #floors { top: 96px; transform: none; }
