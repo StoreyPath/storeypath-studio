@@ -418,9 +418,12 @@ test("several rooms typed at once; deleted and restored with Show deleted", asyn
     s.dispatchEvent(new Event("change"));
   });
   await until((ids) => ids.every((id) => window.storeypathReview.state.byId.get(id).type === "storage"), "both typed storage", 10000, [a.id, b.id]);
+  // one undo at a time: the second waits for the first to be saved (on a slow machine, a
+  // second asked for while the first is on its way is refused as busy)
   await press("z", ["mod"]);
+  await until((ids) => ids.some((id) => window.storeypathReview.state.byId.get(id).type === "office"), "one undone", 20000, [a.id, b.id]);
   await press("z", ["mod"]);
-  await until((ids) => ids.every((id) => window.storeypathReview.state.byId.get(id).type === "office"), "both undone", 10000, [a.id, b.id]);
+  await until((ids) => ids.every((id) => window.storeypathReview.state.byId.get(id).type === "office"), "both undone", 20000, [a.id, b.id]);
   await page.click(...await roomAt(a.id));
   await press("Delete");
   await until((id) => window.storeypathReview.state.byId.get(id).ignored, "deleted", 8000, a.id);

@@ -241,10 +241,11 @@ test("presenting: P hides all but the building; T stops its turning; Esc comes b
     hint: !document.getElementById("present-hint").hidden, turning: window.storeypathWorldPage.state.turning }));
   truly(on.presenting && on.topbar === "hidden" && on.toolbar === "none" && on.stack === "none" && on.status === "hidden" && on.hint, JSON.stringify(on));
   truly(on.turning, "the building turns");
+  // it turns frame by frame: waited for by its movement, not the clock (drawn in software
+  // on CI, a frame can take longer than half a second)
   const before = await R(() => ({ x: window.storeypathWorld.camera.position.x, z: window.storeypathWorld.camera.position.z }));
-  await sleep(600);
-  const after = await R(() => ({ x: window.storeypathWorld.camera.position.x, z: window.storeypathWorld.camera.position.z }));
-  truly(Math.hypot(after.x - before.x, after.z - before.z) > 0.01, "it turned");
+  await until((b) => Math.hypot(window.storeypathWorld.camera.position.x - b.x, window.storeypathWorld.camera.position.z - b.z) > 0.01,
+    "it turned", 20000, before);
   await press("t");
   truly(!(await R(() => window.storeypathWorldPage.state.turning)), "T stops it");
   await press("Escape");
