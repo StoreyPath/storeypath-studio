@@ -1,100 +1,183 @@
 /* StoreyPath Navigate: the way between two places of a building. On theme.css's tokens,
-   ui.css's components and the top bar every page has; the way's colours are the plan
-   engine's --sp-route* variables (the plan and the 3D view are light in both themes). */
-
-body.navigate { --route: #0b6bcb; --route-casing: #ffffff; --route-start: #2e9d63; --route-end: #d62d50; --route-change: #7048e8; }
-body.navigate .sp-plan {
-  --sp-route: var(--route);
-  --sp-route-casing: var(--route-casing);
-  --sp-route-start: var(--route-start);
-  --sp-route-end: var(--route-end);
-  --sp-route-change: var(--route-change);
-  --sp-background: var(--map-bg);
-}
+   ui.css's components and the top bar every page has. The plan is drawn in the plan
+   engine's calm look for finding the way (style "wayfinding"), light or dark with the
+   page; the way's colours there are the engine's --sp-route* variables, set from the
+   page's below. */
 
 body.navigate {
+  --route: #2463eb;
+  --route-soft: rgba(36, 99, 235, .12);
+  --route-end: #e5484d;
+  --nav-canvas: #e9e7e2;
   display: grid; grid-template-rows: var(--topbar-h) minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden;
 }
+:root:not([data-theme="light"]) body.navigate {
+  --route: #4d8dff;
+  --route-soft: rgba(77, 141, 255, .16);
+  --route-end: #ff5a63;
+  --nav-canvas: #121316;
+}
+body.navigate .sp-plan { --sp-background: var(--nav-canvas); }
+
 .crumb-here { color: var(--text); font-weight: var(--fw-semibold); }
 .nav-main { display: flex; min-height: 0; }
-body.navigate #panel {
-  width: 360px; flex: none; overflow-y: auto; padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-5);
-  background: var(--surface-1); border-right: 1px solid var(--border);
-}
-#panel > section { display: flex; flex-direction: column; gap: var(--sp-2); }
-#panel header h1 { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); margin: 0 0 var(--sp-1); }
-#panel header h1 .icon { color: var(--accent-text); }
-.hint { color: var(--muted); font-weight: 400; font-size: 12px; }
-.field .hint { margin-left: 4px; }
 
-/* from, to: a search box each, its choices under it */
-.ends { position: relative; }
-.picker { position: relative; display: flex; flex-direction: column; gap: 4px; }
-.picker > .field { flex-direction: row; align-items: baseline; gap: 6px; color: var(--text); font-size: 13px; font-weight: 600; }
-.picker > .field .hint { margin: 0; }
+/* ---- the panel: where from, where to, and the way in words ---------------------------- */
+
+body.navigate #panel {
+  width: 380px; flex: none; overflow-y: auto; padding: var(--sp-4) var(--sp-4) var(--sp-5); display: flex; flex-direction: column;
+  gap: var(--sp-4); background: var(--surface-1); border-right: 1px solid var(--border);
+}
+.nav-head h1 { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); margin: 0 0 2px; }
+.nav-head h1 .icon { color: var(--accent-text); }
+.nav-building select { width: 100%; }
+.nav-building[hidden] { display: none; }
+.hint { color: var(--text-muted); font-weight: 400; font-size: var(--fs-sm); }
+
+/* from and to: two fields joined by a dotted line, as a map app has them */
+.trip {
+  position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 0 var(--sp-2); align-items: center;
+  padding: var(--sp-2) var(--sp-1) var(--sp-2) var(--sp-2); background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+}
+.trip-rail { display: flex; flex-direction: column; align-items: center; align-self: stretch; padding: 13px 0 11px; }
+.trip-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--route);
+  box-shadow: 0 0 0 3px var(--surface-2), 0 0 0 5px var(--route-soft);
+}
+.trip-dots { flex: 1; width: 0; margin: 5px 0; border-left: 2px dotted var(--border-strong); min-height: 14px; }
+.trip-to { color: var(--route-end); flex: none; }
+.trip-fields { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.trip-fields input {
+  width: 100%; height: 36px; background: var(--surface-1); border-color: transparent; font-size: var(--fs-md);
+}
+.trip-fields input:hover:not(:focus) { border-color: var(--border); }
+.trip .swap { align-self: center; color: var(--text-muted); }
+.picker { position: relative; }
 .choices {
-  position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin: 4px 0 0; padding: 4px; list-style: none;
-  max-height: 340px; overflow-y: auto; background: var(--overlay); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  position: absolute; z-index: var(--z-popover); top: calc(100% + 4px); left: 0; right: -40px; margin: 0; padding: 4px; list-style: none;
+  max-height: 360px; overflow-y: auto; background: var(--overlay); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
   box-shadow: var(--shadow-lg);
 }
-.choices li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; }
-.choices li .label { font-weight: 600; overflow-wrap: anywhere; }
-.choices li .sub { color: var(--muted); font-size: 12px; }
-.choices li.active, .choices li[data-i]:hover { background: var(--hover); }
-.choices li.group { cursor: default; padding: 8px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.choices li.none { cursor: default; color: var(--muted); }
-.swap { align-self: flex-end; margin: -4px 0 -6px; }
-.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
-.check input { margin: 0; accent-color: var(--accent); width: 16px; height: 16px; }
-
-/* the way, in words */
-#summary { font-size: 15px; }
-#summary strong { font-size: 20px; }
-#steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; counter-reset: step; }
-#steps .step {
-  display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; padding: 8px 8px; border-radius: 8px;
+.choices li { padding: 7px 10px; border-radius: var(--r-md); cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+.choices li .label { font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
+.choices li .sub { color: var(--text-muted); font-size: var(--fs-sm); }
+.choices li.active, .choices li[data-i]:hover { background: var(--surface-3); }
+.choices li.group {
+  cursor: default; padding: 8px 10px 3px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
 }
-#steps .step[data-floor] { cursor: pointer; }
-#steps .step[data-floor]:hover, #steps .step:focus-visible { background: var(--hover); outline: none; }
-#steps .step.here { box-shadow: inset 3px 0 0 var(--route); }
-#steps .icon {
-  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 14px;
-  background: color-mix(in srgb, var(--route) 14%, transparent); color: var(--route); font-weight: 700;
-}
-#steps .start .icon { background: var(--route-start); color: #fff; font-size: 11px; }
-#steps .arrive .icon { background: var(--route-end); color: #fff; }
-#steps .take .icon { background: var(--route-change); color: #fff; }
-#steps .take .text { font-weight: 600; }
-#steps .text { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; overflow-wrap: anywhere; }
-#steps .sub { color: var(--muted); font-size: 12px; font-weight: 400; }
+.choices li.none { cursor: default; color: var(--text-muted); }
 
-/* the views: the plan of a floor, the building in 3D, or both */
-#views { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--canvas-bg); }
+.step-free { padding: 0 var(--sp-1) 0 var(--sp-2); margin-top: calc(-1 * var(--sp-2)); font-size: var(--fs-md); }
+.step-free-text { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.step-free-text .icon { color: var(--text-muted); }
+
+/* the way's summary: how far, how long, how; Play */
+.summary {
+  display: flex; flex-direction: column; gap: 2px; padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-xl);
+}
+.sum-top { display: flex; align-items: center; gap: var(--sp-3); }
+.sum-figures { flex: 1; display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; flex-wrap: wrap; }
+.sum-metres { font-size: 24px; font-weight: var(--fw-bold); letter-spacing: -.01em; }
+.sum-time { font-size: var(--fs-lg); color: var(--text-muted); font-weight: var(--fw-medium); }
+.sum-sub { color: var(--text-muted); font-size: var(--fs-sm); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sum-sub .chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: var(--r-full);
+  background: var(--route-soft); color: var(--accent-text); font-weight: var(--fw-semibold);
+}
+.sum-sub .chip svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.sum-actions { display: flex; align-items: center; gap: var(--sp-1); }
+.play { min-width: 92px; gap: 6px; border-radius: var(--r-full); padding: 0 var(--sp-4) 0 var(--sp-3); }
+.play .icon-pause { display: none; }
+.play[aria-pressed="true"] .icon-pause { display: inline; }
+.play[aria-pressed="true"] .icon-play { display: none; }
+.progress { height: 3px; margin-top: var(--sp-2); border-radius: 2px; background: var(--border); overflow: hidden; visibility: hidden; }
+.progress.on { visibility: visible; }
+.progress span { display: block; height: 100%; width: 0; background: var(--route); border-radius: 2px; }
+
+/* the steps: a card each, its picture, its words, how far and how long; the one shown lit */
+#steps { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: flex; flex-direction: column; position: relative; }
+#steps:focus { outline: none; }
+#steps .floor-head {
+  display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 0 var(--sp-1) 4px; color: var(--text-faint);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: .06em;
+}
+#steps .floor-head::after { content: ""; flex: 1; border-top: 1px solid var(--border-subtle); }
+#steps .floor-head:first-child { padding-top: 0; }
+.step {
+  position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: var(--sp-3); align-items: start;
+  padding: 10px 10px 10px 8px; border-radius: var(--r-lg); cursor: pointer; border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+/* the line the steps hang on, from picture to picture */
+.step:not(:last-child)::before {
+  content: ""; position: absolute; left: 25px; top: 46px; bottom: -10px; width: 2px; border-radius: 1px; background: var(--border);
+}
+.step.next-floor::before { background: repeating-linear-gradient(to bottom, var(--border-strong) 0 3px, transparent 3px 6px); }
+.step:hover { background: var(--surface-2); }
+.step:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.step.here { background: var(--route-soft); border-color: color-mix(in srgb, var(--route) 35%, transparent); }
+.step-icon {
+  position: relative; z-index: 1; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-3); color: var(--text); box-shadow: 0 0 0 3px var(--surface-1);
+}
+.step.here .step-icon { box-shadow: 0 0 0 3px color-mix(in srgb, var(--route-soft) 100%, var(--surface-1)); }
+.step-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.step.start .step-icon { background: var(--route-soft); }
+.step.start .step-icon::after {
+  content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--route); box-shadow: 0 0 0 3px #fff;
+}
+.step.walk .step-icon { color: var(--accent-text); }
+.step.take .step-icon { background: var(--route); color: #fff; }
+.step.take .step-icon .way {
+  position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-1); color: var(--route); box-shadow: 0 0 0 1px var(--border);
+}
+.step.take .step-icon .way svg { width: 11px; height: 11px; stroke-width: 2.6; }
+.step.arrive .step-icon { background: var(--route-end); color: #fff; }
+.step-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-top: 1px; }
+.step-text { font-size: var(--fs-md); font-weight: var(--fw-medium); line-height: 1.35; overflow-wrap: anywhere; }
+.step.take .step-text, .step.arrive .step-text { font-weight: var(--fw-semibold); }
+.step-meta { color: var(--text-muted); font-size: var(--fs-sm); display: flex; gap: 6px; flex-wrap: wrap; }
+.step-turns { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 1px; padding: 0; list-style: none; }
+.step-turns li { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: var(--fs-sm); }
+.step-turns svg { width: 14px; height: 14px; flex: none; color: var(--text-faint); }
+.keys-hint { margin: var(--sp-1) 0 0 4px; color: var(--text-faint); font-size: var(--fs-xs); display: flex; align-items: center; gap: 4px; }
+
+/* ---- the views: a floor's plan, the building in 3D, or both --------------------------- */
+
+#views { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--nav-canvas); }
 #bar {
   display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--sp-3);
   background: var(--surface-1); border-bottom: 1px solid var(--border);
 }
 #bar .grow { flex: 1; }
-#floors button.active { background: var(--accent); color: var(--text-on-accent); border-color: transparent; }
-/* the 3D view's look (Real or Model) and quality */
+#bar #fit, #bar #fly { gap: 6px; }
 #bar .look { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-muted); }
 #bar .look select { width: auto; }
-#floors { display: flex; gap: 6px; flex-wrap: wrap; }
-#floors button { min-height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-sm); }
-#floors button.on-route:not(.active) { border-color: var(--route); box-shadow: inset 0 0 0 1px var(--route); }
-#floors .leg {
-  display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 4px;
-  font-size: 11px; font-weight: 700; background: var(--route); color: #fff;
-}
-#floors button.active .leg { background: var(--text-on-accent); color: var(--accent); }
 #views[data-view="plan"] .only-3d, #views[data-view="3d"] .only-plan, #views[data-view="3d"] #floors { display: none; }
+
+/* the floors: those the way goes over marked, with their order on it */
+#floors { display: flex; gap: 2px; flex-wrap: wrap; padding: 2px; background: var(--surface-2); border-radius: var(--r-md); }
+#floors button {
+  min-height: 28px; padding: 0 var(--sp-2); font-size: var(--fs-sm); gap: 6px; border: 0; background: transparent; color: var(--text-faint);
+}
+#floors button.on-route { color: var(--text); }
+#floors button:hover:not(.active) { background: var(--surface-3); }
+#floors button.active { background: var(--surface-1); color: var(--text); box-shadow: var(--shadow-sm); font-weight: var(--fw-semibold); }
+#floors .leg {
+  display: inline-grid; place-items: center; min-width: 17px; height: 17px; border-radius: 9px; padding: 0 4px;
+  font-size: 10.5px; font-weight: var(--fw-bold); background: var(--route-soft); color: var(--accent-text);
+}
+#floors button.active .leg { background: var(--route); color: #fff; }
 
 #panes { flex: 1; display: grid; min-height: 0; }
 #panes.plan { grid-template-columns: 1fr; }
 #panes.plan #world-pane, #panes[class="3d"] #plan-pane { display: none; }
 #panes[class="3d"] { grid-template-columns: 1fr; }
 #panes.both { grid-template-columns: 1fr 1fr; }
-#panes.both #plan-pane { border-right: 1px solid var(--line); }
+#panes.both #plan-pane { border-right: 1px solid var(--border); }
 .pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 #plan, #world3d { position: absolute; inset: 0; }
 .note {
@@ -105,7 +188,7 @@ body.navigate #panel {
 
 @media (max-width: 860px) {
   .nav-main { flex-direction: column; }
-  body.navigate #panel { width: 100%; max-height: 55%; border-right: none; border-bottom: 1px solid var(--line); }
+  body.navigate #panel { width: 100%; max-height: 55%; border-right: none; border-bottom: 1px solid var(--border); }
   #panes.both { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-  #panes.both #plan-pane { border-right: none; border-bottom: 1px solid var(--line); }
+  #panes.both #plan-pane { border-right: none; border-bottom: 1px solid var(--border); }
 }
