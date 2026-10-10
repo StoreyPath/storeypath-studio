@@ -2,23 +2,34 @@
 // scopes. A key is looked up in the scopes that apply now, the first that has it wins:
 //
 //   review   reviewing a floor's rooms one by one (1–9 a type, Enter accept, N / P)
-//   walk     walking: W A S D, the arrows and Shift are the walker's; E the world's (doors)
+//   walk     walking: W A S D, the arrows and Shift are the walker's (reserved for it);
+//            E a door (the world's, first), else up the stairs; Q down
+//   item     an item chosen: R and , . turn it, the arrows move it (walking: R , . only) —
+//            whatever tool is in use: what is chosen wins over the tool
 //   tool     the tool in use (as "tool:space": Enter closes a space, Backspace a corner)
-//   item     an item chosen: R and , . turn it, the arrows move it
-//   3d       in 3D: a 2D tool's key shows that place on the plan with the tool
+//   3d       in 3D and walking: 2 shows the place under the pointer on the plan
+//   2d       on the plan: Space held moves it (pointer.js's, reserved here)
 //   global   everywhere else
 //
+// Context wins: a key means what the thing chosen, the view or the tool make of it, and
+// only letters for tools and 2 3 4 change the tool or the view. A tool's key where the
+// tool does not work says why (in the status bar) and changes nothing.
+//
 // Within a scope a key has one command: binding it twice is an error (said in the
-// console, and the browser tests check there is none). Keys typed in a field are the
-// field's, but for the few marked ``inFields`` (the palette's ⌘K). Chords are written
-// "mod+shift+z" (mod: ⌘ on a Mac, Ctrl elsewhere), "pageup", "[", "?".
+// console, and the browser tests check there is none). Keys others handle (the walker's,
+// the plan's Space) are reserved in their scope with who handles them, so that the map
+// says them too, and nothing of Review hears them there (effectiveMap: what each key
+// does now). Keys typed in a field are the field's, but for the few marked ``inFields``
+// (the palette's ⌘K). Chords are written "mod+shift+z" (mod: ⌘ on a Mac, Ctrl
+// elsewhere), "pageup", "[", "?".
 
 import { el } from "./dom.js";
 
-export const SCOPES = ["review", "walk", "tool", "item", "3d", "global"];
+export const SCOPES = ["review", "walk", "item", "tool", "3d", "2d", "global"];
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-const bindings = new Map(); // scope (or "tool:<id>") → chord → command id
+const bindings = new Map(); // scope (or "tool:<id>") → chord → command id (null: reserved for another's handler)
+const owners = new Map(); // scope → chord → { owner, title }: who handles a key reserved there
 const conflicts = [];
 let scopesNow = () => ["global"];
 let runCommand = () => false;
@@ -106,10 +117,45 @@ function onKey(e) {
   }
 }
 
-/** Keys reserved in a scope: nothing of Review hears them there (the walker's, the world's). */
-export function reserve(chords, scope) {
+/** Keys reserved in a scope for another's handler (``owner``: "walker", "plan"…, doing
+ * ``title``): nothing of Review hears them there, and the map says whose they are. */
+export function reserve(chords, scope, owner = "another", title = "") {
   if (!bindings.has(scope)) bindings.set(scope, new Map());
-  for (const c of chords) bindings.get(scope).set(normal(c), null);
+  if (!owners.has(scope)) owners.set(scope, new Map());
+  for (const c of chords) {
+    const k = normal(c), was = bindings.get(scope).get(k);
+    if (was) {
+      conflicts.push({ scope, chord: k, ids: [was, `${owner}'s`] });
+      console.error(`key ${k} in ${scope}: both ${was} and the ${owner}'s`);
+      continue;
+    }
+    bindings.get(scope).set(k, null);
+    owners.get(scope).set(k, { owner, title });
+  }
+}
+
+/** What each key does now: for each chord bound in a scope that applies, the first such
+ * scope's — { chord, scope, id (null: reserved), owner, title (a reserved key's) }. */
+export function effectiveMap(scopes = scopesNow()) {
+  const out = new Map();
+  for (const scope of scopes) {
+    for (const [chord, id] of bindings.get(scope) ?? []) {
+      if (out.has(chord)) continue;
+      const own = id === null ? owners.get(scope)?.get(chord) ?? { owner: "another", title: "" } : null;
+      out.set(chord, { chord, scope, id, owner: own?.owner ?? null, title: own?.title ?? "" });
+    }
+  }
+  return out;
+}
+
+/** The scopes that apply now, the first first. */
+export const scopesApplying = () => scopesNow();
+
+/** The key that runs a command now, as the map has it (its first chord that resolves to it
+ * in the scopes that apply), or "" when none does (another's here, or not this view's). */
+export function keyNow(id) {
+  const map = effectiveMap();
+  return keysOf(id).find((c) => map.get(c)?.id === id) || "";
 }
 
 // ---- how keys are written -----------------------------------------------------------------

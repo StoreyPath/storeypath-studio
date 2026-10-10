@@ -12,6 +12,9 @@
 //     scope: "global",               where its keys work (keys.js: SCOPES); default global
 //     when: () => true,              whether it can run now (else shown disabled)
 //     why: () => "…",                why it cannot (the palette and tooltips say it)
+//     works: () => true,             whether its key does what it says here (a tool's key where
+//                                    the tool does not work only says why): the list of keys
+//     idle: "shown already",         what its key does where it does not work (default: says why)
 //     run: (event) => {},            what it does
 //     palette: true,                 listed in the palette (false: keys or menus only)
 //     repeat: false,                 a held key runs it again (arrows, zoom)
@@ -39,6 +42,18 @@ export function canRun(c) {
   if (!c) return false;
   try {
     return !c.when || Boolean(c.when());
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a command's key does what the command says, now: it can run, and does here
+ * (the list of keys shows those; a tool's key in a view it does not work in only says why). */
+export function worksNow(c) {
+  if (typeof c === "string") c = commands.get(c);
+  if (!canRun(c)) return false;
+  try {
+    return !c.works || Boolean(c.works());
   } catch {
     return false;
   }
