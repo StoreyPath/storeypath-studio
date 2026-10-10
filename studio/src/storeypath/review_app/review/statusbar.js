@@ -9,7 +9,7 @@ import { $, el, icon } from "./dom.js";
 import { onToast, sayWith } from "./notify.js";
 import { reviewing } from "./reviewmode.js";
 import { chosenSpaces, sel } from "./selection.js";
-import { state, view3d } from "./state.js";
+import { state, title, typeOf, view3d } from "./state.js";
 import { activeTool, blocked } from "./tools.js";
 import { doneEditing, presence, takeOver } from "../together.js";
 
@@ -24,8 +24,16 @@ const VIEW_HINTS = {
 function walkHint() {
   const d = view3d.doorAim;
   if (d?.under) return `${d.open ? "Close" : "Open"} the door: click it or press E`;
-  if (d) return `E ${d.open ? "closes" : "opens"} the door ahead · ${VIEW_HINTS.walk}`;
-  return VIEW_HINTS.walk;
+  // what is under the pointer, and what a click does to it
+  const h = view3d.hovered, ahead = d ? ` · E ${d.open ? "closes" : "opens"} the door ahead` : "";
+  const item = h?.item ? (state.floor?.items || []).find((a) => a.id === h.item) : null;
+  if (item) {
+    const name = typeOf(item.type)?.name_en || item.type;
+    return item.id === state.asset ? `${name} (chosen) · drag it to move it · R , . turn it · Del delete${ahead}` : `${name} · click to choose it${ahead}`;
+  }
+  const room = h?.space ? state.byId.get(h.space) : null;
+  if (room && !h.wall) return `${title(room)} · click to choose it · double-click to go there${ahead}`;
+  return ahead ? `${ahead.slice(3)} · ${VIEW_HINTS.walk}` : VIEW_HINTS.walk;
 }
 
 let refused = "";
