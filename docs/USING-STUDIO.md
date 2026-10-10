@@ -310,9 +310,17 @@ gives.
   changes of floor, and short steps ready to show — "Walk 48 m along CORRIDOR to the
   lift", "Take the lift up to Floor 1", "OFFICE 112 is on your left" — each also a
   kind and values, for a system to word in its own language (Arabic).
-- **Navigate** in Studio (from a project's buildings, and from Review's *Find the way*):
-  choose a start (a kiosk, an entrance, any room) and a destination, avoid stairs if
-  need be, and see the steps, the route on each floor's plan and in 3D.
+- **Find the way** in Studio (from a project's buildings, and from Review's *Find the
+  way*): choose a start (a kiosk, typed by its tag too, an entrance, any room) and a
+  destination, avoid stairs if need be (*Step-free*), and see the way as step cards (the
+  turns along each walk, metres and time) beside a calm plan of each floor it crosses,
+  drawn in from *You are here*, a badge where it changes floor ("Up to Floor 2": a click
+  shows that floor), a pin and a card on the room it ends in. <kbd>↑</kbd> <kbd>↓</kbd>
+  go through the steps; **Play** walks a dot along it, floor by floor; **3D** (or
+  **Both**) shows it glowing through the building, and **Fly along** takes the camera
+  along it, up the stairs or the lift to the destination.
+
+  ![Find the way: the office typed, the way drawn in, played up the stairs to Floor 2 and along the corridor to the office](images/route.webp)
 - **Stairs and lifts the drawing missed** are drawn in Review with its *Stairs* and
   *Lift* tools, already typed, and added to the other floors they serve in one go;
   each lift's or staircase's floors are linked by their code or where they overlap,

@@ -140,12 +140,23 @@ you are in is named, and at stairs and lifts you go up and down.
 
 ### Navigation: from the kiosk to your office
 
+<p align="center">
+  <img src="docs/images/route.webp" width="100%" alt="Find the way: OFFICE 213 typed and chosen; the way draws itself in from You are here at the reception's kiosk to the stairs, marked Up to Floor 2; Play walks a dot along it, up to Floor 2 and down the corridor to the office, each step lit on the left as it gets there">
+</p>
+
 Every package carries its building's walking network: its doors and openings, a point in
-each room, the lifts and stairs that serve each floor, its entrances and kiosks. The way
-from a kiosk, an entrance or any room to any room or desk is the quickest (or the one
-without stairs), with its line on each floor and steps ready to show: *Walk 48 m along
-CORRIDOR to the lift*, *Take the lift up to Floor 1*. Studio, the Go module and the
-viewers find the same way on it. <!-- route pictures: to take after the wayfinding redesign (docs/media/capture.mjs) -->
+each room, the lifts and stairs that serve each floor, its entrances and kiosks. **Find
+the way** goes from a kiosk, an entrance or any room to any room: the quickest way, or
+one without stairs, in steps to read (*Walk 26 m through RECEPTION 001 to the stairs*,
+*Take the stairs up to Floor 2*, turn by turn), drawn on a calm plan of each floor it
+crosses: *You are here* at its start, a badge where it changes floor, a pin and a card on
+the room it ends in. **Play** walks it, floor by floor. In 3D the way glows through the
+building, and **Fly along** takes the camera with it, up the stairs and on to the office.
+Studio, the Go module and the viewers find the same way.
+
+<p align="center">
+  <img src="docs/images/route-fly.webp" width="80%" alt="The same way in 3D: a glowing ribbon from the kiosk through the reception to the stairs, a column up to Floor 2, then Fly along: the camera follows it through the reception, up the stairs and down the corridor to OFFICE 213, its pin and card">
+</p>
 
 ### Share an area Studio read wrong
 
