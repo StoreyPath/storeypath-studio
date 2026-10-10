@@ -69,16 +69,17 @@ def test_a_few_rooms_left_to_review_and_why(built):
                 e = ws.effective(r)
                 left[(f_id.split("-")[-2] + "-" + f_id.split("-")[-1], e["name"], e["number"])] = ws.review_reasons(r)
     assert set(left) == {("MAIN-F00", None, None), ("MAIN-F00", "LOUNGE", "005"), ("MAIN-F00", "COPY ROOM", "007"),
-                         ("MAIN-F01", None, "114"), ("MAIN-F02", "EXECUTIVE LOUNGE", "203"),
+                         ("MAIN-F01", None, "114"),
                          ("PAV-F00", "OPEN OFFICE", "P0-20"), ("PAV-F00", "QUIET ZONE", "P0-21")}, left
     assert left[("MAIN-F00", None, None)] == ["no name or number"]  # the lift with no label
     assert "no type" in left[("MAIN-F00", "LOUNGE", "005")]
 
 
-def _footprint(item, extra_behind=0.0):
-    """An item's box on the plan (its desk's chair side counted in ``extra_behind``)."""
+def _footprint(item, extra_behind=0.0, round_it=(0.0, 0.0)):
+    """An item's box on the plan (its desk's chair side counted in ``extra_behind``; a
+    meeting table's chairs in ``round_it``: at its ends, along its sides)."""
     t = TYPES[item.type]
-    w, d = t.width / 2, t.depth / 2
+    w, d = t.width / 2 + round_it[0], t.depth / 2 + round_it[1]
     corners = [(-w, -d - extra_behind), (w, -d - extra_behind), (w, d), (-w, d)]  # its front (-y) is where its user sits
     a = math.radians(item.rotation)
     return Polygon([(item.x + x * math.cos(a) - y * math.sin(a), item.y + x * math.sin(a) + y * math.cos(a)) for x, y in corners])
@@ -88,14 +89,16 @@ def test_furnished_every_item_in_a_room_clear_of_its_walls(built):
     _, ws, _ = built
     kinds = {i.type for i in ws.items.values()}
     assert {"KIOSK", "COPIER", "ACCESS-POINT", "SOFA", "TV", "DESK-JUNIOR", "DESK-SENIOR", "DESK-SECTION-HEAD", "DESK-MANAGER",
-            "DESK-DIRECTOR", "DESK-CLEVEL", "DESK-PRESIDENT"} <= kinds
+            "DESK-DIRECTOR", "DESK-CLEVEL", "DESK-PRESIDENT"} | {f"MEETING-TABLE-{n}" for n in (4, 6, 8, 12, 14, 16)} <= kinds
     assert sum(1 for i in ws.items.values() if i.type == "KIOSK") == 1
     for *_, f_id in ws.iter_floors():
         rooms = [(r, shape(r.geometry)) for r in ws.floor_objects(f_id) if r.kind == "space"]
         for item in ws.floor_items(f_id):
             t = TYPES[item.type]
             chair = (1.4 if t.grade in ("director", "c_level", "president") else 0.74) if t.grade else 0.0
-            box = _footprint(item, chair)
+            # a meeting table's chairs, as the viewers seat it (fit.js tableChairs)
+            out = (0.7 if t.width >= 3.6 else 0.52) if item.type.startswith("MEETING-") else 0.0
+            box = _footprint(item, chair, (out if t.depth >= 0.8 else 0.0, out))
             inside = [r for r, poly in rooms if poly.buffer(0.02).contains(box)]
             assert inside, (f_id, item.type, item.x, item.y, item.rotation)
             # no two floor items overlap

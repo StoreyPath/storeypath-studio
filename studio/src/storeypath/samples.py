@@ -457,9 +457,7 @@ def main_floor(ordinal: int) -> list[Cell]:
     else:
         south = [
             (10, 18, ["DIRECTOR", "201"], "office"), (18, 26, ["DIRECTOR", "202"], "office"),
-            # a name the rules do not know: Review asks (a lounge, not a board room: the
-            # catalogue has sofas and screens, not meeting tables)
-            (26, 38, ["EXECUTIVE LOUNGE", "203"], "unspecified", {"door_width": 1.8, "double": True, "windows": 3}),
+            (26, 38, ["BOARD ROOM", "203"], "meeting_room", {"door_width": 1.8, "double": True, "windows": 3}),
             (38, 46, ["OFFICE", "204"], "office"),
             (46, 56, ["PRESIDENT OFFICE", "205"], "office"),
         ]
@@ -511,7 +509,7 @@ FINISHES_BY_NAME = {
     "MEETING ROOM": ("FLOOR-CARPET-PATTERN", "WALL-PAINT-NAVY"),
     "CONFERENCE": ("FLOOR-CARPET-PATTERN", "WALL-PAINT-GREEN"),
     "HUDDLE": ("FLOOR-CARPET-GREEN", "WALL-PAINT-SAND"),
-    "EXECUTIVE LOUNGE": ("FLOOR-WOOD-HERRINGBONE", "WALL-WOOD-WALNUT"),
+    "BOARD ROOM": ("FLOOR-WOOD-HERRINGBONE", "WALL-WOOD-WALNUT"),
     "PRESIDENT OFFICE": ("FLOOR-CARPET-CHARCOAL", "WALL-WOOD-WALNUT"),
     "DIRECTOR": ("FLOOR-CARPET-NAVY", "WALL-PAINT-OFFWHITE"),
     "OFFICE@2": ("FLOOR-CARPET-CHARCOAL", "WALL-PAPER-LINEN"),
@@ -583,6 +581,11 @@ class _Furnisher:
         else:
             self.add(code, c.x0 + WALL / 2 + t.depth / 2 + 0.02, y, 90, **values)
 
+    def table(self, seats: int, x: float, y: float) -> None:
+        """A meeting table for ``seats`` at (x, y), along the room (east-west): towards the
+        screen on its east or west wall. Its chairs are drawn round it."""
+        self.add(f"MEETING-TABLE-{seats}", x, y, 0)
+
     def ceiling(self, x: float, y: float) -> None:
         """A wireless access point on the ceiling."""
         self.add("ACCESS-POINT", x, y, 0, color="#f4f4f2")
@@ -602,8 +605,9 @@ class _Furnisher:
 
 
 def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
-    """The main building's furniture and equipment: desks by grade, sofas and screens,
-    copiers, access points on the ceilings, and a wayfinding kiosk at the entrance."""
+    """The main building's furniture and equipment: desks by grade, meeting tables of
+    every size (16 seats in the board room), sofas and screens, copiers, access points on
+    the ceilings, and a wayfinding kiosk at the entrance."""
     rooms = {(c.label[-1] if c.label[-1][:1].isdigit() else c.label[0]): c for c in cells if c.label}
     corridor = rooms["CORRIDOR"]
     for x in (16, 28, 40, 52):
@@ -619,8 +623,7 @@ def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
         for number in ("002", "009", "010", "011"):
             f.desk(rooms[number], "DESK-SENIOR")
         f.on_side(rooms["003"], "TV", east=False, size_in=75)
-        f.add("SOFA", 30, 2.4, 180, seats=3)
-        f.add("SOFA", 30, 5.9, 0, seats=3)
+        f.table(8, 30.4, 4.25)
         f.ceiling(30, 4.2)
         for x in (37.2, 42.8):  # the café's booths along its windows
             f.add("SOFA", x, 1.2, 180, seats=3)
@@ -635,8 +638,7 @@ def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
         f.benches(rooms["008"], (2.6, 6.3))
         f.ceiling(24, 16)
         f.on_side(rooms["013"], "TV", east=True, size_in=86)
-        f.add("SOFA", 49.4, 16.3, 270, seats=3)
-        f.add("SOFA", 52.0, 18.7, 180, seats=3)
+        f.table(14, 50.6, 16.25)
         f.ceiling(51, 16)
     elif ordinal == 1:
         for number in ("101", "111"):
@@ -649,23 +651,20 @@ def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
             f.desk(rooms[number], "DESK-SENIOR")
         f.desk(rooms["108"], "DESK-MANAGER")
         f.on_side(rooms["105"], "TV", east=False, size_in=75)
-        f.add("SOFA", 38, 2.4, 180, seats=3)
-        f.add("SOFA", 38, 5.9, 0, seats=3)
+        f.table(6, 38.4, 4.25)
         f.ceiling(38, 4.2)
         f.add("COPIER", 28.6, 12.3, 180, model="MFP 4040")
-        f.on_side(rooms["116"], "TV", east=True, size_in=65)
+        f.on_side(rooms["116"], "TV", east=True, size_in=65)  # the huddle: a table for four by the screen, a sofa
+        f.table(4, 52.0, 16.25)
         f.add("SOFA", 50.0, 18.6, 180, seats=3)
-        f.add("SOFA", 50.0, 15.3, 0, seats=2)
     else:
         for number in ("201", "202"):
             c = rooms[number]
             f.desk(c, "DESK-DIRECTOR")
             f.by_door_wall(c, "SOFA", c.x1 - c.x0 - 1.5, seats=3)
             f.on_side(c, "TV", east=False, y=4.6, size_in=55)
-        f.on_side(rooms["203"], "TV", east=False, size_in=86)  # the executive lounge: two seating corners
-        for x in (29.8, 34.2):
-            f.add("SOFA", x, 1.6, 180, seats=3)
-            f.add("SOFA", x, 4.9, 0, seats=3)
+        f.on_side(rooms["203"], "TV", east=False, size_in=86)  # the board room: a screen at each end
+        f.table(16, 32.0, 4.25)
         f.on_side(rooms["203"], "TV", east=True, size_in=86)
         f.ceiling(32, 4.2)
         for number in ("204", "208"):
@@ -679,15 +678,14 @@ def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
         f.on_side(rooms["205"], "TV", east=False, y=5.6, size_in=75)
         f.ceiling(51, 4.2)
         f.on_side(rooms["209"], "TV", east=True, size_in=65)
-        f.add("SOFA", 29.0, 18.6, 180, seats=3)
-        f.add("SOFA", 29.0, 15.2, 0, seats=3)
+        f.table(12, 29.6, 16.25)
         for number in ("210", "211", "213", "214"):
             f.desk(rooms[number], "DESK-MANAGER")
         f.add("COPIER", 12.0, 19.9, 180, model="MFP 6055")
 
 
 def _furnish_pavilion(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
-    """The pavilion's: a desk in each office, a meeting room's sofas and screen, the open
+    """The pavilion's: a desk in each office, a meeting room's table and screen, the open
     office's desks (and on the ground floor the quiet zone's sofas)."""
     for x in (6, 18):
         f.ceiling(x, 7)
@@ -697,8 +695,7 @@ def _furnish_pavilion(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
             f.desk(c, "DESK-SENIOR" if ordinal == 0 else "DESK-SECTION-HEAD")
         elif name == "MEETING ROOM":
             f.on_side(c, "TV", east=True, size_in=65)
-            f.add("SOFA", 19.0, 1.3, 180, seats=3)
-            f.add("SOFA", 19.0, 4.3, 0, seats=3)
+            f.table(8 if ordinal == 0 else 6, 18.6, 3.0)
         elif name == "OPEN OFFICE":
             for y, rot in ((11.8, 180), (8.6, 0)):
                 for x in (25.4, 26.6, 27.8, 29.0) if ordinal else (25.6, 27.0, 28.4):

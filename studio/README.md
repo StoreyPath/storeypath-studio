@@ -705,8 +705,8 @@ gives, at every conversion.
 
 ## Furniture and equipment
 
-Items (desks by grade, central photocopiers, wireless access points, sofas, TVs,
-beds, wayfinding kiosks) are placed on floors in the review editor, and kept in the workspace. Each has
+Items (desks by grade, meeting tables for 4, 6, 8, 12, 14 and 16, central
+photocopiers, wireless access points, sofas, TVs, beds, wayfinding kiosks) are placed on floors in the review editor, and kept in the workspace. Each has
 an ID of its own, an asset's tag (`7K2Q-XM9F-4DP`: ten random symbols and a check
 symbol, [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), Asset IDs), which stays with it wherever
 it is carried, to another building too; a deleted item's ID is never issued again. It

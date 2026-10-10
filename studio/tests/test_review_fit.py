@@ -11,7 +11,7 @@ import pytest
 FIT_JS = Path(__file__).parent.parent / "src" / "storeypath" / "review_app" / "fit.js"
 
 SCENARIO = r"""
-import { corners, fits, itemBox, roomAt, settle, snap, wallsOf } from "__FIT__";
+import { corners, fits, itemBox, roomAt, settle, snap, tableChairs, wallsOf } from "__FIT__";
 const check = (ok, what, got) => { if (!ok) { console.error("FAILED:", what, JSON.stringify(got)); process.exit(1); } };
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 const square = (x0, y0, x1, y1) => [[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]];
@@ -28,6 +28,14 @@ const director = itemBox({ code: "DESK-DIRECTOR", width: 2, depth: 1, grade: "di
 check(near(junior[1], -(0.3 + 0.52)) && near(junior[3], 0.3), "a junior's desk and its chair", junior);
 check(near(director[1], -(0.5 + 1.4)) && near(director[3], 0.5 + 0.15 + 0.46), "a director's: its cabinet behind, visitors across", director);
 check(JSON.stringify(itemBox(sofa)) === JSON.stringify([-1, -0.45, 1, 0.45]), "anything else: its footprint", itemBox(sofa));
+// a meeting table: as many chairs as the catalogue's size seats, round it, in what it takes
+for (const [seats, w, d] of [[4, 1.2, 1.2], [6, 1.8, 0.9], [8, 2.4, 1.2], [12, 3.6, 1.4], [14, 4.2, 1.4], [16, 4.8, 1.5]]) {
+  const { at, board } = tableChairs(w, d), box = itemBox({ code: `MEETING-TABLE-${seats}`, width: w, depth: d }), out = board ? 0.7 : 0.52;
+  check(at.length === seats && board === (seats >= 12), `a table for ${seats}`, at);
+  check([box[0], box[1], box[2], box[3]].every((v, i) => near(v, [-w / 2 - out, -d / 2 - out, w / 2 + out, d / 2 + out][i])), `a table for ${seats}, its chairs round it`, box);
+}
+const narrow = itemBox({ code: "MEETING-TABLE-X", width: 1.6, depth: 0.6 });
+check(near(narrow[0], -0.8) && near(narrow[1], -0.3 - 0.52), "a narrow table: none at its ends", narrow);
 
 // a wall's way into the room, whichever way its ring runs
 for (const w of wallsOf(office)) {

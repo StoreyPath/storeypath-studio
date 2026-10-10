@@ -172,7 +172,7 @@ changes — refused, naming who, when someone else changed the same thing since 
 
 ### Furniture and equipment
 
-Desks, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
+Desks, meeting tables, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
 the floors in review.
 
 - **The catalogue** of item types is the organization's: one `catalogue.json` in

@@ -27,13 +27,34 @@ export function visitorChairs(set, w) {
   return { xs, vw, vd };
 }
 
+/** Where a meeting table's chairs stand, the table ``w`` long and ``d`` across, as the
+ * viewers draw them: one in each 0.65 m of its long sides (its ends' 0.1 m aside),
+ * spread evenly, and one at each end of a table at least 0.8 m across; each its middle
+ * on the table's edge and the way out from it, [x, y, [ox, oy]]. A board table's (3.6 m
+ * long or more) are high-backed: ``cw`` wide, ``cd`` deep, ``gap`` out from the edge. */
+export function tableChairs(w, d) {
+  const n = Math.max(1, Math.floor((w - 0.2) / 0.65 + 1e-9)), at = [];
+  for (let i = 0; i < n; i++) {
+    const x = (i - (n - 1) / 2) * (w / n);
+    at.push([x, d / 2, [0, 1]], [x, -d / 2, [0, -1]]);
+  }
+  const ends = d >= 0.8 - 1e-9;
+  if (ends) at.push([w / 2, 0, [1, 0]], [-w / 2, 0, [-1, 0]]);
+  const board = w >= 3.6 - 1e-9;
+  return { at, ends, board, cw: board ? 0.6 : 0.44, cd: board ? 0.62 : 0.42, gap: board ? 0.08 : 0.1 };
+}
+
 /** The box an item takes in its own frame, [u0, v0, u1, v1]: its footprint, and for a
  * desk everything drawn round it (its chair and, by its grade, a return, a cabinet
- * behind the chair, visitors' chairs across it). ``t``: its type (width, depth, code,
- * grade). */
+ * behind the chair, visitors' chairs across it); for a meeting table its chairs.
+ * ``t``: its type (width, depth, code, grade). */
 export function itemBox(t) {
-  const w = t?.width ?? 1, d = t?.depth ?? 0.6;
-  if (((t?.code || "").split("-")[0]) !== "DESK") return [-w / 2, -d / 2, w / 2, d / 2];
+  const w = t?.width ?? 1, d = t?.depth ?? 0.6, kind = (t?.code || "").split("-")[0];
+  if (kind === "MEETING") {
+    const { ends, gap, cd } = tableChairs(w, d), out = gap + cd;
+    return [-w / 2 - (ends ? out : 0), -d / 2 - out, w / 2 + (ends ? out : 0), d / 2 + out];
+  }
+  if (kind !== "DESK") return [-w / 2, -d / 2, w / 2, d / 2];
   const set = DESK_SETS[t.grade] || DESK_SETS.junior;
   const user = Math.max(set.executive ? 0.7 : 0.52, set.return ? 0.8 : 0, set.cabinet ? 1.4 : 0);
   const { xs, vw, vd } = visitorChairs(set, w);

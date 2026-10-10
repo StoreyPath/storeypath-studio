@@ -60,8 +60,9 @@ docker exec storeypath storeypath demo --studio
 puts the demo campus in Studio as a project (*Demo Campus*, `CAMP05`): all of it made
 up, built the same every time. A main building of three floors and a pavilion of two,
 read from their drawings (the pavilion's without room outlines, its rooms found from its
-walls); furnished (desks by grade with their chairs, sofas, screens, copiers, access
-points, a wayfinding kiosk at the entrance), finished (a marble reception, carpeted
+walls); furnished (desks by grade with their chairs, meeting tables from a huddle's for
+four to the board room's for sixteen, sofas, screens, copiers, access points, a wayfinding
+kiosk at the entrance), finished (a marble reception, carpeted
 offices, wood, tiled restrooms, accent walls), and a few rooms left for you to review.
 Admins see it on the Projects page. `storeypath demo <folder>` writes it as files
 instead: its drawings, the workspace and a package of each building, and

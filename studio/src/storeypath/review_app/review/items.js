@@ -17,7 +17,7 @@ import { $, el, icon, svg } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { toast } from "./notify.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
-import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, visitorChairs } from "../fit.js";
+import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, tableChairs, visitorChairs } from "../fit.js";
 import { selectAsset } from "./selection.js";
 import { BASE, round4, state, typeOf, visible, view3d } from "./state.js";
 import { setTool, tool } from "./tools.js";
@@ -63,8 +63,24 @@ function deskSet(g, t, w, d) {
   }
 }
 
+/** A meeting table's chairs round it (tableChairs), their backs away from it. */
+function tableSet(g, w, d) {
+  const { at, board, cw, cd, gap } = tableChairs(w, d), back = board ? 0.14 : 0.1;
+  for (const [x, y, [ox, oy]] of at) {
+    // from ``near`` to ``far`` metres out from the edge, ``cw`` along it: the chair, its back
+    const part = (near, far, attrs) => {
+      const [x0, x1] = ox ? [x + ox * (gap + near), x + ox * (gap + far)].sort((p, q) => p - q) : [x - cw / 2, x + cw / 2];
+      const [y0, y1] = oy ? [y + oy * (gap + near), y + oy * (gap + far)].sort((p, q) => p - q) : [y - cw / 2, y + cw / 2];
+      g.append(svg("rect", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, ...attrs }));
+    };
+    part(0, cd, { class: "chair", rx: board ? 0.08 : 0.1 });
+    part(cd - back, cd, { class: "chair back", rx: 0.04 });
+  }
+}
+
 /** An item's shape on the plan: its footprint turned with it, the edge it faces
- * darker, and a desk's chair and what goes with its grade; on the ceiling, a circle. */
+ * darker, a desk's chair and what goes with its grade, a meeting table's chairs; on
+ * the ceiling, a circle. */
 export function assetShape(a, t, cls) {
   const g = svg("g", { transform: `translate(${a.x} ${a.y}) rotate(${a.rotation || 0})`, class: cls });
   const w = t?.width ?? 1, d = t?.depth ?? 0.6;
@@ -74,7 +90,9 @@ export function assetShape(a, t, cls) {
   } else {
     g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t?.color || "#8a8a8a" }));
     g.append(svg("line", { x1: -w / 2, y1: -d / 2, x2: w / 2, y2: -d / 2, class: "front" })); // its front: the plan's -y, turned
-    if ((t?.code || t?.type || "").split("-")[0] === "DESK") deskSet(g, t, w, d);
+    const kind = (t?.code || t?.type || "").split("-")[0];
+    if (kind === "DESK") deskSet(g, t, w, d);
+    else if (kind === "MEETING") tableSet(g, w, d);
   }
   return g;
 }

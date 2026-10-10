@@ -97,7 +97,8 @@ correction survives the next revision of the drawing.
 | ![The president's desk chosen in 3D, its tag and its Arabic name in the inspector](docs/images/furniture.webp) | ![Placing a copier in 3D: its ghost pulled into the corner by the door](docs/images/place.webp) |
 
 Desks by grade (from a junior's to the president's, each drawn with its chairs, return,
-credenza or armchairs), copiers, access points, sofas, screens and wayfinding kiosks are
+credenza or armchairs), meeting tables for 4 to 16 with their chairs round them, copiers,
+access points, sofas, screens and wayfinding kiosks are
 placed on the plan, in 3D or while walking. An item stays in its room and lines up with the
 walls and the items near it. Its ID is an asset's tag (`7K2Q-XM9F-4DP`) with a check
 symbol: carried to another room or building, it keeps it, and ⌘K finds it as a person types

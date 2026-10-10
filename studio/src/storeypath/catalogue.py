@@ -26,6 +26,10 @@ CATALOGUE_FORMAT = "storeypath-catalogue"
 CATALOGUE_VERSION = 1
 FILE_NAME = "catalogue.json"
 _CODE_RE = re.compile(r"^[A-Z0-9]+(-[A-Z0-9]+)*$")
+SOFA_COLOR = "#8a837a"  # a warm grey
+# what older Studios gave their default types where this one gives otherwise: never a
+# person's choice, so a catalogue still saying it takes this Studio's (the sofa was purple)
+OLD_DEFAULTS = {"SOFA": {"color": {"#7d6a8f"}}}
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # who a desk is for, highest first: a room takes the grade of the highest desk in it
 GRADES = ("president", "c_level", "director", "manager", "section_head", "senior", "junior")
@@ -106,9 +110,18 @@ def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str, g
                     height=0.75, mount="floor", color=color, workplaces=1, grade=grade)
 
 
+def _meeting_table(seats: int, width: float, depth: float, color: str) -> ItemType:
+    # its chairs drawn round it by the viewers, as many as its size seats (tableChairs):
+    # meeting places, not workplaces (no one is allocated to one)
+    ar = f"{seats} مقاعد" if seats <= 10 else f"{seats} مقعدًا"
+    return ItemType(code=f"MEETING-TABLE-{seats}", name_en=f"Meeting table, {seats} seats", name_ar=f"طاولة اجتماعات، {ar}",
+                    category="furniture", width=width, depth=depth, height=0.75, mount="floor", color=color)
+
+
 def default_catalogue() -> Catalogue:
-    """What a new Studio starts with: desks by grade, central photocopiers, access
-    points, sofas, TVs, beds and wayfinding kiosks. People add more as they need them."""
+    """What a new Studio starts with: desks by grade, meeting tables, central
+    photocopiers, access points, sofas, TVs, beds and wayfinding kiosks. People add more
+    as they need them."""
     return Catalogue(types=[
         _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b", "president"),
         _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532", "c_level"),
@@ -117,6 +130,13 @@ def default_catalogue() -> Catalogue:
         _desk("DESK-SECTION-HEAD", "Head of section desk", "مكتب رئيس قسم", 1.6, 0.8, "#a8834f", "section_head"),
         _desk("DESK-SENIOR", "Senior staff desk", "مكتب موظف أول", 1.4, 0.7, "#b8955f", "senior"),
         _desk("DESK-JUNIOR", "Junior staff desk", "مكتب موظف", 1.2, 0.6, "#c6a674", "junior"),
+        # sized to seat their number round them: in oak, a board table's (12 and more) in walnut
+        _meeting_table(4, 1.2, 1.2, "#a8845e"),
+        _meeting_table(6, 1.8, 0.9, "#a8845e"),
+        _meeting_table(8, 2.4, 1.2, "#a8845e"),
+        _meeting_table(12, 3.6, 1.4, "#6b4a33"),
+        _meeting_table(14, 4.2, 1.4, "#6b4a33"),
+        _meeting_table(16, 4.8, 1.5, "#6b4a33"),
         ItemType(code="COPIER", name_en="Central photocopier", name_ar="آلة تصوير مركزية", category="equipment",
                  width=1.2, depth=0.7, height=1.2, mount="floor", color="#3b6ea5",
                  fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
@@ -127,7 +147,7 @@ def default_catalogue() -> Catalogue:
                          ItemField(key="ssid", name_en="Network (SSID)", name_ar="اسم الشبكة اللاسلكية", owner="system"),
                          ItemField(key="vlan", name_en="VLAN", name_ar="الشبكة الافتراضية", kind="number", owner="system")]),
         ItemType(code="SOFA", name_en="Sofa", name_ar="أريكة", category="furniture",
-                 width=2.0, depth=0.9, height=0.8, mount="floor", color="#7d6a8f",
+                 width=2.0, depth=0.9, height=0.8, mount="floor", color=SOFA_COLOR,
                  fields=[ItemField(key="seats", name_en="Seats", name_ar="عدد المقاعد", kind="number")]),
         ItemType(code="TV", name_en="TV screen", name_ar="شاشة تلفاز", category="appliance",
                  width=1.4, depth=0.1, height=0.8, mount="wall", color="#2b2b30",
@@ -171,14 +191,20 @@ def load(folder: str | Path) -> Catalogue:
 def read(text: str) -> tuple[Catalogue, bool]:
     """A catalogue from its JSON, with what this Studio says of its own default types
     where an older file says nothing (how many people work at one, the grade a desk is
-    for); and whether any was filled in."""
+    for) or says what an older Studio gave them (OLD_DEFAULTS); and whether any was
+    filled in."""
     raw = json.loads(text)
     defaults = {t.code: t for t in default_catalogue().types}
     filled = False
     for t in raw.get("types", []):
         d = defaults.get(t.get("code"))
+        if d is None:
+            continue
         for key in ("workplaces", "grade"):
-            if d is not None and key not in t:
+            if key not in t:
+                t[key], filled = getattr(d, key), True
+        for key, olds in OLD_DEFAULTS.get(d.code, {}).items():
+            if isinstance(t.get(key), str) and t[key].lower() in olds:
                 t[key], filled = getattr(d, key), True
     return Catalogue.model_validate(raw), filled
 
