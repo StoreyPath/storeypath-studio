@@ -42,7 +42,8 @@ arm64, on Linux, macOS or Windows with Docker. [More ways to run it](docs/INSTAL
 - **It reads drawings as an architect would.** No layer standards, no templates, no
   cleaning up first. Plans side by side on one sheet are found and titled, units are
   worked out from what is drawn, floors are stacked on their walls, rooms are found even
-  where nothing outlines them, and room names are understood in any language.
+  where nothing outlines them, and room names are understood in English, Arabic and
+  more, by the language model where the rules stop.
   [How Studio reads a drawing](docs/HOW-STUDIO-READS-A-DRAWING.md).
 - **AI where it helps, rules where they suffice, with or without a GPU.** A small
   language model on the CPU reads what the rules do not know; with a GPU, a vision model
