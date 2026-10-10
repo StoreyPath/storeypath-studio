@@ -21,7 +21,7 @@ import { keysOf, keyText } from "./keys.js";
 import { toast } from "./notify.js";
 import { placeLabels, styleSpace } from "./plan.js";
 import { reviewing } from "./reviewmode.js";
-import { doorsMode } from "./view3d.js";
+import { doorsMode, lookSpeed, setLookSpeed } from "./view3d.js";
 import { isChosen, select, selectAsset } from "./selection.js";
 import { code, color, matches, reviewSpaces, state, title, tucked, typeName, typeOf, units, view3d, visible, within } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
@@ -336,7 +336,11 @@ function renderView() {
       el("label", { class: "view-row" }, el("span", { class: "view-label" }, "Quality"), quality),
       toggle("Every floor of the building", view3d.allFloors, () => run("view.all-floors"), { tip: "In 3D: the building's floors all shown (as the floor stack's All)" }),
       toggle("Doors open as you walk into them", doorsMode() === "auto", () => run("view.doors-auto"),
-        { tip: "Walking: off, a door opens and closes only with E or a click at it" })),
+        { tip: "Walking: off, a door opens and closes only with E or a click at it" }),
+      el("div", { class: "view-row" }, el("span", { class: "view-label" }, "Looking round"),
+        segmented("How fast a drag turns the view, walking", [["slow", "Slow", "A drag turns the view less: for a sensitive trackpad"],
+          ["normal", "Normal", "What you press stays under the pointer as you drag"], ["fast", "Fast", "A drag turns the view more: for a small mouse pad"]],
+        lookSpeed(), (v) => setLookSpeed(v), { id: "look-speed" }))),
     section("Interface",
       segmented("Theme", [["dark", "Dark"], ["light", "Light"]], theme, (v) => run(`view.theme-${v}`), { id: "theme-switch" })),
   );

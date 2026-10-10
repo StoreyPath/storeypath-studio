@@ -50,6 +50,21 @@ export function setDoorsMode(mode) {
   emit("settings");
 }
 
+/** Walking, how fast a drag turns the view: "slow", "normal" (what was pressed stays under
+ * the pointer) or "fast", remembered in this browser (the 3D page follows it too). */
+export const LOOK_SPEEDS = { slow: 0.6, normal: 1, fast: 1.6 };
+export function lookSpeed() {
+  const v = saved("storeypath.world.look-speed");
+  return v in LOOK_SPEEDS ? v : "normal";
+}
+
+export function setLookSpeed(speed) {
+  if (!(speed in LOOK_SPEEDS)) return;
+  save("storeypath.world.look-speed", speed);
+  if (view3d.world && "lookSensitivity" in view3d.world) view3d.world.lookSensitivity = LOOK_SPEEDS[speed];
+  emit("settings");
+}
+
 /** Choose a room or an item in the 3D view too, without hearing it back as a click there. */
 export function pick3d(id, { go = false } = {}) {
   if (!view3d.shown || !view3d.world || !view3d.building) return;
@@ -129,6 +144,7 @@ export async function build3d() {
     if (!view3d.world) {
       const { StoreyPathWorld } = await import("/viewer/src/world/world.js");
       view3d.world = new StoreyPathWorld($("world3d"), { showHidden: state.showHidden, ...lookOptions(), doors: doorsMode() });
+      if ("lookSensitivity" in view3d.world) view3d.world.lookSensitivity = LOOK_SPEEDS[lookSpeed()];
       view3d.look.attach(view3d.world);
       setup3d(view3d.world);
     }

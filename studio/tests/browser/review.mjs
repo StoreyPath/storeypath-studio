@@ -725,6 +725,15 @@ test("walking: a drag looks round and the mouse is never taken; a click on a doo
   await until(async (y0) => { const p = window.storeypathReview.view3d.world.player; return Math.abs(Math.atan2(p.dx, p.dz) - y0) > 0.05; }, "the drag turned the view", 10000, y0);
   truly(await R(() => document.pointerLockElement === null && !document.getElementById("crosshair") && !document.getElementById("walk-enter")),
     "no pointer lock, no cross, no card to click to look");
+  // how fast a drag turns the view: View settings, Looking round; remembered
+  await R(() => document.getElementById("tab-view").click());
+  await until(() => Boolean(document.querySelector("#look-speed [role=radio]")), "the View settings", 5000);
+  await R(() => [...document.querySelectorAll("#look-speed [role=radio]")].find((b) => b.textContent === "Fast").click());
+  truly(await R(() => window.storeypathReview.view3d.world.lookSensitivity === 1.6 && localStorage.getItem("storeypath.world.look-speed") === "fast"),
+    "Fast: a drag turns the view more, remembered");
+  await R(() => [...document.querySelectorAll("#look-speed [role=radio]")].find((b) => b.textContent === "Normal").click());
+  truly(await R(() => window.storeypathReview.view3d.world.lookSensitivity === 1), "Normal again");
+  await R(() => document.getElementById("tab-rooms").click());
   // the door shut, its leaf across the doorway under the pointer: said; a click opens it, E shuts it again
   await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, false, { instant: true }), door.id);
   await standAt(door.near, door.m, -0.1);

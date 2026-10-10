@@ -782,6 +782,8 @@ async function start() {
     problem("3D cannot be shown here", `This browser cannot draw the 3D view (it needs WebGL 2): ${e.message}`);
     return;
   }
+  // walking, how fast a drag turns the view: as Review has it (its View settings)
+  w.lookSensitivity = { slow: 0.6, normal: 1, fast: 1.6 }[saved("storeypath.world.look-speed")] ?? 1;
   window.storeypathWorld = w; // for the console
   listen(w);
   state.look.attach(w);
