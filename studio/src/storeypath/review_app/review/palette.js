@@ -3,11 +3,11 @@
 // another floor is found too), floors, and every command (commands.js) with its key.
 // Arrows move, Enter runs, Esc closes.
 
-import { canRun, allCommands, getCommand, whyNot } from "./commands.js";
+import { canRun, allCommands, getCommand, whyNot, worksNow } from "./commands.js";
 import { $, el, icon, save, saved } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { findAsset, showAsset } from "./items.js";
-import { keysOf, kbd } from "./keys.js";
+import { kbd, keyNow } from "./keys.js";
 import { toast } from "./notify.js";
 import { select, selectAsset } from "./selection.js";
 import { code, color, state, title, typeLabel, typeOf, units, visible } from "./state.js";
@@ -92,7 +92,7 @@ function sources(q) {
     if (sc <= 0) continue;
     const ok = canRun(c);
     out.push({ group: "Commands", id: c.id, score: sc * 1.1 + (ok ? 1 : 0), icon: c.icon || "command", title: c.title, sub: ok ? c.group : whyNot(c),
-      keys: keysOf(c.id).slice(0, 1), disabled: !ok, run: () => {
+      keys: keyNow(c.id) && worksNow(c) ? [keyNow(c.id)] : [], disabled: !ok, run: () => { // (its key when it runs it here)
         remember(c.id);
         c.run();
       } });

@@ -42,11 +42,12 @@ export const state = {
 // mode: "2d", "3d" or "walk" (shown: not 2d); busy: the build under way (a promise); again:
 // asked for while it was, so done once more after it; stale: the building to be built again
 // whole; dirty: floors to read again; from: the view before (where walking starts); plan:
-// the middle of the plan's view then; pointer: the last pointer over the 3D view; look:
-// its look's and quality's controls
+// the middle of the plan's view then; pointer: the pointer over the 3D view (null: off it);
+// hovered: walking, what is under it (the world's hover); look: its look's and quality's
+// controls
 export const view3d = { world: null, building: null, stale: true, shown: false, mode: "2d", busy: null, again: false,
   picking: false, dirty: new Set(), from: "2d", plan: null, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0,
-  look: null };
+  look: null, hover: 0, hovered: null };
 
 function savedMode() {
   const mode = saved("storeypath.drawing");

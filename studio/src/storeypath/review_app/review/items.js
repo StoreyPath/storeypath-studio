@@ -4,11 +4,12 @@
 // again. An item stays in the room it was placed in and lines up with walls and items
 // (fit.js); Alt places or drags it freely.
 //
-// The Place tool (I): choose a type in its options, click where it goes (in 3D on the
-// floor; walking, at the cross). An item chosen: R turns it 90° (Shift: back), , and . by
-// 15°, the arrows move it (Shift: further), Del deletes it.
+// The Place tool (I): choose a type in its options, click where it goes (in 3D and
+// walking, on the floor under the pointer: its ghost follows it). An item chosen, in every
+// view and whatever the tool: R turns it 90° (Shift: back), , and . by 15°, Del deletes it;
+// the arrows move it (Shift: further), but walking, where they walk (drag it instead).
 
-import { viewOnly } from "./access.js";
+import { editable, viewOnly, whyNotEditable } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
 import { command } from "./commands.js";
@@ -305,10 +306,12 @@ function placeOptions() {
   return [chooser, t ? el("span", { class: "to-note" }, `${t.width} × ${t.depth} m · Alt: anywhere, as it is`) : null];
 }
 
-/** The item chosen, its keys (the "item" scope: while one is chosen and no tool is in use). */
+/** The item chosen, its keys (the "item" scope: while one is chosen, whatever the tool or
+ * the view: what is chosen wins). */
 function itemCommand(id, title, keys, fn, repeat = false) {
   command({ id, title, group: "Item", scope: "item", keys, palette: false, repeat,
-    when: () => Boolean(chosenAsset()), run: () => fn(chosenAsset()) });
+    when: () => Boolean(chosenAsset()) && editable(), why: () => (chosenAsset() ? whyNotEditable() : "Choose an item first"),
+    run: () => fn(chosenAsset()) });
 }
 
 export function setupItems() {
@@ -318,7 +321,7 @@ export function setupItems() {
     hint: (view) => {
       const t = typeOf(state.placeType);
       if (!t) return "Choose what to place in the options above";
-      return view === "walk" ? `Aim the cross at the floor where the ${t.name_en} goes and click · Alt: as it is · Esc frees the mouse`
+      return view === "walk" ? `Click on the floor where the ${t.name_en} goes (its ghost follows the pointer) · Alt-click: as it is · drag to look`
         : view === "3d" ? `Click on the floor where the ${t.name_en} goes · it lines up as on the plan · Alt-click: as it is`
           : `Click in a room where the ${t.name_en} goes · it lines up with walls and items · Alt-click: anywhere, as it is`;
     },

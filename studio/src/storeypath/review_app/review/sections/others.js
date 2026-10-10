@@ -16,7 +16,7 @@ import { kbd, keysOf, keyText } from "../keys.js";
 import { toast } from "../notify.js";
 import { accept, correct, forEach, setFlag } from "../rooms.js";
 import { select } from "../selection.js";
-import { color, readable, state, title, typeName, typeOf, units, within } from "../state.js";
+import { color, readable, state, title, typeName, typeOf, units, view3d, within } from "../state.js";
 import { roomHistory } from "./history.js";
 
 const key = (id) => {
@@ -122,7 +122,7 @@ function itemMain({ asset: a, editable: may }) {
       by(-90, "rotate-cw", `Turn back 90° (${key("item.turn-back")})`))),
     row("Floor", floor, el("div", { class: "detected" }, "Carried to another floor, it keeps its ID")),
     may ? el("p", { class: "hint" }, "Drag it to move it: it lines up with walls and items and stays in its room (Alt: freely). ",
-      kbd("r"), " turns it 90°, ", kbd(","), " ", kbd("."), " by 15°, the arrows move it.") : null];
+      kbd("r"), " turns it 90°, ", kbd(","), " ", kbd("."), " by 15°", view3d.mode === "walk" ? "." : ", the arrows move it.") : null];
 }
 
 function itemDetails({ asset: a, editable: may }) {

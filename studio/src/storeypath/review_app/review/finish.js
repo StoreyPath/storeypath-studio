@@ -268,6 +268,22 @@ export function setPaint(on) {
 
 export const painting = () => api.state.tool === "paint";
 
+/** The brushes: the finish floors and walls are painted in now ({ floor, wall }, codes). */
+export const brush = () => ({ floor: paint.floor, wall: paint.wall });
+
+/** Paint a room's floor, or the walls of a room (``p``: what the 3D view says is there, as
+ * pick does), with the brush; or take up its finishes (``takeUp``). Whether it was (the
+ * Paint tool need not be in use: the 3D view's menu does it). */
+export function paintAt(p, { takeUp = false } = {}) {
+  const was = paint.on;
+  paint.on = true;
+  try {
+    return pick({ ...p, altKey: takeUp });
+  } finally {
+    paint.on = was;
+  }
+}
+
 /** The plan's click while painting: a room's floor (Shift: its walls; a zone's are its
  * space's), or its finishes taken up (Alt, or the dropper). */
 function paintOnPlan(p, e) {
@@ -330,7 +346,7 @@ export function setup(given) {
     edits: true, keepsSelection: true, words: "finish floor wall carpet tiles paint colour",
     hint: (view) => (paint.dropper ? "Click a room (or in 3D a floor or a wall) to take up its finishes"
       : view === "2d" ? `Click a room: its floor gets ${finishOf(paint.floor)?.name} · Shift-click: its walls get ${finishOf(paint.wall)?.name} · Alt-click takes up its finishes`
-        : view === "walk" ? "Aim at a floor or a wall and click to paint it · Alt-click takes up a finish · Esc frees the mouse"
+        : view === "walk" ? "Click a floor or a wall to paint it (marked under the pointer) · Alt-click takes up a finish · drag to look"
           : "Click a floor, or a wall (its side towards you), to paint it · Alt-click takes up a finish"),
     options: brushes,
     start: () => {

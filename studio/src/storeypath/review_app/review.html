@@ -55,7 +55,7 @@
       <div class="segmented" id="view-mode" role="radiogroup" aria-label="View">
         <button type="button" role="radio" data-view="2d" aria-checked="true" data-tip="The plan: correct rooms and items, draw walls, doors and spaces" data-key="2">2D</button>
         <button type="button" role="radio" data-view="3d" aria-checked="false" data-tip="The floor as built: orbit it, correct and place as on the plan" data-key="3">3D</button>
-        <button type="button" role="radio" data-view="walk" aria-checked="false" data-tip="Walk through the floor: look with the mouse, move with W A S D" data-key="4">Walk</button>
+        <button type="button" role="radio" data-view="walk" aria-checked="false" data-tip="Walk through the floor: drag to look, W A S D to move, double-click to go there" data-key="4">Walk</button>
       </div>
     </div>
     <div class="tb-end">
@@ -135,7 +135,6 @@
         <g id="cursor-main" class="cursor"></g>
       </svg>
       <div id="world3d" hidden></div>
-      <div id="crosshair" hidden aria-hidden="true"></div>
 
       <!-- over the canvas, at its top: someone else editing, review mode, the tool's options -->
       <div id="canvas-top" class="canvas-top">
@@ -148,19 +147,6 @@
         <div id="walk-room">Outside</div>
         <div id="walk-meta" class="meta"></div>
         <div id="walk-keys" class="meta"></div>
-      </div>
-      <div id="walk-enter" class="walk-enter" hidden>
-        <div class="card">
-          <strong>Click to look around</strong>
-          <ul class="keys">
-            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows: move · <kbd>Shift</kbd> run</li>
-            <li>Click: choose what is at the cross · <kbd>R</kbd> <kbd>,</kbd> <kbd>.</kbd> turn it · <kbd>Del</kbd> delete it</li>
-            <li class="edit-only">Place: the Place tool, aim at the floor and click</li>
-            <li><kbd>PgUp</kbd> / <kbd>PgDn</kbd> up or down at stairs · <kbd>2</kbd> or right-click: this place in 2D</li>
-            <li id="walk-doors" hidden><kbd>E</kbd> open or close a door</li>
-            <li><kbd>Esc</kbd> frees the mouse for the panels</li>
-          </ul>
-        </div>
       </div>
 
       <!-- on the canvas, bottom right: the zoom and the building's floors -->

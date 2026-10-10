@@ -125,6 +125,11 @@ kbd {
   background: var(--surface-2); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--r-xs);
 }
 kbd + kbd { margin-left: 2px; }
+/* what is done with the mouse (or a finger), in a list of keys: not a key */
+.gesture {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--r-sm); white-space: nowrap;
+  font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--text-muted); border: 1px dashed var(--border-strong);
+}
 
 /* ---- menus and popovers ----------------------------------------------------------------- */
 .popover, .menu {

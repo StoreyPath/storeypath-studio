@@ -242,6 +242,7 @@ dialog.keys-help { width: min(880px, calc(100vw - 32px)); }
 dialog.keys-help[open] { display: flex; flex-direction: column; }
 .kh-head { display: flex; justify-content: space-between; align-items: center; padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border); }
 .kh-head h2 { font-size: var(--fs-lg); }
+.kh-now { font-size: var(--fs-sm); margin: 2px 0 0; }
 .kh-body { columns: 2 320px; column-gap: var(--sp-6); padding: var(--sp-3) var(--sp-5) var(--sp-2); overflow-y: auto; }
 .kh-body section { break-inside: avoid; margin-bottom: var(--sp-4); }
 .kh-body h3 { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-bottom: var(--sp-2); }

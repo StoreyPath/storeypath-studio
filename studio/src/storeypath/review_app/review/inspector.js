@@ -149,7 +149,7 @@ export function row(label, control, note = null, { tip = null } = {}) {
 }
 
 export function setupInspector() {
-  for (const e of ["selection", "spaces", "items", "access", "catalogue", "converting", "review", "project"]) {
+  for (const e of ["selection", "spaces", "items", "access", "catalogue", "converting", "review", "project", "view"]) {
     on(e, () => render());
   }
   // the floor read again: drawn again at once (under a field too) when what it shows changed

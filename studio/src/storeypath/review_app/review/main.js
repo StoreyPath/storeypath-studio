@@ -11,7 +11,7 @@
 import { accountMenu, whoami } from "../account.js";
 import { setupTogether } from "../together.js";
 import { editable, viewOnly } from "./access.js";
-import { setupActions } from "./actions.js";
+import { keyMap, keysNow, setupActions, situation } from "./actions.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
 import { allCommands, run } from "./commands.js";
@@ -22,7 +22,7 @@ import { openFloor, start } from "./floor.js";
 import { setupFloorStack } from "./floorstack.js";
 import { setupInspector } from "./inspector.js";
 import { setupItems } from "./items.js";
-import { allBindings, keyConflicts } from "./keys.js";
+import { allBindings, effectiveMap, keyConflicts } from "./keys.js";
 import { setupLayout } from "./layout.js";
 import { togetherHooks } from "./live.js";
 import { setupMeasure } from "./measure.js";
@@ -38,7 +38,7 @@ import { setupFloorSections } from "./sections/floor.js";
 import { setupHistorySection } from "./sections/history.js";
 import { setupOtherSections } from "./sections/others.js";
 import { setupRoomSections } from "./sections/room.js";
-import { sel, select } from "./selection.js";
+import { sel, select, selectAsset } from "./selection.js";
 import { BASE, CODE, readable, state, title, units, view3d } from "./state.js";
 import { setupStatusbar } from "./statusbar.js";
 import { allTools, setTool, setupTools, tool } from "./tools.js";
@@ -89,7 +89,8 @@ setupFloorStack();
 setupStatusbar();
 
 // for the console, and the browser tests
-window.storeypathReview = { state, view3d, sel, run, commands: allCommands, tools: allTools, keys: allBindings, keyConflicts };
+window.storeypathReview = { state, view3d, sel, run, commands: allCommands, tools: allTools, keys: allBindings, keyConflicts, keyMap, keysNow,
+  effectiveMap, situation, select, selectAsset, setTool };
 
 (async () => {
   if (!CODE) {

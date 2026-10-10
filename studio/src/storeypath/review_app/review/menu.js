@@ -6,8 +6,10 @@ import { editable } from "./access.js";
 import { $, el, icon } from "./dom.js";
 import { addOpening, deleteItem, drawnNear, drawnSpaceAt, openingAt, openingMeta, openingName, openingNear,
   sizeForm, startLine, startSpace, takeAway } from "./drawing.js";
+import * as finish from "./finish.js";
 import { assetAt, changeAsset, placeAsset, turnAsset } from "./items.js";
-import { keysOf, keyText } from "./keys.js";
+import { keyNow, keyText } from "./keys.js";
+import { finishOf } from "/viewer/src/finishes.js";
 import { spaceAt } from "./plan.js";
 import { setFlag } from "./rooms.js";
 import { select, selectAsset, selectItem } from "./selection.js";
@@ -39,9 +41,9 @@ export function placeMenu(cx, cy) {
   m.style.top = `${Math.max(4, Math.min(cy, window.innerHeight - r.height - 4))}px`;
 }
 
-/** The key of a command, as the map has it ("" when it has none). */
+/** The key of a command, as the map has it now ("" when none runs it here). */
 const key = (id) => {
-  const k = keysOf(id)[0];
+  const k = keyNow(id);
   return k ? keyText(k) : "";
 };
 
@@ -140,39 +142,55 @@ export function placeItemMenu(cx, cy, p) {
   $("menu").querySelector("button")?.focus();
 }
 
-/** A right-click on the 3D view (walking: at the cross, the mouse given back): what is
- * there, and showing that place on the plan, to draw there. */
-export function menu3d(cx, cy) {
+/** A right-click on the 3D view or walking (``p``: what the world says is there, with the
+ * door within reach under the pointer, walking): a door opened or shut; the floor or the
+ * walls there painted with the brush, or their finish taken up; an item placed there;
+ * what is there chosen, an item deleted or turned; and that place shown on the plan. */
+export function menu3d(cx, cy, p = null) {
   const w = view3d.world;
   if (!w || !state.floor) return;
-  const walking = w.walking;
-  const p = walking ? w.pointAt() : w.pointAt(cx, cy);
-  if (walking) {
-    w.stopWalking();
-    const r = $("world3d").getBoundingClientRect();
-    [cx, cy] = [r.left + r.width / 2, r.top + r.height / 2];
-  }
-  if (state.tool) setTool(null);
-  const here = p?.floor === state.floor.id ? p.local : null;
-  const asset = p?.item ? (state.floor.items || []).find((a) => a.id === p.item) : null;
-  const s = !asset && p?.space ? state.byId.get(p.space) : null;
+  if (state.tool && state.tool !== "paint" && state.tool !== "place") setTool(null);
+  const on = p?.floor === state.floor.id ? p : null;
+  const here = on?.local ?? null;
+  const asset = on?.item ? (state.floor.items || []).find((a) => a.id === on.item) : null;
+  const unit = on?.space ? state.byId.get(on.space) : null;
+  const room = on?.wall && on.room ? state.byId.get(on.room) : null; // the walls' room: the side under the pointer
+  const may = editable(), walking = view3d.mode === "walk";
   const items = [];
-  const may = editable();
-  if (asset) {
-    selectAsset(asset.id);
+  // what is there
+  if (on?.door && walking) {
+    const open = w.doorOpen?.(on.door);
+    items.push(...heading("Door", on.door));
+    items.push(menuItem(open ? "Close the door" : "Open the door", () => w.toggleDoor(on.door), { hint: "E", ico: "door-open" }));
+  } else if (asset) {
     const t = typeOf(asset.type);
     items.push(...heading(t ? t.name_en : asset.type, asset.id));
-    if (may) {
-      items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: key("item.turn"), ico: "rotate-ccw" }));
-      items.push(menuItem("Delete", () => changeAsset(asset, { retired: true }), { danger: true, hint: key("edit.delete"), ico: "trash-2" }));
+  } else if (unit) items.push(...heading(title(unit), on.wall ? "Its walls" : typeLabel(unit.type)));
+  if (asset) {
+    items.push(menuItem("Select", () => selectAsset(asset.id), { ico: "mouse-pointer-2", disabled: state.asset === asset.id }));
+    if (may) { // (its keys said when it is the item chosen: they are its then)
+      const chosen = state.asset === asset.id;
+      items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: chosen ? key("item.turn") : "", ico: "rotate-ccw" }));
+      items.push(menuItem("Delete", () => changeAsset(asset, { retired: true }), { danger: true, hint: chosen ? key("edit.delete") : "", ico: "trash-2" }));
     }
-    items.push(el("hr"));
-  } else if (s) {
-    select(s.id);
-    items.push(...heading(title(s), typeLabel(s.type)), el("hr"));
+  } else if (unit && !on?.door) {
+    items.push(menuItem("Select", () => select(unit.id), { ico: "mouse-pointer-2", disabled: state.selected === unit.id }));
   }
+  // painted with the brush (the Paint tool's, in use or not), or its finish taken up
+  if (may && unit && !asset && !on?.door) {
+    const b = finish.brush(), walls = Boolean(room);
+    const code = walls ? b.wall : b.floor;
+    if (items.length) items.push(el("hr"));
+    items.push(menuItem(walls ? `Paint these walls: ${finishOf(code)?.name ?? code}` : `Paint this floor: ${finishOf(code)?.name ?? code}`,
+      () => finish.paintAt(on), { ico: "paint-roller" }));
+    items.push(menuItem("Pick up its finish", () => finish.paintAt(on, { takeUp: true }), { ico: "pipette", hint: "Alt-click" }));
+  }
+  if (may && here) {
+    if (items.length) items.push(el("hr"));
+    items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, here), { hint: key("tool.place"), ico: "armchair" }));
+  }
+  if (items.length) items.push(el("hr"));
   items.push(menuItem(may ? "Draw here in 2D" : "Show here in 2D", () => drawHere(here), { disabled: !here, hint: key("view.here-2d"), ico: "map" }));
-  if (may && here) items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, here), { ico: "armchair" }));
   $("menu").replaceChildren(...items.filter(Boolean));
   placeMenu(cx, cy);
   focusFirst();

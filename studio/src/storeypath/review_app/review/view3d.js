@@ -6,12 +6,17 @@
 // switching is at once. What changes shows in it at once: items (yours, or others' as
 // they are saved) are drawn again on their floor alone, a room's name or type its label
 // and floor; walls, doors, dividers and spaces (drawn on the plan) come with the floor
-// read again, and that floor alone is built again when the reading is done. In 3D and
-// walking, a click chooses a room or an item (walking: at the cross), items are placed as
-// on the plan (fit.js: held in their room, lined up by the magnet; Alt: as they are) and,
-// in 3D, dragged; right-click (or 2) shows that place on the plan, to draw there. In 3D
-// the building's floors can all be shown (the floor stack's All); walking, PgUp and PgDn
-// go up and down at stairs and lifts (E is the world's: doors).
+// read again, and that floor alone is built again when the reading is done.
+//
+// In 3D and walking a click chooses a room or an item where the pointer is; items are
+// placed as on the plan (fit.js: held in their room, lined up by the magnet; Alt: as they
+// are), their ghost following the pointer, and dragged (walking: the item chosen); Paint
+// marks the floor or the walls under the pointer and paints them with a click; a
+// right-click offers what can be done there (menu.js: menu3d). Walking never takes the
+// mouse: a drag looks round, W A S D move, a double-click goes there, and the panels stay
+// usable; E is a door's (the world's: under the pointer, else ahead), else up the stairs;
+// PgUp, PgDn and Q go up and down at stairs and lifts. In 3D the building's floors can all
+// be shown (the floor stack's All).
 
 import { editable } from "./access.js";
 import { emit, on } from "./bus.js";
@@ -20,7 +25,7 @@ import { clearPreview } from "./drawing.js";
 import * as finish from "./finish.js";
 import { changeAsset, drawGuides, placeAsset, placing, renderAssets } from "./items.js";
 import { lookOptions } from "../look.js";
-import { closeMenu, menu3d } from "./menu.js";
+import { closeMenu, menu3d, menuOpen } from "./menu.js";
 import { say, toast } from "./notify.js";
 import { centerOn, planPoint, scaleFor, viewport } from "./plan.js";
 import { select, selectAsset } from "./selection.js";
@@ -209,7 +214,8 @@ function walkFrom() {
   return p && up ? { at: p, heading: Math.atan2(-(up.x - p.x), -(up.z - p.z)) } : {};
 }
 
-/** Items carried in 3D by a drag: only by who may change the floor, and not while placing. */
+/** Items carried in 3D (walking, the item chosen) by a drag: only by who may change the
+ * floor, and not while placing or painting. */
 export function draggable3d() {
   view3d.world?.setDraggable(editable() && state.tool !== "place" && !finish.painting());
 }
@@ -228,7 +234,7 @@ export function update3d() {
   if (!w || !f || !view3d.building || !f.id.startsWith(`${view3d.building}-`)) return;
   w.setFloorItems(f.id, (f.items || []).filter((a) => !a.retired).map(given3d));
   for (const s of f.spaces) sync3dSpace(s);
-  view3d.crossKey = ""; // the cross's ghost seen again (the magnet sees the new items)
+  view3d.crossKey = ""; // the ghost under the pointer seen again (the magnet sees the new items)
   if (state.tool === "place") aimSoon();
 }
 
@@ -286,8 +292,15 @@ function setup3d(world) {
   world.addEventListener("itemdrag", ({ detail }) => carryMove(detail));
   world.addEventListener("itemdragend", ({ detail }) => carryEnd(detail));
   world.addEventListener("roomchange", ({ detail }) => showRoom(detail));
-  world.addEventListener("walklock", () => showWalk());
-  // a world that opens doors: E (or a click) at a door is its own; the door aimed at is said
+  // what is under the pointer, walking: marked as a click would act on it, said in the status bar
+  world.addEventListener("hover", ({ detail }) => {
+    view3d.hovered = detail;
+    markUnder(detail);
+    emit("walk");
+  });
+  // a right-click (walking, a long press too): what can be done there
+  world.addEventListener("menu", ({ detail }) => menu3d(detail.clientX, detail.clientY, detail));
+  // a world that opens doors: a click on one, or E (the door under the pointer, or ahead); said
   world.addEventListener("doorchange", () => showWalk());
   world.addEventListener("dooraim", ({ detail }) => {
     view3d.doorAim = detail?.id ? detail : null;
@@ -298,35 +311,67 @@ function setup3d(world) {
   });
 }
 
-/** The 3D view's pointer: where the item being placed would go, follows it; a press,
- * walking with the mouse free, takes it to look; a right-click (not a drag) offers what
- * can be done there. */
+/** The 3D view's pointer: where it is (the item being placed follows it; painting, what a
+ * click would paint is marked under it, in 3D as the world does walking: hover). */
 function setup3dPointer() {
   const box = $("world3d");
-  let right = null;
   box.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;
     view3d.pointer = [e.clientX, e.clientY];
     state.alt = e.altKey;
     if (state.tool === "place" && !e.buttons) aimSoon();
+    if (view3d.mode === "3d" && !e.buttons) hoverSoon();
   });
-  box.addEventListener("pointerleave", () => { if (!view3d.world?.walking) view3d.world?.ghost(null); });
-  box.addEventListener("pointerdown", (e) => {
-    if (e.button === 2) right = [e.clientX, e.clientY];
+  box.addEventListener("pointerleave", () => {
+    view3d.pointer = null;
+    if (!carry.asset) view3d.world?.ghost(null);
+    view3d.world?.mark(null);
   });
-  box.addEventListener("pointerup", (e) => {
-    if (e.button !== 2 || !right) return;
-    const moved = !view3d.world?.walking && Math.hypot(e.clientX - right[0], e.clientY - right[1]) > 4; // a drag moves the view
-    right = null;
-    if (!moved) menu3d(e.clientX, e.clientY);
-  });
-  box.addEventListener("contextmenu", (e) => e.preventDefault());
-  $("walk-enter").addEventListener("click", startLooking);
+  box.addEventListener("contextmenu", (e) => e.preventDefault()); // (the world's menu event says a right-click)
 }
 
-/** Walking: the mouse taken to look (from a click). */
-function startLooking() {
-  document.activeElement?.blur?.(); // keys to the walker, not to a field
-  view3d.world?.startWalking();
+/** In 3D (orbiting), what is under the pointer, once a frame: marked as a click would act on it. */
+function hoverSoon() {
+  if (view3d.hover) return;
+  view3d.hover = requestAnimationFrame(() => {
+    view3d.hover = 0;
+    const w = view3d.world;
+    if (!w || view3d.mode !== "3d" || !view3d.pointer) return;
+    markUnder(w.pointAt(...view3d.pointer));
+  });
+}
+
+/** What a click there would act on, marked lightly in the world: painting, the floor (or a
+ * wall's side, the walls of the room it faces) under the pointer; choosing, an item there.
+ * Placing, nothing (its ghost shows it). */
+function markUnder(p) {
+  const w = view3d.world;
+  if (!w?.mark) return;
+  if (!p || p.floor !== state.floor?.id || state.tool === "place" || menuOpen() || !editable() && finish.painting()) return w.mark(null);
+  if (finish.painting()) {
+    const room = p.wall ? p.room : null;
+    return w.mark(room ? { walls: room } : p.space ? { floor: p.space } : null);
+  }
+  w.mark(p.item && !p.door ? { item: p.item } : null);
+}
+
+/** Walking: E. The door under the pointer, else the nearest ahead (the world takes E first
+ * when there is one: here when it did not), else up at stairs or a lift. */
+export function walkDoor() {
+  const w = view3d.world;
+  if (!w || view3d.mode !== "walk") return;
+  if (w.useDoor?.()) return;
+  if (w.atStairs) return walkFloor(1);
+  toast("No door within reach: E opens or closes the door under the pointer, or the one ahead (at stairs or a lift, E goes up)");
+}
+
+/** The right-click menu from the keys (Shift+F10, the menu key), in 3D or walking: at the
+ * pointer, else the middle of the view. */
+export function menuHere() {
+  const r = $("world3d").getBoundingClientRect();
+  const [x, y] = view3d.pointer ?? [r.left + r.width / 2, r.top + r.height / 2];
+  const w = view3d.world, p = w?.pointAt(x, y) ?? null;
+  menu3d(x, y, p ? { ...p, door: view3d.doorAim?.under ? view3d.doorAim.id : null } : null);
 }
 
 export function aimSoon() {
@@ -337,14 +382,13 @@ export function aimSoon() {
   });
 }
 
-/** Where the item being placed would go, shown in 3D: under the pointer, or walking at
- * the cross; settled as on the plan (fit.js), red where it does not fit. */
+/** Where the item being placed would go, shown in 3D: under the pointer, settled as on the
+ * plan (fit.js), red where it does not fit. */
 function aim3d() {
   const w = view3d.world;
   if (!w || !view3d.shown) return;
   const t = state.tool === "place" ? typeOf(state.placeType) : null;
-  const walking = view3d.mode === "walk";
-  const p = !t ? null : walking ? (w.walking ? w.pointAt() : null) : view3d.pointer && w.pointAt(...view3d.pointer);
+  const p = t && view3d.pointer ? w.pointAt(...view3d.pointer) : null;
   if (!p?.local || p.floor !== state.floor?.id) {
     w.ghost(null);
     return;
@@ -354,17 +398,18 @@ function aim3d() {
   w.ghost({ ...given3d({ type: t.code, x: at[0], y: at[1], rotation: got?.rot ?? 0 }), ok: Boolean(got), guides: got?.guides || [] });
 }
 
-/** Walking with the mouse taken, while placing: the ghost at the cross, as the view moves. */
-function followCross() {
+/** Walking while placing: the ghost under the pointer, again as the view moves (the
+ * walker walking or looking round, the pointer still). */
+function followPointer() {
   if (view3d.cross) return;
   const step = () => {
     const w = view3d.world;
-    if (!w || view3d.mode !== "walk" || !w.walking || state.tool !== "place") {
+    if (!w || view3d.mode !== "walk" || state.tool !== "place") {
       view3d.cross = 0;
       view3d.crossKey = "";
       return;
     }
-    const key = [...w.camera.position.toArray(), ...w.camera.quaternion.toArray()].map((v) => v.toFixed(4)).join();
+    const key = [...w.camera.position.toArray(), ...w.camera.quaternion.toArray(), ...(view3d.pointer ?? [])].map((v) => v.toFixed(4)).join();
     if (key !== view3d.crossKey) {
       view3d.crossKey = key;
       aim3d();
@@ -374,39 +419,42 @@ function followCross() {
   view3d.cross = requestAnimationFrame(step);
 }
 
-/** Walking: the room you are in, the cross when the mouse is taken, how to start when not. */
+/** Walking: the room you are in, and what can be done now (the tool's, the item chosen's,
+ * the door's), the ghost following the pointer while placing. */
 export function showWalk() {
   const w = view3d.world, walking = view3d.mode === "walk";
-  const locked = walking && Boolean(w?.walking);
   $("walk-hud").hidden = !walking;
   document.body.classList.toggle("walking", walking); // (messages above the room walked in)
-  $("crosshair").hidden = !locked;
-  $("walk-enter").hidden = !walking || locked || !w || w.mode !== "walk";
   $("map").classList.toggle("placing", state.tool === "place" && view3d.shown);
-  $("walk-keys").textContent = !locked ? "" : state.tool === "place" ? "Click: place it at the cross · Alt: as it is · Esc: free the mouse"
-    : finish.painting() ? "Click: paint the floor or wall at the cross · Alt-click: take up its finish · Esc: free the mouse"
-    : editable() ? `Click: choose · R , . turn · Del delete · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`
-        : `Click: choose · 2: here in 2D${doors() ? " · E or click: a door" : ""} · Esc: free the mouse`;
-  $("walk-doors").hidden = !doors();
-  if (locked && state.tool === "place") followCross();
-  else if (walking) w?.ghost(null);
+  $("walk-keys").textContent = !walking ? "" : walkKeys();
+  if (walking && state.tool === "place") followPointer();
+  else if (walking && !carry.asset) w?.ghost(null);
   emit("walk");
 }
 
-/** Whether the world opens and closes doors (E is then its key, walking, at a door). */
-export const doors = () => Boolean(view3d.world && ("doors" in view3d.world || typeof view3d.world.toggleDoor === "function"));
+/** Walking: what the keys and the mouse do now, in a line. */
+function walkKeys() {
+  const may = editable();
+  if (state.tool === "place") return "Click the floor: place it · Alt-click: as it is · Esc: stop placing";
+  if (finish.painting()) return "Click a floor or a wall: paint it · Alt-click: take up its finish · Esc: stop painting";
+  if (state.asset && may) return "R , . turn it · Del delete · drag it to move it · Esc: let it go";
+  return "Drag to look · W A S D to move · double-click to go there";
+}
 
 function showRoom(r) {
   $("walk-room").textContent = r.id ? r.name || typeLabel(r.type) : "Outside";
   $("walk-meta").textContent = [r.id && r.name ? typeLabel(r.type) : "", r.number, r.stairs ? "E or PgUp up · Q or PgDn down" : ""].filter(Boolean).join(" · ");
 }
 
-/** The place under the pointer in 3D (walking: at the cross), on this floor: plan metres, or null. */
+/** The place under the pointer in 3D and walking, on this floor (plan metres); walking with
+ * the pointer off the view, where the walker stands; else null. */
 export function pointerPlace() {
   const w = view3d.world;
   if (!w) return null;
-  const p = w.walking ? w.pointAt() : view3d.pointer ? w.pointAt(...view3d.pointer) : null;
-  return p?.floor === state.floor?.id ? p.local : null;
+  const p = view3d.pointer ? w.pointAt(...view3d.pointer) : null;
+  if (p?.floor === state.floor?.id && p.local) return p.local;
+  if (view3d.mode === "walk" && w.walkFloor === state.floor?.id) return w.buildingPoint({ x: w.player.x, z: w.player.z });
+  return null;
 }
 
 /** Walking: up (1) or down (-1) at stairs or a lift. */
@@ -440,6 +488,7 @@ export function drawHere(p, tool = null) {
  * placed, the walking keys) and who may change the floor. */
 export function setupView3d() {
   setup3dPointer();
+  on("selection", () => showWalk());
   on("draw-here", (what) => {
     if (typeof what === "string") return drawHere(pointerPlace(), what);
     drawHere(null, what.tool);
@@ -449,7 +498,11 @@ export function setupView3d() {
     else aimSoon();
     draggable3d();
     showWalk();
+    // what a click would act on now, under the pointer where it is
+    const w = view3d.world;
+    if (w && view3d.shown) markUnder(view3d.mode === "walk" ? view3d.hovered : view3d.pointer ? w.pointAt(...view3d.pointer) : null);
   });
+  on("view", () => view3d.world?.mark?.(null));
   on("tool-options", () => { if (state.tool === "place") aimSoon(); });
   on("access", draggable3d);
 }

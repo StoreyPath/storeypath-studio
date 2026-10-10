@@ -5,14 +5,14 @@
 
 import { editable, whyNotEditable } from "./access.js";
 import { emit, on } from "./bus.js";
-import { allCommands, command, getCommand, run } from "./commands.js";
+import { allCommands, command, getCommand, run, worksNow } from "./commands.js";
 import { deleteItem } from "./drawing.js";
 import { $, el, icon, save, saved } from "./dom.js";
 import * as finish from "./finish.js";
 import { openFloor, reconvert } from "./floor.js";
 import { buildingFloors } from "./floorstack.js";
 import { changeAsset, chosenAsset, copyId, renderAssets } from "./items.js";
-import { allBindings, kbd, reserve, setupKeys } from "./keys.js";
+import { effectiveMap, kbd, reserve, scopesApplying, setupKeys } from "./keys.js";
 import { panelShown, showPanel } from "./layout.js";
 import { closeMenu, menuOpen, openMenu } from "./menu.js";
 import { showTab } from "./navigator.js";
@@ -23,22 +23,23 @@ import { forEach, setFlag } from "./rooms.js";
 import { reviewing, stopReview } from "./reviewmode.js";
 import { chosenSpaces, clearSelection, sel, selectSpaces } from "./selection.js";
 import { readable, state, units, view3d, visible } from "./state.js";
-import { escapeTool, tool } from "./tools.js";
-import { doorsMode, drawHere, pointerPlace, setAllFloors, setDoorsMode, setView, walkFloor } from "./view3d.js";
+import { activeTool, escapeTool, tool } from "./tools.js";
+import { doorsMode, drawHere, menuHere, pointerPlace, setAllFloors, setDoorsMode, setView, walkDoor, walkFloor } from "./view3d.js";
 import { historyOpen, showHistory, step } from "../together.js";
 import { navigateUrl } from "./topbar.js";
 
 const in2d = () => view3d.mode === "2d" && Boolean(state.floor);
 const NOT_2D = () => "On the plan (2D)";
 
-/** Which of the keyboard map's scopes apply now, the first first. */
+/** Which of the keyboard map's scopes apply now, the first first: review mode, walking,
+ * the item chosen (whatever the tool: what is chosen wins), the tool, the view. */
 function scopes() {
   const list = [];
   if (reviewing()) list.push("review");
   if (view3d.mode === "walk") list.push("walk");
+  if (state.asset) list.push("item");
   if (state.tool) list.push(`tool:${state.tool}`);
-  if (state.asset && !state.tool) list.push("item");
-  if (view3d.shown) list.push("3d");
+  list.push(view3d.shown ? "3d" : "2d");
   list.push("global");
   return list;
 }
@@ -94,42 +95,117 @@ function floorStep(dir) {
   openFloor(next.id);
 }
 
-// rows of the list of keys said as one (the arrows), by the commands' IDs they stand for
+// rows of the list of keys said as one (the arrows, the likely types), by the commands' IDs:
+// the keys shown (those of them that are theirs here), the others they cover (Shift with them)
 const AS_ONE = [
   { ids: /^item\.move-\w+$/, title: "Move the item (Shift: 1 m)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
-  { ids: /^item\.move-\w+-far$/, title: null },
   { ids: /^view\.pan-\w+$/, title: "Move the plan (Shift: further)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
   { ids: /^review\.type-\d$/, title: "Set one of the likely types", keys: ["1", "9"], range: true },
 ];
+const VIEW_NAMES = { "2d": "2D", "3d": "3D", walk: "Walk" };
+
+/** What the mouse (or a finger) does in a view, with the tool in use: [what, what it does]. */
+function gestures() {
+  const mode = view3d.mode, t = state.tool;
+  if (t === "place") {
+    return [[mode === "2d" ? "Click in a room" : "Click on the floor", "Place the item there (it lines up)"], ["Alt-click", "Place it as it is, anywhere"]];
+  }
+  if (t === "paint") {
+    return mode === "2d" ? [["Click a room", "Paint its floor"], ["Shift-click", "Paint its walls"], ["Alt-click", "Take up its finishes"]]
+      : [["Click a floor or a wall", "Paint it (a wall: the side you see)"], ["Alt-click", "Take up its finish"]];
+  }
+  if (mode === "walk") {
+    return [["Drag", "Look round (either button, or a finger)"], ["Click", "Choose, or open and close a door"], ["Double-click", "Go there"],
+      ["Scroll", "A step on or back"], ["Drag the item chosen", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]];
+  }
+  if (mode === "3d") {
+    return [["Click", "Choose a room or an item"], ["Drag", "Turn the view"], ["Shift-drag or right-drag", "Move the view"], ["Scroll", "Zoom"],
+      ["Drag an item", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]];
+  }
+  return [["Click", "Choose a room, an item or a door"], ["Shift-click", "Add a room to those chosen"], ["Shift-drag", "Choose the rooms in a band"],
+    ["Drag", "Move the plan, or carry an item (Alt: freely)"], ["Scroll", "Zoom"], ["Right-click", "What can be done here"]];
+}
+
+/** The situation the list of keys is for: the view, and what is chosen and in use. */
+export function situation() {
+  const parts = [VIEW_NAMES[view3d.mode]];
+  if (reviewing()) parts.push("reviewing");
+  if (state.asset) parts.push("an item chosen");
+  else if (sel.kind === "space") parts.push(chosenSpaces().length > 1 ? "rooms chosen" : "a room chosen");
+  else if (sel.kind) parts.push("a door or line chosen");
+  const t = activeTool();
+  if (state.tool && t) parts.push(t.label);
+  return parts.join(" · ");
+}
+
+/** The keys that work now, grouped as the list shows them: [[group, [{ title, keys, ids, range }]]].
+ * Every key here does what it says, in the view and with what is chosen and in use (the
+ * map's first scope that has it; a command that can run and does here; a key reserved for
+ * the walker or the plan). */
+export function keysNow() {
+  const groups = new Map();
+  const add = (g, row) => {
+    if (!groups.has(g)) groups.set(g, []);
+    const rows = groups.get(g), same = rows.find((r) => r.title === row.title);
+    if (!same) return rows.push({ also: [], ...row });
+    for (const k of row.keys) if (!same.keys.includes(k)) same.keys.push(k);
+    for (const k of row.also ?? []) if (!same.also.includes(k) && !same.keys.includes(k)) same.also.push(k);
+    for (const id of row.ids) if (!same.ids.includes(id)) same.ids.push(id);
+  };
+  const toolNow = activeTool(), map = effectiveMap();
+  for (const b of map.values()) {
+    if (b.id === null) { // reserved: another's handler (the walker's Shift-keys: Shift held, to run)
+      const run = b.owner === "walker" && b.chord.startsWith("shift+");
+      add(b.scope === "walk" ? "Walking" : "On the plan", run
+        ? { title: "Run (held while walking)", keys: ["shift"], also: [b.chord], ids: [`${b.owner}:${b.chord}`], held: true }
+        : { title: b.title || "Another's", keys: [b.chord], ids: [`${b.owner}:${b.chord}`] });
+      continue;
+    }
+    const c = getCommand(b.id);
+    if (!c || !worksNow(c)) continue;
+    const one = AS_ONE.find((a) => a.ids.test(c.id.replace(/-far$/, "")));
+    const g = b.scope === "review" ? "Review mode" : b.scope === "item" ? "The item chosen" : b.scope === "walk" ? "Walking"
+      : b.scope.startsWith("tool:") ? `While using ${toolNow?.label ?? "the tool"}` : c.group;
+    if (!one) {
+      add(g, { title: c.title, keys: [b.chord], ids: [c.id] });
+      continue;
+    }
+    // (said as one: the keys of theirs shown that are theirs here; the others covered)
+    const shown = one.keys.filter((k) => one.range || one.ids.test((map.get(k)?.id ?? "").replace(/-far$/, "")));
+    add(g, { title: one.title, keys: shown, also: shown.includes(b.chord) ? [] : [b.chord], ids: [c.id], range: one.range });
+  }
+  return groups;
+}
 
 function keysHelp() {
-  const groups = new Map();
-  for (const c of allCommands()) {
-    const keys = allBindings().filter((b) => b.id === c.id);
-    if (!keys.length) continue;
-    const g = c.scope === "review" ? "Review mode" : c.scope === "item" ? "An item chosen" : c.group;
-    if (!groups.has(g)) groups.set(g, []);
-    const one = AS_ONE.find((a) => a.ids.test(c.id));
-    if (one && !one.title) continue;
-    const title = one ? one.title : c.title;
-    if (groups.get(g).some((r) => r.title === title)) continue;
-    groups.get(g).push({ title, keys: one ? one.keys : keys.map((k) => k.chord), range: one?.range });
-  }
-  groups.set("Walking", [{ title: "Move, run", keys: ["w", "a", "s", "d", "shift"] }, { title: "Up or down at stairs and lifts", keys: ["pageup", "pagedown"] },
-    { title: "Free the mouse", keys: ["escape"] }]);
-  groups.set("On the plan", [{ title: "Move the plan (any tool)", keys: ["space"] }, { title: "Add a room to those chosen", keys: ["shift"] },
-    { title: "Place or drag freely", keys: ["alt"] }]);
-  const order = ["Tools", "View", "Edit", "Review", "Review mode", "An item chosen", "While drawing", "Floors", "Panels", "Share", "Help", "On the plan", "Walking"];
+  const groups = keysNow();
+  const order = ["The item chosen", "Walking", "Review mode", ...[...groups.keys()].filter((g) => g.startsWith("While using")), "Tools", "View",
+    "Edit", "Review", "Floors", "Panels", "Share", "On the plan", "Help"];
+  const rank = (g) => (order.indexOf(g) + 99) % 99;
+  const row = (r) => [el("dt", {}, r.title),
+    el("dd", { "data-keys": r.keys.join(" "), "data-also": r.also.join(" "), "data-ids": r.ids.join(" "), "data-held": r.held ? "true" : null },
+      ...r.keys.flatMap((k, i) => [i ? el("span", { class: "or" }, r.range ? "–" : r.keys.length > 2 ? "" : "or") : null, ...kbd(k)]))];
+  const mouse = gestures();
   const box = el("dialog", { class: "dialog keys-help", "aria-label": "Keyboard shortcuts" },
-    el("div", { class: "kh-head" }, el("h2", {}, "Keyboard shortcuts"), el("button", { type: "button", class: "btn-ghost btn-icon", "aria-label": "Close", onclick: () => box.close() }, icon("x", { size: 16 }))),
-    el("div", { class: "kh-body" }, ...[...groups].sort((a, b) => (order.indexOf(a[0]) + 99) % 99 - (order.indexOf(b[0]) + 99) % 99).map(([g, rows]) =>
-      el("section", {}, el("h3", {}, g), el("dl", {}, ...rows.flatMap((r) => [el("dt", {}, r.title),
-        el("dd", {}, ...r.keys.flatMap((k, i) => [i ? el("span", { class: "or" }, r.range ? "–" : r.keys.length > 2 ? "" : "or") : null, ...kbd(k)]))]))))),
-    el("p", { class: "kh-foot muted" }, "Keys typed in a field are the field's. In review mode 1–9 set a type; with an item chosen R and the arrows are the item's."));
+    el("div", { class: "kh-head" }, el("div", {}, el("h2", {}, "Keyboard shortcuts"), el("p", { class: "kh-now muted" }, situation())),
+      el("button", { type: "button", class: "btn-ghost btn-icon", "aria-label": "Close", onclick: () => box.close() }, icon("x", { size: 16 }))),
+    el("div", { class: "kh-body" },
+      ...[...groups].sort((a, b) => rank(a[0]) - rank(b[0])).map(([g, rows]) =>
+        el("section", { "data-group": g }, el("h3", {}, g), el("dl", {}, ...rows.flatMap(row)))),
+      el("section", { class: "kh-mouse", "data-group": "Mouse" }, el("h3", {}, view3d.mode === "walk" ? "The mouse, or a finger" : "The mouse"),
+        el("dl", {}, ...mouse.flatMap(([what, does]) => [el("dt", {}, does), el("dd", {}, el("span", { class: "gesture" }, what))])))),
+    el("p", { class: "kh-foot muted" }, "These are the keys for what is shown now: choose an item or a tool, or go to another view, for theirs. "
+      + "Keys typed in a field are the field's."));
   box.addEventListener("close", () => box.remove());
   box.addEventListener("click", (e) => { if (e.target === box) box.close(); });
   document.body.append(box);
   box.showModal();
+}
+
+/** What each key does now, for the tests and the console: [{ chord, scope, id, owner, works }]. */
+export function keyMap() {
+  return [...effectiveMap().values()].map((b) => ({ ...b, works: b.id === null ? true : worksNow(b.id), idle: b.id ? getCommand(b.id)?.idle ?? null : null,
+    scopes: scopesApplying() }));
 }
 
 export function setupActions() {
@@ -144,19 +220,21 @@ export function setupActions() {
 
   // ---- views ---------------------------------------------------------------------------------
   const converted = () => Boolean(state.floor?.converted_at);
-  command({ id: "view.2d", title: "Show the plan (2D)", group: "View", icon: "map", keys: ["2"], run: () => setView("2d") });
+  command({ id: "view.2d", title: "Show the plan (2D)", group: "View", icon: "map", keys: ["2"], works: () => view3d.mode !== "2d", idle: "shown already",
+    run: () => setView("2d") });
   command({ id: "view.here-2d", title: "This place in 2D", group: "View", icon: "map", keys: ["2"], scope: "3d", palette: false,
     run: () => drawHere(pointerPlace()) });
   command({ id: "view.3d", title: "Show in 3D", group: "View", icon: "box", keys: ["3"], when: converted,
-    why: () => "This floor is not converted yet", run: () => setView("3d") });
+    why: () => "This floor is not converted yet", works: () => view3d.mode !== "3d", idle: "shown already", run: () => setView("3d") });
   command({ id: "view.walk", title: "Walk through it", group: "View", icon: "footprints", keys: ["4"], when: converted,
-    why: () => "This floor is not converted yet", run: () => setView("walk") });
+    why: () => "This floor is not converted yet", works: () => view3d.mode !== "walk", idle: "shown already", run: () => setView("walk") });
   command({ id: "view.fit", title: "Fit the floor in view", group: "View", icon: "maximize", keys: ["f"], when: in2d, why: NOT_2D, run: fit });
   command({ id: "view.zoom-in", title: "Zoom in", group: "View", icon: "plus", keys: ["="], when: in2d, why: NOT_2D, repeat: true, run: () => zoomBy(1.25) });
   command({ id: "view.zoom-out", title: "Zoom out", group: "View", icon: "minus", keys: ["-"], when: in2d, why: NOT_2D, repeat: true, run: () => zoomBy(0.8) });
   for (const [key, dx, dy] of [["arrowleft", 1, 0], ["arrowright", -1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
     command({ id: `view.pan-${key.slice(5)}`, title: `Move the plan ${key.slice(5)}`, group: "View", keys: [key, `shift+${key}`], palette: false,
-      repeat: true, when: in2d, run: (e) => panBy(dx * (e?.shiftKey ? 240 : 60), dy * (e?.shiftKey ? 240 : 60)) });
+      repeat: true, when: in2d, why: () => (state.floor ? "The arrows move the plan in 2D: in 3D, drag to turn and Shift-drag to move" : NOT_2D()),
+      run: (e) => panBy(dx * (e?.shiftKey ? 240 : 60), dy * (e?.shiftKey ? 240 : 60)) });
   }
   command({ id: "view.labels", title: "Studio's labels, or the drawing's texts", group: "View", icon: "type-outline", keys: ["t"],
     words: "names numbers text labels print drawing compare",
@@ -248,10 +326,12 @@ export function setupActions() {
     when: () => Boolean(sel.kind) && editable(), why: () => (sel.kind ? whyNotEditable() : "Choose something first"), run: deleteChosen });
   command({ id: "edit.select-all", title: "Choose every room", group: "Edit", icon: "square-dashed", keys: ["mod+a"], when: () => Boolean(state.floor),
     run: () => selectSpaces(units().filter(visible).filter((s) => !s.ignored).map((s) => s.id)) });
-  // the right-click menu from the keys: at the room chosen (its label), else the middle of the view
+  // the right-click menu from the keys: on the plan at the room chosen (its label), else the
+  // middle of the view; in 3D and walking, at the pointer (or the middle)
   command({ id: "edit.menu", title: "What can be done here (the right-click menu)", group: "Edit", keys: ["shift+f10", "contextmenu"],
-    palette: false, when: () => in2d() && editable(), why: () => (in2d() ? whyNotEditable() : NOT_2D()),
+    palette: false, when: () => Boolean(state.floor) && (view3d.shown || editable()), why: () => (state.floor ? whyNotEditable() : "Open a floor first"),
     run: () => {
+      if (view3d.shown) return menuHere();
       const { w, h, left, top } = viewport();
       const s = state.selected && state.byId.get(state.selected);
       const v = state.view;
@@ -268,9 +348,13 @@ export function setupActions() {
     run: () => floorStep(1) });
   command({ id: "floor.down", title: "The floor below", group: "Floors", icon: "arrow-down", keys: ["pagedown"], when: () => Boolean(state.floor),
     run: () => floorStep(-1) });
-  // walking, at stairs or a lift: E (unless a door took it: the world's, first) and Q, or PgUp and PgDn
-  command({ id: "walk.up", title: "Up the stairs", group: "Floors", keys: ["pageup", "e"], scope: "walk", palette: false, run: () => walkFloor(1) });
-  command({ id: "walk.down", title: "Down the stairs", group: "Floors", keys: ["pagedown", "q"], scope: "walk", palette: false, run: () => walkFloor(-1) });
+  // walking: E the door under the pointer, else the nearest ahead (the world's, first), else
+  // up at stairs or a lift; Q, PgUp and PgDn up and down there
+  command({ id: "walk.door", title: "Open or close the door at the pointer, or ahead (at stairs: up)", group: "Walking", keys: ["e"], scope: "walk",
+    palette: false, run: walkDoor });
+  command({ id: "walk.up", title: "Up the stairs or the lift", group: "Walking", keys: ["pageup"], scope: "walk", palette: false, run: () => walkFloor(1) });
+  command({ id: "walk.down", title: "Down the stairs or the lift", group: "Walking", keys: ["pagedown", "q"], scope: "walk", palette: false,
+    run: () => walkFloor(-1) });
   command({ id: "floor.reconvert", title: "Re-read the floor's drawing", group: "Floors", icon: "refresh-cw", words: "convert read again revised",
     when: () => readable() && editable() && !state.converting, why: () => (readable() ? whyNotEditable() || "Being read" : "This floor has no drawing"),
     run: reconvert });
@@ -280,11 +364,13 @@ export function setupActions() {
   command({ id: "help.keys", title: "Keyboard shortcuts", group: "Help", icon: "keyboard", keys: ["?"], run: keysHelp });
   on("keys-help", keysHelp);
 
-  // walking: the walker's keys are its own (W A S D, the arrows, Shift): nothing of Review
-  // hears them there. E at a door is the world's: it takes it first (a key it took is not
-  // Review's: keys.js), else E goes up stairs as before.
-  reserve(["w", "a", "s", "d", "shift+w", "shift+a", "shift+s", "shift+d", "arrowup", "arrowdown", "arrowleft", "arrowright",
-    "shift+arrowup", "shift+arrowdown", "shift+arrowleft", "shift+arrowright"], "walk");
+  // walking: the walker's keys are its own (W A S D, the arrows, Shift to run): nothing of
+  // Review hears them there. E at a door is the world's: it takes it first (a key it took is
+  // not Review's: keys.js), else walk.door. On the plan, Space held moves it (pointer.js).
+  reserve(["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"], "walk", "walker", "Walk");
+  reserve(["shift+w", "shift+a", "shift+s", "shift+d", "shift+arrowup", "shift+arrowdown", "shift+arrowleft", "shift+arrowright"], "walk",
+    "walker", "Run");
+  reserve(["space"], "2d", "plan", "Move the plan, held (with any tool)");
   command({ id: "view.doors-auto", title: "Doors open as you walk into them", group: "View", icon: "door-open", words: "walk doors open close manual",
     run: () => setDoorsMode(doorsMode() === "auto" ? "manual" : "auto") });
 

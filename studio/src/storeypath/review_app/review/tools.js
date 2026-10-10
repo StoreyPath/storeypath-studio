@@ -24,7 +24,7 @@ import { editable, whyNotEditable } from "./access.js";
 import { emit, on } from "./bus.js";
 import { command } from "./commands.js";
 import { $, el, icon } from "./dom.js";
-import { bind, keyText } from "./keys.js";
+import { bind, keyNow, keyText } from "./keys.js";
 import { readable, state, view3d } from "./state.js";
 
 const tools = new Map();
@@ -45,6 +45,7 @@ export function tool(spec) {
     keys: t.key ? [t.key] : [], words: t.words || "",
     when: () => !blocked(t, { anyView: true }),
     why: () => blocked(t, { anyView: true }),
+    works: () => Boolean(t.action) || t.views.includes(view3d.mode),
     run: (e) => useTool(t.id, e),
   });
   return t;
@@ -69,15 +70,20 @@ export function blocked(t, { anyView = false } = {}) {
   return "";
 }
 
-/** A tool chosen from its button, the palette or its key: in a view it does not work in,
- * its key shows the place under the pointer on the plan with it (3D); the palette and its
- * button take the plan first. */
+/** A tool chosen from its button, the palette or its key. In a view it does not work in,
+ * its key changes nothing (a letter never switches the view: only 2, 3 and 4 do) and the
+ * status bar says why, and that 2 shows the place under the pointer on the plan; the
+ * palette (asked for by name) takes the plan first, with the tool. */
 function useTool(id, e) {
   const t = tools.get(id);
   if (t.action) return t.action(e);
   if (!t.views.includes(view3d.mode)) {
-    if (t.views.includes("2d") && view3d.mode === "3d" && e instanceof KeyboardEvent) return emit("draw-here", id);
-    if (t.views.includes("2d") && !(e instanceof KeyboardEvent)) return emit("draw-here", { tool: id, centre: true });
+    if (e instanceof KeyboardEvent) {
+      const why = t.wrongView?.(view3d.mode) || `${t.label} works in ${t.views.map((v) => VIEW_NAMES[v]).join(" and ")}`;
+      emit("tool-refused", t.views.includes("2d") ? `${why} · press 2 to see this place on the plan` : why);
+      return true;
+    }
+    if (t.views.includes("2d")) return emit("draw-here", { tool: id, centre: true });
     return false;
   }
   setTool(id);
@@ -162,9 +168,13 @@ export function markRail() {
   for (const b of document.querySelectorAll("#rail [data-tool]")) {
     const t = tools.get(b.dataset.tool);
     const why = blocked(t);
-    const jump = why && !t.views.includes(view3d.mode) && t.views.includes("2d") && view3d.mode === "3d" && !blocked(t, { anyView: true });
+    const elsewhere = why && !t.views.includes(view3d.mode) && t.views.includes("2d") && !blocked(t, { anyView: true });
     b.setAttribute("aria-disabled", why ? "true" : "false");
-    b.dataset.why = jump && t.key ? `${why} · in 3D, ${keyText(t.key)} over a place draws it there on the plan` : why;
+    b.dataset.why = elsewhere ? `${why} · 2 shows this place on the plan` : why;
+    // its key, when the key chooses it here (walking, W A S D are the walker's)
+    const key = t.key && !why && keyNow(`tool.${t.id}`) ? t.key : "";
+    b.dataset.key = key;
+    b.querySelector(".rail-key")?.classList.toggle("off", !key);
     if (!t.action) b.setAttribute("aria-pressed", String(activeId() === t.id));
   }
 }
@@ -194,7 +204,7 @@ export function setupTools() {
     markRail();
     renderOptions();
   });
-  for (const e of ["view", "access", "floor"]) on(e, markRail);
+  for (const e of ["view", "access", "floor", "selection", "review"]) on(e, markRail);
   on("tool-options", renderOptions);
   // a tool that no longer works where the person is (another view, view only): set down
   on("view", () => {

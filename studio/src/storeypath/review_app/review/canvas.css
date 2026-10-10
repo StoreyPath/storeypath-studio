@@ -139,19 +139,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #map.in3d #svg, #map.in3d #svg-print, #map.in3d #labels { display: none !important; }
 #map.placing #world3d, #map.painting #world3d canvas { cursor: crosshair; }
 
-/* walking: the cross aimed with, the room you are in, and how to start */
-#crosshair {
-  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 4;
-  pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .9);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .45);
-}
-#crosshair::after {
-  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
-  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
-}
-#map.placing #crosshair { border-color: #0ca678; }
-/* a door aimed at (a world that opens doors): the cross says so */
-#world3d.sp3d-door-aim + #crosshair { border-color: #ffb347; width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+/* walking: the room you are in, and what can be done now */
 .walk-hud {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px; max-width: min(400px, calc(100% - 24px));
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg); background: rgba(18, 19, 22, .82); color: #f1f2f4;
@@ -160,15 +148,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #walk-room { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
 .walk-hud .meta { color: #b9bcc4; font-size: var(--fs-sm); }
 #walk-keys:empty, #walk-meta:empty { display: none; }
-.walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
-.walk-enter .card {
-  max-width: min(440px, calc(100% - 32px)); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-xl);
-  background: rgba(18, 19, 22, .88); color: #f1f2f4; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  box-shadow: var(--shadow-lg); font-size: var(--fs-md);
-}
-.walk-enter .card strong { font-size: var(--fs-lg); }
-.walk-enter .keys { list-style: none; margin: var(--sp-3) 0 0; padding: 0; color: #c3c6cd; display: grid; gap: 6px; }
-.walk-enter kbd, .walk-hud kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
+.walk-hud kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
 
 /* ---- over the canvas, at its top: someone else editing, review mode, the tool's options --- */
 .canvas-top {

@@ -73,6 +73,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   color: var(--text-faint); pointer-events: none;
 }
 .rail button[aria-pressed="true"] .rail-key { color: var(--accent-text); }
+.rail button .rail-key.off { visibility: hidden; } /* its key does not choose it here (another view's, the walker's) */
 
 /* ---- panels ----------------------------------------------------------------------------- */
 .panel {

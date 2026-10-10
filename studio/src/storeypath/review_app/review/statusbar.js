@@ -11,19 +11,21 @@ import { reviewing } from "./reviewmode.js";
 import { chosenSpaces, sel } from "./selection.js";
 import { state, view3d } from "./state.js";
 import { activeTool, blocked } from "./tools.js";
-import { doors } from "./view3d.js";
 import { doneEditing, presence, takeOver } from "../together.js";
 
 const VIEW_HINTS = {
   "2d": "Click to choose · Shift-click or ⌘-click to add · Shift-drag a band · drag or Space-drag to move the plan · right-click for more",
-  "3d": "Click a room or an item · drag to turn · Shift-drag to move · scroll to zoom · right-click: draw here in 2D",
-  walk: "Click the view to look · W A S D to move · Esc frees the mouse · right-click: this place in 2D",
+  "3d": "Click a room or an item · drag to turn · Shift-drag to move · scroll to zoom · right-click for more",
+  walk: "Drag to look · W A S D or the arrows to move · double-click the floor to go there · click to choose · right-click for more",
 };
 
-/** Walking: what the person can do there now (a door aimed at, in a world that opens them). */
+/** Walking: what the person can do there now: on a door under the pointer, or with one
+ * ahead (in a world that opens doors), what E and a click do to it. */
 function walkHint() {
-  if (view3d.doorAim) return `${view3d.doorAim.open ? "Close" : "Open"} the door: E or click`;
-  return VIEW_HINTS.walk + (doors() ? " · E or click: open / close a door" : "");
+  const d = view3d.doorAim;
+  if (d?.under) return `${d.open ? "Close" : "Open"} the door: click it or press E`;
+  if (d) return `E ${d.open ? "closes" : "opens"} the door ahead · ${VIEW_HINTS.walk}`;
+  return VIEW_HINTS.walk;
 }
 
 let refused = "";
