@@ -83,7 +83,7 @@ export function accountMenu(me) {
     me.role === "admin" ? node("a", { role: "menuitem", href: "/#/helpers",
       title: "The GPU helpers that serve the vision model: their addresses, keys, and how each is" }, "GPU helpers") : null,
     can("backup") ? node("a", { role: "menuitem", href: "/api/backup", download: "",
-      title: "Everything in Studio's data folder as one .tar.gz: projects, item types, users (with their passwords' hashes), sharing and the audit log; keep it safe" }, "Download a backup") : null,
+      title: "Studio's whole database as one .sql.gz: projects, item types, users (with their passwords' hashes), sharing and the audit log; keep it safe" }, "Download a backup") : null,
     node("button", { type: "button", role: "menuitem", onclick: logout }, "Log out"),
   ];
   const list = node("div", { class: "account-menu", role: "menu", hidden: true }, items);
