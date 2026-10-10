@@ -22,7 +22,7 @@ const { register } = await import("node:module");
 register("data:text/javascript," + encodeURIComponent(`export async function resolve(s, c, next) {
   return s === "/viewer/src/ids.js" ? { url: ${JSON.stringify(process.argv[2])}, shortCircuit: true } : next(s, c);
 }`));
-const { choicesOf, search, duration } = await import(process.argv[1]);
+const { choicesOf, search, duration, turnsOf, stepLegs, stepSeconds } = await import(process.argv[1]);
 const network = JSON.parse(await new Promise((done) => { let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => done(s)); }));
 const choices = choicesOf(network);
 console.log(JSON.stringify({
@@ -35,6 +35,18 @@ console.log(JSON.stringify({
   nothing: search(choices, "no such room"),
   all: search(choices, "  ").length === choices.length,
   times: [duration(42.4), duration(60), duration(89.6), duration(184)],
+  turns: {
+    left: turnsOf([[0, 0], [10, 0], [10, 10]]),
+    right: turnsOf([[0, 0], [0, 10], [10, 10]]),
+    jog: turnsOf([[0, 0], [5, 0], [5, 0.3], [10, 0.3]]),
+    near: turnsOf([[0, 0], [1, 0], [1, 10]]),
+    bend: turnsOf([[0, 0], [10, 0], [20, 8]]),
+    two: turnsOf([[0, 0], [10, 0], [10, 1], [20, 1]], { merge: 2.5 }),
+  },
+  legs: stepLegs({ legs: [{}, {}, {}], steps: [{ kind: "start" }, { kind: "walk" }, { kind: "take" }, { kind: "walk" }, { kind: "take" },
+    { kind: "walk" }, { kind: "arrive" }] }),
+  seconds: stepSeconds({ seconds: 100, legs: [{}, {}], steps: [{ kind: "start" }, { kind: "walk", metres: 26 }, { kind: "take" },
+    { kind: "walk", metres: 13 }, { kind: "arrive" }] }, 1.3),
 }));
 """
 
@@ -72,3 +84,17 @@ def test_rooms_are_found_by_name_number_and_floor(page):
 
 def test_times_in_words(page):
     assert page[1]["times"] == ["42 s", "1 min", "1 min 30 s", "3 min"]
+
+
+def test_turns_along_a_walk_in_words(page):
+    turns = page[1]["turns"]
+    assert turns["left"] == [{"at": 10, "side": "left", "slight": False}]  # y grows up: east, then north
+    assert turns["right"] == [{"at": 10, "side": "right", "slight": False}]
+    assert turns["jog"] == [] and turns["near"] == []  # a jog of 30 cm; a turn a metre from the start
+    assert turns["bend"] == [{"at": 10, "side": "left", "slight": True}]
+    assert turns["two"] == []  # a step aside and on: two turns a metre apart that undo each other
+
+
+def test_each_step_on_its_leg_with_its_time(page):
+    assert page[1]["legs"] == [0, 0, 0, 1, 1, 2, 2]
+    assert page[1]["seconds"] == [0, 20, 70, 10, 0]  # walks at the network's pace; the ride what is left
