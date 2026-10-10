@@ -49,39 +49,71 @@
 
   <div class="nav-main">
   <aside id="panel">
-    <header>
+    <header class="nav-head">
       <h1><svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#route"/></svg> Find the way</h1>
       <div id="project-meta" class="meta"></div>
     </header>
 
-    <section>
-      <label class="field">Building
-        <select id="building"></select>
-      </label>
+    <label class="field nav-building" id="building-field">Building
+      <select id="building"></select>
+    </label>
+
+    <section class="trip" aria-label="From where to where">
+      <div class="trip-rail" aria-hidden="true">
+        <span class="trip-dot trip-from"></span>
+        <span class="trip-dots"></span>
+        <svg class="icon trip-to" width="16" height="16" viewBox="0 0 24 24"><use href="/icons/lucide.svg#map-pin"/></svg>
+      </div>
+      <div class="trip-fields">
+        <div class="picker" id="from">
+          <label class="sr-only" for="from-input">From: a kiosk, an entrance or any room</label>
+          <input id="from-input" type="search" autocomplete="off" placeholder="From: a kiosk, an entrance or a room"
+                 role="combobox" aria-expanded="false" aria-controls="from-list" aria-autocomplete="list">
+          <ul id="from-list" class="choices" role="listbox" hidden></ul>
+        </div>
+        <div class="picker" id="to">
+          <label class="sr-only" for="to-input">To: a room, by name or number</label>
+          <input id="to-input" type="search" autocomplete="off" placeholder="To: a room, by name or number"
+                 role="combobox" aria-expanded="false" aria-controls="to-list" aria-autocomplete="list">
+          <ul id="to-list" class="choices" role="listbox" hidden></ul>
+        </div>
+      </div>
+      <button id="swap" type="button" class="btn-ghost btn-icon swap" data-tip="Swap from and to" aria-label="Swap from and to">
+        <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#arrow-up-down"/></svg>
+      </button>
     </section>
 
-    <section class="ends" aria-label="From where to where">
-      <div class="picker" id="from">
-        <label class="field" for="from-input">From <span class="hint">a kiosk, an entrance or any room</span></label>
-        <input id="from-input" type="search" autocomplete="off" placeholder="Search a kiosk, entrance or room"
-               role="combobox" aria-expanded="false" aria-controls="from-list" aria-autocomplete="list">
-        <ul id="from-list" class="choices" role="listbox" hidden></ul>
-      </div>
-      <button id="swap" type="button" class="btn-ghost btn-icon btn-sm swap" data-tip="Swap from and to" aria-label="Swap from and to">
-        <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#arrow-up-down"/></svg>
-      </button>
-      <div class="picker" id="to">
-        <label class="field" for="to-input">To <span class="hint">a room, by name or number</span></label>
-        <input id="to-input" type="search" autocomplete="off" placeholder="Search a room by name or number"
-               role="combobox" aria-expanded="false" aria-controls="to-list" aria-autocomplete="list">
-        <ul id="to-list" class="choices" role="listbox" hidden></ul>
-      </div>
-      <label class="check"><input type="checkbox" id="accessible"> Avoid stairs <span class="hint">lifts and ramps only</span></label>
-    </section>
+    <label class="switch step-free" data-tip="Lifts and ramps only: no stairs or escalators">
+      <span class="step-free-text">
+        <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#accessibility"/></svg>
+        Step-free <span class="hint">lifts and ramps, no stairs</span>
+      </span>
+      <input type="checkbox" id="accessible">
+    </label>
 
     <section id="result" hidden aria-live="polite">
-      <div id="summary"></div>
-      <ol id="steps"></ol>
+      <div class="summary">
+        <div class="sum-top">
+          <div class="sum-figures">
+            <span class="sum-metres" id="sum-metres"></span>
+            <span class="sum-time" id="sum-time"></span>
+          </div>
+          <div class="sum-actions">
+            <button id="restart" type="button" class="btn-ghost btn-icon" aria-label="Play from the start" data-tip="From the start" hidden>
+              <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#rotate-ccw"/></svg>
+            </button>
+            <button id="play" type="button" class="btn-primary play" aria-pressed="false" data-tip="Walk the way: a dot along it, floor by floor">
+              <svg class="icon icon-play" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#play"/></svg>
+              <svg class="icon icon-pause" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#pause"/></svg>
+              <span class="play-label">Play</span>
+            </button>
+          </div>
+        </div>
+        <div class="sum-sub" id="sum-sub"></div>
+        <div class="progress" id="progress" aria-hidden="true"><span></span></div>
+      </div>
+      <ol id="steps" aria-label="Directions: up and down arrows go through them"></ol>
+      <p class="keys-hint"><kbd>↑</kbd><kbd>↓</kbd> go through the steps</p>
     </section>
     <p id="message" class="meta" role="status"></p>
   </aside>
@@ -95,7 +127,9 @@
       </div>
       <nav id="floors" aria-label="Floors"></nav>
       <span class="grow"></span>
-      <button id="fit" type="button" class="only-plan" title="Show the whole floor; press again for the way on it alone">Fit</button>
+      <button id="fit" type="button" class="btn-ghost only-plan" title="The way on this floor; press again for the whole floor">
+        <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#maximize"/></svg> Fit
+      </button>
       <span class="look only-3d" title="How the 3D view is drawn: Real, floors finished by what each room is, plaster walls and soft shadows; Model, white, like an architect's model, its edges drawn">Look
         <span class="segmented" id="look" role="group" aria-label="Look">
           <button type="button" data-style="real">Real</button>
@@ -109,7 +143,9 @@
           <option value="low">Low</option>
         </select>
       </label>
-      <button id="fly" type="button" class="only-3d" title="Move the 3D view along the way" disabled>Fly along</button>
+      <button id="fly" type="button" class="only-3d" title="Take the 3D view along the way" disabled>
+        <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#navigation-2"/></svg> Fly along
+      </button>
     </div>
     <div id="panes" class="plan">
       <div id="plan-pane" class="pane">
