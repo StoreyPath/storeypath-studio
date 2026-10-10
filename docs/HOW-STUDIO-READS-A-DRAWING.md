@@ -411,7 +411,7 @@ A person corrects the type, name or number (or saves it as it is, which takes it
 off the list), deletes what is not a room, draws the walls, dividers, doors, windows,
 openings and spaces the drawing leaves out, resizes openings, and places furniture
 and equipment. Once corrected or accepted, only a missing type keeps a space on the
-list. See [What you can do in Studio](../README.md#what-you-can-do-in-studio).
+list. See [What you can do in Studio](USING-STUDIO.md#what-you-can-do-in-studio).
 
 ## 10. Export (`export.py`)
 

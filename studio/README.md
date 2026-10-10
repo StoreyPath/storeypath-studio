@@ -1,9 +1,12 @@
 # StoreyPath Studio
 
-The authoring side of [StoreyPath](https://github.com/StoreyPath/storeypath-studio):
-converts DWG/DXF floor plans into StoreyPath packages, lets you review, correct and
-complete the result (walls, doors, furniture and equipment), and exports packages
-that keep the same object IDs every time.
+The app of [StoreyPath](../README.md): it reads the DWG and DXF floor plans an architect
+hands over, as a person reads them, and turns them into living indoor maps. A team
+reviews, corrects and completes them together (walls, doors, stairs and lifts,
+furniture and equipment with asset tags, floor and wall finishes), in 2D, in 3D and
+walking through them, and exports packages that keep the same object IDs every time.
+This page is its reference: every command, setting and rule. The
+[README](../README.md) shows it in pictures; [docs/](../docs) has the guides.
 
 - [Install](#install) · [In the browser](#in-the-browser) ·
   [Users, sharing and backups](#users-sharing-and-backups) ·
@@ -27,12 +30,20 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). From this folder:
 
 ```sh
 uv sync
-uv run storeypath demo demo/                  # sample drawings → workspace → packages (one per building)
-uv run storeypath view demo/demo-HQ.storeypath   # open one in the viewer
+uv run storeypath demo demo/                     # the demo campus: drawings → workspace → packages (one per building)
+uv run storeypath review demo/demo.spproj        # check and complete it in the browser
+uv run storeypath demo --studio                  # or: the demo campus in Studio's database, as a project
 ```
 
+The demo is a made-up campus, the same every time it is built
+([samples.py](src/storeypath/samples.py), `build_showcase`): a main building of three
+floors and a pavilion of two, read from their drawings, furnished, finished, and a few
+rooms left to review; `demo/drawings/main-building-sheet.dxf` holds the main building's
+three plans on one sheet, to drop into a project. The tests' own campus is
+`samples.build_demo`.
+
 DWG drawings and the language model need two more programs, `dwg2dxf` and
-`llama-server`, and the model itself: [Without Docker](../README.md#without-docker)
+`llama-server`, and the model itself: [Without Docker](../docs/INSTALL.md#without-docker)
 has the steps for macOS and Linux. `uv sync --extra vision` adds what looking at the
 plans with a vision model needs.
 
@@ -46,7 +57,7 @@ runs StoreyPath Studio as a web application (this is what the container runs):
 create projects, drop in drawings, choose which plans are which floors, then
 align, convert, review, place on the map and export — with progress for every
 step. Everything is computed on this machine (and on the vision model's, when one
-is set elsewhere). [What you can do in Studio](../README.md#what-you-can-do-in-studio)
+is set elsewhere). [What you can do in Studio](../docs/USING-STUDIO.md#what-you-can-do-in-studio)
 goes through it.
 
 It is served over **HTTPS**, at `https://127.0.0.1:8080`, with a certificate Studio
@@ -306,7 +317,7 @@ what they may see.
 | `sample inspect SAMPLE` | what is in an area sample: the note, counts, what Studio decided there and by whom, the corrections as a diff |
 | `sample replay SAMPLE` | read a sample's drawing with this Studio and compare with Studio then and with the corrections, with a score: `-o DIR` (replay.json, replay.png, side-by-side.png), `--no-model`, `--no-vision`, `--fresh` (without the answers the sample keeps), `--no-edits`, `--units`, `--json` |
 | `view PACKAGE` | open a package in the viewer's example app |
-| `demo DIR` | sample drawings, a workspace and its packages, to try things out |
+| `demo [DIR]` | the demo campus (made up, the same every time): its drawings, a workspace and a package of each building in DIR; `--studio` brings it into Studio's database as a project (DIR then optional) |
 | `profiles` | list the built-in layer-mapping profiles |
 | `schema DIR` | write the JSON Schemas of the package files |
 
@@ -394,8 +405,13 @@ dividers and spaces drawn on the plan come with the floor read again, and that f
 alone is built again (another person's re-read of another floor when that floor is
 next shown). A floor of about a thousand rooms and a thousand desks orbits and walks
 at 60 frames a second on a laptop's graphics (labels only where there is room for
-them). *3D in its own window* opens the building on a page of its own, to show it
-full screen.
+them). *3D window* (the Share menu, the floor's inspector) opens the building on
+Studio's 3D page (`world.html?pkg=<one of Studio's packages>[&building=…][&floor=…]`,
+also *Walk in 3D* on a project's page), read only: the whole window, the dollhouse or a
+walk, X-ray, Cutaway, Explode, Labels, Items, the look and quality, a room's or an
+item's details, full screen (F) and presenting (P: nothing but the building, turning
+slowly; Esc back); what it shows is kept in its address
+([docs/USING-STUDIO.md](../docs/USING-STUDIO.md#3d-the-dollhouse-walking-and-the-3d-page)).
 
 The same corrections are possible from the command line:
 
@@ -523,7 +539,7 @@ the model.
 
 Without a model everything works on the rules alone; `convert --no-model` skips it.
 Outside the container, install `llama-server` and fetch the model as in
-[Without Docker](../README.md#without-docker).
+[Without Docker](../docs/INSTALL.md#without-docker).
 [eval/](eval) scores a model on room labels, sheet titles, layer names, unit notes and
 level labels
 (`uv run python eval/run.py --model path/to/model.gguf`).
@@ -809,7 +825,7 @@ other naming schemes and pass its path with `add-floor --profile`.
 
 DXF is read directly. DWG needs an external converter, which this package does not
 include (the container does): install [LibreDWG](https://www.gnu.org/software/libredwg/)
-(`dwg2dxf`, see [Without Docker](../README.md#without-docker)) or the
+(`dwg2dxf`, see [Without Docker](../docs/INSTALL.md#without-docker)) or the
 [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter),
 or save the drawing as DXF.
 
