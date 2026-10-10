@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StoreyPath 3D</title>
+  <link rel="icon" href="data:,">
+  <script>
+    // the theme this browser chose, before anything is drawn (no flash of the other one)
+    try { if (localStorage.getItem("storeypath.theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
+  </script>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="world.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/viewer/vendor/three/three.module.js",
+        "three/addons/": "/viewer/vendor/three/addons/",
+        "jszip": "/viewer/vendor/jszip.mjs"
+      }
+    }
+  </script>
+</head>
+<body class="world-page">
+  <!-- the top bar: where you are (project / building), Dollhouse or Walk, presenting, full
+       screen, the theme, the person's menu -->
+  <header id="topbar" class="topbar">
+    <div class="tb-start">
+      <a class="tb-home" href="/" aria-label="StoreyPath Studio: all projects" data-tip="All projects">
+        <svg class="icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#layers"/></svg>
+      </a>
+      <nav class="crumbs" id="crumbs" aria-label="Where you are">
+        <a class="crumb" href="/">Projects</a>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb crumb-here" aria-current="page">3D</span>
+      </nav>
+    </div>
+    <div class="tb-center">
+      <div class="segmented" id="mode" role="radiogroup" aria-label="View">
+        <button type="button" role="radio" data-mode="dollhouse" aria-checked="true"
+                data-tip="Dollhouse: orbit the building, one floor or all" data-key="3">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#rotate-3d"/></svg>
+          Dollhouse
+        </button>
+        <button type="button" role="radio" data-mode="walk" aria-checked="false"
+                data-tip="Walk through it: look with the mouse, move with W A S D" data-key="4">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#footprints"/></svg>
+          Walk
+        </button>
+      </div>
+    </div>
+    <div class="tb-end">
+      <button id="keys-open" type="button" class="btn-ghost btn-icon" aria-label="Keys" data-tip="The keys" data-key="?">
+        <svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#keyboard"/></svg>
+      </button>
+      <button id="present" type="button" class="btn-ghost btn-icon" aria-label="Present"
+              data-tip="Present: the building alone, for a big screen (Esc: back)" data-key="p">
+        <svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#presentation"/></svg>
+      </button>
+      <button id="fullscreen" type="button" class="btn-ghost btn-icon" aria-label="Full screen" aria-pressed="false"
+              data-tip="Full screen" data-key="f">
+        <svg class="icon icon-enter" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#maximize"/></svg>
+        <svg class="icon icon-leave" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#minimize"/></svg>
+      </button>
+      <button id="theme-toggle" type="button" class="btn-ghost btn-icon theme-toggle" aria-label="Light or dark" data-tip="Light or dark">
+        <svg class="icon icon-dark" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#moon"/></svg>
+        <svg class="icon icon-light" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#sun"/></svg>
+      </button>
+      <div id="account" class="tb-account"></div>
+    </div>
+  </header>
+
+  <main id="stage" aria-label="The building in 3D">
+    <div id="world"></div>
+
+    <!-- over the world, at its top: how the building is shown -->
+    <div id="toolbar" class="w-toolbar" role="toolbar" aria-label="How the building is shown" hidden>
+      <div class="w-group">
+        <button id="xray" type="button" class="w-toggle" aria-pressed="false"
+                data-tip="X-ray: see-through walls, each room tinted by its type" data-key="x">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#scan-eye"/></svg>
+          <span>X-ray</span>
+        </button>
+        <button id="cutaway" type="button" class="w-toggle only-dollhouse" aria-pressed="false"
+                data-tip="Cutaway: the walls cut low, like a plan in 3D" data-key="c">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#scissors"/></svg>
+          <span>Cutaway</span>
+        </button>
+        <label id="explode-box" class="w-explode only-dollhouse" data-tip="Explode: lift the floors apart (every floor shown)">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#unfold-vertical"/></svg>
+          <span>Explode</span>
+          <input id="explode" type="range" min="0" max="8" step="0.5" value="0" aria-label="Explode: metres between floors">
+        </label>
+      </div>
+      <span class="w-sep" role="separator"></span>
+      <div class="w-group">
+        <button id="labels" type="button" class="w-toggle" aria-pressed="true" data-tip="Room labels" data-key="l">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#tags"/></svg>
+          <span>Labels</span>
+        </button>
+        <button id="items" type="button" class="w-toggle" aria-pressed="false"
+                data-tip="Furniture and equipment (shown when one floor is, unless you say)" data-key="i">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#sofa"/></svg>
+          <span>Items</span>
+        </button>
+        <button id="hidden-spaces" type="button" class="w-toggle" aria-pressed="false"
+                data-tip="Spaces hidden or deleted in Review (a shaft, a sliver)">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#eye-off"/></svg>
+          <span>Hidden</span>
+        </button>
+        <button id="map" type="button" class="w-toggle only-walk" aria-pressed="true" data-tip="The map of the floor you walk on" data-key="m">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#map"/></svg>
+          <span>Map</span>
+        </button>
+        <button id="doors" type="button" class="w-toggle only-walk" aria-pressed="true"
+                data-tip="Doors open as you walk into them; off: only with E or a click">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#door-open"/></svg>
+          <span>Auto doors</span>
+        </button>
+      </div>
+      <span class="w-sep" role="separator"></span>
+      <div class="w-group">
+        <span class="w-label" id="look-label">Look</span>
+        <div class="segmented" id="look" role="group" aria-labelledby="look-label">
+          <button type="button" data-style="real" data-tip="Real: floors and walls finished by what each room is, soft shadows">Real</button>
+          <button type="button" data-style="model" data-tip="Model: white, like an architect's model, its edges drawn">Model</button>
+        </div>
+        <label class="w-quality" data-tip="High: soft shadows where surfaces meet, smooth edges. Low: quickest, for built-in, virtual or software graphics. Auto: Low on those, or when High draws slowly">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#gauge"/></svg>
+          <span class="sr-only">Quality</span>
+          <select id="quality" aria-label="Quality">
+            <option value="auto">Auto</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- what is chosen in the dollhouse: a room's or an item's details -->
+    <section id="details" class="w-card" hidden aria-live="polite"></section>
+
+    <!-- walking: the floor's map, the room you are in, the cross, how to start -->
+    <canvas id="minimap" class="w-minimap" width="220" height="220" hidden aria-label="Map of the floor you walk on"></canvas>
+    <div id="walk-hud" class="walk-hud" hidden aria-live="polite">
+      <div id="walk-room">Outside</div>
+      <div id="walk-meta" class="meta"></div>
+      <div id="walk-stairs" class="meta"></div>
+    </div>
+    <div id="crosshair" hidden aria-hidden="true"></div>
+    <div id="walk-enter" class="walk-enter" hidden>
+      <div class="card">
+        <strong>Click to look around</strong>
+        <ul class="keys">
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows: move · <kbd>Shift</kbd> run</li>
+          <li><kbd>E</kbd> or a click: open or close the door at the cross</li>
+          <li><kbd>E</kbd> <kbd>Q</kbd> or <kbd>PgUp</kbd> <kbd>PgDn</kbd>: up or down at stairs and lifts</li>
+          <li><kbd>M</kbd> the map · <kbd>X</kbd> x-ray · <kbd>I</kbd> items</li>
+          <li><kbd>Esc</kbd> frees the mouse · <kbd>3</kbd> back to the dollhouse</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- bottom right: the building's floors, the top one first; All in the dollhouse -->
+    <nav id="floor-stack" class="floor-stack" aria-label="The building's floors" hidden></nav>
+
+    <div id="loading" class="w-loading" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="loading-text">Reading the building…</span>
+    </div>
+    <div id="problem" class="w-problem" hidden role="alert"></div>
+    <div id="present-hint" class="w-present-hint" hidden aria-live="polite">
+      Presenting · <kbd>P</kbd> or <kbd>Esc</kbd> to come back
+    </div>
+  </main>
+
+  <!-- the status bar: what the view expects, the door at the cross, how it is drawn, what it shows -->
+  <footer id="statusbar" class="statusbar">
+    <div id="sb-hint" class="sb-hint" aria-live="polite"></div>
+    <div id="sb-door" class="sb-item sb-door" hidden aria-live="polite"></div>
+    <div id="sb-look" class="sb-item"></div>
+    <div id="sb-source" class="sb-item"></div>
+  </footer>
+
+  <dialog id="keys-dialog" class="dialog w-keys" aria-labelledby="keys-title">
+    <div class="w-keys-head">
+      <h2 id="keys-title">Keys</h2>
+      <button type="button" class="btn-ghost btn-icon" data-close aria-label="Close">
+        <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#x"/></svg>
+      </button>
+    </div>
+    <div id="keys-list" class="w-keys-list"></div>
+  </dialog>
+
+  <div id="toast" role="status" hidden></div>
+  <script type="module" src="world.js"></script>
+</body>
+</html>

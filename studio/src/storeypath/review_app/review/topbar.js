@@ -181,6 +181,6 @@ export function setupTopbar({ openFloor, request, followJob, say }) {
     run: () => open(`/api/${BASE}/floors/${encodeURIComponent(state.floor.id)}/print.png`) });
   command({ id: "share.window", title: "Open the building in 3D on its own page", group: "Share", icon: "app-window",
     words: "full screen window present", when: () => Boolean(state.floor?.converted_at), why: () => "This floor is not converted yet",
-    run: () => open("/viewer/examples/world/index.html?" + new URLSearchParams({
+    run: () => open("/world.html?" + new URLSearchParams({
       pkg: `/api/${BASE}/preview.storeypath?building=${encodeURIComponent(buildingOf(state.floor.id))}`, floor: state.floor.id })) });
 }

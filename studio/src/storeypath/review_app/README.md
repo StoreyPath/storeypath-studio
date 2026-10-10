@@ -2,8 +2,24 @@
 
 Studio's pages are plain HTML, CSS and ES modules, served as they are (no build step,
 no framework): `index.html` (projects, a project, users, GPU helpers: `studio.js`),
-`login.html`, `navigate.html`, and **Review** (`review.html` and `review/`), the floor
-editor. This note is about Review, for whoever adds to it.
+`login.html`, `navigate.html`, `world.html` (a building in 3D, the whole window: `world.js`,
+`world.css`), and **Review** (`review.html` and `review/`), the floor editor. This note is
+mostly about Review, for whoever adds to it.
+
+## The 3D page
+
+`world.html?pkg=<one of Studio's packages>[&building=…][&floor=…]` shows a building in 3D,
+read only: Review's *3D window* and a project's *Walk in 3D* (and a building's or an
+export's *3D*) open it. It is StoreyPath's world (`/viewer/src/world/world.js`) in Studio's
+frame: the top bar (where you are, Dollhouse or Walk, the keys, presenting, full screen,
+the theme, the account), a toolbar over the world (X-ray, Cutaway, Explode, Labels, Items,
+Hidden; walking, the map and the doors; Look and Quality: `look.js`), the floor stack, a
+room's or an item's details, walking's map and the room you are in, and a status bar (what
+the view expects, the door at the cross, how it is drawn). `P` presents: nothing but the
+building, turning slowly in the dollhouse (`T` stops it), `Esc` back. What it shows is kept
+in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`,
+`quality`, `floor`), and only a package of Studio's own (`/api/projects/…`) is read.
+`tests/browser/world.mjs` drives it.
 
 ## What Review is made of
 
@@ -140,5 +156,6 @@ href="/icons/lucide.svg#<name>"/></svg>`. Colour and stroke come from CSS (`.ico
 ## Tests
 
 `tests/test_review_browser.py` runs `tests/browser/review.mjs` in headless Chrome (the
-viewers' harness) on the demo project: add a test there for what you add. Node runs
-`review/view3d.js`'s `refresh3d` and `build3d` in `tests/test_review_app_3d.py`.
+viewers' harness) on the tests' campus, and `tests/browser/world.mjs` (the 3D page) on the
+demo campus: add a test there for what you add. Node runs `review/view3d.js`'s `refresh3d`
+and `build3d` in `tests/test_review_app_3d.py`.

@@ -28,6 +28,15 @@ def test_every_icon_named_is_in_the_sprite():
     assert not missing, missing
 
 
+def test_studio_opens_its_own_3d_page():
+    """Review's 3D window and a project's Walk in 3D open world.html, Studio's page, not the
+    viewer's example page (left as the viewer's own)."""
+    pages = [*APP.glob("*.html"), *APP.glob("*.js"), *APP.glob("review/**/*.js")]
+    assert not [p.name for p in pages if "examples/world" in p.read_text(encoding="utf-8")]
+    assert "/world.html?" in (APP / "studio.js").read_text(encoding="utf-8")
+    assert "/world.html?" in (APP / "review" / "topbar.js").read_text(encoding="utf-8")
+
+
 def test_the_icons_licence_is_beside_them():
     licence = (APP / "icons" / "LICENSE-lucide.txt").read_text(encoding="utf-8")
     assert "ISC License" in licence and "Lucide" in licence

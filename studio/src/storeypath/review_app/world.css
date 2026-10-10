@@ -1,0 +1,218 @@
+/* StoreyPath 3D (world.html): a building in 3D, the whole window. On theme.css's tokens,
+   ui.css's components and the top bar every page has; what floats over the world is the
+   theme's (the toolbar, a room's details) or, like Review's canvas, light in both themes
+   (the floor stack). Presenting (body.presenting), nothing but the world. */
+
+body.world-page {
+  display: grid;
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--status-h);
+  height: 100vh; height: 100dvh; overflow: hidden;
+}
+.crumb-here { color: var(--text); font-weight: var(--fw-semibold); }
+#crumb-project { flex-shrink: 3; max-width: 260px; }
+.crumb-building {
+  min-height: 30px; flex: none; background: transparent; border-color: transparent; color: var(--text);
+  font-weight: var(--fw-semibold); padding: 0 var(--sp-2); gap: 6px;
+}
+.crumb-building:hover:not(:disabled), .crumb-building[aria-expanded="true"] { background: var(--surface-3); border-color: transparent; }
+.crumb-building .icon { color: var(--text-muted); }
+#mode > button { min-width: 104px; gap: 6px; font-weight: var(--fw-semibold); }
+#fullscreen .icon-leave { display: none; }
+#fullscreen[aria-pressed="true"] .icon-enter { display: none; }
+#fullscreen[aria-pressed="true"] .icon-leave { display: inline; }
+
+/* ---- the stage: the world, and what floats over it --------------------------------------- */
+#stage { position: relative; min-height: 0; overflow: hidden; background: var(--canvas-bg); }
+#world { position: absolute; inset: 0; }
+#world canvas { display: block; outline: none; }
+
+.w-toolbar {
+  /* centred by its margins: the whole width of the stage is its to take, less the gutters */
+  position: absolute; top: var(--sp-3); left: var(--sp-3); right: var(--sp-3); margin-inline: auto; width: fit-content;
+  z-index: var(--z-canvas-ui); display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; justify-content: center;
+  padding: var(--sp-1); background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-md); animation: rise var(--dur) var(--ease);
+}
+@keyframes rise { from { transform: translateY(-6px); opacity: 0; } }
+.w-group { display: flex; align-items: center; gap: 2px; }
+.w-sep { width: 1px; align-self: stretch; margin: var(--sp-1) var(--sp-1); background: var(--border); }
+.w-toggle {
+  min-height: 30px; padding: 0 var(--sp-2); gap: 6px; border-color: transparent; background: transparent;
+  color: var(--text-muted); font-size: var(--fs-sm);
+}
+.w-toggle:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--surface-3); border-color: transparent; color: var(--text); }
+.w-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.w-toggle[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-text); }
+.w-label { padding: 0 var(--sp-1) 0 var(--sp-2); color: var(--text-muted); font-size: var(--fs-sm); }
+.w-toolbar .segmented > button { min-height: 24px; }
+.w-explode, .w-quality {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 var(--sp-2);
+  border-radius: var(--r-md); color: var(--text-muted); font-size: var(--fs-sm); cursor: pointer;
+}
+.w-explode:hover { background: var(--surface-3); color: var(--text); }
+.w-explode.on { color: var(--accent-text); }
+.w-explode input { width: 92px; accent-color: var(--accent); margin: 0; cursor: pointer; }
+.w-quality select { width: auto; min-height: 26px; font-size: var(--fs-sm); padding-left: var(--sp-2); }
+body.walking .only-dollhouse, body:not(.walking) .only-walk { display: none; }
+
+/* a room's or an item's details, chosen in the dollhouse */
+.w-card {
+  position: absolute; top: calc(var(--sp-3) + 56px); right: var(--sp-3); z-index: var(--z-canvas-ui);
+  width: min(320px, calc(100% - 2 * var(--sp-3))); max-height: calc(100% - 140px); overflow-y: auto;
+  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg); animation: card-in var(--dur) var(--ease);
+}
+@keyframes card-in { from { transform: translateY(-4px); opacity: 0; } }
+.w-card-head { display: flex; gap: var(--sp-2); align-items: flex-start; padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-4); }
+.w-card-head .grow { min-width: 0; }
+.w-card-head h3 { font-size: var(--fs-lg); line-height: 1.3; overflow-wrap: anywhere; }
+.w-card-kind { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--text-muted); font-size: var(--fs-sm); }
+.w-card-ar { color: var(--text-muted); font-size: var(--fs-sm); }
+.w-card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px var(--sp-3); margin: 0; padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  border-top: 1px solid var(--border-subtle); font-size: var(--fs-md); }
+.w-card dt { color: var(--text-muted); }
+.w-card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.w-card .w-id { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.w-card .w-id code { font-size: var(--fs-sm); }
+.w-card .w-id button { min-height: 22px; width: 22px; }
+.w-card .w-section { padding: var(--sp-2) var(--sp-4) var(--sp-3); border-top: 1px solid var(--border-subtle); }
+.w-card .w-section h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-faint); }
+.w-card .w-doors { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.w-card .w-doors button { min-height: 26px; padding: 0 var(--sp-2); font-size: var(--fs-sm); }
+.w-card .w-note { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.w-card .w-actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--border-subtle); }
+.w-card .w-actions button { flex: 1; }
+
+/* walking: the map, the room you are in, the cross aimed with, and how to start */
+.w-minimap {
+  position: absolute; top: calc(var(--sp-3) + 56px); right: var(--sp-3); z-index: var(--z-canvas-ui);
+  width: 200px; height: 200px; border-radius: var(--r-xl); background: var(--canvas-overlay);
+  border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
+}
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 4;
+  pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .45);
+}
+#crosshair::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+}
+/* a door within reach at the cross: the cross says so (the world marks its element) */
+#world.sp3d-door-aim ~ #crosshair { border-color: var(--warning); width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+.walk-hud {
+  position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px;
+  max-width: min(420px, calc(100% - 24px)); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg);
+  background: rgba(18, 19, 22, .82); color: #f1f2f4; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md); pointer-events: none;
+}
+#walk-room { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
+.walk-hud .meta { color: #b9bcc4; font-size: var(--fs-sm); }
+#walk-meta:empty, #walk-stairs:empty { display: none; }
+.walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
+.walk-enter .card {
+  max-width: min(460px, calc(100% - 32px)); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-xl);
+  background: rgba(18, 19, 22, .88); color: #f1f2f4; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-lg); font-size: var(--fs-md);
+}
+.walk-enter .card strong { font-size: var(--fs-lg); }
+.walk-enter .keys { list-style: none; margin: var(--sp-3) 0 0; padding: 0; color: #c3c6cd; display: grid; gap: 6px; }
+.walk-enter kbd, .walk-hud kbd, .w-present-hint kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
+
+/* bottom right: the building's floors (as Review's canvas has them: light in both themes) */
+.floor-stack {
+  position: absolute; right: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui);
+  display: flex; flex-direction: column; padding: 3px; gap: 2px; border-radius: var(--r-lg);
+  background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.floor-stack button {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2); width: 64px; height: 28px; min-height: 0;
+  padding: 0 var(--sp-2); border: 0; border-radius: var(--r-md); background: transparent; color: var(--canvas-text);
+  font: var(--fw-semibold) var(--fs-sm) / 1 var(--font-ui); font-variant-numeric: tabular-nums;
+}
+.floor-stack button:hover:not(:disabled):not([aria-current="true"]) { background: rgba(0, 0, 0, .06); border: 0; color: var(--canvas-text); }
+.floor-stack button[aria-current="true"] { background: var(--canvas-text); color: var(--canvas-paper); }
+.floor-stack .fs-all { font-weight: var(--fw-medium); color: var(--canvas-muted); }
+.floor-stack .fs-all[aria-pressed="true"] { background: var(--accent); color: var(--text-on-accent); }
+.floor-stack .fs-all[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-hover); color: var(--text-on-accent); }
+.floor-stack .fs-sep { height: 1px; background: var(--canvas-overlay-border); margin: 2px 4px; }
+
+/* reading the package, and what went wrong */
+.w-loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--z-canvas-ui);
+  display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4);
+  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-full);
+  box-shadow: var(--shadow-md); font-size: var(--fs-md);
+}
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: spin .8s linear infinite; flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.w-problem {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: var(--z-canvas-ui);
+  max-width: min(480px, calc(100% - 32px)); padding: var(--sp-4) var(--sp-5); text-align: center;
+  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+}
+.w-problem h3 { font-size: var(--fs-lg); margin-bottom: var(--sp-2); }
+.w-problem p { margin: 0 0 var(--sp-3); color: var(--text-muted); }
+.w-present-hint {
+  position: absolute; left: 50%; top: var(--sp-4); transform: translateX(-50%); z-index: var(--z-toast);
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-full); background: rgba(18, 19, 22, .82); color: #f1f2f4;
+  font-size: var(--fs-md); pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
+}
+.w-present-hint.fading { opacity: 0; }
+
+/* ---- the status bar --------------------------------------------------------------------- */
+.statusbar {
+  display: flex; align-items: center; min-width: 0; padding: 0 var(--sp-2);
+  background: var(--surface-0); border-top: 1px solid var(--border); color: var(--text-muted); font-size: var(--fs-sm);
+  z-index: var(--z-panel);
+}
+.sb-hint { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-hint .sb-mode { color: var(--text); font-weight: var(--fw-semibold); }
+.sb-hint .icon { color: var(--text-muted); }
+.statusbar kbd { height: 16px; font-size: 10px; }
+.sb-item { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 var(--sp-3); white-space: nowrap;
+  border-left: 1px solid var(--border-subtle); }
+.sb-item:empty { display: none; }
+.sb-door { color: var(--warning-text); font-weight: var(--fw-semibold); }
+.sb-door .icon { color: var(--warning-text); }
+
+/* ---- the keys --------------------------------------------------------------------------- */
+.w-keys { width: min(520px, calc(100vw - 32px)); }
+.w-keys-head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-3) var(--sp-2) var(--sp-5); }
+.w-keys-head h2 { font-size: var(--fs-lg); color: var(--text); text-transform: none; letter-spacing: 0; }
+.w-keys-list { padding: 0 var(--sp-5) var(--sp-5); display: grid; grid-template-columns: auto 1fr; gap: var(--sp-2) var(--sp-4);
+  align-items: center; font-size: var(--fs-md); }
+.w-keys-list h3 { grid-column: 1 / -1; margin-top: var(--sp-2); font-size: var(--fs-xs); font-weight: var(--fw-semibold);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.w-keys-list .k { display: flex; gap: 2px; justify-content: flex-end; white-space: nowrap; }
+
+/* ---- presenting: the building alone, the whole screen -------------------------------------- */
+body.presenting { grid-template-rows: 0 minmax(0, 1fr) 0; }
+body.presenting #topbar, body.presenting #statusbar { visibility: hidden; overflow: hidden; border: 0; }
+body.presenting .w-toolbar, body.presenting .floor-stack, body.presenting .w-card, body.presenting .w-minimap,
+body.presenting .walk-hud, body.presenting .walk-enter .card, body.presenting .w-loading, body.presenting #toast { display: none !important; }
+body.presenting #stage { cursor: none; }
+body.presenting.pointer-moved #stage { cursor: auto; }
+
+/* ---- narrow windows ----------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  #crumb-project, #crumb-project + .crumb-sep { display: none; }
+  .w-toggle span, .w-label, .w-explode span { display: none; }
+}
+@media (max-width: 760px) {
+  .tb-center { display: none; }
+  .topbar { grid-template-columns: minmax(0, 1fr) auto; }
+  .w-card { top: auto; bottom: calc(var(--sp-3) + 8px); right: var(--sp-3); left: var(--sp-3); width: auto; max-height: 50%; }
+  .floor-stack { bottom: auto; top: calc(var(--sp-3) + 56px); }
+  #sb-look, #sb-source { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w-toolbar, .w-card { animation: none; }
+}

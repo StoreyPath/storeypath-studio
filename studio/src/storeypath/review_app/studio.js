@@ -644,14 +644,14 @@ function thumbnail(plan) {
 
 // ---- buildings, placement, export -------------------------------------------------
 
-/** The 3D world showing the project as it is now: no export needed. */
+/** Studio's 3D page (world.html) showing the project as it is now: no export needed. */
 function worldUrl(code, { building, floor } = {}) {
   const pkg = `/api/projects/${encodeURIComponent(code)}/preview.storeypath`;
   const owner = building || (floor && floor.split("-").slice(0, 3).join("-")); // a floor's building: its ID's first three parts
   const q = new URLSearchParams({ pkg: owner ? `${pkg}?building=${encodeURIComponent(owner)}` : pkg });
   if (building) q.set("building", building);
   if (floor) q.set("floor", floor);
-  return `/viewer/examples/world/index.html?${q}`;
+  return `/world.html?${q}`;
 }
 
 function buildingsCard(code, p) {
@@ -1037,7 +1037,7 @@ function exportCard(code, p) {
         el("a", { href: url, download: f }, "Download"),
         planPage ? el("a", { href: `/viewer/svg/example/index.html?package=${encodeURIComponent(url)}`, target: "_blank",
           title: "Each floor as a plan: walls, doors with their swings, windows, rooms coloured by type" }, "2D plan") : null,
-        el("a", { href: `/viewer/examples/world/index.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
+        el("a", { href: `/world.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
           title: "The building as built: walls, doors and windows; walk through it, or orbit it as a dollhouse" }, "3D"),
         el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
           title: "Each room as a block coloured by its type, floors stacked on a map, with search: a check of the rooms, not the building's walls" },
