@@ -191,19 +191,28 @@ test("a room chosen shows its details: its ID, floor, area, finishes, where its 
   noErrors("the details");
 });
 
-test("Walk: 4 walks in, the room you are in, the map; a door at the cross said in the status bar and E opens it", async () => {
+test("Walk: 4 walks in, the room you are in, the map; the mouse never taken: a drag looks, a click shows details; the door ahead said, E opens it, a click on it too", async () => {
   await press("4");
   await until(() => window.storeypathWorld.mode === "walk" && document.body.classList.contains("walking"), "walking");
   const walk = await R(() => ({ hud: !document.getElementById("walk-hud").hidden, map: !document.getElementById("minimap").hidden,
-    enter: !document.getElementById("walk-enter").hidden, cutaway: getComputedStyle(document.getElementById("cutaway")).display,
+    enter: Boolean(document.getElementById("walk-enter")), cross: Boolean(document.getElementById("crosshair")),
+    keys: document.getElementById("walk-keys").textContent, cutaway: getComputedStyle(document.getElementById("cutaway")).display,
     doors: getComputedStyle(document.getElementById("doors")).display, all: Boolean(document.querySelector("#floor-stack .fs-all")),
     hint: document.getElementById("sb-hint").textContent }));
-  truly(walk.hud && walk.map && walk.enter && walk.cutaway === "none" && walk.doors !== "none" && !walk.all, JSON.stringify(walk));
-  truly(/Walk/.test(walk.hint) && (await param("mode")) === "walk", walk.hint);
+  truly(walk.hud && walk.map && !walk.enter && !walk.cross && /Drag to look/.test(walk.keys) && walk.cutaway === "none" && walk.doors !== "none" && !walk.all,
+    JSON.stringify(walk));
+  truly(/Walk/.test(walk.hint) && /Drag to look/.test(walk.hint) && (await param("mode")) === "walk", walk.hint);
   await press("m");
   truly(await R(() => document.getElementById("minimap").hidden) && !(await pressed("map")), "M hides the map");
   await press("m");
-  // stand before a door of the ground floor, facing it
+  // a drag looks round; the mouse is never taken
+  const yaw = () => R(() => { const p = window.storeypathWorld.player; return Math.atan2(p.dx, p.dz); });
+  const y0 = await yaw();
+  const box = await R(() => { const b = document.getElementById("world").getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; });
+  await page.drag(box, [box[0] - 120, box[1]], 10);
+  await until(async (y0) => Math.abs(Math.atan2(window.storeypathWorld.player.dx, window.storeypathWorld.player.dz) - y0) > 0.05, "the drag turned the view", 10000, y0);
+  truly(await R(() => document.pointerLockElement === null), "the mouse not taken");
+  // stand before a door of the ground floor, facing it: said in the status bar, E works it
   const door = await R(() => {
     const w = window.storeypathWorld, floor = w.package.floorsOf(w.building)[0].id;
     const d = w.plan(floor).doors.find((x) => Math.hypot(x.span[1][0] - x.span[0][0], x.span[1][1] - x.span[0][1]) < 1.2);
@@ -211,12 +220,28 @@ test("Walk: 4 walks in, the room you are in, the map; a door at the cross said i
     const len = Math.hypot(bx - ax, bz - az), nx = -(bz - az) / len, nz = (bx - ax) / len;
     w.setMode("dollhouse");
     w.setMode("walk", { floor, at: { x: mx + nx * 1.1, z: mz + nz * 1.1 }, heading: Math.atan2(nx, nz) });
+    window.doorAt = { m: [mx, mz], n: [nx, nz] };
     return { id: d.id, open: d.open };
   });
   await until(() => !document.getElementById("sb-door").hidden, "the door ahead, said", 10000);
-  truly(/Door ahead/.test(await R(() => document.getElementById("sb-door").textContent)), "the status bar says it");
+  truly(/Door ahead: E/.test(await R(() => document.getElementById("sb-door").textContent)), "the status bar says it");
+  // a click on the floor at your feet: its room's details, walking too
+  const feet = await R(() => { const b = document.getElementById("world").getBoundingClientRect(); return [b.left + b.width / 2, b.bottom - 40]; });
+  await page.click(...feet);
+  await until(() => !document.getElementById("details").hidden && window.storeypathWorld.selected, "a room's details, walking", 10000);
+  await press("Escape");
+  await until(() => document.getElementById("details").hidden, "Esc closes them", 5000);
   await press("e");
   await until((id, was) => window.storeypathWorld.doorOpen(id) === !was, "E opened or shut it", 5000, door.id, door.open);
+  // shut now (if it was open): its leaf across the middle of the view, under the pointer: a click opens it
+  if (door.open) {
+    await R(() => new Promise((res) => setTimeout(res, 700)));
+    const mid = await R(() => { const b = document.getElementById("world").getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2 + 30]; });
+    await page.mouse("mouseMoved", ...mid);
+    await until(() => /Door: a click or E opens it/.test(document.getElementById("sb-door").textContent), "the door under the pointer, said", 10000);
+    await page.click(...mid);
+    await until((id) => window.storeypathWorld.doorOpen(id) === true, "a click opened it", 5000, door.id);
+  }
   await press("3");
   await until(() => window.storeypathWorld.mode === "dollhouse" && !document.body.classList.contains("walking"), "3: the dollhouse");
   truly((await param("mode")) === null, "the address says so");

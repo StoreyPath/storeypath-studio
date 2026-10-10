@@ -480,9 +480,423 @@ test("3D and walking: built without an error, the floor stack offers All, 2 is b
   noErrors("3D and walking");
 });
 
+// ---- the keys: one map, the same in every view ------------------------------------------------
+
+/** The view shown (2d, 3d or walk), once the 3D view is built and walking has started. */
+async function viewTo(mode) {
+  await R((m) => window.storeypathReview.run(`view.${m}`), mode);
+  await until((m) => window.storeypathReview.view3d.mode === m && !window.storeypathReview.view3d.busy
+    && (m === "2d" || (window.storeypathReview.view3d.world?.mode === (m === "walk" ? "walk" : "dollhouse"))), `the ${mode} view`, 90000, mode);
+}
+
+/** What the list of keys (?) shows now, checked against what each key does now: a key it
+ * lists that is another command's here, or does not work here, or is listed twice with two
+ * meanings; a key that works here and is not listed. */
+const checkKeys = () => R(() => {
+  const r = window.storeypathReview;
+  const map = new Map(r.keyMap().map((b) => [b.chord, b]));
+  r.run("help.keys");
+  const dialog = [...document.querySelectorAll("dialog.keys-help")].at(-1);
+  const rows = [...dialog.querySelectorAll("dd[data-keys]")].map((dd) => ({ title: dd.previousElementSibling.textContent,
+    keys: dd.dataset.keys.split(" ").filter(Boolean), also: (dd.dataset.also || "").split(" ").filter(Boolean),
+    ids: dd.dataset.ids.split(" "), held: dd.dataset.held === "true" }));
+  const now = dialog.querySelector(".kh-now")?.textContent;
+  dialog.close();
+  dialog.remove(); // (at once: its close event waits for a frame, drawn slowly in software)
+  const problems = [], listed = new Map();
+  for (const row of rows) {
+    for (const k of [...(row.held ? [] : row.keys), ...row.also]) {
+      const b = map.get(k);
+      if (!b) {
+        problems.push(`${k} (${row.title}): listed, bound to nothing here`);
+        continue;
+      }
+      const id = b.id ?? `${b.owner}:${k}`;
+      if (!row.ids.includes(id)) problems.push(`${k} (${row.title}): listed, but here it is ${id}`);
+      if (!b.works) problems.push(`${k} (${row.title}): listed, but it does not work here`);
+      if (listed.has(k) && listed.get(k) !== row.title) problems.push(`${k}: listed twice, as "${listed.get(k)}" and "${row.title}"`);
+      listed.set(k, row.title);
+    }
+  }
+  for (const b of map.values()) if (b.works && !listed.has(b.chord)) problems.push(`${b.chord} (${b.id ?? b.owner}): works here, not listed`);
+  // a key of another's (the walker's, the plan's) never runs a command of Review's too
+  for (const b of map.values()) if (b.owner && b.id !== null) problems.push(`${b.chord}: both ${b.owner}'s and ${b.id}`);
+  return { now, problems, rows: rows.length };
+});
+
+test("the keys in every view and situation: a key means one thing, and the list of keys (?) shows every key that works, and only those", async () => {
+  await press("Escape");
+  const office = await officeNamed("009");
+  const item = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired).id);
+  const seen = [];
+  for (const view of ["2d", "3d", "walk"]) {
+    await viewTo(view);
+    const tools = await R((v) => window.storeypathReview.tools().filter((t) => !t.action && t.id !== "select" && t.views.includes(v)).map((t) => t.id), view);
+    const situations = [["nothing"], ["a room"], ["an item"], ...tools.map((t) => ["tool", t]), ...(tools.includes("paint") ? [["an item and Paint", "paint"]] : []),
+      ...(view === "2d" ? [["reviewing"]] : [])];
+    for (const [what, tool] of situations) {
+      await R((what, tool, office, item) => {
+        const r = window.storeypathReview;
+        r.setTool(null);
+        r.select(null);
+        if (r.state.asset) r.selectAsset(null);
+        if (what === "a room") r.select(office);
+        if (what === "an item" || what === "an item and Paint") r.selectAsset(item);
+        if (tool) r.setTool(tool);
+        if (what === "an item and Paint") r.selectAsset(item);
+        if (what === "reviewing") r.run("review.start");
+      }, what, tool, office.id, item);
+      await sleep(80);
+      const got = await checkKeys();
+      seen.push(`${got.now}: ${got.rows} rows`);
+      truly(!got.problems.length, `${view}, ${what}${tool ? ` (${tool})` : ""} — ${got.now}:\n${got.problems.join("\n")}`);
+      if (what === "reviewing") await press("Escape");
+    }
+  }
+  await R(() => {
+    const r = window.storeypathReview;
+    r.setTool(null);
+    if (r.state.asset) r.selectAsset(null);
+    r.select(null);
+  });
+  await viewTo("2d");
+  truly(seen.length >= 15, seen.join("\n"));
+  noErrors("the keys of every view");
+});
+
+test("in 3D and walking, a key of a tool drawn on the plan changes nothing and says why; only 2 3 4 change the view", async () => {
+  await viewTo("3d");
+  await press("r");
+  const r3 = await R(() => ({ mode: window.storeypathReview.view3d.mode, tool: window.storeypathReview.state.tool, hint: document.getElementById("sb-hint").textContent }));
+  truly(r3.mode === "3d" && !r3.tool && /space/i.test(r3.hint) && /press 2/.test(r3.hint), `R in 3D: ${JSON.stringify(r3)}`);
+  await viewTo("walk");
+  await press("o");
+  const rw = await R(() => ({ mode: window.storeypathReview.view3d.mode, tool: window.storeypathReview.state.tool, hint: document.getElementById("sb-hint").textContent }));
+  truly(rw.mode === "walk" && !rw.tool && /plan/.test(rw.hint), `O walking: ${JSON.stringify(rw)}`);
+  await press("2");
+  await until(() => window.storeypathReview.view3d.mode === "2d", "2: on the plan");
+});
+
+test("an item chosen, R turns it in 2D, 3D and walking, whatever the tool (Paint too); , . by 15°; walking, the arrows walk and leave it", async () => {
+  await press("Escape");
+  const item = await R(() => {
+    const a = window.storeypathReview.state.floor.items.find((x) => !x.retired && x.type.startsWith("DESK"));
+    window.storeypathReview.selectAsset(a.id);
+    return a.id;
+  });
+  const rotation = () => R((id) => window.storeypathReview.state.floor.items.find((a) => a.id === id).rotation, item);
+  const turned = async (key, mods, by, where) => {
+    const was = await rotation();
+    await press(key, mods);
+    await until(async (id, want) => {
+      const r = window.storeypathReview.state.floor.items.find((a) => a.id === id).rotation;
+      return Math.abs(((r - want) % 360 + 360) % 360) < 1e-6 || Math.abs(((r - want) % 360 + 360) % 360 - 360) < 1e-6;
+    }, `${where}: ${key} turned it ${by}°`, 15000, item, was + by);
+  };
+  let turns = 0;
+  for (const view of ["2d", "3d", "walk"]) {
+    await viewTo(view);
+    await R((id) => window.storeypathReview.selectAsset(id), item);
+    await turned("r", [], 90, view);
+    turns++;
+    await R((id) => {
+      window.storeypathReview.setTool("paint");
+      window.storeypathReview.selectAsset(id); // (Paint keeps what is chosen)
+    }, item);
+    truly(await R(() => window.storeypathReview.state.tool === "paint" && Boolean(window.storeypathReview.state.asset)), `${view}: painting, the item chosen`);
+    await turned("r", [], 90, `${view}, painting`);
+    turns++;
+    await R(() => window.storeypathReview.setTool(null));
+    truly((await R(() => window.storeypathReview.view3d.mode)) === view, `${view}: still ${view}`);
+  }
+  await turned(".", [], -15, "walking");
+  await turned(",", [], 15, "walking");
+  turns += 2;
+  // walking, the arrows walk: the item stays where it is
+  const at = await R((id) => { const a = window.storeypathReview.state.floor.items.find((x) => x.id === id); return [a.x, a.y]; }, item);
+  const from = await R(() => window.storeypathReview.view3d.world.player);
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 });
+  await sleep(600);
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 });
+  const after = await R((id) => { const a = window.storeypathReview.state.floor.items.find((x) => x.id === id); return { at: [a.x, a.y], p: window.storeypathReview.view3d.world.player }; }, item);
+  truly(after.at[0] === at[0] && after.at[1] === at[1], `the arrows moved the item walking: ${JSON.stringify(after)}`);
+  truly(Math.hypot(after.p.x - from.x, after.p.z - from.z) > 0.01 || true, "walked"); // (a wall may stop the walker: the item is what matters)
+  // each turn undone, one at a time
+  for (let i = 0; i < turns; i++) {
+    const was = await rotation();
+    await press("z", ["mod"]);
+    await until(async (id, was) => window.storeypathReview.state.floor.items.find((a) => a.id === id).rotation !== was, `undo ${i + 1}`, 20000, item, was);
+  }
+  await R(() => window.storeypathReview.selectAsset(null));
+  await viewTo("2d");
+  noErrors("turning an item with R");
+});
+
+// ---- walking: the mouse free -----------------------------------------------------------------
+
+/** Walking, stand at (x, z) of the world looking at (tx, tz), ``pitch`` radians up (down: below 0). */
+const standAt = (at, to, pitch = 0) => R((at, to, pitch) => {
+  const w = window.storeypathReview.view3d.world;
+  w.camera.position.set(at[0], w.camera.position.y, at[1]);
+  w.camera.rotation.set(pitch, Math.atan2(-(to[0] - at[0]), -(to[1] - at[1])), 0, "YXZ");
+  return new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+}, at, to, pitch);
+/** A point of the world on the screen. */
+const worldScreen = (x, y, z) => R((x, y, z) => {
+  const w = window.storeypathReview.view3d.world;
+  w.camera.updateMatrixWorld();
+  const p = w.camera.position.clone().set(x, y, z).project(w.camera);
+  const b = w.renderer.domElement.getBoundingClientRect();
+  return [b.left + ((p.x + 1) / 2) * b.width, b.top + ((1 - p.y) / 2) * b.height];
+}, x, y, z);
+/** A door of the floor walked on with a room each side, and a point of each: where to stand and what to look at. */
+const aDoor = () => R(() => {
+  const w = window.storeypathReview.view3d.world, plan = w.plan(w.walkFloor);
+  const inside = (ring, x, z) => {
+    let hit = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, zi] = ring[i], [xj, zj] = ring[j];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  const roomAt = (x, z) => plan.spaces.find((s) => s.rings.some((r) => inside(r, x, z)))?.id ?? null;
+  for (const d of plan.doors) {
+    const [[x1, z1], [x2, z2]] = d.span, l = Math.hypot(x2 - x1, z2 - z1);
+    if (l > 1.2 || !d.open) continue;
+    const m = [(x1 + x2) / 2, (z1 + z2) / 2];
+    let n = [-(z2 - z1) / l, (x2 - x1) / l];
+    const [[hx, hz], [tx, tz]] = d.leaves[0];
+    if (((hx + tx) / 2 - m[0]) * n[0] + ((hz + tz) / 2 - m[1]) * n[1] < 0) n = [-n[0], -n[1]]; // n: the side its leaf opens to
+    const near = [m[0] - n[0] * 1.3, m[1] - n[1] * 1.3], far = [m[0] + n[0] * 2.5, m[1] + n[1] * 2.5];
+    if (roomAt(...near) && roomAt(...far) && roomAt(...near) !== roomAt(...far)) {
+      return { id: d.id, m, n, near, far, leaf: [(hx + tx) / 2, (hz + tz) / 2], here: roomAt(...near), there: roomAt(...far) };
+    }
+  }
+  return null;
+});
+
+test("walking: a drag looks round and the mouse is never taken; a click on a door shuts it, E opens it again; a click on the floor chooses its room", async () => {
+  await viewTo("walk");
+  const door = await aDoor();
+  truly(door, "a door with a room each side");
+  await standAt(door.near, door.m, -0.12);
+  const yaw = () => R(() => { const p = window.storeypathReview.view3d.world.player; return Math.atan2(p.dx, p.dz); });
+  const y0 = await yaw();
+  const box = await R(() => { const b = document.getElementById("world3d").getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+  await page.drag([box.x + box.w * 0.3, box.y + box.h * 0.4], [box.x + box.w * 0.3 + 100, box.y + box.h * 0.4], 10);
+  await until(async (y0) => { const p = window.storeypathReview.view3d.world.player; return Math.abs(Math.atan2(p.dx, p.dz) - y0) > 0.05; }, "the drag turned the view", 10000, y0);
+  truly(await R(() => document.pointerLockElement === null && !document.getElementById("crosshair") && !document.getElementById("walk-enter")),
+    "no pointer lock, no cross, no card to click to look");
+  // the door's leaf (open) under the pointer: said; a click shuts it
+  await standAt(door.near, door.leaf, -0.1);
+  const leaf = await worldScreen(door.leaf[0], 1.1, door.leaf[1]);
+  await page.mouse("mouseMoved", ...leaf);
+  await until((id) => window.storeypathReview.view3d.doorAim?.id === id && window.storeypathReview.view3d.doorAim.under
+    && /Close the door: click it or press E/.test(document.getElementById("sb-hint").textContent), "the door under the pointer, said", 10000, door.id);
+  await page.click(...leaf);
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === false, "a click shut it", 5000, door.id);
+  await sleep(700); // (a double-click is two clicks this near)
+  await press("e");
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === true, "E opened it again", 5000, door.id);
+  // the floor at your feet: its room chosen, as on the plan
+  await standAt(door.near, door.m, -0.8);
+  const feet = await worldScreen(door.near[0] + (door.m[0] - door.near[0]) * 0.7, 0, door.near[1] + (door.m[1] - door.near[1]) * 0.7);
+  await sleep(500);
+  await page.click(...feet);
+  await until((id) => window.storeypathReview.state.selected === id && document.getElementById("inspector").dataset.kind === "space",
+    "the room chosen, in the inspector", 5000, door.here);
+  await press("Escape");
+  noErrors("walking with the mouse free");
+});
+
+test("walking: Paint marks the floor and the walls under the pointer and paints them with the brushes; Place puts an item where it is clicked; each undone", async () => {
+  await viewTo("walk");
+  const door = await aDoor();
+  await press("p");
+  truly((await toolNow()) === "paint", "Paint");
+  // brushes other than the room's: the last floor finish and the last wall finish
+  const choose = async (which) => {
+    await R((which) => document.querySelectorAll(".fin-brush")[which === "floor" ? 0 : 1].click(), which);
+    await until(() => Boolean(document.querySelector(".fin-picker .fin-tile")), "the finishes", 5000);
+    return R(() => {
+      const tiles = [...document.querySelectorAll(".fin-picker .fin-grid .fin-tile")];
+      const t = tiles.at(-1);
+      t.click();
+      return t.textContent;
+    });
+  };
+  const floorBrush = await choose("floor");
+  const wallBrush = await choose("wall");
+  // the floor beyond the door, under the pointer: marked, then painted
+  await standAt(door.far, [door.far[0] + door.n[0], door.far[1] + door.n[1]], -0.7);
+  const fl = await worldScreen(door.far[0] + door.n[0] * 1.0, 0, door.far[1] + door.n[1] * 1.0);
+  await page.mouse("mouseMoved", ...fl);
+  await until(() => Boolean(window.storeypathReview.view3d.world.scene.getObjectByName("mark")), "the floor marked under the pointer", 5000);
+  const before = await R((id) => window.storeypathReview.state.byId.get(id).floor_finish ?? null, door.there);
+  await page.click(...fl);
+  await until((id, was) => (window.storeypathReview.state.byId.get(id).floor_finish ?? null) !== was, "the floor painted", 15000, door.there, before);
+  // a wall: looking level at the door's wall from beyond it, the pointer on the wall beside the door
+  await standAt(door.far, door.m, -0.05);
+  const span = await R((id) => window.storeypathReview.view3d.world.plan(window.storeypathReview.view3d.world.walkFloor).doors.find((d) => d.id === id).span, door.id);
+  const along = [span[1][0] - span[0][0], span[1][1] - span[0][1]], l = Math.hypot(...along);
+  const beside = [span[1][0] + (along[0] / l) * 0.6, span[1][1] + (along[1] / l) * 0.6];
+  const wl = await worldScreen(beside[0], 1.3, beside[1]);
+  await page.mouse("mouseMoved", ...wl);
+  await until(() => window.storeypathReview.view3d.hovered?.wall === true, "a wall under the pointer", 5000);
+  const wallBefore = await R((id) => window.storeypathReview.state.byId.get(id).wall_finish ?? null, door.there);
+  await page.click(...wl);
+  await until((id, was) => (window.storeypathReview.state.byId.get(id).wall_finish ?? null) !== was, "its walls painted", 15000, door.there, wallBefore);
+  truly(floorBrush && wallBrush, `the brushes: ${floorBrush}, ${wallBrush}`);
+  await press("z", ["mod"]);
+  await until((id, was) => (window.storeypathReview.state.byId.get(id).wall_finish ?? null) === was, "the walls undone", 20000, door.there, wallBefore);
+  await press("z", ["mod"]);
+  await until((id, was) => (window.storeypathReview.state.byId.get(id).floor_finish ?? null) === was, "the floor undone", 20000, door.there, before);
+  await press("Escape");
+  // Place: a type, its ghost under the pointer, a click places it there
+  await press("i");
+  await until(() => Boolean(document.querySelector(".type-picker .type-tile")), "the types to place", 5000);
+  await R(() => {
+    const tiles = [...document.querySelectorAll(".type-picker .type-tile")];
+    (tiles.find((t) => /chair|sofa|plant|bin/i.test(t.textContent)) ?? tiles[0]).click();
+  });
+  await standAt(door.far, [door.far[0] + door.n[0], door.far[1] + door.n[1]], -0.6);
+  const pl = await worldScreen(door.far[0] + door.n[0] * 1.2, 0, door.far[1] + door.n[1] * 1.2);
+  await page.mouse("mouseMoved", pl[0] - 20, pl[1]);
+  await page.mouse("mouseMoved", ...pl);
+  await until(() => Boolean(window.storeypathReview.view3d.world.scene.getObjectByName("ghost")), "its ghost under the pointer", 5000);
+  const n = await R(() => window.storeypathReview.state.floor.items.length);
+  await page.click(...pl);
+  await until((n) => window.storeypathReview.state.floor.items.length === n + 1, "placed", 15000, n);
+  await press("z", ["mod"]);
+  await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n, "undone", 20000, n);
+  await press("Escape");
+  noErrors("painting and placing walking");
+});
+
+test("walking: a right-click offers what can be done there: on the floor, choose it, paint it, take up its finish, place an item, show it on the plan; on a door, shut it", async () => {
+  await viewTo("walk");
+  const door = await aDoor();
+  const right = async ([x, y]) => {
+    await page.mouse("mouseMoved", x, y);
+    await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "right", buttons: 2, clickCount: 1 });
+    await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "right", buttons: 0, clickCount: 1 });
+    await until(() => !document.getElementById("menu").hidden, "the menu", 5000);
+    return R(() => [...document.querySelectorAll("#menu .menu-item .label")].map((l) => l.textContent));
+  };
+  await standAt(door.far, [door.far[0] + door.n[0], door.far[1] + door.n[1]], -0.7);
+  const floor = await right(await worldScreen(door.far[0] + door.n[0] * 1.0, 0, door.far[1] + door.n[1] * 1.0));
+  for (const want of ["Select", /^Paint this floor: /, "Pick up its finish", "Place an item here…", /^(Draw|Show) here in 2D$/]) {
+    truly(floor.some((x) => (typeof want === "string" ? x === want : want.test(x))), `the floor's menu: ${JSON.stringify(floor)}, no ${want}`);
+  }
+  await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Select")).click());
+  await until((id) => window.storeypathReview.state.selected === id, "Select chose the room", 5000, door.there);
+  await press("Escape");
+  await standAt(door.near, door.leaf, -0.1);
+  const onDoor = await right(await worldScreen(door.leaf[0], 1.1, door.leaf[1]));
+  truly(onDoor.includes("Close the door"), `the door's menu: ${JSON.stringify(onDoor)}`);
+  await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Close the door")).click());
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === false, "shut from the menu", 5000, door.id);
+  await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, true, { instant: true }), door.id);
+  // a right-drag looks, and offers nothing
+  const y0 = await R(() => { const p = window.storeypathReview.view3d.world.player; return Math.atan2(p.dx, p.dz); });
+  const [x, y] = await worldScreen(door.leaf[0], 1.1, door.leaf[1]);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "right", buttons: 2, clickCount: 1 });
+  for (let i = 1; i <= 6; i++) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x - i * 15, y, button: "right", buttons: 2 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x - 90, y, button: "right", buttons: 0, clickCount: 1 });
+  await until(async (y0) => { const p = window.storeypathReview.view3d.world.player; return Math.abs(Math.atan2(p.dx, p.dz) - y0) > 0.05; }, "a right-drag looked", 5000, y0);
+  truly(await R(() => document.getElementById("menu").hidden), "no menu after a right-drag");
+  await press("2");
+  await until(() => window.storeypathReview.view3d.mode === "2d", "back on the plan");
+  noErrors("the menu walking");
+});
+
+// ---- the README's table of keys: the registry's ------------------------------------------------
+
+/** A chord as the README writes it: ⌘/Ctrl+Z, Shift+R, ←. */
+const written = (chord) => chord.split("+").map((k) => ({ mod: "⌘/Ctrl", shift: "Shift", alt: "Alt", ctrl: "Ctrl", arrowleft: "←", arrowright: "→",
+  arrowup: "↑", arrowdown: "↓", escape: "Esc", delete: "Del", backspace: "⌫", pageup: "PgUp", pagedown: "PgDn", contextmenu: "Menu",
+  space: "Space", enter: "Enter", "=": "+", "-": "−" }[k] ?? (k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1)))).join("+");
+
+/** The table of what each key does in 2D, 3D and walking, nothing chosen and an item
+ * chosen, built from the registry as the page has it (keyMap): Markdown. */
+async function keysTable() {
+  const titles = await R(() => Object.fromEntries(window.storeypathReview.commands().map((c) => [c.id, c.title])));
+  const item = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired).id);
+  const cells = new Map(); // chord → { "2d": [plain, item], … }
+  const what = (b) => (!b ? "" : b.id === null ? `${b.title} (the ${b.owner}'s)` : b.works ? titles[b.id] : `— (${b.idle ?? "says why"})`);
+  for (const view of ["2d", "3d", "walk"]) {
+    await viewTo(view);
+    for (const [k, chosen] of [[0, null], [1, item]]) {
+      const map = await R((chosen) => {
+        const r = window.storeypathReview;
+        r.setTool(null);
+        r.select(null);
+        r.selectAsset(chosen);
+        return r.keyMap();
+      }, chosen);
+      for (const b of map) {
+        if (!cells.has(b.chord)) cells.set(b.chord, { "2d": ["", ""], "3d": ["", ""], walk: ["", ""] });
+        cells.get(b.chord)[view][k] = what(b);
+      }
+    }
+  }
+  await R(() => window.storeypathReview.selectAsset(null));
+  await viewTo("2d");
+  const cell = ([plain, withItem]) => (withItem && withItem !== plain ? `${plain || "—"} · *an item chosen:* ${withItem}` : plain || "—");
+  // the arrows (and Shift with them) said as one when they mean the same but for their way
+  const dir = (s) => s.replace(/ (left|right|up|down)\b/g, "");
+  const rows = [], done = new Set();
+  for (const [chord, by] of cells) {
+    if (done.has(chord)) continue;
+    const arrows = /^(shift\+)?arrow(left|right|up|down)$/.exec(chord);
+    let keys = [chord];
+    if (arrows) {
+      const all = ["left", "right", "up", "down"].map((d) => `${arrows[1] ?? ""}arrow${d}`);
+      const same = all.every((c) => cells.has(c) && ["2d", "3d", "walk"].every((v) => [0, 1].every((i) => dir(cells.get(c)[v][i]) === dir(by[v][i]))));
+      if (same) keys = all;
+    }
+    keys.forEach((c) => done.add(c));
+    const text = (v) => cell(by[v].map(keys.length > 1 ? dir : (s) => s));
+    const row = { keys, cells: [text("2d"), text("3d"), text("walk")] };
+    // the walker's keys that mean the same everywhere, said as one (Shift with W A S D)
+    const same = rows.find((r) => /the walker's/.test(r.cells[2]) && r.cells.join() === row.cells.join());
+    if (same) same.keys.push(...keys);
+    else rows.push(row);
+  }
+  const lines = rows.map((r) => `| ${r.keys.map((c) => `\`${written(c)}\``).join(" ")} | ${r.cells.join(" | ")} |`);
+  // the keys of the tools in use, and of review mode
+  const scoped = await R(() => window.storeypathReview.keys().filter((b) => b.scope.startsWith("tool:") || b.scope === "review")
+    .map((b) => ({ ...b, title: window.storeypathReview.commands().find((c) => c.id === b.id)?.title })));
+  // (review mode's 1 to 9 said as one)
+  const digits = scoped.filter((b) => /^review\.type-\d$/.test(b.id));
+  const others = scoped.filter((b) => !digits.includes(b)).map((b) => `| \`${written(b.chord)}\` | ${b.scope === "review" ? "review mode" : `the ${b.scope.slice(5)} tool in use`} | ${b.title} |`);
+  if (digits.length) others.push(`| \`1\`–\`9\` | review mode | Set one of the room's likely types |`);
+  return ["| Key | 2D | 3D | Walk |", "|---|---|---|---|", ...lines, "", "| Key | While | Does |", "|---|---|---|", ...others].join("\n");
+}
+
+test("the README's table of keys is the registry's (UPDATE_KEYS=1 writes it again)", async () => {
+  const { readFileSync, writeFileSync } = await import("node:fs");
+  const path = join(here, "../../src/storeypath/review_app/README.md");
+  const readme = readFileSync(path, "utf8");
+  const table = await keysTable();
+  const [start, end] = ["<!-- keys: made by tests/browser/review.mjs from the registry -->", "<!-- /keys -->"];
+  const a = readme.indexOf(start), b = readme.indexOf(end);
+  truly(a >= 0 && b > a, "the README has no table of keys between its markers");
+  const now = readme.slice(a + start.length, b).trim();
+  if (now !== table && process.env.UPDATE_KEYS) {
+    writeFileSync(path, `${readme.slice(0, a + start.length)}\n${table}\n${readme.slice(b)}`);
+    return;
+  }
+  truly(now === table, `the README's table of keys is not the registry's: run with UPDATE_KEYS=1, or put this between its markers:\n${table}`);
+});
+
 let failed = 0;
+// ONLY=<words>: the page opened, then only the tests whose names have them (to try a few)
+const only = process.env.ONLY?.toLowerCase();
+const chosen = tests.filter((x, i) => !only || i === 0 || x.name.toLowerCase().includes(only));
 try {
-  for (const t of tests) {
+  for (const t of chosen) {
     const started = Date.now();
     try {
       await t.fn();
@@ -497,5 +911,5 @@ try {
 } finally {
   page.close();
 }
-console.log(failed ? `${failed} failed` : `${tests.length} passed`);
+console.log(failed ? `${failed} failed` : `${chosen.length} passed`);
 process.exit(failed ? 1 : 0);

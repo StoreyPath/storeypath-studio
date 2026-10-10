@@ -14,8 +14,10 @@ export's *3D*) open it. It is StoreyPath's world (`/viewer/src/world/world.js`) 
 frame: the top bar (where you are, Dollhouse or Walk, the keys, presenting, full screen,
 the theme, the account), a toolbar over the world (X-ray, Cutaway, Explode, Labels, Items,
 Hidden; walking, the map and the doors; Look and Quality: `look.js`), the floor stack, a
-room's or an item's details, walking's map and the room you are in, and a status bar (what
-the view expects, the door at the cross, how it is drawn). `P` presents: nothing but the
+room's or an item's details (a click, walking too), walking's map and the room you are in,
+and a status bar (what the view expects, the door <kbd>E</kbd> works, how it is drawn).
+Walking never takes the mouse: a drag looks, a double-click goes there (the world's own,
+`viewer/README.md`, "Walking"). `P` presents: nothing but the
 building, turning slowly in the dollhouse (`T` stops it), `Esc` back. What it shows is kept
 in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`,
 `quality`, `floor`), and only a package of Studio's own (`/api/projects/…`) is read.
@@ -55,8 +57,8 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
 | `review/measure.js` | the Measure tool |
 | `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, Paint finishes, Share an area: each its own tool and parts |
-| `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`) |
-| `review/menu.js` | the right-click menu |
+| `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |
+| `review/menu.js` | the right-click menu, on the plan and in 3D and walking (`menu3d`) |
 | `review/rooms.js` | a room's corrections, saved; capacity and grade |
 | `review/live.js`, `../together.js` | others' changes shown live; presence, the floor's lock, undo and redo, History |
 | `review/api.js`, `notify.js`, `access.js`, `dom.js`, `tooltip.js` | calls to Studio, toasts and the status line, who may edit, elements and icons, tooltips |
@@ -93,7 +95,9 @@ tool({
 
 `p` is a point of the plan in metres. The rail, its tooltip and key, the command
 `tool.column` in the palette and the keyboard map come with it. In 3D and walking the
-world's `pick` event is the tool's (see Place and Paint in `view3d.js`). Call
+world's `pick` event (a click where the pointer is) is the tool's (see Place and Paint in
+`view3d.js`). Its key where it does not work (a 2D tool in 3D or walking) changes nothing
+and says why in the status bar: a letter never switches the view. Call
 `emit("tool-options")` when its options change and `emit("tool-progress")` when its hint
 does.
 
@@ -108,11 +112,98 @@ command({ id: "view.grid", title: "Show a grid", group: "View", icon: "layers",
 ```
 
 It is in the palette at once (`palette: false` keeps it out), its key in the map and
-in the list of keys (?). A menu runs it with `run("view.grid")`. Keys are scoped
-(`scope`): `global`, `3d`, `item` (an item chosen), `review` (review mode), `walk`,
-`tool:<id>`; the first scope that applies and has the key wins, and one key twice in a
-scope is an error (`window.storeypathReview.keyConflicts()`; the browser tests check
-it). Keys typed in a field are the field's.
+in the list of keys (?). A menu runs it with `run("view.grid")`. `works: () => …` says
+when its key does what it says (the list of keys shows only those; a tool's key elsewhere
+only says why).
+
+## The keys
+
+One map (`keys.js`), in scopes, the first that applies and has the key wins:
+`review` (review mode), `walk` (walking: W A S D and the arrows reserved for the walker),
+`item` (an item chosen, whatever the tool: R , . turn it, the arrows move it, Del deletes
+it — what is chosen wins), `tool:<id>` (the tool in use: Enter, Backspace), `3d` (3D and
+walking: 2 shows the place under the pointer on the plan) or `2d` (Space held moves the
+plan, reserved for `pointer.js`), and `global`. Keys others handle are reserved in their
+scope with who handles them (`reserve(chords, scope, owner, title)`), so the map says them
+and Review hears nothing there; one key twice in a scope is an error
+(`window.storeypathReview.keyConflicts()`). Keys typed in a field are the field's, and a
+dialog's or a menu's keys are theirs. A letter changes the tool, never the view: only
+2, 3 and 4 do (and 2 in 3D or walking shows the place under the pointer on the plan); a
+key that cannot work where you are says why in the status bar. The list of keys (?) shows
+the keys of the view and of what is chosen and in use, and nothing else; tooltips, the
+palette and the menus show a command's key only where it runs it (`keyNow`).
+
+What each key does, made from the registry by `tests/browser/review.mjs` (which fails
+when this table is not the registry's; `UPDATE_KEYS=1` writes it again). Walking, the
+world itself takes <kbd>E</kbd> first when there is a door (under the pointer, else
+ahead).
+
+<!-- keys: made by tests/browser/review.mjs from the registry -->
+| Key | 2D | 3D | Walk |
+|---|---|---|---|
+| `Space` | Move the plan, held (with any tool) (the plan's) | — | — |
+| `V` | Select tool | Select tool | Select tool |
+| `H` | Pan tool | — (says why) | — (says why) |
+| `G` | Find the way | Find the way | Find the way |
+| `2` | — (shown already) | This place in 2D | This place in 2D |
+| `3` | Show in 3D | — (shown already) | Show in 3D |
+| `4` | Walk through it | Walk through it | — (shown already) |
+| `F` | Fit the floor in view | — (says why) | — (says why) |
+| `+` | Zoom in | — (says why) | — (says why) |
+| `−` | Zoom out | — (says why) | — (says why) |
+| `←` `→` `↑` `↓` | Move the plan · *an item chosen:* Move the item | — (says why) · *an item chosen:* Move the item | Walk (the walker's) |
+| `Shift+←` `Shift+→` `Shift+↑` `Shift+↓` | Move the plan · *an item chosen:* Move the item 1 m | — (says why) · *an item chosen:* Move the item 1 m | Run (the walker's) |
+| `T` | Studio's labels, or the drawing's texts | Studio's labels, or the drawing's texts | Studio's labels, or the drawing's texts |
+| `[` | Show or hide the navigator | Show or hide the navigator | Show or hide the navigator |
+| `]` | Show or hide the inspector | Show or hide the inspector | Show or hide the inspector |
+| `\` | Show or hide both panels | Show or hide both panels | Show or hide both panels |
+| `⌘/Ctrl+Z` | Undo | Undo | Undo |
+| `⌘/Ctrl+Shift+Z` | Redo | Redo | Redo |
+| `⌘/Ctrl+Y` | Redo | Redo | Redo |
+| `Del` | — (says why) · *an item chosen:* Delete what is chosen | — (says why) · *an item chosen:* Delete what is chosen | — (says why) · *an item chosen:* Delete what is chosen |
+| `⌫` | — (says why) · *an item chosen:* Delete what is chosen | — (says why) · *an item chosen:* Delete what is chosen | — (says why) · *an item chosen:* Delete what is chosen |
+| `⌘/Ctrl+A` | Choose every room | Choose every room | Choose every room |
+| `Shift+F10` | What can be done here (the right-click menu) | What can be done here (the right-click menu) | What can be done here (the right-click menu) |
+| `Menu` | What can be done here (the right-click menu) | What can be done here (the right-click menu) | What can be done here (the right-click menu) |
+| `Esc` | Close, give up or let go (the nearest first) | Close, give up or let go (the nearest first) | Close, give up or let go (the nearest first) |
+| `PgUp` | The floor above | The floor above | Up the stairs or the lift |
+| `PgDn` | The floor below | The floor below | Down the stairs or the lift |
+| `⌘/Ctrl+K` | Search and commands | Search and commands | Search and commands |
+| `/` | Search and commands | Search and commands | Search and commands |
+| `?` | Keyboard shortcuts | Keyboard shortcuts | Keyboard shortcuts |
+| `W` | Wall tool | — (says why) | Walk (the walker's) |
+| `R` | Space tool · *an item chosen:* Turn the item 90° | — (says why) · *an item chosen:* Turn the item 90° | — (says why) · *an item chosen:* Turn the item 90° |
+| `D` | Divide tool | — (says why) | Walk (the walker's) |
+| `O` | Door, window, opening tool | — (says why) | — (says why) |
+| `L` | Stairs and lifts tool | — (says why) | — (says why) |
+| `I` | Place an item tool | Place an item tool | Place an item tool |
+| `P` | Paint finishes tool | Paint finishes tool | Paint finishes tool |
+| `M` | Measure tool | — (says why) | — (says why) |
+| `A` | Share an area tool | — (says why) | Walk (the walker's) |
+| `N` | Next room to review | Next room to review | Next room to review |
+| `Shift+N` | Room before, to review | Room before, to review | Room before, to review |
+| `Shift+R` | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° |
+| `,` | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left |
+| `.` | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right |
+| `E` | — | — | Open or close the door at the pointer, or ahead (at stairs: up) |
+| `Q` | — | — | Down the stairs or the lift |
+| `S` | — | — | Walk (the walker's) |
+| `Shift+W` `Shift+A` `Shift+S` `Shift+D` | — | — | Run (the walker's) |
+
+| Key | While | Does |
+|---|---|---|
+| `Enter` | the space tool in use | Space: close the shape |
+| `⌫` | the space tool in use | Space: take back the last corner |
+| `Enter` | the stairs tool in use | Stairs and lifts: close the shape (two corners: a rectangle) |
+| `⌫` | the stairs tool in use | Stairs and lifts: take back the last corner |
+| `Enter` | the measure tool in use | Measure: finish the measure |
+| `⌫` | the measure tool in use | Measure: take back the last point |
+| `N` | review mode | Next room to review |
+| `P` | review mode | Room before |
+| `Shift+N` | review mode | Room before |
+| `Enter` | review mode | Accept the room as it is |
+| `1`–`9` | review mode | Set one of the room's likely types |
+<!-- /keys -->
 
 ## Adding an inspector section
 
