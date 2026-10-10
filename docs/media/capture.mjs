@@ -146,24 +146,23 @@ async function world(p, building, more = {}) {
 
 /** The dollhouse camera put round the point it turns around: ``azimuth`` (degrees, from the
  * world's south, clockwise seen from above), ``elevation`` (degrees above the horizon) and
- * ``distance`` (metres; default as it is). The orbit's target is kept: only the camera moves. */
-const orbit = (p, { azimuth, elevation, distance = null }) => p.R((az, el, dist) => {
+ * ``distance`` (metres; default as it is, times ``closer``). The orbit's target is kept: only the
+ * camera moves. */
+const orbit = (p, { azimuth, elevation, distance = null, closer = 1 }) => p.R((az, el, dist, closer) => {
   const w = window.storeypathWorld ?? window.storeypathReview.view3d.world;
   const cam = w.camera, t = w.target, P = cam.position;
   const d = cam.getWorldDirection(cam.position.clone()); // (a vector to fill)
   const flat = Math.hypot(t.x - P.x, t.z - P.z), along = flat / Math.max(1e-6, Math.hypot(d.x, d.z));
   const ty = P.y + d.y * along; // the target's height, where the camera looks
-  const r = dist ?? Math.hypot(t.x - P.x, ty - P.y, t.z - P.z);
+  const r = (dist ?? Math.hypot(t.x - P.x, ty - P.y, t.z - P.z)) * closer;
   const a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
   P.set(t.x + r * Math.cos(e) * Math.sin(a), ty + r * Math.sin(e), t.z + r * Math.cos(e) * Math.cos(a));
   return { target: [t.x, ty, t.z], r };
-}, azimuth, elevation, distance);
+}, azimuth, elevation, distance, closer);
 
 // ---- the scenes --------------------------------------------------------------------------------------
 //
-// Each writes one or more pictures (jobs for encode.py). Not here yet: the way through the building
-// (Navigate, and the 3D world's route), to be taken once the wayfinding look being redesigned has
-// landed in the viewer.
+// Each writes one or more pictures (jobs for encode.py).
 
 const jobs = []; // what encode.py makes of the screenshots
 const scenes = {};
@@ -470,8 +469,8 @@ scenes.walk = async () => {
 // ---- animations: screenshots taken as fast as they come, then put on a timeline ------------------------
 
 /** Frames of a page as it changes (JPEGs, each with when it was taken), until ``stop``; ``now()``
- * marks a moment, to cut the timeline at. */
-function recorder(p, name) {
+ * marks a moment, to cut the timeline at. ``clip``: a part of the page alone (CSS pixels). */
+function recorder(p, name, { clip = null } = {}) {
   const frames = [];
   const t0 = Date.now();
   let on = true, paused = false, n = 0, taking = null;
@@ -482,7 +481,8 @@ function recorder(p, name) {
         continue;
       }
       const t = Date.now() - t0;
-      taking = p.page.send("Page.captureScreenshot", { format: "jpeg", quality: 90, optimizeForSpeed: true });
+      taking = p.page.send("Page.captureScreenshot", { format: "jpeg", quality: 90, optimizeForSpeed: true,
+        ...(clip ? { clip: { ...clip, scale: 1 } } : {}) });
       const { data } = await taking;
       taking = null;
       const file = join(rawDir, `${name}-${String(++n).padStart(4, "0")}.jpg`);
@@ -717,6 +717,134 @@ scenes.walkdoor = async () => {
   p.close();
 };
 
+// ---- finding the way: Studio's Find the way page, the way drawn in, played, flown along -------------------
+//
+// The viewers move the way by their own clocks (a line drawing itself in, a dot walking it, the
+// camera flying along it), so these are taken in slow motion: the page's clocks and its CSS
+// animations run at RATE of real time while it is recorded, and the recording is played 1/RATE
+// times as fast. What is shown is what a person sees, at its own pace.
+
+const RATE = 0.4;
+
+/** Installed in a page before its scripts: its clocks (performance.now, the time animation frames
+ * are given, timers) and its CSS animations and transitions slowed by ``window.__spRate(rate)``
+ * from that moment, without a jump. (DevTools' own Animation.setPlaybackRate leaves the plan
+ * blank while it plays: the page's animations are slowed one by one instead.) */
+const SLOWABLE = `(() => {
+  const real = performance.now.bind(performance), frame = window.requestAnimationFrame.bind(window);
+  const timeout = window.setTimeout.bind(window), interval = window.setInterval.bind(window);
+  let base = real(), offset = base, rate = 1;
+  const scaled = (t) => offset + (t - base) * rate;
+  performance.now = () => scaled(real());
+  window.requestAnimationFrame = (cb) => frame((t) => cb(scaled(t)));
+  window.setTimeout = (fn, ms = 0, ...a) => timeout(fn, ms / rate, ...a);
+  window.setInterval = (fn, ms = 0, ...a) => interval(fn, ms / rate, ...a);
+  window.__spRate = (r) => { const now = real(); offset = scaled(now); base = now; rate = r; };
+  const css = () => {
+    for (const a of document.getAnimations()) if (a.playbackRate !== rate) a.playbackRate = rate;
+    frame(css);
+  };
+  frame(css);
+})();`;
+
+/** The page's clocks and CSS animations at ``rate`` of real time (1: as they are). */
+const slowMotion = (p, rate) => p.R((r) => window.__spRate(r), rate);
+
+/** The demo's way: from the kiosk in the main building's reception to an office two floors up. */
+async function wayEnds(p) {
+  const net = await p.R(async (path) => (await fetch(path)).json(), `/api/projects/${DEMO}/buildings/${MAIN}/navigation`);
+  const kiosk = net.nodes.find((n) => n.kind === "kiosk" && n.floor_id === `${MAIN}-F00`).item_id;
+  const office = net.places.find((x) => x.label === "OFFICE 213" && x.floor_id === `${MAIN}-F02`);
+  const floors = Object.fromEntries(net.floors.map((f) => [f.id, f.name]));
+  return { kiosk, office: office.id, floors };
+}
+
+/** Studio's Find the way page from the kiosk (to the office, unless ``to: false``), slowable. */
+async function findTheWay(p, { to = true, view = "plan", theme = "dark", width = W, height = H } = {}) {
+  const ends = await wayEnds(p);
+  await p.page.send("Page.addScriptToEvaluateOnNewDocument", { source: SLOWABLE });
+  await p.R((t, v) => {
+    localStorage.setItem("storeypath.theme", t);
+    localStorage.setItem("storeypath.navigate.view", v);
+  }, theme, view);
+  const q = new URLSearchParams({ p: DEMO, building: MAIN, from: ends.kiosk, ...(to ? { to: ends.office } : {}) });
+  await p.open(`/navigate.html?${q}`, { width, height });
+  await p.until(() => window.storeypathNavigate?.state.engine && window.storeypathNavigate.state.planShows, "the plan", 60000);
+  if (to) await p.until(() => document.querySelector(".sp-route[data-sp-route]") && document.querySelectorAll("#steps .step").length, "the way", 30000);
+  if (view !== "plan") {
+    await p.until(() => window.storeypathNavigate.state.worldShows && window.storeypathNavigate.state.world.route, "the way in 3D", 120000);
+    await p.R(() => window.storeypathNavigate.state.world.ready());
+  }
+  return ends;
+}
+
+/** Where an element is on the page (CSS pixels), as a screenshot's clip. */
+const boxOf = (p, selector) => p.R((s) => {
+  const r = document.querySelector(s).getBoundingClientRect();
+  return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+}, selector);
+
+/** The way played on the plan, as a person finds it: the office typed and chosen, the way drawing
+ * itself in, then Play: a dot walks it, up the stairs to Floor 2 and on to the office. With
+ * ``clip``, the plan alone (for the viewer's README). */
+async function playTheWay(p, name, { area = null } = {}) {
+  const rec = recorder(p, name, { clip: area }), m = {};
+  await slowMotion(p, RATE);
+  await sleep(500);
+  m.start = rec.now();
+  const to = await boxOf(p, "#to-input");
+  await p.page.click(to.x + to.width / 2, to.y + to.height / 2);
+  await sleep(500);
+  for (const ch of "office 213") {
+    await p.page.send("Input.insertText", { text: ch });
+    await sleep(240);
+  }
+  await sleep(900);
+  m.chosen = rec.now();
+  await p.key("Enter");
+  await p.until(() => document.querySelector(".sp-route[data-sp-route]"), "the way", 20000);
+  await p.R(() => document.activeElement?.blur());
+  await sleep(2200 / RATE); // drawn in (a second), then flowing
+  await p.R(() => document.getElementById("play").click());
+  await p.until(() => window.storeypathNavigate.state.playing === "ended", "played to the end", 120000);
+  await sleep(1100 / RATE);
+  m.end = rec.now();
+  const frames = await rec.stop();
+  await slowMotion(p, 1);
+  return { frames, m };
+}
+
+/** Find the way, on the plan: typed, drawn in, played across two floors. */
+scenes.route = async () => {
+  const p = await browser("maya");
+  await findTheWay(p, { to: false });
+  await sleep(1500);
+  const { frames, m } = await playTheWay(p, "route");
+  jobs.push({ frames: merged([...hold(frames, m.start, 200), ...clip(frames, m.start, m.end, 1 / RATE), ...hold(frames, m.end, 900)]),
+    out: "route.webp", width: 1200, quality: 70 });
+  p.close();
+};
+
+/** Find the way in 3D: the way glowing through the building, then Fly along, up the stairs to the office. */
+scenes["route-fly"] = async () => {
+  const p = await browser("maya");
+  await findTheWay(p, { view: "3d" });
+  await sleep(2500);
+  const rec = recorder(p, "route-fly", { clip: await boxOf(p, "#world-pane") }), m = {};
+  await slowMotion(p, RATE);
+  await sleep(1400 / RATE);
+  m.start = rec.now();
+  await p.R(() => document.getElementById("fly").click());
+  await p.until(() => window.storeypathNavigate.state.world.routePlay === null && !document.getElementById("fly").disabled, "flown", 180000);
+  await sleep(800 / RATE);
+  m.end = rec.now();
+  const frames = await rec.stop();
+  await slowMotion(p, 1);
+  jobs.push({ frames: merged([...hold(frames, m.start, 1000), ...clip(frames, m.start, m.end, 1 / RATE), ...hold(frames, m.end, 500)]),
+    out: "route-fly.webp", width: 720, quality: 55 });
+  p.close();
+};
+
 // ---- the viewer's own README: the world and the plan alone, no Studio round them -----------------------
 //
 // Taken only when asked (`viewer`, or a scene's name), into the viewer's checkout
@@ -840,6 +968,37 @@ scenes["viewer-walk"] = async () => {
   await p.R((id) => window.storeypathWorld.setDoorOpen(id, true, { instant: true }), door);
   jobs.push({ frames: merged([...hold(frames, m.start, 400), ...clip(frames, m.start, m.atDoor, SLOW), ...clip(frames, m.atDoor, m.opened, 1),
     ...clip(frames, m.opened, m.end, SLOW), ...hold(frames, m.end, 600)]), out: inViewer("walk.webp"), width: 960, quality: 70 });
+  p.close();
+};
+
+/** The way on the plan alone, in the light: drawn in, then played up the stairs to the office. */
+scenes["viewer-route"] = async () => {
+  const p = await browser("maya", { gl: false });
+  await findTheWay(p, { to: false, theme: "light", width: 1500, height: 940 });
+  await sleep(1500);
+  const { frames, m } = await playTheWay(p, "viewer-route", { area: await boxOf(p, "#plan-pane") });
+  jobs.push({ frames: merged([...hold(frames, m.chosen + 300, 300), ...clip(frames, m.chosen + 300, m.end, 1 / RATE), ...hold(frames, m.end, 900)]),
+    out: inViewer("route.webp"), width: 900, quality: 72 });
+  p.close();
+};
+
+/** The way in the 3D world alone: its glowing ribbon over each floor, the stairs' column between, its marks. */
+scenes["viewer-route3d"] = async () => {
+  const p = await browser("maya");
+  const { kiosk, office, floors } = await wayEnds(p);
+  await world(p, MAIN);
+  await bare(p);
+  const { route } = await p.R(async (path) => (await fetch(path)).json(),
+    `/api/projects/${DEMO}/buildings/${MAIN}/navigation?${new URLSearchParams({ from: kiosk, to: office })}`);
+  await p.R(async (route, floors) => {
+    const w = window.storeypathWorld;
+    w.setFloor(null);
+    await w.showRoute(route, { fit: true, animate: false, startLabel: "You are here", floorName: (id) => floors[id] ?? id });
+  }, route, floors);
+  await sleep(2500);
+  await orbit(p, { azimuth: -30, elevation: 27, closer: 0.76 }); // low and close: the way across the building
+  await sleep(2500);
+  jobs.push({ in: await p.shot("viewer-route3d"), out: inViewer("route-3d.webp"), quality: 90 });
   p.close();
 };
 

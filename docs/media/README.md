@@ -26,8 +26,14 @@ another), to be committed in that repository.
   pages, lossy for 3D), the Real and Model picture split down the middle, and the animated
   WebP.
 
+The way through the building (`route`: Find the way on the plan, typed, drawn in and
+played; `route-fly`: Fly along in 3D; and the viewer's `viewer-route`, `viewer-route3d`)
+moves by the viewers' own clocks, so it is recorded in slow motion: the page's clocks and
+CSS animations run at 0.4 of real time and the recording plays 2.5 times as fast, at the
+pace a person sees it.
+
 It needs Studio's environment (`cd studio && uv sync --extra vision`), Node.js, Chrome,
 and the viewer built (`npm ci && npm run build` in `storeypath-viewer/viewer/svg` and
 `/world`). `--raw <folder>` keeps the screenshots as taken; `--stage <file>` uses a stage
 already running (its first line saved to the file); `--out <folder>` writes elsewhere.
-Keep `docs/images/` lean: about 4 MB today, the hero about 2 MB.
+Keep `docs/images/` lean: about 7 MB today, the hero and the fly along some 2 to 3 MB each.
