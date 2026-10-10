@@ -207,8 +207,9 @@ body.presenting.pointer-moved #stage { cursor: auto; }
   .w-toggle span, .w-label, .w-explode span { display: none; }
 }
 @media (max-width: 760px) {
-  .tb-center { display: none; }
-  .topbar { grid-template-columns: minmax(0, 1fr) auto; }
+  /* Dollhouse or Walk stays, its icons alone (their names in the tooltips) */
+  #mode > button { min-width: 0; padding: 0 var(--sp-3); }
+  .w-mode-name, #keys-open { display: none; }
   .w-card { top: auto; bottom: calc(var(--sp-3) + 8px); right: var(--sp-3); left: var(--sp-3); width: auto; max-height: 50%; }
   .floor-stack { bottom: auto; top: calc(var(--sp-3) + 56px); }
   #sb-look, #sb-source { display: none; }

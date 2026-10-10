@@ -92,7 +92,7 @@ function remember(name, value) {
 
 function problem(title, text, action = null) {
   $("loading").hidden = true;
-  $("problem").replaceChildren(el("h3", {}, title), el("p", {}, text), action);
+  $("problem").replaceChildren(...[el("h3", {}, title), el("p", {}, text), action].filter(Boolean));
   $("problem").hidden = false;
 }
 
@@ -403,10 +403,15 @@ function renderRoom(feature) {
       b.addEventListener("click", () => state.world.select(space.id));
       return b;
     }))) : null;
-  $("details").replaceChildren(
+  showDetails(
     head(p.name || typeWords(p.type), [typeWords(p.type), p.number].filter(Boolean).join(" · "), typeColour(p.type)),
     el("dl", {}, rows.flat()), leads,
     el("div", { class: "w-actions" }, walkHere(feature.id), reviewLink(feature)));
+}
+
+/** The details card with these parts (those null left out: replaceChildren would write "null"). */
+function showDetails(...parts) {
+  $("details").replaceChildren(...parts.filter(Boolean));
   $("details").hidden = false;
 }
 
@@ -432,13 +437,12 @@ function renderItem(feature) {
     [el("dt", {}, "Mounted"), el("dd", {}, `${p.mount}${p.elevation_m ? `, ${Number(p.elevation_m).toFixed(2)} m up` : ""}`)],
     ...ours.map((f) => [el("dt", {}, f.name_en), el("dd", {}, value(f))]),
   ].filter(Boolean);
-  $("details").replaceChildren(
+  showDetails(
     head(type?.name_en ?? p.name, [cap(p.category), p.type].join(" · "), type?.color ?? "#8a8a8a", type?.name_ar || null),
     el("dl", {}, rows.flat()),
     theirs.length ? el("div", { class: "w-section" }, el("p", { class: "w-note" },
       `Kept by the system that manages it: ${theirs.map((f) => f.name_en).join(", ")}`)) : null,
     el("div", { class: "w-actions" }, walkHere(feature.id), reviewLink(feature)));
-  $("details").hidden = false;
 }
 
 // ---- walking ------------------------------------------------------------------------------------

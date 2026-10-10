@@ -184,7 +184,9 @@ test("a room chosen shows its details: its ID, floor, area, finishes, where its 
     w.select(w.package.items.find((i) => i.properties.type === "KIOSK").id);
   });
   await until(() => /Wayfinding kiosk/.test(document.getElementById("details").textContent), "the kiosk's details");
-  truly(/[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{3}/.test(await R(() => document.getElementById("details").textContent)), "its tag");
+  const kiosk = await R(() => document.getElementById("details").textContent);
+  truly(/[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{3}/.test(kiosk) && /RECEPTION/.test(kiosk), `its tag and its room: ${kiosk}`);
+  truly(!/null|undefined/.test(card + kiosk), `nothing missing said as such: ${card} ${kiosk}`);
   await press("Escape");
   noErrors("the details");
 });
@@ -269,6 +271,18 @@ test("the light theme: the top bar, the toolbar and the status bar light, rememb
     && light.topbar === "rgb(255, 255, 255)", JSON.stringify({ dark, light }));
   await click("#theme-toggle");
   truly(await R(() => document.documentElement.dataset.theme === "dark"), "back to dark");
+});
+
+test("a narrow window: Dollhouse and Walk still there, by their icons; the toolbar's names in its tooltips", async () => {
+  await page.send("Emulation.setDeviceMetricsOverride", { width: 720, height: 900, deviceScaleFactor: 1, mobile: false });
+  await sleep(300);
+  const narrow = await R(() => ({
+    modes: [...document.querySelectorAll("#mode button")].map((b) => b.offsetWidth > 0 && b.getBoundingClientRect().right <= innerWidth),
+    names: [...document.querySelectorAll("#mode button")].map((b) => b.getAttribute("aria-label")),
+    scroll: document.documentElement.scrollWidth <= innerWidth,
+  }));
+  truly(narrow.modes.every(Boolean) && narrow.names.join() === "Dollhouse,Walk" && narrow.scroll, JSON.stringify(narrow));
+  await page.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 });
 
 test("opened again with what its address says: walking, x-ray, Model", async () => {
