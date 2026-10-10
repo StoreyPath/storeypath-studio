@@ -163,7 +163,8 @@ export function keyNow(id) {
 const MAC_MODS = { mod: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
 const PC_MODS = { mod: "Ctrl", ctrl: "Ctrl", alt: "Alt", shift: "Shift" };
 const KEY_NAMES = { escape: "Esc", enter: "Enter", backspace: "⌫", delete: "Del", space: "Space", pageup: "PgUp", pagedown: "PgDn",
-  arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", "=": "+", "-": "−", tab: "Tab", home: "Home", end: "End" };
+  arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", "=": "+", "-": "−", tab: "Tab", home: "Home", end: "End",
+  contextmenu: "Menu" };
 
 /** A chord as its keys' caps: ["⇧", "⌘", "Z"] on a Mac, ["Ctrl", "Shift", "Z"] elsewhere. */
 export function caps(chord) {

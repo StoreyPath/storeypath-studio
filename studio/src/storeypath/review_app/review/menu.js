@@ -159,8 +159,8 @@ export function menu3d(cx, cy, p = null) {
   const items = [];
   // what is there
   if (on?.door && walking) {
-    const open = w.doorOpen?.(on.door);
-    items.push(...heading("Door", on.door));
+    const open = w.doorOpen?.(on.door), d = (state.floor.doors || []).find((x) => x.id === on.door);
+    items.push(...heading(d ? openingName(d) : "Door", (d && openingMeta(d)) || on.door));
     items.push(menuItem(open ? "Close the door" : "Open the door", () => w.toggleDoor(on.door), { hint: "E", ico: "door-open" }));
   } else if (asset) {
     const t = typeOf(asset.type);

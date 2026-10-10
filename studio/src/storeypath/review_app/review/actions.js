@@ -104,26 +104,24 @@ const AS_ONE = [
 ];
 const VIEW_NAMES = { "2d": "2D", "3d": "3D", walk: "Walk" };
 
-/** What the mouse (or a finger) does in a view, with the tool in use: [what, what it does]. */
+/** What the mouse (or a finger) does in a view, with the tool in use: [what, what it does]
+ * (a tool's click first, then what the view's mouse does besides). */
 function gestures() {
   const mode = view3d.mode, t = state.tool;
-  if (t === "place") {
-    return [[mode === "2d" ? "Click in a room" : "Click on the floor", "Place the item there (it lines up)"], ["Alt-click", "Place it as it is, anywhere"]];
-  }
-  if (t === "paint") {
-    return mode === "2d" ? [["Click a room", "Paint its floor"], ["Shift-click", "Paint its walls"], ["Alt-click", "Take up its finishes"]]
-      : [["Click a floor or a wall", "Paint it (a wall: the side you see)"], ["Alt-click", "Take up its finish"]];
-  }
-  if (mode === "walk") {
-    return [["Drag", "Look round (either button, or a finger)"], ["Click", "Choose, or open and close a door"], ["Double-click", "Go there"],
-      ["Scroll", "A step on or back"], ["Drag the item chosen", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]];
-  }
-  if (mode === "3d") {
-    return [["Click", "Choose a room or an item"], ["Drag", "Turn the view"], ["Shift-drag or right-drag", "Move the view"], ["Scroll", "Zoom"],
-      ["Drag an item", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]];
-  }
-  return [["Click", "Choose a room, an item or a door"], ["Shift-click", "Add a room to those chosen"], ["Shift-drag", "Choose the rooms in a band"],
-    ["Drag", "Move the plan, or carry an item (Alt: freely)"], ["Scroll", "Zoom"], ["Right-click", "What can be done here"]];
+  const view = mode === "walk"
+    ? [["Drag", "Look round (either button, or a finger)"], ["Click", "Choose, or open and close a door"], ["Double-click", "Go there"],
+      ["Scroll", "A step on or back"], ["Drag the item chosen", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]]
+    : mode === "3d"
+      ? [["Click", "Choose a room or an item"], ["Drag", "Turn the view"], ["Shift-drag or right-drag", "Move the view"], ["Scroll", "Zoom"],
+        ["Drag an item", "Carry it (Alt: freely)"], ["Right-click", "What can be done here"]]
+      : [["Click", "Choose a room, an item or a door"], ["Shift-click", "Add a room to those chosen"], ["Shift-drag", "Choose the rooms in a band"],
+        ["Drag", "Move the plan, or carry an item (Alt: freely)"], ["Scroll", "Zoom"], ["Right-click", "What can be done here"]];
+  const tool = t === "place" ? [[mode === "2d" ? "Click in a room" : "Click on the floor", "Place the item there (it lines up)"], ["Alt-click", "Place it as it is, anywhere"]]
+    : t === "paint" ? (mode === "2d" ? [["Click a room", "Paint its floor"], ["Shift-click", "Paint its walls"], ["Alt-click", "Take up its finishes"]]
+      : [["Click a floor or a wall", "Paint it (a wall: the side you see)"], ["Alt-click", "Take up its finish"]])
+      : [];
+  // (with a tool, its clicks are the tool's: the view's own click and what carries are not said)
+  return [...tool, ...view.filter(([what]) => !tool.length || !/^(Click|Shift-click|Drag an item|Drag the item chosen)$/.test(what))];
 }
 
 /** The situation the list of keys is for: the view, and what is chosen and in use. */
