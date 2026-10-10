@@ -1134,15 +1134,45 @@ def view(
 
 
 @app.command()
-def demo(directory: Path):
-    """Generate sample drawings, a workspace and a package to try things out."""
-    from .samples import build_demo
+def demo(
+    directory: Annotated[Optional[Path], typer.Argument(
+        help="an empty folder (made when missing) for its drawings, workspace and packages")] = None,
+    studio: Annotated[bool, typer.Option(
+        "--studio", help="bring it into Studio's database (STOREYPATH_DATABASE_URL) as a project, to open in the browser")] = False,
+):
+    """The demo campus, all of it made up, to try things out: a main building of three floors
+    and a pavilion of two, read from their drawings, furnished, finished and partly reviewed;
+    its workspace, and a package of each building. The same every time it is built. With
+    --studio, a project in Studio too (a folder is then optional)."""
+    import shutil
+    import tempfile
 
-    if directory.exists() and any(directory.iterdir()):
+    from .samples import SHOWCASE_CODE, SHOWCASE_NAME, build_showcase
+
+    if directory is None and not studio:
+        _fail("give a folder to build the demo in, or --studio to bring it into Studio")
+    if directory is not None and directory.exists() and any(directory.iterdir()):
         _fail(f"{directory} is not empty")
-    ws_path, packages = build_demo(directory)
-    typer.echo(f"workspace: {ws_path}\npackages:  {', '.join(map(str, packages))} (one per building)\n"
-               f"next: storeypath view {packages[0]}")
+    folder = directory or Path(tempfile.mkdtemp(prefix="storeypath-demo-"))
+    try:
+        ws_path, packages = build_showcase(folder)
+        if directory is not None:
+            typer.echo(f"workspace: {ws_path}\npackages:  {', '.join(map(str, packages))} (one per building)\n"
+                       f"a sheet:   {folder / 'drawings' / 'main-building-sheet.dxf'} (three plans on one sheet, "
+                       f"to drop into Studio)")
+        if studio:
+            from .db.importer import import_folder
+
+            report = import_folder(folder, _database(), accounts=False)  # (the folder is not Studio's data folder)
+            if report["projects"]:
+                typer.echo(f"in Studio: {SHOWCASE_NAME} ({SHOWCASE_CODE}), on the Projects page")
+            else:
+                typer.echo(f"Studio has the demo already ({SHOWCASE_CODE}): it was left as it is")
+        elif directory is not None:
+            typer.echo(f"next: storeypath review {ws_path}")
+    finally:
+        if directory is None:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 sample_app = typer.Typer(no_args_is_help=True, help="Area samples (*.spsample): a part of a floor, how Studio read it "

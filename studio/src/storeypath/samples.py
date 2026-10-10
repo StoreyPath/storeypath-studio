@@ -10,6 +10,8 @@ out to get a plan whose spaces must be found from its walls.
 
 from __future__ import annotations
 
+import math
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +36,7 @@ class Door:
     swing: int  # +1 / -1: side the leaf opens to (y for "h", x for "v")
     width: float = 0.9
     block: bool = True  # False: just an opening in the wall, no door drawn
+    double: bool = False  # two leaves, one hinged at each jamb
 
 
 @dataclass
@@ -50,6 +53,9 @@ class Cell:
     furniture: bool = False
     outline: list[tuple[float, float]] | None = None  # any shape (an L-shaped room); x0…y1 are its bounds
     label_at: tuple[float, float] | None = None  # where its label goes, when not its middle
+    doors: list[Door] = field(default_factory=list)  # more doors than its own (an entrance from outside)
+    windows: int | None = None  # windows in each outside wall along the floor's long sides (None: one, by its type)
+    labels: list[tuple[list[str], tuple[float, float]]] = field(default_factory=list)  # more labels, each where it goes
 
     @property
     def shape(self):
@@ -162,17 +168,49 @@ def _door_block(doc, width_mm: int) -> str:
 
 
 def _windows(cells: list[Cell]) -> list[tuple[float, float, float]]:
-    """(x centre, y of the wall, width) of a window in the outside wall of each
-    office-like room along the long sides of the floor."""
+    """(x centre, y of the wall, width) of the windows in the outside wall of each
+    office-like room along the long sides of the floor: one each, or as many as the
+    room says (``Cell.windows``), evenly spaced."""
     ymin, ymax = min(c.y0 for c in cells), max(c.y1 for c in cells)
     out = []
     for c in cells:
-        if c.expected_type in WINDOW_TYPES and not c.outline:
-            width = min(1.8, c.x1 - c.x0 - 1.2)
-            for y in (ymin, ymax):
-                if y in (c.y0, c.y1):
-                    out.append(((c.x0 + c.x1) / 2, y, width))
+        n = c.windows if c.windows is not None else 1 if c.expected_type in WINDOW_TYPES else 0
+        if n <= 0 or c.outline:
+            continue
+        bay = (c.x1 - c.x0) / n
+        width = min(1.8, bay - 1.2)
+        for y in (ymin, ymax):
+            if y in (c.y0, c.y1):
+                out.extend((c.x0 + (i + 0.5) * bay, y, width) for i in range(n))
     return out
+
+
+def _leaves(d: Door) -> list[tuple[tuple[float, float], float, float, bool]]:
+    """Where a door's leaves are drawn: (hinge point, width, rotation in degrees,
+    mirrored) of each, for the door block (a leaf along its +y, open; its swing from +x).
+    One leaf hinged at one jamb, or two at both."""
+    h = d.width / 2
+    if d.axis == "h":
+        jambs, along = ((d.x - h, d.y), (d.x + h, d.y)), (1.0, 0.0)
+        opens = (0.0, float(d.swing))
+    else:
+        jambs, along = ((d.x, d.y - h), (d.x, d.y + h)), (0.0, 1.0)
+        opens = (float(d.swing), 0.0)
+
+    def leaf(hinge, closed, width):
+        # the block's +x (closed) onto ``closed``, its +y (open) onto ``opens``: turned, or mirrored and turned
+        if closed[0] * opens[1] - closed[1] * opens[0] > 0:
+            return hinge, width, math.degrees(math.atan2(closed[1], closed[0])) % 360, False
+        return hinge, width, (math.degrees(math.atan2(closed[1], closed[0])) + 180) % 360, True
+
+    if not d.double:
+        # as a single door always was: hinged where its swing puts the leaf's back
+        if d.axis == "h":
+            hinge, closed = (jambs[0], along) if d.swing > 0 else (jambs[1], (-1.0, 0.0))
+        else:
+            hinge, closed = (jambs[1], (0.0, -1.0)) if d.swing > 0 else (jambs[0], along)
+        return [leaf(hinge, closed, d.width)]
+    return [leaf(jambs[0], along, h), leaf(jambs[1], (-along[0], -along[1]), h)]
 
 
 def write_floor_dxf(
@@ -213,8 +251,7 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
     wall_mass = unary_union([c.shape.exterior for c in cells]).buffer(WALL / 2, join_style="mitre")
     gaps = []
     for c in cells:
-        if c.door:
-            d = c.door
+        for d in ([c.door] if c.door else []) + c.doors:
             h = d.width / 2
             seg = LineString([(d.x - h, d.y), (d.x + h, d.y)] if d.axis == "h" else [(d.x, d.y - h), (d.x, d.y + h)])
             gaps.append(seg.buffer(WALL, cap_style="flat"))
@@ -258,6 +295,10 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
                 for i, line in enumerate(c.label):
                     msp.add_text(line, height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
                         mm(cx, cy + 0.3 - 0.6 * i), align=TextEntityAlignment.MIDDLE_CENTER)
+        for lines, (lx, ly) in c.labels:
+            for i, line in enumerate(lines):
+                msp.add_text(line, height=250, dxfattribs={"layer": "A-AREA-IDEN"}).set_placement(
+                    mm(lx, ly + 0.3 - 0.6 * i), align=TextEntityAlignment.MIDDLE_CENTER)
         for name in c.blocks:
             msp.add_blockref(name, mm(cx, cy), dxfattribs={"layer": "A-EQPM-VERT"})
         if c.furniture:
@@ -268,15 +309,15 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
             while x < c.x1 - 0.5:
                 msp.add_line(mm(x, c.y0 + 1.5), mm(x, c.y1 - 0.5), dxfattribs={"layer": "A-FLOR-STRS"})
                 x += 0.3
-        if c.door and c.door.block:
-            d = c.door
-            name = _door_block(doc, round(d.width * 1000))
-            h = d.width / 2
-            if d.axis == "h":
-                rot, ins = (0, (d.x - h, d.y)) if d.swing > 0 else (180, (d.x + h, d.y))
-            else:
-                rot, ins = (270, (d.x, d.y + h)) if d.swing > 0 else (90, (d.x, d.y - h))
-            msp.add_blockref(name, mm(*ins), dxfattribs={"layer": "A-DOOR", "rotation": rot})
+        for d in ([c.door] if c.door else []) + c.doors:
+            if not d.block:
+                continue
+            for hinge, width, rot, mirrored in _leaves(d):
+                name = _door_block(doc, round(width * 1000))
+                attribs = {"layer": "A-DOOR", "rotation": rot}
+                if mirrored:
+                    attribs["xscale"] = -1
+                msp.add_blockref(name, mm(*hinge), dxfattribs=attribs)
 
     xmax = max(c.x1 for c in cells)
     msp.add_linear_dim(base=mm(0, -2), p1=mm(0, 0), p2=mm(xmax, 0), dxfattribs={"layer": "A-ANNO-DIMS"}).render()
@@ -284,9 +325,11 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
 
 
 def build_demo(directory: str | Path) -> tuple[Path, list[Path]]:
-    """Create sample drawings, a workspace and its buildings' packages. Returns
-    (workspace path, package paths: one per building). The annex drawings have no room outlines, so
-    its spaces are found from the walls."""
+    """The tests' campus: plain office floors whose answer is known (office_floor), as
+    sample drawings, a workspace and its buildings' packages. Returns (workspace path,
+    package paths: one per building). The annex drawings have no room outlines, so its
+    spaces are found from the walls. `storeypath demo` builds the showcase instead
+    (build_showcase)."""
     from .convert import convert_floor
     from .export import export_package
     from .ids import make_id
@@ -317,5 +360,420 @@ def build_demo(directory: str | Path) -> tuple[Path, list[Path]]:
         for b in loc.buildings:
             packages.append(directory / f"demo-{b.code}.storeypath")
             export_package(ws, packages[-1], building=make_id(ws.id, loc.code, b.code))
+    ws.save(ws_path)
+    return ws_path, packages
+
+
+# ---- the showcase: what `storeypath demo` builds ------------------------------------------
+#
+# A small campus, all of it made up: a main building of three floors (a reception with a
+# wayfinding kiosk at the entrance, a café, a lounge, meeting rooms, open offices, offices
+# for every grade up to the executives' floor, its lifts and stairs on every floor) and a
+# pavilion of two, drawn without room outlines (its rooms found from its walls). Furnished,
+# finished, a few rooms left for a person to review, and the same every time it is built
+# (its project code, its items' tags), so that its pictures can be taken again.
+
+SHOWCASE_NAME = "Demo Campus"
+SHOWCASE_CODE = "CAMP05"  # the project's code: its IDs the same every time
+SHOWCASE_SEED = 2026  # the items' tags, drawn the same every time
+ORIGIN = (125.0, 48.0)  # where the plans are drawn, metres: away from the drawing's origin
+MAIN_W, MAIN_D = 56.0, 21.0  # the main building, metres
+CORRIDOR = (8.5, 11.5)  # its corridor's south and north walls
+PAV_W, PAV_D = 30.0, 13.0  # the pavilion, metres
+
+
+def _bays(width: float) -> int:
+    """How many windows a room this wide has in its outside wall: one every 4 m or so."""
+    return max(1, round(width / 4))
+
+
+def _row(rooms: list[tuple], south: bool) -> list[Cell]:
+    """The main building's rooms along its corridor, south of it or north: each (x0, x1,
+    label, type[, options]); a door in the corridor wall at its middle, opening into the
+    room, windows in its outside wall."""
+    y0, y1 = (0.0, CORRIDOR[0]) if south else (CORRIDOR[1], MAIN_D)
+    wall, swing = (CORRIDOR[0], -1) if south else (CORRIDOR[1], +1)
+    cells = []
+    for x0, x1, label, kind, *more in rooms:
+        o = more[0] if more else {}
+        door = o.get("door") or Door((x0 + x1) / 2, wall, "h", swing, o.get("door_width", 0.9), double=o.get("double", False))
+        windows = o.get("windows", _bays(x1 - x0) if kind in WINDOW_TYPES else 0)
+        cells.append(Cell(x0, y0, x1, y1, label, kind, door, label_style=o.get("style", "text"), doors=o.get("doors", []),
+                          windows=windows))
+    return cells
+
+
+def main_floor(ordinal: int) -> list[Cell]:
+    """A floor of the showcase's main building, 56 × 21 m: the core on the west (two lifts,
+    the stairs, the restrooms, the lift lobby), a corridor east-west and rooms on both sides.
+    Ground floor: the reception with the entrance, a café, a lounge, meeting rooms, an open
+    office; first: open offices and offices; second: the executives', with a board room."""
+    lift2 = ["LIFT"] if ordinal else None  # the ground floor's second lift has no label: Review asks
+    core = [
+        Cell(0, 0, 5, 6, ["WOMEN WC"], "restroom", Door(4.0, 6, "h", -1)),
+        Cell(5, 0, 10, 6, ["MEN WC"], "restroom", Door(7.5, 6, "h", -1)),
+        Cell(0, 6, 3, 10, ["LIFT"], "elevator", Door(3, 8, "v", +1, 1.1, block=False), blocks=["ELEVATOR_CAR"]),
+        Cell(0, 10, 3, 14, lift2, "elevator", Door(3, 12, "v", +1, 1.1, block=False), blocks=["ELEVATOR_CAR"]),
+        Cell(3, 6, 10, 14, ["LIFT LOBBY"], "lobby", Door(10, 10, "v", +1, 1.8, double=True)),
+        Cell(0, 14, 10, MAIN_D, ["STAIR", "1"], "stairs", Door(6.5, 14, "h", +1)),
+        Cell(10, CORRIDOR[0], MAIN_W, CORRIDOR[1], ["CORRIDOR"], "corridor", Door(MAIN_W, 10, "v", -1, 1.8, double=True)),
+    ]
+    if ordinal == 0:
+        south = [
+            (10, 22, ["RECEPTION", "001"], "lobby", {"door": Door(16, CORRIDOR[0], "h", -1, 1.8, double=True),
+                                                    "doors": [Door(16, 0, "h", +1, 2.0, double=True)], "windows": 2}),
+            (22, 26, ["OFFICE", "002"], "office"),
+            (26, 34, ["MEETING ROOM", "003"], "meeting_room", {"style": "mtext"}),
+            (34, 46, ["CAFE", "004"], "kitchen"),
+            (46, 56, ["LOUNGE", "005"], "unspecified", {"windows": 2}),  # a name the rules do not know: Review asks
+        ]
+        north = [
+            (10, 14, ["STORAGE", "006"], "storage", {"style": "tag"}),
+            (14, 18, ["COPY ROOM", "007"], "unspecified", {"windows": 1}),  # the same
+            (18, 30, ["OPEN OFFICE", "008"], "open_area"),
+            (30, 34, ["OFFICE", "009"], "office"),
+            (34, 38, ["OFFICE", "010"], "office"),
+            (38, 42, ["OFFICE", "011"], "office"),
+            (42, 46, ["ELEC.", "012"], "utility"),
+            (46, 56, ["CONFERENCE", "013"], "meeting_room"),
+        ]
+    elif ordinal == 1:
+        south = [
+            (10, 22, ["OPEN OFFICE", "101"], "open_area"),
+            (22, 26, ["OFFICE", "102"], "office"), (26, 30, ["OFFICE", "103"], "office"), (30, 34, ["OFFICE", "104"], "office"),
+            (34, 42, ["MEETING ROOM", "105"], "meeting_room", {"style": "mtext"}),
+            (42, 46, ["OFFICE", "106"], "office"), (46, 50, ["OFFICE", "107"], "office"),
+            (50, 56, ["MANAGER", "108"], "office"),
+        ]
+        north = [
+            (10, 14, ["STORAGE", "109"], "storage", {"style": "tag"}),
+            (14, 18, ["PANTRY", "110"], "kitchen"),
+            (18, 30, ["OPEN OFFICE", "111"], "open_area"),
+            (30, 34, ["OFFICE", "112"], "office"), (34, 38, ["OFFICE", "113"], "office"),
+            (38, 42, ["114"], "unspecified", {"windows": 1}),  # a number and no name: Review asks what it is
+            (42, 46, ["ELEC.", "115"], "utility"),
+            (46, 56, ["HUDDLE", "116"], "meeting_room"),
+        ]
+    else:
+        south = [
+            (10, 18, ["DIRECTOR", "201"], "office"), (18, 26, ["DIRECTOR", "202"], "office"),
+            # a name the rules do not know: Review asks (a lounge, not a board room: the
+            # catalogue has sofas and screens, not meeting tables)
+            (26, 38, ["EXECUTIVE LOUNGE", "203"], "unspecified", {"door_width": 1.8, "double": True, "windows": 3}),
+            (38, 46, ["OFFICE", "204"], "office"),
+            (46, 56, ["PRESIDENT OFFICE", "205"], "office"),
+        ]
+        north = [
+            (10, 14, ["STORAGE", "206"], "storage", {"style": "tag"}), (14, 18, ["PANTRY", "207"], "kitchen"),
+            (18, 26, ["OFFICE", "208"], "office"), (26, 34, ["MEETING ROOM", "209"], "meeting_room"),
+            (34, 38, ["OFFICE", "210"], "office"), (38, 42, ["OFFICE", "211"], "office"),
+            (42, 46, ["ELEC.", "212"], "utility"), (46, 51, ["OFFICE", "213"], "office"), (51, 56, ["OFFICE", "214"], "office"),
+        ]
+    return core + _row(south, True) + _row(north, False)
+
+
+def pavilion_floor(ordinal: int) -> list[Cell]:
+    """A floor of the showcase's pavilion, 30 × 13 m: its stairs, lift, a restroom, a
+    meeting room and offices along a corridor, and on the east an open office. On the
+    ground floor the open office holds two rooms' labels, the office's and a quiet
+    zone's, with no wall between them: Studio divides it into two zones, for a person
+    to check."""
+    def n(k: int) -> str:
+        return f"P{ordinal}-{k:02d}"
+
+    cells = [
+        Cell(0, 0, 4, 6, ["STAIR", n(1)], "stairs", Door(2, 6, "h", -1)),
+        Cell(4, 3, 6.5, 6, ["LIFT", n(2)], "elevator", Door(5.25, 6, "h", -1, 1.0, block=False), blocks=["ELEVATOR_CAR"]),
+        Cell(4, 0, 6.5, 3, ["SHAFT"], "shaft"),
+        Cell(6.5, 0, 10, 6, ["WC", n(3)], "restroom", Door(8.25, 6, "h", -1, 0.8)),
+        Cell(10, 0, 14, 6, ["STORAGE", n(4)], "storage", Door(12, 6, "h", -1)),
+        Cell(14, 0, 24, 6, ["MEETING ROOM", n(5)], "meeting_room", Door(19, 6, "h", -1), windows=2),
+        Cell(0, 6, 24, 8, ["CORRIDOR"], "corridor", Door(0, 7, "v", +1, 1.2) if ordinal == 0 else None),
+    ]
+    north = [(0, 4, "OFFICE"), (4, 8, "OFFICE"), (8, 12, "OFFICE"), (12, 16, "OFFICE"), (16, 20, "OFFICE"), (20, 24, "PANTRY")]
+    for i, (x0, x1, name) in enumerate(north):
+        cells.append(Cell(x0, 8, x1, PAV_D, [name, n(10 + i)], "office" if name == "OFFICE" else "kitchen",
+                          Door((x0 + x1) / 2, 8, "h", +1), windows=1))
+    quiet = [(["QUIET ZONE", n(21)], (27.0, 3.0))] if ordinal == 0 else []
+    cells.append(Cell(24, 0, PAV_W, PAV_D, ["OPEN OFFICE", n(20)], "open_area", Door(24, 7, "v", +1, 1.2),
+                      label_at=(27.0, 10.0), labels=quiet, windows=1))
+    return cells
+
+
+# what rooms are finished in (format 0.9), by their name, or "<name>@<floor's ordinal>" on one
+# floor: a person's choice, kept as a correction (choosing finishes does not check a room)
+FINISHES_BY_NAME = {
+    "RECEPTION": ("FLOOR-MARBLE-WHITE", "WALL-STONE"),
+    "LIFT LOBBY": ("FLOOR-MARBLE-BEIGE", "WALL-WOOD-SLATS"),
+    "CORRIDOR@0": ("FLOOR-TERRAZZO-LIGHT", None),
+    "CAFE": ("FLOOR-LVT-OAK", "WALL-PAINT-TERRACOTTA"),
+    "LOUNGE": ("FLOOR-WOOD-OAK", "WALL-PAPER-GEOMETRIC"),
+    "MEETING ROOM": ("FLOOR-CARPET-PATTERN", "WALL-PAINT-NAVY"),
+    "CONFERENCE": ("FLOOR-CARPET-PATTERN", "WALL-PAINT-GREEN"),
+    "HUDDLE": ("FLOOR-CARPET-GREEN", "WALL-PAINT-SAND"),
+    "EXECUTIVE LOUNGE": ("FLOOR-WOOD-HERRINGBONE", "WALL-WOOD-WALNUT"),
+    "PRESIDENT OFFICE": ("FLOOR-CARPET-CHARCOAL", "WALL-WOOD-WALNUT"),
+    "DIRECTOR": ("FLOOR-CARPET-NAVY", "WALL-PAINT-OFFWHITE"),
+    "OFFICE@2": ("FLOOR-CARPET-CHARCOAL", "WALL-PAPER-LINEN"),
+    "OPEN OFFICE@0": ("FLOOR-CARPET-WARMGREY", None),
+    "OPEN OFFICE@1": ("FLOOR-CARPET-GREY", None),
+    "WOMEN WC": ("FLOOR-PORCELAIN-DARK", "WALL-TILE-GREY"),
+    "MEN WC": ("FLOOR-PORCELAIN-DARK", "WALL-TILE-GREY"),
+    "WC": ("FLOOR-PORCELAIN-GREY", "WALL-TILE-MOSAIC"),
+    "COPY ROOM": ("FLOOR-VINYL-GREY", None),
+    "PANTRY": ("FLOOR-PORCELAIN-BEIGE", "WALL-TILE-WHITE"),
+}
+
+
+class _Furnisher:
+    """Items placed on one floor, by its rooms' cells (metres of the plan, before ORIGIN),
+    each turned so that its front (where its user sits, or its screen) faces where it
+    should; their tags drawn from ``rng``: the same every time."""
+
+    def __init__(self, ws, floor_id: str, rng: random.Random):
+        from .catalogue import default_catalogue
+
+        self.ws, self.floor_id, self.rng = ws, floor_id, rng
+        self.types = {t.code: t for t in default_catalogue().types}
+
+    def add(self, code: str, x: float, y: float, rotation: float = 0.0, **values) -> None:
+        """An item at (x, y), turned ``rotation``° counter-clockwise: 0, its front to the south."""
+        from .ids import CROCKFORD_ALPHABET, ITEM_ID_SYMBOLS, _item_id_of, item_check_symbol
+        from .workspace import Item
+
+        tag = None
+        while tag is None or tag in self.ws.items:  # (as new_item_id draws one, but from rng: the same every time)
+            symbols = "".join(self.rng.choice(CROCKFORD_ALPHABET) for _ in range(ITEM_ID_SYMBOLS))
+            tag = _item_id_of(symbols + item_check_symbol(symbols))
+        self.ws.items[tag] = Item(id=tag, type=code, floor_id=self.floor_id, x=round(ORIGIN[0] + x, 3),
+                                  y=round(ORIGIN[1] + y, 3), rotation=rotation % 360, values=values)
+
+    @staticmethod
+    def south(c: Cell) -> bool:
+        """Whether the room is on the south side, its windows to the south."""
+        return c.y0 == 0
+
+    def desk(self, c: Cell, code: str, x: float | None = None) -> None:
+        """A desk by the window, its user's back to it, facing the door; its chair and what
+        goes with its grade (drawn round it) between it and the window."""
+        t = self.types[code]
+        behind = 1.4 if t.grade in ("director", "c_level", "president") else 0.74 if t.grade == "junior" else 0.8
+        gap = behind + 0.25 + t.depth / 2
+        x = (c.x0 + c.x1) / 2 if x is None else x
+        if self.south(c):
+            self.add(code, x, c.y0 + WALL / 2 + gap, 0)
+        else:
+            self.add(code, x, c.y1 - WALL / 2 - gap, 180)
+
+    def by_door_wall(self, c: Cell, code: str, along: float, **values) -> None:
+        """Against the wall the door is in, its middle ``along`` metres from the room's west
+        side, facing into the room."""
+        t = self.types[code]
+        if self.south(c):
+            self.add(code, c.x0 + along, c.y1 - WALL / 2 - t.depth / 2 - 0.05, 0, **values)
+        else:
+            self.add(code, c.x0 + along, c.y0 + WALL / 2 + t.depth / 2 + 0.05, 180, **values)
+
+    def on_side(self, c: Cell, code: str, east: bool, y: float | None = None, **values) -> None:
+        """Against the room's east or west wall, facing into the room: a screen, a sofa."""
+        t = self.types[code]
+        y = (c.y0 + c.y1) / 2 if y is None else y
+        if east:
+            self.add(code, c.x1 - WALL / 2 - t.depth / 2 - 0.02, y, 270, **values)
+        else:
+            self.add(code, c.x0 + WALL / 2 + t.depth / 2 + 0.02, y, 90, **values)
+
+    def ceiling(self, x: float, y: float) -> None:
+        """A wireless access point on the ceiling."""
+        self.add("ACCESS-POINT", x, y, 0, color="#f4f4f2")
+
+    def benches(self, c: Cell, rows: tuple[float, ...], per_side: int = 3, code: str = "DESK-JUNIOR") -> None:
+        """Desks in clusters of two rows facing each other, two clusters side by side along
+        the room: ``rows``, the clusters' middles across it (metres from its window wall)."""
+        t = self.types[code]
+        width = c.x1 - c.x0
+        for r in rows:
+            y = c.y0 + r if self.south(c) else c.y1 - r
+            for middle in (c.x0 + width * 0.27, c.x0 + width * 0.73):
+                for i in range(per_side):
+                    x = middle + (i - (per_side - 1) / 2) * t.width
+                    self.add(code, x, y - t.depth / 2, 0)  # its user to the south
+                    self.add(code, x, y + t.depth / 2, 180)  # and one across from them
+
+
+def _furnish_main(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
+    """The main building's furniture and equipment: desks by grade, sofas and screens,
+    copiers, access points on the ceilings, and a wayfinding kiosk at the entrance."""
+    rooms = {(c.label[-1] if c.label[-1][:1].isdigit() else c.label[0]): c for c in cells if c.label}
+    corridor = rooms["CORRIDOR"]
+    for x in (16, 28, 40, 52):
+        f.ceiling(x, (corridor.y0 + corridor.y1) / 2)
+    f.ceiling(6.5, 10)  # the lift lobby
+    if ordinal == 0:
+        f.add("KIOSK", 13.6, 2.2, 0, model="Wayfinding kiosk, 32-inch")  # at the entrance, its screen to the doors
+        f.add("DESK-SENIOR", 12.4, 6.4, 180)  # the reception desk: who sits at it faces the entrance
+        f.add("SOFA", 19.6, 2.0, 180, seats=3)  # a waiting area: two sofas facing each other, a screen
+        f.add("SOFA", 19.6, 5.3, 0, seats=3)
+        f.on_side(rooms["001"], "TV", east=True, y=3.6, size_in=65)
+        f.ceiling(16, 4.2)
+        for number in ("002", "009", "010", "011"):
+            f.desk(rooms[number], "DESK-SENIOR")
+        f.on_side(rooms["003"], "TV", east=False, size_in=75)
+        f.add("SOFA", 30, 2.4, 180, seats=3)
+        f.add("SOFA", 30, 5.9, 0, seats=3)
+        f.ceiling(30, 4.2)
+        for x in (37.2, 42.8):  # the café's booths along its windows
+            f.add("SOFA", x, 1.2, 180, seats=3)
+            f.add("SOFA", x, 4.0, 0, seats=3)
+        f.on_side(rooms["004"], "TV", east=True, y=5.8, size_in=55)
+        f.ceiling(40, 4.2)
+        f.add("SOFA", 50.0, 1.3, 180, seats=3)  # the lounge
+        f.add("SOFA", 52.6, 3.6, 270, seats=2)
+        f.add("SOFA", 50.0, 6.0, 0, seats=3)
+        f.on_side(rooms["005"], "TV", east=False, y=3.6, size_in=65)
+        f.by_door_wall(rooms["007"], "COPIER", 1.0, model="MFP 6055")
+        f.benches(rooms["008"], (2.6, 6.3))
+        f.ceiling(24, 16)
+        f.on_side(rooms["013"], "TV", east=True, size_in=86)
+        f.add("SOFA", 49.4, 16.3, 270, seats=3)
+        f.add("SOFA", 52.0, 18.7, 180, seats=3)
+        f.ceiling(51, 16)
+    elif ordinal == 1:
+        for number in ("101", "111"):
+            f.benches(rooms[number], (2.6, 6.3))
+        f.ceiling(16, 4.2)
+        f.ceiling(24, 16)
+        for number in ("102", "103", "104", "106", "107"):
+            f.desk(rooms[number], "DESK-SECTION-HEAD")
+        for number in ("112", "113"):
+            f.desk(rooms[number], "DESK-SENIOR")
+        f.desk(rooms["108"], "DESK-MANAGER")
+        f.on_side(rooms["105"], "TV", east=False, size_in=75)
+        f.add("SOFA", 38, 2.4, 180, seats=3)
+        f.add("SOFA", 38, 5.9, 0, seats=3)
+        f.ceiling(38, 4.2)
+        f.add("COPIER", 28.6, 12.3, 180, model="MFP 4040")
+        f.on_side(rooms["116"], "TV", east=True, size_in=65)
+        f.add("SOFA", 50.0, 18.6, 180, seats=3)
+        f.add("SOFA", 50.0, 15.3, 0, seats=2)
+    else:
+        for number in ("201", "202"):
+            c = rooms[number]
+            f.desk(c, "DESK-DIRECTOR")
+            f.by_door_wall(c, "SOFA", c.x1 - c.x0 - 1.5, seats=3)
+            f.on_side(c, "TV", east=False, y=4.6, size_in=55)
+        f.on_side(rooms["203"], "TV", east=False, size_in=86)  # the executive lounge: two seating corners
+        for x in (29.8, 34.2):
+            f.add("SOFA", x, 1.6, 180, seats=3)
+            f.add("SOFA", x, 4.9, 0, seats=3)
+        f.on_side(rooms["203"], "TV", east=True, size_in=86)
+        f.ceiling(32, 4.2)
+        for number in ("204", "208"):
+            c = rooms[number]
+            f.desk(c, "DESK-CLEVEL")
+            f.by_door_wall(c, "SOFA", 1.5, seats=3)
+            f.on_side(c, "TV", east=True, size_in=55)
+        f.desk(rooms["205"], "DESK-PRESIDENT", x=50.0)
+        f.add("SOFA", 54.4, 5.4, 270, seats=3)
+        f.add("SOFA", 51.0, 7.7, 0, seats=3)
+        f.on_side(rooms["205"], "TV", east=False, y=5.6, size_in=75)
+        f.ceiling(51, 4.2)
+        f.on_side(rooms["209"], "TV", east=True, size_in=65)
+        f.add("SOFA", 29.0, 18.6, 180, seats=3)
+        f.add("SOFA", 29.0, 15.2, 0, seats=3)
+        for number in ("210", "211", "213", "214"):
+            f.desk(rooms[number], "DESK-MANAGER")
+        f.add("COPIER", 12.0, 19.9, 180, model="MFP 6055")
+
+
+def _furnish_pavilion(f: _Furnisher, ordinal: int, cells: list[Cell]) -> None:
+    """The pavilion's: a desk in each office, a meeting room's sofas and screen, the open
+    office's desks (and on the ground floor the quiet zone's sofas)."""
+    for x in (6, 18):
+        f.ceiling(x, 7)
+    for c in cells:
+        name = (c.label or [""])[0]
+        if name == "OFFICE":
+            f.desk(c, "DESK-SENIOR" if ordinal == 0 else "DESK-SECTION-HEAD")
+        elif name == "MEETING ROOM":
+            f.on_side(c, "TV", east=True, size_in=65)
+            f.add("SOFA", 19.0, 1.3, 180, seats=3)
+            f.add("SOFA", 19.0, 4.3, 0, seats=3)
+        elif name == "OPEN OFFICE":
+            for y, rot in ((11.8, 180), (8.6, 0)):
+                for x in (25.4, 26.6, 27.8, 29.0) if ordinal else (25.6, 27.0, 28.4):
+                    f.add("DESK-JUNIOR", x, y, rot)
+            if ordinal == 0:
+                f.add("SOFA", 27.0, 1.2, 180, seats=3)  # the quiet zone
+                f.add("SOFA", 29.3, 3.4, 270, seats=2)
+            f.ceiling(27, 6.5)
+
+
+def _finish(ws, floors: dict[str, list[str]]) -> None:
+    """Each room finished as FINISHES_BY_NAME says, kept as a person's correction."""
+    from . import finishes
+    from .workspace import Override
+
+    for ids in floors.values():
+        for ordinal, floor_id in enumerate(ids):
+            for r in ws.floor_objects(floor_id):
+                fin = r.name and (FINISHES_BY_NAME.get(f"{r.name}@{ordinal}") or FINISHES_BY_NAME.get(r.name))
+                if r.kind not in ("space", "zone") or not fin:
+                    continue
+                o = ws.overrides.setdefault(r.id, Override())
+                o.floor_finish = finishes.check(fin[0], "floor")
+                if r.kind == "space" and fin[1]:
+                    o.wall_finish = finishes.check(fin[1], "wall")
+
+
+def write_showcase_sheet(path: str | Path) -> None:
+    """The main building's three plans side by side on one sheet, each titled, as an
+    architect hands them over: a drawing to drop into Studio and see its plans found."""
+    titles = ["GROUND FLOOR PLAN", "FIRST FLOOR PLAN", "SECOND FLOOR PLAN"]
+    write_sheet_dxf(path, [(main_floor(i), (ORIGIN[0] + i * (MAIN_W + 14), ORIGIN[1]), t) for i, t in enumerate(titles)],
+                    area_outlines=False)
+
+
+def build_showcase(directory: str | Path) -> tuple[Path, list[Path]]:
+    """What `storeypath demo` builds: the showcase campus (made up) as drawings, a
+    workspace and its buildings' packages, the same every time. Returns (workspace path,
+    package paths: one per building). Its drawings/ also hold main-building-sheet.dxf: the
+    main building's three plans on one sheet, to drop into Studio and see them found."""
+    from .convert import convert_floor
+    from .export import export_package
+    from .ids import make_id
+    from .workspace import Project, SitePosition, SourceDrawing, Workspace
+
+    directory = Path(directory)
+    (directory / "drawings").mkdir(parents=True, exist_ok=True)
+    ws = Workspace(project=Project(code=SHOWCASE_CODE, name=SHOWCASE_NAME))
+    loc = ws.add_location("CAMPUS", SHOWCASE_NAME, address="1 Example Street")
+    rng = random.Random(SHOWCASE_SEED)
+    # (code, name, its floors' plans, how many, drawn with room outlines, its furniture, where on the site)
+    buildings = [("MAIN", "Main Building", main_floor, 3, True, _furnish_main, (0.0, 0.0), (MAIN_W, MAIN_D)),
+                 ("PAV", "Pavilion", pavilion_floor, 2, False, _furnish_pavilion, (6.0, -32.0), (PAV_W, PAV_D))]
+    floors: dict[str, list[str]] = {}
+    for code, name, plan, n_floors, outlines, _, (sx, sy), (w, d) in buildings:
+        b_id = ws.add_building(loc, code, name)
+        ws.building(b_id).site = SitePosition(x=sx, y=sy, pivot=(ORIGIN[0] + w / 2, ORIGIN[1] + d / 2))
+        floors[b_id] = []
+        for ordinal in range(n_floors):
+            rel = Path("drawings") / f"{name.lower().replace(' ', '-')}-level-{ordinal}.dxf"
+            write_floor_dxf(directory / rel, plan(ordinal), origin=ORIGIN, title=f"{name.upper()} LEVEL {ordinal}",
+                            area_outlines=outlines, walls="polylines" if outlines else "lines")
+            floors[b_id].append(ws.add_floor(b_id, ordinal, name="Ground floor" if ordinal == 0 else f"Floor {ordinal}",
+                                             source=SourceDrawing(path=str(rel))))
+    write_showcase_sheet(directory / "drawings" / "main-building-sheet.dxf")
+    for _, _, _, floor_id in ws.iter_floors():
+        convert_floor(ws, floor_id, directory)
+    for (_, _, plan, _, _, furnish, _, _), ids in zip(buildings, floors.values()):
+        for ordinal, floor_id in enumerate(ids):
+            furnish(_Furnisher(ws, floor_id, rng), ordinal, plan(ordinal))
+    _finish(ws, floors)
+    ws_path = directory / "demo.spproj"
+    packages = []  # one per building
+    for code, *_ in buildings:
+        packages.append(directory / f"demo-{code}.storeypath")
+        export_package(ws, packages[-1], building=make_id(ws.id, loc.split("-")[-1], code))
     ws.save(ws_path)
     return ws_path, packages
