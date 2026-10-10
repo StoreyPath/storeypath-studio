@@ -6,7 +6,12 @@ after a change to Studio:
 ```sh
 node docs/media/capture.mjs              # every picture and animation
 node docs/media/capture.mjs review hero  # those alone
+node docs/media/capture.mjs viewer       # the viewer's README's, into storeypath-viewer/docs/images
 ```
+
+The viewer's pictures (`viewer-*` scenes: the world and the plan alone, no Studio round
+them) are taken only when asked, into the viewer's checkout (`--viewer-out` names
+another), to be committed in that repository.
 
 - `stage.py` starts a throwaway Studio for it: a database of its own (made on
   `STOREYPATH_MEDIA_SERVER`, else the tests' PostgreSQL on 127.0.0.1:55470, and dropped

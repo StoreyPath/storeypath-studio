@@ -64,7 +64,8 @@ def main(jobs_file: str, folder: str) -> None:
     out_dir = Path(folder)
     out_dir.mkdir(parents=True, exist_ok=True)
     for job in json.loads(Path(jobs_file).read_text()):
-        out = out_dir / job["out"]
+        out = out_dir / job["out"]  # (a path of its own, the viewer's pictures, wins)
+        out.parent.mkdir(parents=True, exist_ok=True)
         if "frames" in job:
             _animate(job, out)
         else:

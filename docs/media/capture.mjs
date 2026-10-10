@@ -26,6 +26,7 @@ const option = (name) => {
 };
 const stageFile = option("--stage");
 const OUT = resolve(option("--out") ?? join(ROOT, "docs/images"));
+const VIEWER_OUT = resolve(option("--viewer-out") ?? join(ROOT, "storeypath-viewer/docs/images")); // the viewer's README's
 const keepRaw = option("--raw");
 const rawDir = keepRaw ?? mkdtempSync(join(tmpdir(), "sp-media-"));
 const wanted = new Set(argv);
@@ -716,9 +717,136 @@ scenes.walkdoor = async () => {
   p.close();
 };
 
+// ---- the viewer's own README: the world and the plan alone, no Studio round them -----------------------
+//
+// Taken only when asked (`viewer`, or a scene's name), into the viewer's checkout
+// (storeypath-viewer/docs/images, or --viewer-out): its pictures are its own repository's.
+
+const inViewer = (name) => join(VIEWER_OUT, name);
+
+/** Studio's 3D page presenting (nothing but the world), still. */
+async function bare(p) {
+  await p.R(() => {
+    window.storeypathWorldPage.setPresenting(true);
+    window.storeypathWorldPage.setTurning(false);
+    document.getElementById("present-hint").hidden = true;
+  });
+  await sleep(1200);
+}
+
+scenes["viewer-world"] = async () => {
+  const p = await browser("maya");
+  await world(p, MAIN, { explode: "5", cutaway: "1" });
+  await bare(p);
+  await orbit(p, { azimuth: -36, elevation: 33 });
+  await sleep(2500);
+  jobs.push({ in: await p.shot("viewer-world"), out: inViewer("world.webp"), quality: 90 });
+  p.close();
+};
+
+scenes["viewer-xray"] = async () => {
+  const p = await browser("maya");
+  await world(p, MAIN, { xray: "1", floor: `${MAIN}-F01` });
+  await bare(p);
+  const { r } = await orbit(p, { azimuth: 28, elevation: 40 });
+  await orbit(p, { azimuth: 28, elevation: 40, distance: r * 0.8 });
+  await sleep(2500);
+  jobs.push({ in: await p.shot("viewer-xray"), out: inViewer("xray.webp"), quality: 90 });
+  p.close();
+};
+
+scenes["viewer-looks"] = async () => {
+  const p = await browser("maya");
+  await world(p, MAIN, { floor: `${MAIN}-F02`, cutaway: "1" });
+  await p.R(() => {
+    const w = window.storeypathWorld;
+    w.select(w.package.spaces.find((s) => s.properties.name === "CORRIDOR" && s.properties.floor_id.endsWith("-F02")).id);
+  });
+  await sleep(1500);
+  await p.R(() => window.storeypathWorld.select(null, { go: false }));
+  await bare(p);
+  await p.R(() => window.storeypathWorld.setLabels(false));
+  await orbit(p, { azimuth: 6, elevation: 56, distance: 44 });
+  await sleep(2500);
+  const real = await p.shot("viewer-real");
+  await p.R(() => window.storeypathWorld.setStyle("model"));
+  await p.R(() => window.storeypathWorld.ready());
+  await sleep(2500);
+  const model = await p.shot("viewer-model");
+  await p.R(() => window.storeypathWorld.setStyle("real"));
+  jobs.push({ split: [real, model], out: inViewer("looks.webp"), quality: 90 });
+  p.close();
+};
+
+/** The 2D plan (viewer/svg's FloorPlanEngine, its example page): a floor, its items and doors. */
+scenes["viewer-plan"] = async () => {
+  const p = await browser("maya", { gl: false });
+  await p.page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+  const pkg = `/api/projects/${DEMO}/preview.storeypath?building=${MAIN}`;
+  await p.open(`/viewer/svg/example/index.html?package=${encodeURIComponent(pkg)}`, { width: 1600, height: 760 });
+  await p.until(() => document.querySelector("#floor option"), "the plan", 60000);
+  await p.R((floor) => {
+    document.querySelector("header").style.display = "none"; // the plan alone, the whole page
+    document.body.style.gridTemplateRows = "minmax(0, 1fr)";
+    const s = document.getElementById("floor");
+    s.value = floor;
+    s.dispatchEvent(new Event("change"));
+    window.dispatchEvent(new Event("resize"));
+  }, `${MAIN}-F01`);
+  await sleep(800);
+  await p.R(() => document.getElementById("fit").click());
+  await sleep(1200);
+  jobs.push({ in: await p.shot("viewer-plan"), out: inViewer("plan.webp"), lossless: true });
+  p.close();
+};
+
+/** Walking through a door, the world alone: the cross, its hint, the door swinging open. */
+scenes["viewer-walk"] = async () => {
+  const p = await browser("maya");
+  await world(p, MAIN, { floor: `${MAIN}-F02` });
+  await bare(p);
+  const door = await p.R(() => {
+    const w = window.storeypathWorld, floor = `${w.building}-F02`;
+    const office = w.package.spaces.find((s) => s.properties.number === "205");
+    const c = w.toLocal(office.properties.display_point);
+    const { d, m } = w.plan(floor).doors.map((d) => ({ d, m: [(d.span[0][0] + d.span[1][0]) / 2, (d.span[0][1] + d.span[1][1]) / 2] }))
+      .sort((a, b) => Math.hypot(a.m[0] - c.x, a.m[1] - c.z) - Math.hypot(b.m[0] - c.x, b.m[1] - c.z))[0];
+    const [[ax, az], [bx, bz]] = d.span, len = Math.hypot(bx - ax, bz - az);
+    let nx = -(bz - az) / len, nz = (bx - ax) / len;
+    if ((c.x - m[0]) * nx + (c.z - m[1]) * nz > 0) { nx = -nx; nz = -nz; }
+    w.setDoorOpen(d.id, false, { instant: true });
+    w.setDoors("manual");
+    const h1 = Math.atan2(nx, nz), h0 = h1 + 1.15, end = { x: m[0] + nx * 1.2, z: m[1] + nz * 1.2 };
+    w.setMode("walk", { floor, at: { x: end.x + Math.sin(h0) * 3.2, z: end.z + Math.cos(h0) * 3.2 }, heading: h0 });
+    return d.id;
+  });
+  await p.page.click(800, 520);
+  await p.until(() => window.storeypathWorld.walking, "the mouse taken", 10000);
+  await p.R(() => { document.getElementById("minimap").hidden = true; });
+  await sleep(800);
+  const rec = recorder(p, "viewer-walk"), m = {};
+  await sleep(400);
+  m.start = rec.now();
+  await walkOn(p, 1700 * SLOW, 3.2, -1.15);
+  await sleep(500);
+  m.atDoor = rec.now();
+  await p.key("e");
+  await sleep(800);
+  m.opened = rec.now();
+  await walkOn(p, 2300 * SLOW, 3.4);
+  await sleep(600);
+  m.end = rec.now();
+  const frames = await rec.stop();
+  await p.R((id) => window.storeypathWorld.setDoorOpen(id, true, { instant: true }), door);
+  jobs.push({ frames: merged([...hold(frames, m.start, 400), ...clip(frames, m.start, m.atDoor, SLOW), ...clip(frames, m.atDoor, m.opened, 1),
+    ...clip(frames, m.opened, m.end, SLOW), ...hold(frames, m.end, 600)]), out: inViewer("walk.webp"), width: 960, quality: 70 });
+  p.close();
+};
+
 // ---- run ---------------------------------------------------------------------------------------------
 
-const order = Object.keys(scenes).filter((s) => !wanted.size || wanted.has(s));
+const asked = (s) => (s.startsWith("viewer") ? wanted.has(s) || wanted.has("viewer") : !wanted.size || wanted.has(s));
+const order = Object.keys(scenes).filter(asked);
 let failed = false;
 for (const name of order) {
   console.log(name);
