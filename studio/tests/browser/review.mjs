@@ -517,8 +517,20 @@ async function aDesk() {
   await R(() => [...document.querySelectorAll(".type-tile")].find((b) => /junior/i.test(b.textContent)).click());
   const before = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
   const office = (await rooms()).find((x) => x.name === "OFFICE" && !x.ignored);
-  await page.click(...await roomAt(office.id));
-  await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 1, "a desk placed", 8000, before);
+  // at its label, else (something there, a click that missed) the middle of its box
+  const [x0, y0, x1, y1] = await boxOf(office.id);
+  const spots = [await roomAt(office.id), await screenOf([(x0 + x1) / 2, (y0 + y1) / 2])];
+  for (let i = 0; i < spots.length; i++) {
+    await page.click(...spots[i]);
+    try {
+      await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 1, "a desk placed", 8000, before);
+      break;
+    } catch (e) {
+      if (i === spots.length - 1) {
+        throw new Error(`${e.message}; the toast: ${await R(() => document.getElementById("toast")?.textContent)}; the tool: ${await toolNow()}`);
+      }
+    }
+  }
   await press("Escape");
   placed = await R(() => window.storeypathReview.state.floor.items.filter((x) => !x.retired).at(-1).id);
   return placed;
@@ -664,6 +676,7 @@ test("an item chosen, R turns it in 2D, 3D and walking, whatever the tool (Paint
     await R((id) => window.storeypathReview.selectAsset(id), item);
     await press("Delete");
     await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired, "the desk placed taken away", 8000, item);
+    placed = null;
   }
   await R(() => window.storeypathReview.selectAsset(null));
   noErrors("turning an item with R");
@@ -872,7 +885,8 @@ const written = (chord) => chord.split("+").map((k) => ({ mod: "⌘/Ctrl", shift
  * chosen, built from the registry as the page has it (keyMap): Markdown. */
 async function keysTable() {
   const titles = await R(() => Object.fromEntries(window.storeypathReview.commands().map((c) => [c.id, c.title])));
-  const item = await aDesk();
+  // an item to choose: any desk of the floor (one deleted too: its keys are the same), else one placed
+  const item = (await R(() => window.storeypathReview.state.floor.items.find((a) => a.type.startsWith("DESK"))?.id ?? null)) ?? await aDesk();
   const cells = new Map(); // chord → { "2d": [plain, item], … }
   const what = (b) => (!b ? "" : b.id === null ? `${b.title} (the ${b.owner}'s)` : b.works ? titles[b.id] : `— (${b.idle ?? "says why"})`);
   for (const view of ["2d", "3d", "walk"]) {
@@ -897,6 +911,7 @@ async function keysTable() {
     await R((id) => window.storeypathReview.selectAsset(id), item);
     await press("Delete");
     await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired, "the desk placed taken away", 8000, item);
+    placed = null;
     await press("Escape");
   }
   const cell = ([plain, withItem]) => (withItem && withItem !== plain ? `${plain || "—"} · *an item chosen:* ${withItem}` : plain || "—");
