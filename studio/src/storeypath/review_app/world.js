@@ -46,7 +46,7 @@ const state = {
   finishes: null, // the viewer's finishOf
   plan: null, // the minimap's floor plan, and its floor
   planFloor: null,
-  doorAim: null, // walking: the door at the cross ({id, open}) or null
+  doorAim: null, // walking: the door E works ({id, open, under}: under the pointer, else ahead) or null
 };
 
 // ---- the package's address: one of Studio's own --------------------------------------------
@@ -449,12 +449,11 @@ function renderItem(feature) {
 
 function showWalk() {
   const w = state.world;
-  const walking = w?.mode === "walk", locked = walking && w.walking;
+  const walking = w?.mode === "walk";
   document.body.classList.toggle("walking", Boolean(walking));
   $("walk-hud").hidden = !walking;
-  $("crosshair").hidden = !locked;
-  $("walk-enter").hidden = !walking || locked;
   $("minimap").hidden = !walking || !state.showMap;
+  $("walk-keys").textContent = walking ? "Drag to look · W A S D to move · double-click the floor to go there" : "";
   renderHint();
 }
 
@@ -486,17 +485,16 @@ function renderHint() {
   const walking = w.mode === "walk";
   const parts = walking
     ? [icon("footprints", { size: 14 }), el("span", { class: "sb-mode" }, "Walk"),
-      el("span", {}, w.walking ? "W A S D or the arrows to move · Shift to run · E or a click: the door at the cross · Esc frees the mouse"
-        : "Click the view to look around")]
+      el("span", {}, "Drag to look · W A S D or the arrows to move (Shift: run) · double-click the floor to go there · click a room or an item for its details")]
     : [icon("rotate-3d", { size: 14 }), el("span", { class: "sb-mode" }, "Dollhouse"),
       el("span", {}, "Drag to turn · Shift-drag or right-drag to move · scroll to zoom · click a room for its details")];
   hint.replaceChildren(...parts);
-  // the door within reach at the cross (the world says which): E works it, and a click once the mouse looks
+  // the door E works (the world says which): under the pointer (a click works it too), else ahead
   const door = $("sb-door");
   const aim = walking ? state.doorAim : null;
   door.hidden = !aim;
   door.replaceChildren(...(aim ? [icon("door-open", { size: 14 }),
-    `Door ahead: E${w.walking ? " or a click" : ""} ${aim.open ? "closes" : "opens"} it`] : []));
+    aim.under ? `Door: a click or E ${aim.open ? "closes" : "opens"} it` : `Door ahead: E ${aim.open ? "closes" : "opens"} it`] : []));
 }
 
 function renderLook() {
@@ -590,8 +588,10 @@ function drawMinimap() {
 const KEYS = [
   ["View", [["3", "Dollhouse"], ["4", "Walk"], ["x", "X-ray"], ["c", "Cutaway (the dollhouse)"], ["l", "Labels"], ["i", "Items"],
     ["pageup pagedown", "A floor up or down"]]],
-  ["Walking", [["w a s d", "Move (or the arrows)"], ["shift", "Run"], ["e", "Open or close the door at the cross"],
-    ["e q", "Up or down at stairs and lifts (or PgUp, PgDn)"], ["m", "The map"], ["escape", "Free the mouse"]]],
+  ["Walking", [["w a s d", "Move (or the arrows)"], ["shift", "Run, held"], ["e", "Open or close the door under the pointer, or ahead"],
+    ["e q", "Up or down at stairs and lifts (or PgUp, PgDn)"], ["m", "The map"]]],
+  ["The mouse, walking", [["Drag", "Look round (either button, or a finger)"], ["Click", "A room's or an item's details; a door opened or closed"],
+    ["Double-click", "Go there"], ["Scroll", "A step on or back"]]],
   ["The screen", [["p", "Present: the building alone"], ["t", "Presenting: turn the building, or stop it"], ["f", "Full screen"],
     ["?", "These keys"], ["escape", "Back: stop presenting, close what is open"]]],
 ];
@@ -599,8 +599,10 @@ const KEYS = [
 function showKeys() {
   const list = $("keys-list");
   if (!list.childElementCount) {
+    // (the mouse's: what is done with it, not keys)
     list.append(...KEYS.flatMap(([group, keys]) => [el("h3", {}, group),
-      ...keys.flatMap(([chords, what]) => [el("span", { class: "k" }, chords.split(" ").map((c) => kbd(c))), el("span", {}, what)])]));
+      ...keys.flatMap(([chords, what]) => [el("span", { class: "k" }, group.startsWith("The mouse") ? el("span", { class: "gesture" }, chords)
+        : chords.split(" ").map((c) => kbd(c))), el("span", {}, what)])]));
   }
   $("keys-dialog").showModal();
 }
@@ -670,10 +672,6 @@ function wire() {
       setPresenting(false);
     }
   });
-  $("walk-enter").addEventListener("click", () => {
-    document.activeElement?.blur?.(); // keys to the walker, not to a button
-    state.world?.startWalking();
-  });
   // presenting: the pointer shown while it moves; a drag or a scroll stops the turning
   let still;
   $("stage").addEventListener("pointermove", () => {
@@ -715,7 +713,6 @@ function listen(w) {
     showWalk();
     remember("mode", mode === "walk" ? "walk" : null);
   });
-  w.addEventListener("walklock", () => showWalk());
   w.addEventListener("roomchange", ({ detail }) => {
     const type = typeWords(detail.type);
     $("walk-room").textContent = detail.id ? detail.name || type : "Outside";
@@ -725,7 +722,7 @@ function listen(w) {
     renderStairs();
   });
   w.addEventListener("select", ({ detail: { id, feature } }) => {
-    if (!id || !feature || w.mode === "walk") return closeDetails();
+    if (!id || !feature) return closeDetails();
     if (feature.properties.kind === "item") renderItem(feature);
     else renderRoom(feature);
   });

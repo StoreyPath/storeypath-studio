@@ -84,23 +84,12 @@ body.walking .only-dollhouse, body:not(.walking) .only-walk { display: none; }
 .w-card .w-actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--border-subtle); }
 .w-card .w-actions button { flex: 1; }
 
-/* walking: the map, the room you are in, the cross aimed with, and how to start */
+/* walking: the map, the room you are in, and how to walk */
 .w-minimap {
   position: absolute; top: calc(var(--sp-3) + 56px); right: var(--sp-3); z-index: var(--z-canvas-ui);
   width: 200px; height: 200px; border-radius: var(--r-xl); background: var(--canvas-overlay);
   border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
 }
-#crosshair {
-  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 4;
-  pointer-events: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .9);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .45);
-}
-#crosshair::after {
-  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
-  border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
-}
-/* a door within reach at the cross: the cross says so (the world marks its element) */
-#world.sp3d-door-aim ~ #crosshair { border-color: var(--warning); width: 28px; height: 28px; margin: -14px 0 0 -14px; }
 .walk-hud {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px;
   max-width: min(420px, calc(100% - 24px)); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg);
@@ -109,16 +98,8 @@ body.walking .only-dollhouse, body:not(.walking) .only-walk { display: none; }
 }
 #walk-room { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
 .walk-hud .meta { color: #b9bcc4; font-size: var(--fs-sm); }
-#walk-meta:empty, #walk-stairs:empty { display: none; }
-.walk-enter { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; cursor: pointer; }
-.walk-enter .card {
-  max-width: min(460px, calc(100% - 32px)); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-xl);
-  background: rgba(18, 19, 22, .88); color: #f1f2f4; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  box-shadow: var(--shadow-lg); font-size: var(--fs-md);
-}
-.walk-enter .card strong { font-size: var(--fs-lg); }
-.walk-enter .keys { list-style: none; margin: var(--sp-3) 0 0; padding: 0; color: #c3c6cd; display: grid; gap: 6px; }
-.walk-enter kbd, .walk-hud kbd, .w-present-hint kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
+#walk-meta:empty, #walk-stairs:empty, #walk-keys:empty { display: none; }
+.walk-hud kbd, .w-present-hint kbd { background: #2a2c32; border-color: #41444c; color: #e9eaee; }
 
 /* bottom right: the building's floors (as Review's canvas has them: light in both themes) */
 .floor-stack {
@@ -197,7 +178,7 @@ body.walking .only-dollhouse, body:not(.walking) .only-walk { display: none; }
 body.presenting { grid-template-rows: 0 minmax(0, 1fr) 0; }
 body.presenting #topbar, body.presenting #statusbar { visibility: hidden; overflow: hidden; border: 0; }
 body.presenting .w-toolbar, body.presenting .floor-stack, body.presenting .w-card, body.presenting .w-minimap,
-body.presenting .walk-hud, body.presenting .walk-enter .card, body.presenting .w-loading, body.presenting #toast { display: none !important; }
+body.presenting .walk-hud, body.presenting .w-loading, body.presenting #toast { display: none !important; }
 body.presenting #stage { cursor: none; }
 body.presenting.pointer-moved #stage { cursor: auto; }
 

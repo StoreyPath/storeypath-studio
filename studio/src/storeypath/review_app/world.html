@@ -142,25 +142,13 @@
     <!-- what is chosen in the dollhouse: a room's or an item's details -->
     <section id="details" class="w-card" hidden aria-live="polite"></section>
 
-    <!-- walking: the floor's map, the room you are in, the cross, how to start -->
+    <!-- walking: the floor's map, the room you are in, how to walk (or what E does) -->
     <canvas id="minimap" class="w-minimap" width="220" height="220" hidden aria-label="Map of the floor you walk on"></canvas>
     <div id="walk-hud" class="walk-hud" hidden aria-live="polite">
       <div id="walk-room">Outside</div>
       <div id="walk-meta" class="meta"></div>
       <div id="walk-stairs" class="meta"></div>
-    </div>
-    <div id="crosshair" hidden aria-hidden="true"></div>
-    <div id="walk-enter" class="walk-enter" hidden>
-      <div class="card">
-        <strong>Click to look around</strong>
-        <ul class="keys">
-          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrows: move · <kbd>Shift</kbd> run</li>
-          <li><kbd>E</kbd> or a click: open or close the door at the cross</li>
-          <li><kbd>E</kbd> <kbd>Q</kbd> or <kbd>PgUp</kbd> <kbd>PgDn</kbd>: up or down at stairs and lifts</li>
-          <li><kbd>M</kbd> the map · <kbd>X</kbd> x-ray · <kbd>I</kbd> items</li>
-          <li><kbd>Esc</kbd> frees the mouse · <kbd>3</kbd> back to the dollhouse</li>
-        </ul>
-      </div>
+      <div id="walk-keys" class="meta"></div>
     </div>
 
     <!-- bottom right: the building's floors, the top one first; All in the dollhouse -->
@@ -176,7 +164,7 @@
     </div>
   </main>
 
-  <!-- the status bar: what the view expects, the door at the cross, how it is drawn, what it shows -->
+  <!-- the status bar: what the view expects, the door E works, how it is drawn, what it shows -->
   <footer id="statusbar" class="statusbar">
     <div id="sb-hint" class="sb-hint" aria-live="polite"></div>
     <div id="sb-door" class="sb-item sb-door" hidden aria-live="polite"></div>
