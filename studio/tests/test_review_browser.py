@@ -6,7 +6,8 @@ its tag, the command palette, a door's sizes, review mode's keys and undo, the p
 the labels over the print, the light theme, another page's change shown live, 3D and
 walking. And Studio's 3D page (world.html, tests/browser/world.mjs) on the demo campus
 (`storeypath demo`): each of its controls, a room's details, walking and its doors,
-presenting, the light theme, what its address says, and the way Review opens it. Needs
+presenting, the light theme, what its address says, and the way Review opens it. And the Item
+types page (tests/browser/itemtypes.mjs). Needs
 Node.js, Chrome (or Chromium; CHROME names another) and the viewer built."""
 
 import os
@@ -82,6 +83,22 @@ def test_review_in_a_browser(tmp_path):
     with _reviewing(spproj) as (address, code):
         run = subprocess.run(["node", str(HERE / "browser" / "review.mjs"), address, code],
                              capture_output=True, text=True, timeout=900)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+
+@pytest.mark.skipif(_missing() is not None, reason=_missing() or "")
+def test_the_item_types_page_in_a_browser(tmp_path):
+    """Studio's Item types page (tests/browser/itemtypes.mjs): a type added, changed,
+    retired and restored; types taken from a file, some chosen; a file refused; the
+    package export's choice of item types."""
+    from storeypath.samples import build_demo
+
+    spproj, _ = build_demo(tmp_path / "demo")
+    files = tmp_path / "files"
+    files.mkdir()
+    with _reviewing(spproj) as (address, code):
+        run = subprocess.run(["node", str(HERE / "browser" / "itemtypes.mjs"), address, code, str(files)],
+                             capture_output=True, text=True, timeout=600)
         assert run.returncode == 0, run.stdout + run.stderr
 
 

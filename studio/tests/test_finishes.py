@@ -15,6 +15,7 @@ from people import Team
 from storeypath import accounts as acc
 from storeypath import finishes
 from storeypath.assets import asset_dir
+from storeypath.package import FORMAT_VERSION
 from storeypath.types import SpaceType
 
 
@@ -236,7 +237,7 @@ def test_finishes_are_exported_and_valid(team, tmp_path):
     with zipfile.ZipFile(out) as z:
         spaces = {f["id"]: f["properties"] for f in json.loads(z.read("spaces.geojson"))["features"]}
         zones = {f["id"]: f["properties"] for f in json.loads(z.read("zones.geojson"))["features"]}
-        assert json.loads(z.read("manifest.json"))["format_version"] == "0.9.0"
+        assert json.loads(z.read("manifest.json"))["format_version"] == FORMAT_VERSION
     assert (spaces[office.id]["floor_finish"], spaces[office.id]["wall_finish"]) == ("FLOOR-MARBLE-BLACK",
                                                                                     "WALL-WOOD-WALNUT")
     assert zones[zone.id]["floor_finish"] == "FLOOR-TERRAZZO-DARK" and "wall_finish" not in zones[zone.id]

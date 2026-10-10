@@ -6,6 +6,19 @@
 // Pure functions, no page: Review (review/items.js, pointer.js, view3d.js) uses them
 // as an item is placed, dragged, nudged or turned, and the tests run them in Node.
 
+/** How a type may be drawn (format 0.9.1: its ``shape``), as the viewers draw them; and
+ * how one without a shape is, by its code's first part (DESK-MANAGER is a desk). */
+export const SHAPES = ["desk", "meeting_table", "sofa", "screen", "copier", "bed", "kiosk", "access_point", "box"];
+const BY_CODE = { DESK: "desk", MEETING: "meeting_table", SOFA: "sofa", TV: "screen", SCREEN: "screen", COPIER: "copier",
+  PRINTER: "copier", ACCESS: "access_point", BED: "bed", KIOSK: "kiosk" };
+
+/** How an item of type ``t`` is drawn: its shape, else as its code's first part says, else
+ * a box (one of SHAPES). ``t``: a type of the catalogue ({code, shape}), or an item ({type}). */
+export function shapeOf(t) {
+  if (SHAPES.includes(t?.shape)) return t.shape;
+  return BY_CODE[(t?.code || t?.type || "").split("-")[0]] ?? "box";
+}
+
 /** What goes with a desk, by the grade it is for, as the viewers draw it: visitors'
  * chairs across it (armchairs for the president's), a return at its side (an
  * L-shaped desk), a cabinet behind its chair, and a high-backed chair. */
@@ -49,12 +62,12 @@ export function tableChairs(w, d) {
  * behind the chair, visitors' chairs across it); for a meeting table its chairs.
  * ``t``: its type (width, depth, code, grade). */
 export function itemBox(t) {
-  const w = t?.width ?? 1, d = t?.depth ?? 0.6, kind = (t?.code || "").split("-")[0];
-  if (kind === "MEETING") {
+  const w = t?.width ?? 1, d = t?.depth ?? 0.6, kind = shapeOf(t);
+  if (kind === "meeting_table") {
     const { ends, gap, cd } = tableChairs(w, d), out = gap + cd;
     return [-w / 2 - (ends ? out : 0), -d / 2 - out, w / 2 + (ends ? out : 0), d / 2 + out];
   }
-  if (kind !== "DESK") return [-w / 2, -d / 2, w / 2, d / 2];
+  if (kind !== "desk") return [-w / 2, -d / 2, w / 2, d / 2];
   const set = DESK_SETS[t.grade] || DESK_SETS.junior;
   const user = Math.max(set.executive ? 0.7 : 0.52, set.return ? 0.8 : 0, set.cabinet ? 1.4 : 0);
   const { xs, vw, vd } = visitorChairs(set, w);

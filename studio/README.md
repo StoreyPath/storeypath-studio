@@ -209,7 +209,7 @@ log).
 | `POST login`, `logout`, `setup` (no users yet) | nobody |
 | `GET me`, `POST me/password` | logged in (with a temporary password: nothing else) |
 | `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder and the database in `status`) is told to admins alone |
-| `POST catalogue` | admin, or `catalogue` |
+| `POST catalogue`, `PUT catalogue/types-in` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
@@ -721,16 +721,26 @@ one when the package is opened.
 
 Their types are the **catalogue** ([catalogue.py](src/storeypath/catalogue.py)):
 in Studio's database, one for every project (`catalogue.json` beside workspace files
-on the command line), written with the default types the first time Studio needs it,
-and copied into every package. A type
+on the command line), written with the default types the first time Studio needs it.
+A package carries the types its items use, each once (exported with *Every item type*,
+`item_types: "all"`, `--item-types all`: the whole catalogue), so another system knows
+them and may take them into its own. A type
 has a `code` kept for good, English and Arabic names, a `category` (furniture,
-equipment, appliance), a size, a `mount` (floor, wall, ceiling), a colour,
-`workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
+equipment, appliance), a size, a `mount` (floor, wall, ceiling), a colour, a `shape`
+(how the viewers draw it, format 0.9.1: `desk`, `meeting_table`, `sofa`, `screen`,
+`copier`, `bed`, `kiosk`, `access_point` or `box`; none: as its code's first part
+says), `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
 `storeypath` (entered in Studio) or by the `system` that manages the asset (entered
-there, never in a package). Add or change types with `POST /api/catalogue` (or, on
-the command line, by editing the file); a type no longer used is marked `retired`, never removed (Studio
-refuses a catalogue sent to it that drops one, and puts back a default type missing
-from the file). `export` on the command line uses the catalogue of
+there, never in a package). The **Item types** page (`#/item-types`, in the person's
+menu and on the Projects page) lists them for everyone; admins, and those with the
+`catalogue` capability, add types, change them, retire and restore them, take types
+from a file (a catalogue `.json`, a package or a project file: `PUT
+/api/catalogue/types-in` reads what it brings, each marked new, changed or the same,
+for them to choose) and save the catalogue, or the types chosen, as a `.json`. Saved
+whole with `POST /api/catalogue` (or, on the command line, by editing the file): a type
+no longer used is marked `retired`, never removed (Studio refuses a catalogue sent to
+it that drops one, a shape it does not know or a size of nothing, and puts back a
+default type missing from the file); what changed is in the audit log. `export` on the command line uses the catalogue of
 the data folder the workspace is in, else the built-in types. A package or project
 file opened in Studio adds the types it brings that the catalogue lacks only when an
 admin, or someone with the `catalogue` capability, opens it; anyone else's opens all

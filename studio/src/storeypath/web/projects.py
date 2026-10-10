@@ -179,7 +179,7 @@ def place_site(code: str, location_id: str, request: Request, may: May, studio: 
 @calls.post(P + "/export")
 def export(code: str, request: Request, may: May, studio: TheStudio, body: Body):
     building = may.export(code, body)
-    job = studio.export(code, {"building": building}, by=may.uid)
+    job = studio.export(code, {"building": building, "item_types": body.get("item_types")}, by=may.uid)
     may.audit("export", building)
     return answer(request, job)
 

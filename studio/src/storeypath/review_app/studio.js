@@ -7,6 +7,7 @@
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { setCrumbs, setupChrome } from "./chrome.js";
 import { helpersPage } from "./helpers.js";
+import { itemTypesPage } from "./itemtypes.js";
 import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
 import { avatar } from "./together.js";
@@ -141,6 +142,10 @@ async function route() {
       document.title = "Users · StoreyPath Studio";
       setCrumbs([{ label: "Projects", href: "#/" }, { label: "Users" }]);
       await usersPage($("page"), me, toast);
+    } else if (parts[0] === "item-types") {
+      document.title = "Item types · StoreyPath Studio";
+      setCrumbs([{ label: "Projects", href: "#/" }, { label: "Item types" }]);
+      await itemTypesPage($("page"), me, toast);
     } else if (parts[0] === "helpers" && me?.role === "admin") {
       document.title = "GPU helpers · StoreyPath Studio";
       setCrumbs([{ label: "Projects", href: "#/" }, { label: "GPU helpers" }]);
@@ -171,11 +176,14 @@ async function projectsPage() {
   const whose = (p) => p.can && !p.can.project ? "Parts shared with you"
     : p.can?.owner ? "Yours" : p.can && !p.can.admin ? `Shared with you: ${p.can.project}` : null;
   showPage(
-    el("section", {},
-      el("h1", {}, "Projects"),
-      el("p", { class: "lead" }, creates
-        ? "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms."
-        : "The projects shared with you, and how far: some whole, some a building or a floor of them.")),
+    el("section", { class: "row page-head" },
+      el("div", { class: "grow" },
+        el("h1", {}, "Projects"),
+        el("p", { class: "lead" }, creates
+          ? "A project holds the drawings of one site or campus and every object ID issued for it. Create one, add its drawings, and Studio finds the plans, floors and rooms."
+          : "The projects shared with you, and how far: some whole, some a building or a floor of them.")),
+      el("a", { class: "button", href: "#/item-types", title: "The furniture and equipment people place on floors, for every project" },
+        "Item types")),
     creates ? el("section", { class: "card" }, form) : null,
     creates ? openCard() : null,
     projects.length
@@ -970,7 +978,7 @@ function openCard() {
       const floors = `${r.floors} floor${r.floors === 1 ? "" : "s"}`;
       // item types the file brings that this Studio lacks are added only by who may change them
       const left = (r.item_types_not_added || []).length
-        ? ` Item types it brings were not added (an admin, or who may change the item types, adds them): ${r.item_types_not_added.join(", ")}; their items are drawn as plain items.`
+        ? ` Item types it brings were not added (an admin, or who may change the item types, takes them from the file on the Item types page): ${r.item_types_not_added.join(", ")}; their items are drawn as plain items.`
         : "";
       toast((r.how === "project"
         ? `${r.name} opened as it was sent: ${floors}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
@@ -1007,9 +1015,14 @@ function exportCard(code, p) {
   if (!buildings.length && !onProject(p, "view") && !p.exports.length) return null;
   const what = el("select", { "aria-label": "Building to export" },
     ...buildings.map((b) => el("option", { value: b.id }, b.name)));
+  // its item types: those its items use (each once), or the whole catalogue for another system to choose from
+  const types = el("select", { "aria-label": "Item types in the package", "data-testid": "export-item-types",
+    title: "The item types the package carries, each once: what another system reads its items by, and may take into its own" },
+  el("option", { value: "used" }, "Item types its items use"),
+  el("option", { value: "all" }, "Every item type"));
   const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
     try {
-      const r = await runJob(api(`projects/${code}/export`, { building: what.value }));
+      const r = await runJob(api(`projects/${code}/export`, { building: what.value, item_types: types.value }));
       // downloaded at once; its copy stays in the list, the package as it was sent
       const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
       document.body.append(a);
@@ -1027,8 +1040,8 @@ function exportCard(code, p) {
   "Download project");
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
-      buildings.length > 1 ? what : null, buildings.length ? button : null),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
+      buildings.length > 1 ? what : null, buildings.length ? types : null, buildings.length ? button : null),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("p", { class: "muted small" }, ...(p.exports_folder // (where the server keeps them: told to admins)
       ? ["Saved in ", el("code", {}, p.exports_folder), ", newest first:"] : ["Newest first:"])) : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {

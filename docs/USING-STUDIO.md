@@ -175,15 +175,22 @@ changes — refused, naming who, when someone else changed the same thing since 
 Desks, meeting tables, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
 the floors in review.
 
-- **The catalogue** of item types is the organization's: one `catalogue.json` in
-  Studio's data folder, the same for every project, and copied into every package.
+- **The catalogue** of item types is the organization's: the same for every project.
   A new Studio starts with desks by grade (president, C-level, director, manager,
-  head of section, senior and junior staff), a central photocopier, a wireless
-  access point, a sofa, a TV screen, king- and queen-size beds and a wayfinding
-  kiosk, each with a code, English and Arabic names, a size, how it is mounted
-  (floor, wall, ceiling) and a colour. Types are added or changed by editing that
-  file; a type no longer used is marked `retired`, never removed, so its code stays
-  with the items that have it and is never given to another type.
+  head of section, senior and junior staff), meeting tables for 4 to 16, a central
+  photocopier, a wireless access point, a sofa, a TV screen, king- and queen-size
+  beds and a wayfinding kiosk, each with a code, English and Arabic names, a size, how
+  it is mounted (floor, wall, ceiling), a colour and how it is drawn (a desk with its
+  chairs, a meeting table with as many chairs as it seats, a sofa, a screen, a copier,
+  a bed, a kiosk, an access point, or a plain box).
+- **Item types** (in your menu, top right, and on the Projects page) lists them. Admins,
+  and those an admin lets, add a type (its code is its identity for good), change one,
+  *Copy as new*, or *Retire* one no longer used (never removed: its code stays with
+  the items that have it and is never given to another type; *Restore* brings it
+  back). *Take from a file…* reads a catalogue (`.json`), a building's package or a
+  project file, and lists the types it brings, each *New*, *Changed* (and what) or
+  *Same*: the new ones are chosen, a changed one only when you choose it. *Save as a
+  file* gives the catalogue, or the types ticked, as a `.json` for another Studio.
 - **Place** one with the *Place* tool (<kbd>I</kbd>): choose its type in the tool's
   options and click where it goes (or right-click, *Place an item here…*). Drag it to
   move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows
@@ -254,7 +261,9 @@ replace.
 
 *Export package* writes the package (`.storeypath`, [format 0.9](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
-openings, its items and their catalogue, with every ID, and its walking network
+openings, its items and their types (each once: those its items use, or, chosen
+beside *Export package*, every item type of the Studio, for another system to take
+the ones it wants), with every ID, and its walking network
 ([Navigation](#navigation-from-the-kiosk-to-your-office)). It is checked against the
 format before it is kept, downloaded, and listed on the project page (newest first),
 with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
@@ -272,7 +281,8 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
 every correction, edit and ID, its export history, its drawings and the Studio's
 item types. Another Studio opens it on its Projects page (*Open a project or a
 building's package*) and continues the project where it was (the item types it brings
-are added there when an admin, or someone who may change the item types, opens it).
+are added there when an admin, or someone who may change the item types, opens it;
+anyone may later take them on the *Item types* page).
 It is not a package: other systems read a building's package.
 
 A building's **package** opens the same way: its building is rebuilt with the same

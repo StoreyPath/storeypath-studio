@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from .calls import Body, Calls, May, Query, TheStudio, answer
+from .calls import Body, Calls, May, Query, Sent, TheStudio, answer
 
 calls = Calls()
 
@@ -52,7 +52,21 @@ def catalogue(request: Request, may: May, studio: TheStudio):
 @calls.post("/api/catalogue")
 def save_catalogue(request: Request, may: May, studio: TheStudio, body: Body):
     may.capability("catalogue")
-    return answer(request, studio.save_catalogue(body))
+    before = {t.code: t.model_dump() for t in studio.catalogue().types}
+    saved = studio.save_catalogue(body)
+    added = [t["code"] for t in saved["types"] if t["code"] not in before]
+    changed = [t["code"] for t in saved["types"] if t["code"] in before and before[t["code"]] != t]
+    if added or changed:
+        may.audit("item types changed", None, added=added, changed=changed)
+    return answer(request, saved)
+
+
+@calls.put("/api/catalogue/types-in")
+def types_in(request: Request, may: May, studio: TheStudio, sent: Sent):
+    """The item types a file brings (a catalogue .json, a package, a project file), read
+    for who may change the item types to choose which to take: nothing is changed."""
+    may.capability("catalogue")
+    return answer(request, studio.types_in(sent.read()))
 
 
 @calls.get("/api/users")

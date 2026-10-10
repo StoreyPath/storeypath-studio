@@ -266,6 +266,7 @@ class Studio:
         out (their codes stay with the items that have them)."""
         from . import catalogue
 
+        catalogue.check_types(body.get("types") if isinstance(body.get("types"), list) else [])
         with self._lock:
             old = self.store.catalogue()
             new = catalogue.Catalogue.model_validate({**body, "format": catalogue.CATALOGUE_FORMAT})
@@ -273,6 +274,14 @@ class Studio:
                 raise ValueError(f"types are retired, not removed: {', '.join(gone)}")
             self.store.save_catalogue(new)
             return new.model_dump()
+
+    def types_in(self, data: bytes) -> dict:
+        """The item types a file brings (a catalogue, a package or a project file), for a
+        person to choose which to take into the catalogue: read, nothing changed
+        (catalogue.types_in)."""
+        from . import catalogue
+
+        return catalogue.types_in(data)
 
     def _changing(self, code: str) -> StepLock:
         """The lock held while a job changes this project (the database's advisory lock
@@ -991,8 +1000,15 @@ class Studio:
     def export(self, code: str, body: dict | None = None, by=None) -> Job:
         """The package of one of the project's buildings (``building``: its ID; may be
         left out when the project has one building): made from the project as it is,
-        entered in its export history, and kept as sent (its bytes, in the database)."""
+        entered in its export history, and kept as sent (its bytes, in the database).
+        ``item_types``: "used" (its catalogue the types its items use) or "all" (the
+        whole catalogue)."""
+        from .export import ITEM_TYPES
+
         building = self.export_building(code, body)
+        item_types = (body or {}).get("item_types") or "used"
+        if item_types not in ITEM_TYPES:
+            raise ValueError(f"item_types: {' or '.join(ITEM_TYPES)}")
 
         def run(job: Job):
             with self._changing(code):
@@ -1002,7 +1018,8 @@ class Studio:
                 name = f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
                 job.say(f"writing {name}")
                 self.work.mkdir(parents=True, exist_ok=True)
-                manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work)
+                manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work,
+                                                    item_types=item_types)
                 self.store.save(ws, by=by, part="building", kind="export", targets=[building],
                                 more={"file": name, "sequence": manifest.export.sequence}, export_bytes={name: data})
             job.say("valid: " + ", ".join(f"{n} {k}" for k, n in manifest.counts.items()))
@@ -1357,11 +1374,12 @@ def package_buildings(ws: Workspace, name: str) -> list[str] | None:
     return list(record.buildings) if record is not None and record.buildings else None
 
 
-def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue, say, folder=None):
+def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue, say, folder=None,
+                       item_types: str = "used"):
     """A building's package made (in a folder of its own, removed after) and checked; when
     it is valid, entered as an export in ``ws`` (not saved) and given back with its
     bytes: (manifest, bytes). One that is not valid is not entered (its number is not
-    used up): ValueError, saying what is wrong."""
+    used up): ValueError, saying what is wrong. ``item_types``: export_package's."""
     import shutil
     import tempfile
 
@@ -1372,7 +1390,7 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
     try:
         part = where / name  # the name it is entered under
         before = list(ws.exports)
-        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue)
+        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue, item_types=item_types)
         errors = validate_package(part)
         for e in errors:
             say("invalid: " + e)
@@ -1384,12 +1402,13 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
         shutil.rmtree(where, ignore_errors=True)
 
 
-def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say):
+def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say,
+                        item_types: str = "used"):
     """A building's package written to ``out`` and entered as an export in the workspace
     (saved to ``ws_path``) only when it is valid (make_valid_package). Raises
     ValueError, saying what is wrong, when it is not. (The command line's: files.)"""
     out.parent.mkdir(parents=True, exist_ok=True)
-    manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent)
+    manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent, item_types=item_types)
     part = out.with_name(f"{WRITING}{out.name}")
     part.write_bytes(data)
     part.replace(out)

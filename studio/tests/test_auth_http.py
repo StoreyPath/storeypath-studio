@@ -165,6 +165,8 @@ ROWS = [
     Row("GET", "/api/status", ok=200, passes=ALL),
     Row("GET", "/api/catalogue", ok=200, passes=ALL),
     Row("POST", "/api/catalogue", {"types": "nope"}, ok=400, passes={"admin"}),
+    # the types a file brings, read for who may change them (a file that brings none: refused, saying so)
+    Row("PUT", "/api/catalogue/types-in", raw=b"not a catalogue", ok=(400, "not JSON"), passes={"admin"}),
     Row("GET", "/api/projects", ok=200, passes=ALL),
     Row("POST", "/api/projects", {"name": ""}, ok=(400, "needs a name"), passes={"admin", "owner", "engineer"}),
     # (who may change something somewhere may open a package into it: the file is read)

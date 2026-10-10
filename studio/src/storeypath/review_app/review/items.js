@@ -17,7 +17,8 @@ import { $, el, icon, svg } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { toast } from "./notify.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
-import { DESK_SETS, fits, inRings, itemBox, ringsOf, roomAt, settle, tableChairs, visitorChairs } from "../fit.js";
+import { fits, inRings, itemBox, ringsOf, roomAt, settle } from "../fit.js";
+import { assetShape } from "../itemshape.js";
 import { selectAsset } from "./selection.js";
 import { BASE, round4, state, typeOf, visible, view3d } from "./state.js";
 import { setTool, tool } from "./tools.js";
@@ -40,61 +41,6 @@ export function categories() {
     groups.get(t.category).push(t);
   }
   return [...groups];
-}
-
-/** A desk's chair and what goes with its grade, in its own frame: its user towards -y. */
-function deskSet(g, t, w, d) {
-  const set = DESK_SETS[t?.grade] || DESK_SETS.junior;
-  // [x, y] from its middle towards its user, as the viewers measure it
-  const rect = (x, y, rw, rh, attrs) => g.append(svg("rect", { x, y: -(y + rh), width: rw, height: rh, ...attrs }));
-  const color = t?.color || "#8a8a8a";
-  if (set.return) rect(w / 2 - Math.min(0.45, w / 3), d / 2, Math.min(0.45, w / 3), 0.8, { fill: color });
-  if (set.cabinet) rect(-w * 0.45, d / 2 + 0.95, w * 0.9, 0.45, { fill: color });
-  const chair = (x, y, cw, cd, back) => { // its back at y + cd
-    rect(x - cw / 2, y, cw, cd, { class: "chair", rx: 0.08 });
-    rect(x - cw / 2, y + cd - back, cw, back, { class: "chair back", rx: 0.04 });
-  };
-  if (set.executive) chair(0, d / 2 + 0.08, 0.6, 0.62, 0.14);
-  else rect(-0.22, d / 2 + 0.1, 0.44, 0.42, { class: "chair", rx: 0.1 });
-  const { xs, vw, vd } = visitorChairs(set, w);
-  for (const x of xs) { // facing its user: their backs away from it
-    rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, vd, { class: "chair", rx: 0.08 });
-    rect(x - vw / 2, -d / 2 - 0.15 - vd, vw, 0.12, { class: "chair back", rx: 0.04 });
-  }
-}
-
-/** A meeting table's chairs round it (tableChairs), their backs away from it. */
-function tableSet(g, w, d) {
-  const { at, board, cw, cd, gap } = tableChairs(w, d), back = board ? 0.14 : 0.1;
-  for (const [x, y, [ox, oy]] of at) {
-    // from ``near`` to ``far`` metres out from the edge, ``cw`` along it: the chair, its back
-    const part = (near, far, attrs) => {
-      const [x0, x1] = ox ? [x + ox * (gap + near), x + ox * (gap + far)].sort((p, q) => p - q) : [x - cw / 2, x + cw / 2];
-      const [y0, y1] = oy ? [y + oy * (gap + near), y + oy * (gap + far)].sort((p, q) => p - q) : [y - cw / 2, y + cw / 2];
-      g.append(svg("rect", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, ...attrs }));
-    };
-    part(0, cd, { class: "chair", rx: board ? 0.08 : 0.1 });
-    part(cd - back, cd, { class: "chair back", rx: 0.04 });
-  }
-}
-
-/** An item's shape on the plan: its footprint turned with it, the edge it faces
- * darker, a desk's chair and what goes with its grade, a meeting table's chairs; on
- * the ceiling, a circle. */
-export function assetShape(a, t, cls) {
-  const g = svg("g", { transform: `translate(${a.x} ${a.y}) rotate(${a.rotation || 0})`, class: cls });
-  const w = t?.width ?? 1, d = t?.depth ?? 0.6;
-  if (t?.mount === "ceiling") {
-    g.classList.add("ceiling");
-    g.append(svg("circle", { r: Math.max(w, d) / 2, fill: t?.color || "#8a8a8a" }));
-  } else {
-    g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t?.color || "#8a8a8a" }));
-    g.append(svg("line", { x1: -w / 2, y1: -d / 2, x2: w / 2, y2: -d / 2, class: "front" })); // its front: the plan's -y, turned
-    const kind = (t?.code || t?.type || "").split("-")[0];
-    if (kind === "DESK") deskSet(g, t, w, d);
-    else if (kind === "MEETING") tableSet(g, w, d);
-  }
-  return g;
 }
 
 export function renderAssets() {

@@ -1,7 +1,8 @@
 # Studio's pages, and Review in them
 
 Studio's pages are plain HTML, CSS and ES modules, served as they are (no build step,
-no framework): `index.html` (projects, a project, users, GPU helpers: `studio.js`),
+no framework): `index.html` (projects, a project, item types, users, GPU helpers:
+`studio.js`, `itemtypes.js`, `users.js`, `helpers.js`),
 `login.html`, `navigate.html`, `world.html` (a building in 3D, the whole window: `world.js`,
 `world.css`), and **Review** (`review.html` and `review/`), the floor editor. This note is
 mostly about Review, for whoever adds to it.
@@ -55,6 +56,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
 | `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here |
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
+| `fit.js`, `itemshape.js` | where an item may stand and the magnet; how a type is drawn (`shapeOf`) and its symbol on a plan (the Item types page draws the same) |
 | `review/measure.js` | the Measure tool |
 | `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, Paint finishes, Share an area: each its own tool and parts |
 | `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |

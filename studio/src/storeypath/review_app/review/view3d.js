@@ -240,7 +240,8 @@ export function draggable3d() {
 function given3d(a) {
   const t = typeOf(a.type);
   return { id: a.id, type: a.type, x: a.x, y: a.y, rotation: a.rotation || 0, ...(t ? { width: t.width, depth: t.depth,
-    height: t.height, mount: t.mount || "floor", elevation: t.elevation ?? null, color: t.color, grade: t.grade ?? null } : {}) };
+    height: t.height, mount: t.mount || "floor", elevation: t.elevation ?? null, color: t.color, grade: t.grade ?? null,
+    shape: t.shape ?? null } : {}) };
 }
 
 /** The floor shown, in 3D as the page has it now: its items drawn again (that floor's

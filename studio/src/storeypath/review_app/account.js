@@ -71,14 +71,17 @@ export async function logout() {
   location.assign("/login.html");
 }
 
-/** The person's name, and their menu: change password, users and GPU helpers (admins), backup
- * (admins, and whoever an admin let), log out. Studio without accounts (storeypath
+/** The person's name, and their menu: change password, item types, users and GPU helpers
+ * (admins), backup (admins, and whoever an admin let), log out. Studio without accounts (storeypath
  * review, on this computer alone) has none of it. */
 export function accountMenu(me) {
   if (!me || me.local) return node("span");
   const can = (c) => me.role === "admin" || (me.capabilities || []).includes(c);
   const items = [
     node("a", { role: "menuitem", href: `/login.html?change=1&next=${encodeURIComponent(here())}` }, "Change password"),
+    node("a", { role: "menuitem", href: "/#/item-types",
+      title: can("catalogue") ? "The furniture and equipment people place on floors: add, change and retire them"
+        : "The furniture and equipment people place on floors" }, "Item types"),
     me.role === "admin" ? node("a", { role: "menuitem", href: "/#/users" }, "Users") : null,
     me.role === "admin" ? node("a", { role: "menuitem", href: "/#/helpers",
       title: "The GPU helpers that serve the vision model: their addresses, keys, and how each is" }, "GPU helpers") : null,

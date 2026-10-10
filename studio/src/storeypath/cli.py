@@ -1031,6 +1031,9 @@ def export(
     building: Annotated[Optional[str], typer.Option(
         help="the building to export, by its ID or code (a package holds one building; "
              "may be left out when the project has one)")] = None,
+    item_types: Annotated[str, typer.Option(
+        "--item-types", help="its catalogue: 'used' (the item types its items use, each once) or 'all' "
+                             "(the whole catalogue, for another system to choose which to take)")] = "used",
 ):
     """Write the exchange package of one building, entered as an export only when it is
     valid. Its items are of the item types of the Studio data folder the project is in
@@ -1048,7 +1051,7 @@ def export(
     data = workspace.resolve().parent.parent  # <data>/<code>/<code>.spproj: the Studio's item types, when it has them
     cat = catalogues.load(data) if (data / catalogues.FILE_NAME).is_file() else catalogues.default_catalogue()
     try:
-        manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo)
+        manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo, item_types=item_types)
     except (ExportError, ValueError) as e:
         _fail(str(e))
     counts = ", ".join(f"{n} {k}" for k, n in manifest.counts.items())

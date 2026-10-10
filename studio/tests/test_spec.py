@@ -44,7 +44,9 @@ def test_the_campus_packages_have_furniture_and_equipment():
             held = json.loads(z.read(manifest["files"]["items"]))["features"]
             spaces.update({f["id"]: f["properties"] for f in json.loads(z.read(manifest["files"]["spaces"]))["features"]})
             codes |= {t["code"] for t in json.loads(z.read(manifest["files"]["catalogue"]))["types"]}
-        assert manifest["format_version"] == FORMAT_VERSION and manifest["counts"]["items"] == len(held)
+        # (of this format: its major and minor version; a patch only adds, so its packages stand)
+        assert manifest["format_version"].split(".")[:2] == FORMAT_VERSION.split(".")[:2]
+        assert manifest["counts"]["items"] == len(held)
         assert all(f["properties"]["building_id"] == manifest["scope"]["buildings"][0] for f in held)
         items += held
     by_type: dict[str, list[dict]] = {}

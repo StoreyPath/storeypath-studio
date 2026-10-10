@@ -112,6 +112,10 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #assets .asset .front { stroke: var(--canvas-text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 #assets .asset .chair { fill: #5b5f69; }
 #assets .asset .chair.back { fill: var(--canvas-text); fill-opacity: .55; }
+/* the mark of how it is drawn (itemshape.js): a sofa's seat, a copier's lid, a bed's pillows… */
+#assets .asset .mark { fill: none; stroke: rgba(0, 0, 0, .5); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+#assets .asset .mark.solid, #assets .asset .mark.screen { fill: rgba(0, 0, 0, .55); }
+#assets .asset .mark.view { stroke-dasharray: 3 2; }
 #assets .asset.ceiling circle { fill-opacity: .3; stroke-dasharray: 3 3; }
 #assets .asset.chosen rect, #assets .asset.chosen circle { stroke: var(--select); stroke-width: 3; }
 #assets .asset.retired { opacity: .35; }
