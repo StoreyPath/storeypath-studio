@@ -489,6 +489,41 @@ async function viewTo(mode) {
     && (m === "2d" || (window.storeypathReview.view3d.world?.mode === (m === "walk" ? "walk" : "dollhouse"))), `the ${mode} view`, 90000, mode);
 }
 
+/** Until the plan's view stops moving (a fit or a flight to a place is eased over frames). */
+async function steady() {
+  let was = "";
+  for (let i = 0; i < 100; i++) {
+    const now = await R(() => JSON.stringify(window.storeypathReview.state.view));
+    if (now === was) return;
+    was = now;
+    await sleep(150);
+  }
+}
+
+/** A desk on the floor shown: one there, else one placed with the Place tool in an office
+ * on the plan (said in ``placed``, taken away by the last test that needs it). Its ID. */
+let placed = null;
+async function aDesk() {
+  const have = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired && a.type.startsWith("DESK"))?.id ?? null);
+  if (have) return have;
+  await viewTo("2d");
+  await press("Escape");
+  await press("f"); // (the whole floor in view: the office to click in on the screen)
+  await steady();
+  await press("i");
+  await sleep(100);
+  await R(() => { if (!document.querySelector(".type-picker")) document.querySelector(".type-chooser")?.click(); }); // (a type chosen before: not opened by itself)
+  await until(() => Boolean(document.querySelector(".type-picker")), "the types to place open");
+  await R(() => [...document.querySelectorAll(".type-tile")].find((b) => /junior/i.test(b.textContent)).click());
+  const before = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
+  const office = (await rooms()).find((x) => x.name === "OFFICE" && !x.ignored);
+  await page.click(...await roomAt(office.id));
+  await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 1, "a desk placed", 8000, before);
+  await press("Escape");
+  placed = await R(() => window.storeypathReview.state.floor.items.filter((x) => !x.retired).at(-1).id);
+  return placed;
+}
+
 /** What the list of keys (?) shows now, checked against what each key does now: a key it
  * lists that is another command's here, or does not work here, or is listed twice with two
  * meanings; a key that works here and is not listed. */
@@ -526,8 +561,8 @@ const checkKeys = () => R(() => {
 
 test("the keys in every view and situation: a key means one thing, and the list of keys (?) shows every key that works, and only those", async () => {
   await press("Escape");
-  const office = await officeNamed("009");
-  const item = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired).id);
+  const office = (await rooms()).find((x) => x.name === "OFFICE" && !x.ignored);
+  const item = await aDesk();
   const seen = [];
   for (const view of ["2d", "3d", "walk"]) {
     await viewTo(view);
@@ -579,11 +614,8 @@ test("in 3D and walking, a key of a tool drawn on the plan changes nothing and s
 
 test("an item chosen, R turns it in 2D, 3D and walking, whatever the tool (Paint too); , . by 15°; walking, the arrows walk and leave it", async () => {
   await press("Escape");
-  const item = await R(() => {
-    const a = window.storeypathReview.state.floor.items.find((x) => !x.retired && x.type.startsWith("DESK"));
-    window.storeypathReview.selectAsset(a.id);
-    return a.id;
-  });
+  const item = await aDesk();
+  await R((id) => window.storeypathReview.selectAsset(id), item);
   const rotation = () => R((id) => window.storeypathReview.state.floor.items.find((a) => a.id === id).rotation, item);
   const turned = async (key, mods, by, where) => {
     const was = await rotation();
@@ -627,8 +659,13 @@ test("an item chosen, R turns it in 2D, 3D and walking, whatever the tool (Paint
     await press("z", ["mod"]);
     await until(async (id, was) => window.storeypathReview.state.floor.items.find((a) => a.id === id).rotation !== was, `undo ${i + 1}`, 20000, item, was);
   }
-  await R(() => window.storeypathReview.selectAsset(null));
   await viewTo("2d");
+  if (placed === item) { // (the desk placed for these tests: taken away)
+    await R((id) => window.storeypathReview.selectAsset(id), item);
+    await press("Delete");
+    await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired, "the desk placed taken away", 8000, item);
+  }
+  await R(() => window.storeypathReview.selectAsset(null));
   noErrors("turning an item with R");
 });
 
@@ -676,7 +713,7 @@ const aDoor = () => R(() => {
   return null;
 });
 
-test("walking: a drag looks round and the mouse is never taken; a click on a door shuts it, E opens it again; a click on the floor chooses its room", async () => {
+test("walking: a drag looks round and the mouse is never taken; a click on a door opens it, E shuts it again; a click on the floor chooses its room", async () => {
   await viewTo("walk");
   const door = await aDoor();
   truly(door, "a door with a room each side");
@@ -688,17 +725,19 @@ test("walking: a drag looks round and the mouse is never taken; a click on a doo
   await until(async (y0) => { const p = window.storeypathReview.view3d.world.player; return Math.abs(Math.atan2(p.dx, p.dz) - y0) > 0.05; }, "the drag turned the view", 10000, y0);
   truly(await R(() => document.pointerLockElement === null && !document.getElementById("crosshair") && !document.getElementById("walk-enter")),
     "no pointer lock, no cross, no card to click to look");
-  // the door's leaf (open) under the pointer: said; a click shuts it
-  await standAt(door.near, door.leaf, -0.1);
-  const leaf = await worldScreen(door.leaf[0], 1.1, door.leaf[1]);
+  // the door shut, its leaf across the doorway under the pointer: said; a click opens it, E shuts it again
+  await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, false, { instant: true }), door.id);
+  await standAt(door.near, door.m, -0.1);
+  const leaf = await worldScreen(door.m[0], 1.1, door.m[1]);
   await page.mouse("mouseMoved", ...leaf);
   await until((id) => window.storeypathReview.view3d.doorAim?.id === id && window.storeypathReview.view3d.doorAim.under
-    && /Close the door: click it or press E/.test(document.getElementById("sb-hint").textContent), "the door under the pointer, said", 10000, door.id);
+    && /Open the door: click it or press E/.test(document.getElementById("sb-hint").textContent), "the door under the pointer, said", 10000, door.id);
   await page.click(...leaf);
-  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === false, "a click shut it", 5000, door.id);
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === true, "a click opened it", 5000, door.id);
   await sleep(700); // (a double-click is two clicks this near)
   await press("e");
-  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === true, "E opened it again", 5000, door.id);
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === false, "E shut it again", 5000, door.id);
+  await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, true, { instant: true }), door.id);
   // the floor at your feet: its room chosen, as on the plan
   await standAt(door.near, door.m, -0.8);
   const feet = await worldScreen(door.near[0] + (door.m[0] - door.near[0]) * 0.7, 0, door.near[1] + (door.m[1] - door.near[1]) * 0.7);
@@ -755,6 +794,8 @@ test("walking: Paint marks the floor and the walls under the pointer and paints 
   await press("Escape");
   // Place: a type, its ghost under the pointer, a click places it there
   await press("i");
+  await sleep(100);
+  await R(() => { if (!document.querySelector(".type-picker")) document.querySelector(".type-chooser")?.click(); }); // (a type chosen before)
   await until(() => Boolean(document.querySelector(".type-picker .type-tile")), "the types to place", 5000);
   await R(() => {
     const tiles = [...document.querySelectorAll(".type-picker .type-tile")];
@@ -765,16 +806,16 @@ test("walking: Paint marks the floor and the walls under the pointer and paints 
   await page.mouse("mouseMoved", pl[0] - 20, pl[1]);
   await page.mouse("mouseMoved", ...pl);
   await until(() => Boolean(window.storeypathReview.view3d.world.scene.getObjectByName("ghost")), "its ghost under the pointer", 5000);
-  const n = await R(() => window.storeypathReview.state.floor.items.length);
+  const n = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
   await page.click(...pl);
-  await until((n) => window.storeypathReview.state.floor.items.length === n + 1, "placed", 15000, n);
+  await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 1, "placed", 15000, n);
   await press("z", ["mod"]);
   await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n, "undone", 20000, n);
   await press("Escape");
   noErrors("painting and placing walking");
 });
 
-test("walking: a right-click offers what can be done there: on the floor, choose it, paint it, take up its finish, place an item, show it on the plan; on a door, shut it", async () => {
+test("walking: a right-click offers what can be done there: on the floor, choose it, paint it, take up its finish, place an item, show it on the plan; on a door, open it", async () => {
   await viewTo("walk");
   const door = await aDoor();
   const right = async ([x, y]) => {
@@ -792,15 +833,15 @@ test("walking: a right-click offers what can be done there: on the floor, choose
   await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Select")).click());
   await until((id) => window.storeypathReview.state.selected === id, "Select chose the room", 5000, door.there);
   await press("Escape");
-  await standAt(door.near, door.leaf, -0.1);
-  const onDoor = await right(await worldScreen(door.leaf[0], 1.1, door.leaf[1]));
-  truly(onDoor.includes("Close the door"), `the door's menu: ${JSON.stringify(onDoor)}`);
-  await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Close the door")).click());
-  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === false, "shut from the menu", 5000, door.id);
-  await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, true, { instant: true }), door.id);
+  await R((id) => window.storeypathReview.view3d.world.setDoorOpen(id, false, { instant: true }), door.id);
+  await standAt(door.near, door.m, -0.1);
+  const onDoor = await right(await worldScreen(door.m[0], 1.1, door.m[1]));
+  truly(onDoor.includes("Open the door"), `the door's menu: ${JSON.stringify(onDoor)}`);
+  await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Open the door")).click());
+  await until((id) => window.storeypathReview.view3d.world.doorOpen(id) === true, "opened from the menu", 5000, door.id);
   // a right-drag looks, and offers nothing
   const y0 = await R(() => { const p = window.storeypathReview.view3d.world.player; return Math.atan2(p.dx, p.dz); });
-  const [x, y] = await worldScreen(door.leaf[0], 1.1, door.leaf[1]);
+  const [x, y] = await worldScreen(door.m[0], 1.1, door.m[1]);
   await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "right", buttons: 2, clickCount: 1 });
   for (let i = 1; i <= 6; i++) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: x - i * 15, y, button: "right", buttons: 2 });
   await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x - 90, y, button: "right", buttons: 0, clickCount: 1 });
@@ -822,7 +863,7 @@ const written = (chord) => chord.split("+").map((k) => ({ mod: "⌘/Ctrl", shift
  * chosen, built from the registry as the page has it (keyMap): Markdown. */
 async function keysTable() {
   const titles = await R(() => Object.fromEntries(window.storeypathReview.commands().map((c) => [c.id, c.title])));
-  const item = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired).id);
+  const item = await aDesk();
   const cells = new Map(); // chord → { "2d": [plain, item], … }
   const what = (b) => (!b ? "" : b.id === null ? `${b.title} (the ${b.owner}'s)` : b.works ? titles[b.id] : `— (${b.idle ?? "says why"})`);
   for (const view of ["2d", "3d", "walk"]) {
@@ -843,6 +884,12 @@ async function keysTable() {
   }
   await R(() => window.storeypathReview.selectAsset(null));
   await viewTo("2d");
+  if (placed === item) { // (the desk placed for it: taken away)
+    await R((id) => window.storeypathReview.selectAsset(id), item);
+    await press("Delete");
+    await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired, "the desk placed taken away", 8000, item);
+    await press("Escape");
+  }
   const cell = ([plain, withItem]) => (withItem && withItem !== plain ? `${plain || "—"} · *an item chosen:* ${withItem}` : plain || "—");
   // the arrows (and Shift with them) said as one when they mean the same but for their way
   const dir = (s) => s.replace(/ (left|right|up|down)\b/g, "");
