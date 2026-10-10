@@ -117,7 +117,7 @@ def test_finished_as_a_person_chose(built):
     _, ws, packages = built
     reception = next(r for r in _rooms(ws, f"{MAIN}-F00") if r.name == "RECEPTION")
     assert ws.effective(reception)["floor_finish"] == "FLOOR-MARBLE-WHITE"
-    assert ws.effective(reception)["wall_finish"] == "WALL-STONE"
+    assert ws.effective(reception)["wall_finish"] == "WALL-WOOD-SLATS"
     assert not ws.effective(reception)["corrected"]  # choosing finishes does not check a room
     with zipfile.ZipFile(packages[0]) as z:
         spaces = json.loads(z.read("spaces.geojson"))["features"]

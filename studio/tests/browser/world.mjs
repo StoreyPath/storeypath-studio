@@ -172,7 +172,7 @@ test("a room chosen shows its details: its ID, floor, area, finishes, where its 
   });
   await until(() => !document.getElementById("details").hidden, "the details");
   const card = await R(() => document.getElementById("details").textContent);
-  truly(/RECEPTION/.test(card) && /CAMP05-CAMPUS-MAIN-F00-/.test(card) && /Marble, white/.test(card) && /Stone cladding/.test(card), card);
+  truly(/RECEPTION/.test(card) && /CAMP05-CAMPUS-MAIN-F00-/.test(card) && /Marble, white/.test(card) && /Oak slats/.test(card), card);
   truly(/Outside/.test(card) && /CORRIDOR/.test(card), `its doors lead: ${card}`);
   truly(await R(() => /review\.html\?p=CAMP05#floor=.*space=/.test(document.querySelector("#details a.button").getAttribute("href"))),
     "a way to it in Review");

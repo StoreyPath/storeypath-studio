@@ -503,8 +503,8 @@ def pavilion_floor(ordinal: int) -> list[Cell]:
 # what rooms are finished in (format 0.9), by their name, or "<name>@<floor's ordinal>" on one
 # floor: a person's choice, kept as a correction (choosing finishes does not check a room)
 FINISHES_BY_NAME = {
-    "RECEPTION": ("FLOOR-MARBLE-WHITE", "WALL-STONE"),
-    "LIFT LOBBY": ("FLOOR-MARBLE-BEIGE", "WALL-WOOD-SLATS"),
+    "RECEPTION": ("FLOOR-MARBLE-WHITE", "WALL-WOOD-SLATS"),
+    "LIFT LOBBY": ("FLOOR-MARBLE-BEIGE", "WALL-STONE"),
     "CORRIDOR@0": ("FLOOR-TERRAZZO-LIGHT", None),
     "CAFE": ("FLOOR-LVT-OAK", "WALL-PAINT-TERRACOTTA"),
     "LOUNGE": ("FLOOR-WOOD-OAK", "WALL-PAPER-GEOMETRIC"),
