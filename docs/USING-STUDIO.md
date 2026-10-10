@@ -128,7 +128,8 @@ and every command with its key; <kbd>?</kbd> lists the keys.
 - **2D, 3D, Walk — one view** (<kbd>2</kbd>, <kbd>3</kbd>, <kbd>4</kbd>), in the
   same place: the floor, what you chose, the panels and the plan's view stay as they
   are, and switching is instant once the building is built. In 3D the floor stack's
-  *All* shows every floor of the building. Walking: click the view to look, <kbd>W A S
+  *All* shows every floor of the building, and <kbd>⌘</kbd>-click (<kbd>Ctrl</kbd>-click;
+  a long press on a tablet) shows another floor with the one open. Walking: click the view to look, <kbd>W A S
   D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panels; the room you're in
   is shown, and you start in the room you chose, or where the 3D view or the plan was
   looking. In 3D and walking you edit as on the plan: a click chooses a room or an
@@ -327,8 +328,10 @@ gives.
   drawn in from *You are here*, a badge where it changes floor ("Up to Floor 2": a click
   shows that floor), a pin and a card on the room it ends in. <kbd>↑</kbd> <kbd>↓</kbd>
   go through the steps; **Play** walks a dot along it, floor by floor; **3D** (or
-  **Both**) shows it glowing through the building, and **Fly along** takes the camera
-  along it, up the stairs or the lift to the destination.
+  **Both**) shows it glowing through the building, on the floors it walks on alone (by
+  lift from the ground floor to the third: those two, the floors it rides past left
+  out; its floor stack says which, *Way* brings them back after a floor is chosen), and
+  **Fly along** takes the camera along it, up the stairs or the lift to the destination.
 
   ![Find the way: the office typed, the way drawn in, played up the stairs to Floor 2 and along the corridor to the office](images/route.webp)
 - **Stairs and lifts the drawing missed** are drawn in Review with its *Stairs* and
@@ -372,7 +375,8 @@ Studio's top bar (where you are; Dollhouse <kbd>3</kbd> or Walk <kbd>4</kbd>), a
 toolbar over the world (X-ray <kbd>X</kbd>, Cutaway <kbd>C</kbd>, Explode, Labels
 <kbd>L</kbd>, Items <kbd>I</kbd>, Hidden; walking, the map <kbd>M</kbd> and Auto
 doors; Look and Quality), the floor stack with *All* (<kbd>PgUp</kbd>,
-<kbd>PgDn</kbd>), a room's or an item's details (with *Walk here* and a way to it in
+<kbd>PgDn</kbd>; <kbd>⌘</kbd>-click or <kbd>Ctrl</kbd>-click a floor to show it with
+the others shown, the ground floor and the third, say), a room's or an item's details (with *Walk here* and a way to it in
 Review), and a slim status bar that says what the view expects and, walking, the door
 at the cross. <kbd>F</kbd> is full screen, <kbd>?</kbd> lists the keys, and
 <kbd>P</kbd> **presents**: nothing but the building, for a big screen, turning slowly

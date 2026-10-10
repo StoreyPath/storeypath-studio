@@ -12,6 +12,7 @@
 
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { setupChrome } from "./chrome.js";
+import { WITH_OTHERS, onHold, together, toggled } from "./floorpick.js";
 import { lookOptions, setupLook } from "./look.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 
@@ -732,6 +733,7 @@ async function drawWorld() {
       state.world = new StoreyPathWorld($("world3d"), { labels: true, ...lookOptions() });
       state.look?.attach(state.world);
       follow(state.world);
+      for (const type of ["floorchange", "floorsshown"]) state.world.addEventListener(type, () => renderWorldFloors());
     }
     if (state.worldShows !== state.building) {
       note.textContent = "Building the 3D view…";
@@ -752,8 +754,38 @@ async function drawWorld() {
 function drawWorldRoute() {
   const w = state.world;
   if (!w || state.worldShows !== state.building || typeof w.showRoute !== "function") return;
+  w.setFloors?.(null); // (a new way: the floors it walks on, by lift past others: those alone)
   w.showRoute(state.route, { fit: true, startLabel: startLabel(), floorName });
   $("fly").disabled = !state.route || typeof w.flyRoute !== "function";
+  renderWorldFloors();
+}
+
+/** The 3D view's floors (bottom right), those shown marked: a way of several floors shows
+ * those it walks on (Way: a lift's floors ridden past left out), else every floor (All); a
+ * click shows a floor on its own, ⌘-click (Ctrl-click; a long press) one with those shown. */
+function renderWorldFloors() {
+  const box = $("world-floors"), w = state.world, pkg = w?.package;
+  const floors = w?.setFloors && pkg && w.building && state.worldShows === state.building ? pkg.floorsOf(w.building) : [];
+  box.hidden = floors.length < 2;
+  if (box.hidden) return box.replaceChildren();
+  const ids = floors.map((f) => f.id), shown = w.shownFloors, asked = w.floors; // (lowest first)
+  const multi = new Set((state.route?.legs ?? []).map((l) => l.floor_id)).size > 1;
+  const marked = asked ?? (shown.length === ids.length ? [] : shown);
+  const first = el("button", { type: "button", class: "fs-all", "aria-pressed": String(asked === null),
+    "data-tip": multi ? "The floors the way walks on" : "Every floor of the building" }, multi ? "Way" : "All");
+  first.addEventListener("click", () => w.setFloors(null));
+  const parts = [first, el("div", { class: "fs-sep", role: "separator" })];
+  for (const f of [...floors].reverse()) { // (the top one first)
+    const here = marked.includes(f.id), name = floorName(f.id);
+    const b = el("button", { type: "button", "data-id": f.id, "aria-current": here ? "true" : null,
+      "aria-label": `${name}${here ? ", shown" : ""}`, "data-tip": `${name} · ${WITH_OTHERS}` },
+    f.properties.code || f.id.split("-").at(-1));
+    const withOthers = () => w.setFloors(toggled(asked ?? shown, f.id, ids, { every: !multi }));
+    onHold(b, withOthers);
+    b.addEventListener("click", (e) => (together(e) ? withOthers() : w.setFloor(f.id)));
+    parts.push(b);
+  }
+  box.replaceChildren(...parts);
 }
 
 async function fly() {

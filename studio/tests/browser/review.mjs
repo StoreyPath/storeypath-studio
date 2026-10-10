@@ -461,6 +461,23 @@ test("3D and walking: built without an error, the floor stack offers All, 2 is b
   await until(() => window.storeypathReview.view3d.building && window.storeypathReview.view3d.mode === "3d" && !window.storeypathReview.view3d.busy,
     "the 3D view is built", 90000);
   truly(await R(() => Boolean(document.querySelector("#floor-stack .fs-all"))), "All, in 3D");
+  // ⌘-click (Ctrl-click): another floor shown with the one open, marked so; again, taken away
+  const other = await R(() => [...document.querySelectorAll("#floor-stack button:not(.fs-all)")]
+    .find((b) => b.getAttribute("aria-current") !== "true")?.textContent ?? null);
+  if (other) {
+    const withIt = () => R((t) => [...document.querySelectorAll("#floor-stack button:not(.fs-all)")].find((b) => b.textContent === t)
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true, metaKey: true })), other);
+    await withIt();
+    const two = await R(() => {
+      const r = window.storeypathReview, w = r.view3d.world;
+      return { floors: w.floors?.length ?? 0, open: Boolean(w.floors?.includes(r.state.floor.id)), together: r.view3d.together.length,
+        marked: [...document.querySelectorAll("#floor-stack .fs-with")].map((b) => b.textContent) };
+    });
+    truly(two.floors === 2 && two.open && two.together === 1 && two.marked.join() === other, `another floor with the one open: ${JSON.stringify(two)}`);
+    await withIt();
+    truly(await R(() => window.storeypathReview.view3d.world.floor === window.storeypathReview.state.floor.id
+      && !document.querySelector("#floor-stack .fs-with")), "again: the floor open alone");
+  }
   truly(await R(() => document.querySelector("#rail [data-tool=wall]").getAttribute("aria-disabled") === "true"), "the Wall tool: not in 3D");
   await press("p");
   truly((await toolNow()) === "paint" && !(await R(() => document.getElementById("tool-options").hidden)), "Paint in 3D, its brushes shown");

@@ -15,6 +15,7 @@
 
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { setupChrome } from "./chrome.js";
+import { WITH_OTHERS, onHold, together, toggled } from "./floorpick.js";
 import { lookOptions, setupLook } from "./look.js";
 import { el, icon, save, saved } from "./review/dom.js";
 import { kbd } from "./review/keys.js";
@@ -171,20 +172,25 @@ function renderFloors() {
   if (!w || !pkg || !w.building) return box.replaceChildren();
   const floors = [...pkg.floorsOf(w.building)].reverse(); // the top one first
   const walking = w.mode === "walk";
-  const current = walking ? w.walkFloor : w.floor;
+  // the floors shown: walking, the walker's; else one, some together (⌘-click), or all (none marked)
+  const marked = walking ? [w.walkFloor] : w.floors ?? [];
+  const ids = floors.map((f) => f.id).reverse(); // (lowest first)
   const parts = [];
   if (!walking && floors.length > 1) {
-    const all = el("button", { type: "button", class: "fs-all", "aria-pressed": String(current === null),
+    const all = el("button", { type: "button", class: "fs-all", "aria-pressed": String(w.floors === null),
       "data-tip": "Every floor of the building" }, "All");
     all.addEventListener("click", () => w.setFloor(null));
     parts.push(all, el("div", { class: "fs-sep", role: "separator" }));
   }
   for (const f of floors) {
-    const here = f.id === current;
+    const here = marked.includes(f.id);
     const b = el("button", { type: "button", "data-id": f.id, "aria-current": here ? "true" : null,
-      "aria-label": `${f.properties.name}${here ? ", shown" : ""}`, "data-tip": f.properties.name },
+      "aria-label": `${f.properties.name}${here ? ", shown" : ""}`,
+      "data-tip": walking ? f.properties.name : `${f.properties.name} · ${WITH_OTHERS}` },
     f.properties.code || f.id.split("-").at(-1));
-    b.addEventListener("click", () => w.setFloor(f.id));
+    const withOthers = () => w.setFloors(toggled(w.floors, f.id, ids));
+    if (!walking) onHold(b, withOthers);
+    b.addEventListener("click", (e) => (!walking && together(e) ? withOthers() : w.setFloor(f.id)));
     parts.push(b);
   }
   box.replaceChildren(...parts);
@@ -588,6 +594,7 @@ function drawMinimap() {
 const KEYS = [
   ["View", [["3", "Dollhouse"], ["4", "Walk"], ["x", "X-ray"], ["c", "Cutaway (the dollhouse)"], ["l", "Labels"], ["i", "Items"],
     ["pageup pagedown", "A floor up or down"]]],
+  ["The mouse, dollhouse", [[`${WITH_OTHERS.split(":")[0]} a floor`, "Show it with the floors shown, or take it away (on a tablet, a long press)"]]],
   ["Walking", [["w a s d", "Move (or the arrows)"], ["shift", "Run, held"], ["e", "Open or close the door under the pointer, or ahead"],
     ["e q", "Up or down at stairs and lifts (or PgUp, PgDn)"], ["m", "The map"]]],
   ["The mouse, walking", [["Drag", "Look round (either button, or a finger)"], ["Click", "A room's or an item's details; a door opened or closed"],
@@ -696,10 +703,13 @@ function listen(w) {
     renderSource();
     remember("building", w.building);
   });
-  w.addEventListener("floorchange", ({ detail: { id } }) => {
+  w.addEventListener("floorchange", ({ detail: { id, floors } }) => {
     renderFloors();
     renderItems();
-    if (w.mode !== "walk") remember("floor", id);
+    if (w.mode !== "walk") {
+      remember("floor", id);
+      remember("floors", !id && floors ? floors.join(",") : null); // (some shown together)
+    }
     if (id !== null && Number($("explode").value) > 0) setExplode(0, { quiet: false });
   });
   w.addEventListener("modechange", ({ detail: { mode } }) => {
@@ -800,6 +810,7 @@ async function start() {
   const building = floor ? floor.properties.building_id : params.get("building");
   if (building && pkg.get(building) && building !== w.building) await w.setBuilding(building);
   if (floor) w.setFloor(floor.id);
+  else if (params.get("floors")) w.setFloors(params.get("floors").split(","));
   pressed("hidden-spaces", params.get("hidden") === "1");
   pressed("doors", w.doors !== "manual");
   if (params.get("xray") === "1") setXray(true);

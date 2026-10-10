@@ -99,6 +99,55 @@ test("the floor stack: a floor alone, All again; PgUp and PgDn go up and down", 
   truly((await param("floor")) === null, "no floor in the address");
 });
 
+test("floors together: ⌘-click (Ctrl-click) shows a floor with the one shown, again takes it away; both marked, kept in the address, apart when exploded; a long press too; All again", async () => {
+  const withIt = (code) => R((code) => document.querySelector(`#floor-stack button[data-id$='-${code}']`)
+    .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true, metaKey: true })), code);
+  const now = () => R(() => {
+    const w = window.storeypathWorld, code = (id) => id.split("-").at(-1);
+    return { floor: w.floor && code(w.floor), floors: w.floors?.map(code) ?? null, shown: w.shownFloors.map(code),
+      marked: [...document.querySelectorAll("#floor-stack [aria-current='true']")].map((b) => b.textContent).sort(),
+      all: document.querySelector("#floor-stack .fs-all").getAttribute("aria-pressed") };
+  });
+  await click("#floor-stack button[data-id$='-F00']");
+  await withIt("F02");
+  const two = await now();
+  truly(two.floor === null && two.floors.join() === "F00,F02" && two.shown.join() === "F00,F02" && two.marked.join() === "F00,F02"
+    && two.all === "false", `the ground floor and the second together: ${JSON.stringify(two)}`);
+  truly((await param("floors"))?.split(",").map((f) => f.split("-").at(-1)).join() === "F00,F02" && (await param("floor")) === null, "kept in the address");
+  truly(await R(() => /-click: with the floors shown/.test(document.querySelector("#floor-stack button[data-id$='-F01']").dataset.tip)), "the tooltip says how");
+  await R(() => {
+    const r = document.getElementById("explode");
+    r.value = "4";
+    r.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const apart = await now();
+  truly(apart.floors.join() === "F00,F02" && apart.shown.join() === "F00,F02", `exploded, those two apart: ${JSON.stringify(apart)}`);
+  await R(() => {
+    const r = document.getElementById("explode");
+    r.value = "0";
+    r.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await withIt("F02");
+  truly((await now()).floor === "F00", "again: the ground floor alone");
+  await withIt("F00");
+  truly((await now()).floor === "F00", "the last one shown stays");
+  // a finger held on a floor: with them, the click it ends in not taken as one
+  await R(() => document.querySelector("#floor-stack button[data-id$='-F01']")
+    .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" })));
+  await until(() => window.storeypathWorld.floors?.length === 2, "held: shown with it"); // (the finger lifted once it has)
+  await R(() => {
+    const b = document.querySelector("#floor-stack button[data-id$='-F01']");
+    b.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch" }));
+    b.click();
+  });
+  const held = await now();
+  truly(held.floors?.join() === "F00,F01", `a long press: with it: ${JSON.stringify(held)}`);
+  await click("#floor-stack .fs-all");
+  const all = await now();
+  truly(all.floors === null && all.all === "true" && !all.marked.length && (await param("floors")) === null, `All again: ${JSON.stringify(all)}`);
+  noErrors("floors together");
+});
+
 test("X-ray, Cutaway, Labels, Items, Hidden: each by its button and its key, kept in the address", async () => {
   await click("#xray");
   truly(await pressed("xray") && (await param("xray")) === "1", "X-ray on");

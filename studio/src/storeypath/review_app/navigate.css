@@ -180,6 +180,25 @@ body.navigate #panel {
 #panes.both #plan-pane { border-right: 1px solid var(--border); }
 .pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 #plan, #world3d { position: absolute; inset: 0; }
+/* the 3D view's floors: those shown marked (a way's own, or as chosen), as the 3D window's */
+.floor-stack {
+  position: absolute; right: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui);
+  display: flex; flex-direction: column; padding: 3px; gap: 2px; border-radius: var(--r-lg);
+  background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.floor-stack[hidden] { display: none; }
+.floor-stack button {
+  display: flex; align-items: center; justify-content: center; width: 56px; height: 28px; min-height: 0; padding: 0 var(--sp-2);
+  border: 0; border-radius: var(--r-md); background: transparent; color: var(--canvas-text);
+  font: var(--fw-semibold) var(--fs-sm) / 1 var(--font-ui); font-variant-numeric: tabular-nums;
+}
+.floor-stack button:hover:not(:disabled):not([aria-current="true"]) { background: rgba(0, 0, 0, .06); border: 0; color: var(--canvas-text); }
+.floor-stack button[aria-current="true"] { background: var(--canvas-text); color: var(--canvas-paper); }
+.floor-stack .fs-all { font-weight: var(--fw-medium); color: var(--canvas-muted); }
+.floor-stack .fs-all[aria-pressed="true"] { background: var(--accent); color: var(--text-on-accent); }
+.floor-stack .fs-all[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-hover); color: var(--text-on-accent); }
+.floor-stack .fs-sep { height: 1px; background: var(--canvas-overlay-border); margin: 2px 4px; }
 .note {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); margin: 0; max-width: min(460px, 90%);
   background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-3) var(--sp-4);

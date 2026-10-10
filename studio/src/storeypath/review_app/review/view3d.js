@@ -30,12 +30,14 @@ import { say, toast } from "./notify.js";
 import { centerOn, planPoint, scaleFor, viewport } from "./plan.js";
 import { select, selectAsset } from "./selection.js";
 import { settle } from "../fit.js";
+import { toggled } from "../floorpick.js";
 import { openFloor } from "./floor.js";
 import { BASE, buildingOf, readable, round4, state, typeLabel, typeOf, view3d } from "./state.js";
 import { setTool } from "./tools.js";
 
 const REACH_3D = 0.3; // m: how near a wall or an item the magnet takes an item in 3D (fit.js)
 view3d.allFloors = false; // in 3D, the building's floors all shown (not walking)
+view3d.together = []; // in 3D, the floors shown with the one open (⌘-click in the stack), but all
 view3d.doorAim = null; // walking: the door aimed at ({id, open}), when the world opens doors
 
 /** Walking, doors open as you walk into them ("auto"), or only with E or a click
@@ -181,7 +183,7 @@ export async function build3d() {
     }
     // the floor shown now, when it is of the building built (else that one is built next)
     if (state.floor?.id.startsWith(`${view3d.building}-`)) {
-      view3d.world.setFloor(view3d.allFloors && view3d.mode === "3d" ? null : state.floor.id);
+      view3d.world.setFloors(view3d.mode === "3d" ? floors3d() : [state.floor.id]);
       update3d();
     }
     pick3d(state.selected || state.asset || null, { go: false });
@@ -199,7 +201,28 @@ export async function build3d() {
 /** In 3D, every floor of the building shown (true), or the floor alone. */
 export function setAllFloors(on) {
   view3d.allFloors = Boolean(on);
+  view3d.together = [];
   if (view3d.world && view3d.building && view3d.mode === "3d") view3d.world.setFloor(on ? null : state.floor.id);
+  emit("floors3d");
+}
+
+/** The floors the 3D view shows (not walking): every floor; else the one open, with those
+ * chosen with it (of its building, lowest first); null for every floor. */
+function floors3d() {
+  if (view3d.allFloors) return null;
+  const open = state.floor?.id;
+  return [open, ...view3d.together.filter((f) => f !== open && buildingOf(f) === buildingOf(open))];
+}
+
+/** In 3D, a floor shown with the one open, or taken away from those shown (⌘-click in the
+ * floor stack): ``all``, the building's floors, lowest first. The floor open stays. */
+export function toggleFloor3d(id, all) {
+  const open = state.floor?.id;
+  if (!open || id === open) return;
+  const next = toggled(floors3d(), id, all);
+  view3d.allFloors = next === null;
+  view3d.together = next === null ? [] : next.filter((f) => f !== open);
+  if (view3d.world && view3d.building && view3d.mode === "3d") view3d.world.setFloors(floors3d());
   emit("floors3d");
 }
 
@@ -215,7 +238,7 @@ function applyMode() {
     if (chosen) pick3d(chosen, { go: true }); // walked to: in the room, before the item
   } else if (view3d.mode === "3d" && w.mode !== "dollhouse") {
     w.setMode("dollhouse", { back: true });
-    if (view3d.allFloors) w.setFloor(null);
+    if (view3d.allFloors || view3d.together.length) w.setFloors(floors3d());
   }
   showWalk();
 }

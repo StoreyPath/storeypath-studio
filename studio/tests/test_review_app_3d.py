@@ -34,7 +34,7 @@ const BASE = "projects/P";
 const at = "2026-10-09T10:00:00";
 const state = { floor: { id: "P-SITE-A-F00", converted_at: at }, selected: null, asset: null, showHidden: false };
 const view3d = { world: null, building: null, stale: true, shown: true, mode: "3d", busy: null, again: false, picking: false,
-  dirty: new Set() };
+  dirty: new Set(), allFloors: false, together: [] };
 const buildingOf = (id) => id.split("-").slice(0, 3).join("-");
 const opened = [], reloaded = [], floors = [], said = [];
 let finish = null, fail = false;
@@ -45,6 +45,7 @@ view3d.world = {
     return fail ? Promise.reject(new Error("offline")) : new Promise((r) => (finish = r));
   },
   setFloor(id) { floors.push(id); },
+  setFloors(ids) { floors.push(ids === null ? null : ids.join("+")); }, // (one: as setFloor)
 };
 const toast = (m) => { said.push(m); };
 const say = () => {};
@@ -112,7 +113,7 @@ console.log("ok");
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs Node.js")
 def test_3d_refresh_asked_while_busy_is_not_dropped(tmp_path):
     src = VIEW3D_JS.read_text(encoding="utf-8")
-    script = SCENARIO.replace("__FUNCTIONS__", function(src, "refresh3d") + "\n" + function(src, "build3d"))
+    script = SCENARIO.replace("__FUNCTIONS__", "\n".join(function(src, name) for name in ("refresh3d", "build3d", "floors3d")))
     (tmp_path / "scenario.mjs").write_text(script, encoding="utf-8")
     run = subprocess.run(["node", str(tmp_path / "scenario.mjs")], capture_output=True, text=True, timeout=60)
     assert run.returncode == 0 and run.stdout.strip() == "ok", run.stdout + run.stderr

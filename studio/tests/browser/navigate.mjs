@@ -207,6 +207,40 @@ test("3D: the way through the building, a step clicked framed there, Fly along t
   noErrors("3D");
 });
 
+test("3D, step-free: by the lift two floors up, the floors it walks on alone (Way), the one between left out; a floor alone, ⌘-click one with it; Way again", async () => {
+  await page.click(...await middleOf(".step-free input"));
+  await until(() => document.getElementById("sum-sub").textContent.includes("by lift"), "by the lift");
+  await page.click(...await middleOf("#view-mode [data-view='3d']"));
+  const stack = () => R(() => {
+    const w = window.storeypathNavigate.state.world, c = (id) => id.split("-").at(-1);
+    const first = document.querySelector("#world-floors .fs-all");
+    return { shown: w.shownFloors.map(c), floors: w.floors?.map(c) ?? null, floor: w.floor && c(w.floor),
+      marked: [...document.querySelectorAll("#world-floors [aria-current='true']")].map((b) => b.textContent).sort(),
+      first: first?.textContent, pressed: first?.getAttribute("aria-pressed") };
+  });
+  await until(() => {
+    const w = window.storeypathNavigate.state.world;
+    return w?.route && w.shownFloors.length === 2 && !document.getElementById("world-floors").hidden;
+  }, "the way in 3D on its floors", 60000);
+  const way = await stack();
+  truly(way.shown.join() === "F00,F02" && way.marked.join() === "F00,F02" && way.first === "Way" && way.pressed === "true",
+    `by lift: the ground floor and the second, the first left out, said in the stack: ${JSON.stringify(way)}`);
+  await page.click(...await middleOf("#world-floors button[data-id$='-F01']"));
+  const alone = await stack();
+  truly(alone.floor === "F01" && alone.shown.join() === "F01" && alone.marked.join() === "F01" && alone.pressed === "false", `a floor alone: ${JSON.stringify(alone)}`);
+  await R(() => document.querySelector("#world-floors button[data-id$='-F02']")
+    .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true, metaKey: true })));
+  const two = await stack();
+  truly(two.floors?.join() === "F01,F02" && two.shown.join() === "F01,F02" && two.marked.join() === "F01,F02", `⌘-click: with it: ${JSON.stringify(two)}`);
+  await page.click(...await middleOf("#world-floors .fs-all"));
+  const again = await stack();
+  truly(again.floors === null && again.shown.join() === "F00,F02" && again.pressed === "true", `Way again: ${JSON.stringify(again)}`);
+  await page.click(...await middleOf("#view-mode [data-view='plan']"));
+  await page.click(...await middleOf(".step-free input"));
+  await until(() => document.getElementById("sum-sub").textContent.includes("by stairs"), "by the stairs again");
+  noErrors("3D by lift");
+});
+
 let failed = 0;
 try {
   for (const t of tests) {

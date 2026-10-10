@@ -1,13 +1,16 @@
 // The floor stack, on the canvas (bottom right), the same in 2D and 3D: the building's
 // floors, the top one first, the one shown marked, those with rooms to review dotted; a
-// click opens a floor. In 3D, All shows every floor of the building at once. And the
-// zoom buttons beside it (2D).
+// click opens a floor. In 3D, All shows every floor of the building at once, and ⌘-click
+// (Ctrl-click; a long press on a tablet) shows a floor with the one open, or takes it
+// away. And the zoom buttons beside it (2D).
 
 import { on } from "./bus.js";
 import { run } from "./commands.js";
 import { $, el } from "./dom.js";
 import { openFloor } from "./floor.js";
+import { WITH_OTHERS, onHold, together } from "../floorpick.js";
 import { buildingOf, state, view3d } from "./state.js";
+import { toggleFloor3d } from "./view3d.js";
 
 /** A floor's short name: its code (F00, B1…), as its ID ends. */
 export const floorCode = (id) => id.split("-").at(-1);
@@ -30,15 +33,20 @@ function render() {
     all.addEventListener("click", () => run("view.all-floors"));
     parts.push(all, el("div", { class: "fs-sep", role: "separator" }));
   }
+  const in3d = view3d.mode === "3d", ids = floors.map((f) => f.id).reverse(); // (lowest first)
   for (const f of floors) {
-    const current = f.id === state.floor.id;
-    const b = el("button", { type: "button", "aria-current": current ? "true" : null,
-      "aria-label": `${f.name}${f.review ? `, ${f.review} to review` : ""}${current ? ", shown" : ""}`,
-      "data-tip": `${f.name}${f.review ? ` · ${f.review} to review` : ""}${f.converted ? "" : " · not converted"}` },
+    const current = f.id === state.floor.id, alongside = in3d && !view3d.allFloors && view3d.together.includes(f.id);
+    const b = el("button", { type: "button", "aria-current": current ? "true" : null, class: alongside ? "fs-with" : null,
+      "aria-label": `${f.name}${f.review ? `, ${f.review} to review` : ""}${current ? ", shown" : alongside ? ", shown with it" : ""}`,
+      "data-tip": `${f.name}${f.review ? ` · ${f.review} to review` : ""}${f.converted ? "" : " · not converted"}${in3d && !current ? ` · ${WITH_OTHERS}` : ""}` },
     el("span", {}, floorCode(f.id)), f.review ? el("span", { class: "fs-dot", "aria-hidden": "true" }) : null);
-    b.addEventListener("click", () => {
-      if (!current) openFloor(f.id);
-      else if (view3d.allFloors) run("view.all-floors");
+    if (in3d) onHold(b, () => toggleFloor3d(f.id, ids));
+    b.addEventListener("click", (e) => {
+      if (in3d && together(e)) toggleFloor3d(f.id, ids);
+      else if (!current) {
+        view3d.together = []; // (a floor on its own)
+        openFloor(f.id);
+      } else if (view3d.allFloors) run("view.all-floors");
     });
     parts.push(b);
   }
