@@ -90,6 +90,10 @@ body.walking .only-dollhouse, body:not(.walking) .only-walk { display: none; }
   width: 200px; height: 200px; border-radius: var(--r-xl); background: var(--canvas-overlay);
   border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
 }
+/* walking, a room's or an item's details (a click) under the map */
+@media (min-width: 761px) {
+  body.walking:has(#minimap:not([hidden])) .w-card { top: calc(var(--sp-3) + 56px + 200px + var(--sp-2)); max-height: calc(100% - 56px - 208px - 160px); }
+}
 .walk-hud {
   position: absolute; left: var(--sp-3); bottom: var(--sp-3); z-index: var(--z-canvas-ui); min-width: 200px;
   max-width: min(420px, calc(100% - 24px)); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-lg);
