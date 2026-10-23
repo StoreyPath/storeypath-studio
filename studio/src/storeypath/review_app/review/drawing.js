@@ -1,6 +1,9 @@
 // Drawing what the drawing leaves out: a wall, a dividing line, a space, a door, a window,
 // an opening. Each is kept with the floor and read with its drawing every time (walls part
-// spaces as drawn walls do); the floor is read again at once. Plan coordinates are local
+// spaces as drawn walls do). A wall, a dividing line or a space has the floor read again at
+// once; a door, window, opening or gate (added, sized, retyped, turned, moved or taken away)
+// changes the floor at once, with no read (Studio's openings.py): drawn as it will be the
+// moment it is made (state.ghosts), then as Studio has it. Plan coordinates are local
 // metres, as the spaces are. Also: what is under the pointer (a door, a line drawn here),
 // taking away what was drawn, and a door's, window's or opening's size.
 //
@@ -17,7 +20,7 @@ import { refreshFloor } from "./live.js";
 import { toast } from "./notify.js";
 import { selectItem } from "./selection.js";
 import { BASE, inRing, rings, state, toSegment, view3d } from "./state.js";
-import { renderDrawn } from "./plan.js";
+import { renderDoors, renderDrawn } from "./plan.js";
 import { setTool, tool } from "./tools.js";
 import { dirty3d } from "./view3d.js";
 import * as vertical from "./vertical.js";
@@ -233,42 +236,133 @@ export function toolClick(p) {
     const span = openingAt(p);
     if (!span) return toast("Click on a wall (or nearer one)", true);
     const swing = state.openingKind === "door" ? leafAt(span, p) : undefined;
-    submitEdit({ add: { opening: { type: state.openingKind, span, swing } } }, `Adding the ${state.openingKind}…`);
+    const opening = { type: state.openingKind, span, swing };
+    submitEdit({ add: { opening } }, `Adding the ${state.openingKind}…`, null, ghost([], [addedOpening(opening)]));
   }
 }
 
-export async function submitEdit(body, saying, after = null) {
+// ---- doors, windows, openings and gates: changed at once ---------------------------------
+// Studio changes them with no read of the floor (openings.py). The change is drawn as it will
+// be the moment it is made (a ghost: the floor's openings it hides, and what it shows in their
+// place), the next one may be made at once, and when Studio has it the floor's openings are
+// drawn as Studio has them (its answer's version reached: the ghost goes). Refused, the floor
+// is as it was, and the page says why. One Studio cannot change at once (no read of the floor
+// kept, walls drawn since) is read again, as a wall is.
+
+/** Whether an edit is of a door, window, opening or gate (changed at once, as a rule). */
+const ofOpenings = (body) => Boolean(body.add?.opening || body.resize || body.move || body.remove?.kind === "opening");
+
+let ghosts = 0; // (each opening added, a name of its own until Studio gives it its ID)
+
+/** A change drawn as it will be: the openings it hides (their IDs), and those it shows. */
+const ghost = (hide, show) => ({ hide, show: show.map((d) => ({ ...d, pending: true })), until: null });
+
+/** An opening added ({type, span, swing}), as the floor will list it. */
+function addedOpening(o) {
+  const [a, b] = o.span;
+  return { id: `pending-${++ghosts}`, type: o.type, span: o.span, point: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+    swings: o.swing ? [o.swing] : [], drawn: true };
+}
+
+/** An opening slid along its wall by (dx, dy): its span, its mark and its leaves with it. */
+function shifted(d, dx, dy) {
+  const by = ([x, y]) => [x + dx, y + dy];
+  return { ...d, span: d.span.map(by), point: by(d.point), middle: d.middle && by(d.middle),
+    swings: (d.swings || []).map((leaf) => leaf.map(by)) };
+}
+
+/** An opening of another width, about its middle; a door's leaves on their jambs, as long as it is wide. */
+function widened(d, width) {
+  const [a, b] = [d.span[0], d.span.at(-1)];
+  const w = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = [(b[0] - a[0]) / w, (b[1] - a[1]) / w];
+  const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], h = width / 2;
+  const span = [[m[0] - u[0] * h, m[1] - u[1] * h], [m[0] + u[0] * h, m[1] + u[1] * h]];
+  const swings = (d.swings || []).map(([hinge, free]) => {
+    const jamb = Math.hypot(hinge[0] - a[0], hinge[1] - a[1]) <= Math.hypot(hinge[0] - b[0], hinge[1] - b[1]) ? span[0] : span[1];
+    const k = width / w;
+    return [jamb, [jamb[0] + (free[0] - hinge[0]) * k, jamb[1] + (free[1] - hinge[1]) * k]];
+  });
+  return { ...d, span, swings, width };
+}
+
+/** What a change of an opening ``d`` (resize's or move's body) will make of it, drawn so. */
+function changed(d, body) {
+  if (!d?.span) return null;
+  if (body.move) {
+    const u = along(d), t = (body.move.to[0] - d.middle[0]) * u[0] + (body.move.to[1] - d.middle[1]) * u[1];
+    return ghost([d.id], [shifted(d, u[0] * t, u[1] * t)]);
+  }
+  const r = body.resize;
+  let out = r.width ? widened(d, r.width) : { ...d };
+  if (r.type !== undefined && r.type !== null) out = { ...out, type: r.type, swings: r.type === "door" ? out.swings : [] };
+  if (r.swing) out = { ...out, swings: [r.swing] };
+  return ghost([d.id], [out]);
+}
+
+/** The ghosts the floor shown has caught up with (its version, at least the one each was saved
+ * as) let go; those of another floor too. */
+function settle() {
+  const before = state.ghosts.length;
+  state.ghosts = state.ghosts.filter((g) => g.floor === state.floor?.id && !(g.until != null && (state.floor?.version ?? -1) >= g.until));
+  if (state.ghosts.length !== before) renderDoors();
+}
+
+export async function submitEdit(body, saying, after = null, shown = null) {
   if (viewOnly()) return;
   // a wall or dividing line: drawn at once, the next one drawn while it is read (Studio
-  // reads them in turn); anything else is waited for
+  // reads them in turn); a door, window, opening or gate: drawn as it will be, the next one
+  // made at once (Studio changes them with no read); anything else is waited for
   const line = body.add?.wall ? ["wall", body.add.wall] : body.add?.divider ? ["divider", body.add.divider] : null;
+  const quick = ofOpenings(body);
+  const floorId = state.floor.id;
   if (line) {
     state.pending.push(line);
     renderDrawn();
+  } else if (quick) {
+    if (shown) {
+      shown.floor = floorId;
+      state.ghosts.push(shown);
+      clearPreview();
+      renderDoors();
+    }
   } else {
     state.busy = true;
   }
-  $("map").classList.add("busy");
-  const floorId = state.floor.id;
+  if (!quick) $("map").classList.add("busy");
+  let read = !quick;
   try {
-    await followJob(await request(`${BASE}/floors/${floorId}/edits`, body), saying);
-    await refreshProject();
-    view3d.dirty.add(floorId); // read again with it: built again in 3D (that floor alone)
-    state.busy = false;
-    if (state.floor?.id === floorId) await refreshFloor(null); // what the read changed, drawn in place
-    toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
+    const answer = await request(`${BASE}/floors/${floorId}/edits`, body);
+    if (answer.at_once) { // changed at once: the floor's openings as Studio has them now
+      if (shown) shown.until = answer.version ?? null;
+      if (state.floor?.id === floorId) await refreshFloor(null);
+      if (body.remove) toast("Taken away");
+    } else {
+      read = true;
+      if (quick) $("map").classList.add("busy");
+      await followJob(answer, saying);
+      await refreshProject();
+      view3d.dirty.add(floorId); // read again with it: built again in 3D (that floor alone)
+      state.busy = false;
+      if (state.floor?.id === floorId) await refreshFloor(null); // what the read changed, drawn in place
+      toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
+    }
     after?.();
   } catch (e) {
     toast(`Not saved: ${e.message}`, true);
   } finally {
+    if (shown) { // (refused, or read: as Studio has it; changed at once: until the floor shown has caught up)
+      if (shown.until == null) state.ghosts = state.ghosts.filter((g) => g !== shown);
+      settle();
+      renderDoors();
+    }
     if (line) {
       state.pending = state.pending.filter((x) => x !== line);
       renderDrawn();
-    } else {
+    } else if (!quick) {
       state.busy = false;
       clearPreview();
     }
-    if (!state.busy && !state.pending.length) $("map").classList.remove("busy");
+    if (read && !state.busy && !state.pending.length) $("map").classList.remove("busy");
   }
 }
 
@@ -314,8 +408,9 @@ export function drawnSpaceAt(p) {
 
 /** Taking away what was drawn here: its kind and its points as saved (the server
  * takes that one, never another drawn near it), and where it is, for an older server. */
-export function takeAway(kind, at, shape) {
-  return submitEdit({ remove: { kind, at, ...(shape ? { shape } : {}) } }, "Taking it away…");
+export function takeAway(kind, at, shape, d = null) {
+  return submitEdit({ remove: { kind, at, ...(shape ? { shape } : {}) } }, "Taking it away…", null,
+    d ? ghost([d.id], []) : null);
 }
 
 /** The opening drawn here that the floor reads as this door, window or opening: of
@@ -391,7 +486,8 @@ function sizesFrom(form, d) {
 }
 
 export function resize(d, sizes) {
-  return submitEdit({ resize: { at: d.middle, ...sizes } }, "Changing the size…", () => selectItem({ kind: "door", id: d.id }));
+  const body = { resize: { at: d.middle, ...sizes } };
+  return submitEdit(body, "Changing the size…", () => selectItem({ kind: "door", id: d.id }), changed(d, body));
 }
 
 /** A door, window or opening chosen, as the floor has it (null: none chosen). */
@@ -423,17 +519,18 @@ export function slideOpening(d, from, p) {
   return u ? slid(d, (p[0] - from[0]) * u[0] + (p[1] - from[1]) * u[1]) : null;
 }
 
-/** The opening moved so its middle is at ``to`` along its wall; the floor is read again. */
+/** The opening moved so its middle is at ``to`` along its wall (at once). */
 export function moveOpening(d, to) {
-  return submitEdit({ move: { at: d.middle, to } }, `Moving the ${d.type === "opening" ? "opening" : d.type}…`, () => {
-    clearPreview();
+  const body = { move: { at: d.middle, to } };
+  return submitEdit(body, `Moving the ${d.type === "opening" ? "opening" : d.type}…`, () => {
     selectItem({ kind: "door", id: d.id });
-  });
+  }, changed(d, body));
 }
 
 // the arrows on an opening chosen: its slide gathered while they are pressed, sent once they stop
+// (soon: Studio moves it at once)
 let nudged = null; // { d, t, timer }
-const NUDGE_SETTLE_MS = 450;
+const NUDGE_SETTLE_MS = 200;
 
 /** An arrow on the opening chosen: along its wall by ``step`` metres, the way the arrow
  * points as far as its wall runs that way; one across its wall says which arrows move it. */
@@ -492,18 +589,17 @@ export function turnChosenDoor(by) {
     const { d: was, way } = turning;
     turning = null;
     if (way === wayOf(was)) return clearPreview();
-    submitEdit({ resize: { at: was.middle, swing: leafOfWay(was, way) } }, "Turning the door…", () => {
-      clearPreview();
-      selectItem({ kind: "door", id: was.id });
-    });
+    const body = { resize: { at: was.middle, swing: leafOfWay(was, way) } };
+    submitEdit(body, "Turning the door…", () => selectItem({ kind: "door", id: was.id }), changed(was, body));
   }, NUDGE_SETTLE_MS);
 }
 
 /** A door, window or opening said to be another (null: as the drawing reads it): one the
- * drawing reads wrong set right, kept through every re-read; the floor is read again. */
+ * drawing reads wrong set right, kept through every re-read (at once). */
 export function retype(d, type) {
-  return submitEdit({ resize: { at: d.middle, type } }, type ? `Making it ${type === "opening" ? "an opening" : `a ${type}`}…`
-    : "Back to what the drawing says…", () => selectItem({ kind: "door", id: d.id }));
+  const body = { resize: { at: d.middle, type } };
+  return submitEdit(body, type ? `Making it ${type === "opening" ? "an opening" : `a ${type}`}…`
+    : "Back to what the drawing says…", () => selectItem({ kind: "door", id: d.id }), type ? changed(d, body) : null);
 }
 
 export function addOpening(type, p) {
@@ -516,7 +612,7 @@ export function addOpening(type, p) {
       .map((x) => ({ x, d: Math.hypot(x.middle[0] - mid[0], x.middle[1] - mid[1]) }))
       .sort((a, b) => a.d - b.d)[0];
     if (added && added.d < 0.5) selectItem({ kind: "door", id: added.x.id });
-  });
+  }, ghost([], [addedOpening({ type, span })]));
 }
 
 export function startSpace(p) {
@@ -547,7 +643,7 @@ export async function deleteItem() {
   if (!d) return;
   if (d.drawn) {
     const { at, span } = drawnOpeningOf(d);
-    return takeAway("opening", at, span);
+    return takeAway("opening", at, span, d);
   }
   if (roomTaken(...(d.connects || []))) return;
   try {
@@ -628,6 +724,7 @@ export function setupDrawing() {
   // what the opening tool adds follows the floor: on a location's layout a gate, else a door
   let wasLayout = false;
   on("floor", () => {
+    settle(); // (changes of openings drawn as they will be: gone once the floor shown has them)
     const layout = Boolean(state.floor?.layout);
     if (layout !== wasLayout || !(state.openingKind in openingKinds())) {
       state.openingKind = layout ? "gate" : "door";

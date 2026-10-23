@@ -569,6 +569,70 @@ test("the door tool: R turns the door to add (the tool stays), Shift+R back, [ ]
   noErrors("the door tool");
 });
 
+/** The reads of floors the project's jobs list (a read started is one more). */
+const reads = () => R(async (c) => (await (await fetch(`/api/projects/${c}/jobs`)).json()).jobs.filter((j) => j.kind === "read").length, code);
+
+/** A point of the plan, on the screen. */
+const onScreen = (p) => R((p) => {
+  const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+  return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+}, p);
+
+test("a door added, moved, turned and undone changes the floor at once: shown before Studio answers, no read of the floor", async () => {
+  await press("f");
+  const floor = await R(() => window.storeypathReview.state.floor.id);
+  // what its openings are changed on, worked out in the background when the floor was opened (Studio.warm)
+  await until(async (a) => (await (await fetch(`/api/projects/${a[0]}/floors/${a[1]}`)).json()).openings_at_once,
+    "the floor ready to have its openings changed at once", 180000, [code, floor]);
+  const before = await reads();
+  // two offices side by side: a door in the wall between them
+  const [a, b] = [await officeNamed("002"), await officeNamed("003")];
+  const at = await R((ids) => {
+    const st = window.storeypathReview.state, [p, q] = ids.map((id) => st.byId.get(id).geometry.coordinates[0]);
+    const x = Math.max(...p.map((c) => c[0])), ys = q.map((c) => c[1]);
+    return [x + 0.1, (Math.min(...ys) + Math.max(...ys)) / 2];
+  }, [a.id, b.id]);
+  await press("o");
+  const there = await onScreen(at);
+  await page.mouse("mouseMoved", ...there);
+  await until(() => Boolean(document.querySelector("#preview path.swing")), "the door to add, drawn", 5000);
+  const t0 = Date.now();
+  await page.click(...there);
+  await until(() => Boolean(document.querySelector("#doors .pending")) || window.storeypathReview.state.floor.doors.some((d) => d.drawn),
+    "the door shown the moment it is added", 1000);
+  const added = await until(() => window.storeypathReview.state.floor.doors.find((d) => d.drawn) ?? null, "the door as Studio has it", 4000);
+  truly(Date.now() - t0 < 4000 && added.connects.length === 2, `added at once, joining the two offices: ${JSON.stringify(added.connects)}`);
+  truly(await R(() => !/Reading the floor again/.test(document.body.textContent) && !window.storeypathReview.state.busy),
+    "no read of the floor said, the page never held");
+  await press("Escape");
+  await page.click(...(await onScreen(added.middle)));
+  await until((id) => window.storeypathReview.state.item?.id === id, "the door chosen", 5000, added.id);
+  // the arrows: along its wall, gathered and sent once they stop; R: turned
+  const key = Math.abs(added.span[1][0] - added.span[0][0]) > Math.abs(added.span[1][1] - added.span[0][1]) ? "ArrowRight" : "ArrowUp";
+  await press(key);
+  await press(key);
+  const moved = (id, from, want) => {
+    const m = window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.middle;
+    return m && Math.abs(Math.hypot(m[0] - from[0], m[1] - from[1]) - want) < 0.02;
+  };
+  await until(moved, "moved 10 cm along its wall at once, its ID kept", 3000, added.id, added.middle, 0.1);
+  const leaf = await R((id) => JSON.stringify(window.storeypathReview.state.floor.doors.find((d) => d.id === id).swings), added.id);
+  await press("r");
+  await until((id, was) => JSON.stringify(window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.swings) !== was,
+    "turned at once", 3000, added.id, leaf);
+  // each undone at once, the latest first: the turn, the move, the door
+  await press("Escape");
+  await press("z", ["mod"]);
+  await until((id, was) => JSON.stringify(window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.swings) === was,
+    "⌘Z: as it hung", 3000, added.id, leaf);
+  await press("z", ["mod"]);
+  await until(moved, "⌘Z: where it was added", 3000, added.id, added.middle, 0);
+  await press("z", ["mod"]);
+  await until(() => !window.storeypathReview.state.floor.doors.some((d) => d.drawn), "⌘Z: taken away", 3000);
+  truly((await reads()) === before, `no read of the floor started (${before} reads listed before, ${await reads()} after)`);
+  noErrors("a door changed at once");
+});
+
 test("a window the drawing reads where a door is: said to be a door in the inspector, then as read again", async () => {
   const w = await R(() => window.storeypathReview.state.floor.doors.find((d) => d.type === "window" && d.span && !d.ignored));
   await R(() => window.storeypathReview.select(null));
@@ -642,10 +706,11 @@ test("a door chosen turns with R (the presses gathered, sent once), as the door 
   await until((id) => window.storeypathReview.state.item?.id === id, "the door chosen", 8000, d.id);
   truly(await R(() => [...document.querySelectorAll("#inspector button")].some((b) => /Turn it/.test(b.textContent))), "Turn it, in the inspector");
   await press("r");
-  await until(() => Boolean(document.querySelector("#preview path.swing")), "R: the door shown turned at once", 3000);
-  const leaf = (id) => JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings);
+  await until((id, was) => Boolean(document.querySelector("#preview path.swing, #doors .swing.pending"))
+    || JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings) !== was,
+  "R: the door shown turned at once", 3000, d.id, JSON.stringify(d.swings));
   await until((id, was) => { const now = JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings); return now && now !== was; },
-    "turned, the floor read again, its ID kept", 30000, d.id, JSON.stringify(d.swings));
+    "turned, its ID kept", 30000, d.id, JSON.stringify(d.swings));
   await until(() => !/Reading the floor again/.test(document.body.textContent) && !window.storeypathReview.state.busy, "read", 30000);
   await sleep(500);
   await press("Escape");
