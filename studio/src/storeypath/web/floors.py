@@ -28,6 +28,8 @@ def floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudi
     floor = studio.review(code).floor(floor_id, since=int(since) if since is not None else None)
     if since is None and rank(sight.floor(floor_id)) >= rank("edit"):
         studio.warm(code, floor_id)  # opened by someone who may draw on it: its read ready for them
+        # whether its doors, windows and openings are changed at once now (openings.py), or read first
+        floor["openings_at_once"] = studio.openings_at_once(code, floor_id)
     return answer(request, {**floor, "editing": studio.editing(code, floor_id)})
 
 
@@ -89,9 +91,15 @@ def sample(code: str, floor_id: str, request: Request, may: May, studio: TheStud
 
 @calls.post(F + "/edits")
 def edits(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """What a person drew on the floor, or took away: a door, window, opening or gate (one
+    added, sized, retyped, turned, moved or taken away) changes the floor at once, as
+    reading it again would ({"at_once": true}: openings.py); anything else, or an opening's
+    change that cannot be made so (said in the job's log), has the floor read again: a job."""
     may.floor(code, floor_id, "edit")
-    studio.review(code).edit(floor_id, body, by=may.user, editor=may.editor)
-    return answer(request, studio.convert(code, floor_id, by=may.uid, drawn=True))
+    done = studio.review(code).edit(floor_id, body, by=may.user, editor=may.editor) or {}
+    if done.get("at_once"):  # (version: the project's, with it: a page drawing it shows it till it has caught up)
+        return answer(request, {"at_once": True, "floor": floor_id, "version": studio.store.version(code)})
+    return answer(request, studio.convert(code, floor_id, by=may.uid, drawn=True, why=done.get("read")))
 
 
 @calls.post(F + "/items")

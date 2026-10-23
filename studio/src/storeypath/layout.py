@@ -18,10 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from shapely import affinity
-from shapely.geometry import Point, Polygon, mapping, shape
+from shapely.geometry import Point, Polygon, shape
 from shapely.ops import unary_union
 
 from .cad import file_sha256, meters_per_unit
+from . import openings
 from .convert import ConversionReport, _allocate_id, _drawing, _local, _match_spaces, _retire
 from .geometry import as_polygons, iou
 from .ids import LAND_CODE, make_id, parse_id
@@ -32,7 +33,7 @@ from .workspace import (Building, North, ObjectRecord, Override, Reading, SitePo
                         utcnow)
 
 METHOD = "site plan"  # how a layout's objects were found (its level's method)
-GATE_MATCH_M = 1.0  # a gate read this near one read before is that one
+GATE_MATCH_M = openings.GATE_MATCH_M  # a gate read this near one read before is that one
 MATCH_FLOOR = 0.35  # a footprint is matched to a building this sure, at least
 SITE_READING = "site: "  # what a site plan's text says is kept among the project's readings by this and the text
 
@@ -93,12 +94,17 @@ class LayoutRead:
     sha: str
     offset: tuple[float, float]  # what the source's offset is (drawing units): chosen at its first read
     notes: list[str] = field(default_factory=list)
+    base: openings.LandBase | None = None  # what review's gates are put in on (openings.py)…
+    edits_read: str = ""  # …what review had done to them when it was read (openings.edits_key)…
+    keep_in: Path | None = None  # …and where it is kept, beside memory
 
 
-def read_layout(ws: Workspace, layout_id: str, workspace_dir: str | Path = ".", model=None, say=None) -> LayoutRead:
+def read_layout(ws: Workspace, layout_id: str, workspace_dir: str | Path = ".", model=None, say=None,
+                reads: str | Path | None = None) -> LayoutRead:
     """Read a layout's site plan (siteplan.read_site_plan) in the layout's frame: its
     source's offset, or, read for the first time, the middle of its plot (the site's
-    centre). What the model answered is kept in ``ws``."""
+    centre). What the model answered is kept in ``ws``. ``reads``: a folder where what
+    review's gates are put in on is kept (openings.py), beside memory."""
     floor = ws.floor(layout_id)
     if not floor.layout:
         raise ValueError(f"{layout_id} is not a location's layout")
@@ -111,15 +117,20 @@ def read_layout(ws: Workspace, layout_id: str, workspace_dir: str | Path = ".", 
     texts = SiteTexts(ws, model)
     read = read_site_plan(doc, src.region, src.units, src.offset, floor.edits, texts, say)
     offset = tuple(src.offset) if src.offset is not None else None
+    frame = read.frame
     if offset is None and read.middle is not None:  # the plot's middle, the site's centre
         scale = meters_per_unit(doc, src.units)
         offset = (round(read.middle[0] / scale, 4), round(read.middle[1] / scale, 4))
         dx, dy = offset[0] * scale, offset[1] * scale
         _moved(read, dx, dy)
+        frame = (dx, dy)  # (where the next read puts it: the offset chosen)
     notes = list(read.warnings)
     if texts.failed:
         notes.append(f"the language model was not used: {texts.failed}")
-    return LayoutRead(layout_id, read, sha, offset or (0.0, 0.0), notes)
+    base = openings.LandBase(floor_id=layout_id, gates=read.gates_found, areas=read.areas_found, dx=frame[0],
+                             dy=frame[1]) if read.boundary is not None else None
+    return LayoutRead(layout_id, read, sha, offset or (0.0, 0.0), notes, base, openings.edits_key(floor.edits),
+                      Path(reads) if reads is not None else None)
 
 
 def _moved(read: SitePlanRead, dx: float, dy: float) -> None:
@@ -143,6 +154,9 @@ def apply_layout(ws: Workspace, lr: LayoutRead, force: bool = False) -> Conversi
     layout_id, read = lr.layout_id, lr.read
     report = ConversionReport(layout_id, method=METHOD, warnings=list(lr.notes))
     floor = ws.floor(layout_id)
+    if lr.base is not None and openings.edits_key(floor.edits) != lr.edits_read:
+        # review changed the layout's gates while it was read (at once: openings.py): as they are now
+        read.gates = lr.base.worked(floor.edits)
     land_id = parse_id(layout_id).prefix("building")
     existing = [r for r in ws.floor_objects(layout_id)]
     if read.boundary is None and not force and any(r.kind == "space" for r in existing):
@@ -185,16 +199,12 @@ def apply_layout(ws: Workspace, lr: LayoutRead, force: bool = False) -> Conversi
         for r in before:
             if id(r) not in kept:
                 _retire(r, now, report)
-    areas = {i: r.id for i, r in enumerate(_by_geometry(ws, layout_id, "space", read.areas))}
-    # gates: by where they are
+    area_ids = [r.id if r is not None else None for r in _by_geometry(ws, layout_id, "space", read.areas)]
+    # gates: by where they are (openings.match_gates)
     before = [r for r in existing if r.kind == "opening"]
     used: set[str] = set()
-    for g in read.gates:
-        mid = g.span.interpolate(0.5, normalized=True)
-        near = [(shape(r.geometry).distance(mid), r) for r in before if r.id not in used]
-        near = [(d, r) for d, r in near if d <= GATE_MATCH_M]
-        if near:
-            record = min(near, key=lambda x: x[0])[1]
+    for g, record in zip(read.gates, openings.match_gates(before, read.gates)):
+        if record is not None:
             report.kept.append(record.id)
         else:
             record_id = _allocate_id(ws, layout_id, land_id)
@@ -202,13 +212,7 @@ def apply_layout(ws: Workspace, lr: LayoutRead, force: bool = False) -> Conversi
                                                           geometry={})
             report.added.append(record_id)
         used.add(record.id)
-        record.type, record.type_source = OpeningType.GATE.value, \
-            "drawn gate" if g.drawn else "drawing" if g.swings else "gap"
-        record.geometry = mapping(Point(round(mid.x, 4), round(mid.y, 4)))
-        record.span = [[round(x, 4), round(y, 4)] for x, y in g.span.coords]
-        record.width = round(g.span.length, 3)
-        record.connects = [areas[i] for i in g.connects if i in areas]
-        record.issues = [] if g.swings or g.drawn else ["a gap in the boundary walls: no gate drawn in it"]
+        openings.put_fields(record, openings.gate_fields(g, area_ids))
     for r in before:
         if r.id not in used:
             _retire(r, now, report)
@@ -219,6 +223,9 @@ def apply_layout(ws: Workspace, lr: LayoutRead, force: bool = False) -> Conversi
     if read.north is not None and loc.placement is None and (loc.north is None or loc.north.source == "drawing"):
         loc.north = North(bearing=read.north.bearing, source="drawing", sure=read.north.sure)
     match_buildings(ws, make_id(ws.id, loc.code))
+    if lr.base is not None:  # what review's gates are put in on, kept (openings.py)
+        lr.base.register(ws, layout_id, area_ids)
+        openings.keep(lr.base, lr.keep_in)
     return report
 
 

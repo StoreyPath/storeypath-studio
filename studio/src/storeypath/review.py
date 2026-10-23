@@ -21,8 +21,10 @@ and read again whenever it changes on disk. The web server is in server.py:
     POST /api/projects/<code>/floors/<id>/edits   {"add": {"wall": [[x, y], [x, y]]}}, {"add": {"divider": …}},
                                                   {"add": {"opening": {"type", "span"}}} or
                                                   {"remove": {"kind", "shape": [[x, y], …], "at": [x, y]}}:
-                                                  what a person draws, kept through every conversion; then
-                                                  the floor is read again (a job)
+                                                  what a person draws, kept through every conversion; a
+                                                  door, window or opening (a gate) changes the floor at once
+                                                  ({"at_once": true}: openings.py), anything else has the
+                                                  floor read again (a job)
     POST /api/projects/<code>/floors/<id>/sample/preview  {area, keep?, remove?}: what an area sample of the
                                                   floor would hold (areasample/): its pictures, what is taken out
     POST /api/projects/<code>/floors/<id>/sample  {area, note?, keep?, remove?}: the sample, <id>.spsample
@@ -60,8 +62,8 @@ from shapely.geometry import LineString, Point, Polygon, shape
 from shapely.ops import unary_union
 
 from .cad import DrawingError, meters_per_unit, read_drawing
-from . import finishes, history
-from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
+from . import finishes, history, openings
+from .db.store import Changes, Editor, _same, drawing_name, floor_of, put_floor, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
@@ -176,6 +178,10 @@ class ProjectFile:
     def prints(self) -> Path:
         return self.path.parent / CACHE_DIR / "prints"
 
+    def reads(self) -> Path | None:
+        """Where floors' reads are kept beside memory (openings.py): nowhere, for a file."""
+        return None
+
 
 class StoredProject:
     """A project in Studio's database (db/store.py): its changes are transactions on what
@@ -232,6 +238,10 @@ class StoredProject:
 
     def prints(self) -> Path:
         return self.cache / "prints" / self.code
+
+    def reads(self) -> Path:
+        """Where floors' reads are kept beside memory (Studio's cache, server.READS)."""
+        return self.cache / "reads"
 
 
 def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | None:
@@ -590,10 +600,12 @@ class Review:
         }
 
     def _floor_since(self, ws: Workspace, f, floor_id: str, cat, version: int, since: int, touched) -> dict:
-        """What changed on a floor after version ``since`` (floor)."""
+        """What changed on a floor after version ``since`` (floor): its openings all
+        (``doors_all``) when it was read again, else those changed."""
         objects = {r.id: r for r in ws.floor_objects(floor_id)}
         mine = sorted(i for i in touched.ids if i.startswith(floor_id + "-"))
         itself = floor_id in touched.floors
+        whole = floor_id in touched.whole  # (its openings maybe all changed: read again)
         items = sorted(i for i in touched.ids if i in ws.items)
         seats = self._seats(ws, cat, floor_id, list(objects.values())) if items or itself else None
         spaces, doors, gone = [], [], [i for i in mine if i not in objects]
@@ -606,12 +618,13 @@ class Review:
                     gone.append(i)
                 else:
                     spaces.append(self._space(ws, r, seats, cat))
-            elif r.kind == "opening" and not itself:
+            elif r.kind == "opening" and not whole:
                 doors.append(self._door(ws, r, f.edits.resized))
-        if itself:  # (an opening's size given in review is the floor's)
+        if whole:  # (an opening's size given in review is the floor's)
             doors = [self._door(ws, r, f.edits.resized) for r in sorted(objects.values(), key=lambda r: r.id)
                      if r.kind == "opening"]
         out = {"id": floor_id, "version": version, "since": since, "spaces": spaces, "doors": doors,
+               **({"doors_all": True} if whole else {}),
                "items": [self._item(ws.items[i], cat) for i in items if ws.items[i].floor_id == floor_id],
                # (and items moved to another floor, or taken away)
                "gone": gone + [i for i in items if ws.items[i].floor_id != floor_id] +
@@ -890,14 +903,17 @@ class Review:
                 "middle": [round(middle.x, 4), round(middle.y, 4)],
                 # the size given in review to one of the drawing's (null: as drawn)
                 "resize": next((x.model_dump(exclude={"at"} | {k for k in ("type", "to", "swing") if getattr(x, k) is None})
-                                for x in resized if Point(x.to or x.at).distance(middle) <= REMOVE_REACH_M), None),
+                                for x in resized if math.dist(x.to or x.at, (middle.x, middle.y)) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
                 "divider": self._divider_of(ws, r)}
 
-    def edit(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> None:
+    def edit(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
         """Add or remove what a person drew on a floor: a wall, a line dividing a space
         (no wall: its zones), a door, a window or an opening (local meters). Removing
-        takes the one of its kind drawn as the page shows it (_remove)."""
+        takes the one of its kind drawn as the page shows it (_remove). What became of it
+        (_at_once): {"at_once": true} when the floor's openings were changed with it, as
+        reading the floor again would change them; else {"read": why not, or None}, for the
+        floor to be read again."""
 
         def fn(ws: Workspace):
             was = self._floor(ws, floor_id)
@@ -952,9 +968,36 @@ class Review:
                 record, by_xy = moved
                 ch.objects[record.id] = record
                 ch.more.update(opening=record.id, by=by_xy)
-            return ch, None
+            return ch, self._at_once(ws, floor_id, ch)
 
-        self._change(fn, by, editor)
+        return self._change(fn, by, editor)
+
+    def _at_once(self, ws: Workspace, floor_id: str, ch: Changes) -> dict:
+        """A change of a floor's doors, windows, openings or gates (``ch``: its drawn edits)
+        made with what reading the floor again would make of them (openings.at_once): their
+        records, the floor's walls, its building's next object number, in ``ch``. What
+        became of it: {"at_once": true}, or {"read": why not} (None: what was drawn may
+        change its rooms: read again, as ever)."""
+        if floor_id not in ch.edits or ch.more.get("list") not in openings.LISTS:
+            return {"read": None}
+        after = ch.apply(ws)
+        reads = self.source.reads() if hasattr(self.source, "reads") else None
+        done = openings.at_once(after, floor_id, reads)
+        if isinstance(done, str):
+            return {"read": done}
+        ch.objects.update(done.objects)
+        ch.exact = True  # (pages are sent the openings changed, not all the floor's)
+        was, now = ws.floor(floor_id).edits.resized, after.floor(floor_id).edits.resized
+        given = [x.to or x.at for x in [*was, *now] if x not in was or x not in now]
+        if given:  # (an opening's size as given in review is shown with it)
+            final = {**{r.id: r for r in after.floor_objects(floor_id) if r.kind == "opening"},
+                     **{i: r for i, r in done.objects.items() if r.status == "active"}}
+            ch.also |= {i for i, r in final.items() if any(math.dist(g, _middle(r).coords[0]) <= REMOVE_REACH_M for g in given)}
+        if done.walls_changed or done.next_object_seq is not None:
+            f = after.floor(floor_id)
+            put_floor(ch, after, floor_id, f.model_copy(update={"walls": done.walls}) if done.walls_changed else f,
+                      done.next_object_seq)
+        return {"at_once": True}
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> str:
         """A door, window or opening given another width, sill or height (metres; null:
@@ -1287,8 +1330,10 @@ class Review:
         undoing redone. Refused (Conflict, naming who and when) when what it changed was
         changed since. ``check(row)``: whether the person may (raises when not). An item
         added is retired, never taken out (its ID is never given again); what was drawn
-        is taken away or put back, and the floor is to be read again (``read``). What was
-        done: {seq, line, part, floors, read}."""
+        is taken away or put back: a door, window, opening or gate with the floor's openings
+        as reading it again makes them (_at_once), anything else with the floor to be read
+        again (``read``; ``why``: why an opening's was not done at once). What was done:
+        {seq, line, part, floors, read, why}."""
         store = getattr(self.source, "store", None)
         if store is None:
             raise ValueError("undo needs Studio's database: this project is a file here")
@@ -1315,11 +1360,14 @@ class Review:
                          more={k: entry[k] for k in LINE_KEYS if entry.get(k) is not None})
             ch.more["redoes" if redo else "undoes"] = entry["seq"]
             _inverse(ws, entry, ch, lambda: history.refused(entry, None, me, doing))
-            return ch, None
+            if entry["part"] != "edit":
+                return ch, {}
+            return ch, self._at_once(ws, (entry["targets"] or [None])[0], ch)
 
-        self._change(fn, by, editor)
+        said = self._change(fn, by, editor) or {}
         return {"seq": entry["seq"], "line": history.describe(entry), "part": entry["part"],
-                "floors": entry["floors"], "read": entry["part"] == "edit"}
+                "floors": entry["floors"], "read": entry["part"] == "edit" and not said.get("at_once"),
+                "why": said.get("read")}
 
     def drawing(self, floor_id: str) -> dict:
         ws = self.workspace()
@@ -1484,15 +1532,36 @@ def _shifted(r: ObjectRecord, dx: float, dy: float) -> ObjectRecord:
                                 "swings": [shift(leaf) for leaf in r.swings] if r.swings else r.swings}, deep=True)
 
 
+_WALLS: dict[int, tuple] = {}  # a floor's walls as shapes, by the walls kept (the latest few)
+
+
+def _walls_shape(walls: dict):
+    """A floor's walls (as it keeps them) as a shape: made once a version of them."""
+    kept = _WALLS.get(id(walls))
+    if kept is not None and kept[0] is walls:
+        return kept[1]
+    g = shape(walls)
+    if len(_WALLS) >= 4:
+        _WALLS.pop(next(iter(_WALLS)), None)
+    _WALLS[id(walls)] = (walls, g)
+    return g
+
+
 def _on_walls(f, span, moved, gaps=()) -> bool:
     """Whether a span moved along its wall is still in it: the walls as read along nine
     tenths of it, give or take a wall's thickness, the gaps of its own and of the floor's
-    other openings (``gaps``, their spans) taken as wall (a door slid across a window's)."""
+    other openings (``gaps``, their spans) taken as wall (a door slid across a window's).
+    Only what lies within a wall's thickness of where it goes is looked at."""
     if not f.walls:
         return True  # (no walls read: nothing to tell)
     t = max(f.wall_thickness or 0.2, 0.1)
-    walls = unary_union([shape(f.walls)] + [LineString(g).buffer(t, cap_style="flat") for g in [span, *gaps] if len(g) >= 2])
     line = LineString(moved)
+    near = line.buffer(t)  # (each point looked at, and all within t / 2 of it)
+    x0, y0, x1, y1 = near.bounds
+    beside = [g for g in [span, *gaps] if len(g) >= 2 and min(p[0] for p in g) <= x1 + t and max(p[0] for p in g) >= x0 - t
+              and min(p[1] for p in g) <= y1 + t and max(p[1] for p in g) >= y0 - t]
+    walls = unary_union([_walls_shape(f.walls).intersection(near)] +
+                        [LineString(g).buffer(t, cap_style="flat").intersection(near) for g in beside])
     inside = sum(1 for k in range(11) if walls.distance(line.interpolate(k / 10, normalized=True)) <= t / 2)
     return inside >= 10
 
@@ -1559,10 +1628,13 @@ def _nearest_door(ws: Workspace, floor_id: str, at) -> str | None:
 
 
 def _middle(r: ObjectRecord) -> Point:
-    """An opening's middle: of its span when known, else where it is."""
-    if r.span and len(r.span) >= 2:
+    """An opening's middle: of its span when known (jamb to jamb: halfway), else where it is."""
+    if r.span and len(r.span) == 2:
+        (x0, y0), (x1, y1) = r.span
+        return Point((x0 + x1) / 2, (y0 + y1) / 2)
+    if r.span and len(r.span) > 2:
         return LineString(r.span).interpolate(0.5, normalized=True)
-    return Point(r.geometry["coordinates"])
+    return Point(r.geometry["coordinates"][:2])
 
 
 def _round_box(box) -> list[float]:

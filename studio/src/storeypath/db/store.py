@@ -351,6 +351,11 @@ class Changes:
     words: dict[str, str] = field(default_factory=dict)  # name -> the words of a drawing put now
     sent: dict[str, str] = field(default_factory=dict)  # name -> the sha256 of a drawing put now, as it was sent
     floors: set[str] = field(default_factory=set)  # the floors it touched (their version raised)
+    # what pages are told it touched besides what it writes (an opening whose size as given in
+    # review changed with the floor's edits), and whether that is all it changed of its floors'
+    # objects (a change of openings at once: openings.py), not maybe any of them (a read)
+    also: set[str] = field(default_factory=set)
+    exact: bool = False
     # history
     part: str = "project"  # object, item, edit, floor, building, project
     kind: str = "change"
@@ -396,6 +401,39 @@ class Changes:
                 records[pos] = self.exports[pos]
             update["exports"] = [r for r in records if r is not None]
         return base.model_copy(update=update) if update else base
+
+
+def put_floor(ch: Changes, ws: Workspace, floor_id: str, floor, next_object_seq: int | None = None) -> None:
+    """Into ``ch``: the floor ``floor_id`` of ``ws`` (a layout's too) made ``floor``, its row
+    written whole, and its building's next object number set (when given): the tree after
+    it, sharing the rest of ``ws``'s."""
+    out, found = [], False
+    for loc in ws.locations:
+        land = [loc.layout] if loc.layout is not None else []
+        changed = loc
+        for j, b in enumerate([*loc.buildings, *land]):
+            codes = [f.code for f in b.floors]
+            f_ids = [f"{ws.id}-{loc.code}-{b.code}-{c}" for c in codes]
+            if floor_id not in f_ids:
+                continue
+            k, found = f_ids.index(floor_id), True
+            nb = b.model_copy(update={"floors": [*b.floors[:k], floor, *b.floors[k + 1:]],
+                                      **({"next_object_seq": next_object_seq} if next_object_seq is not None else {})})
+            ch.nodes.append(("floors", (loc.code, b.code, floor.code), {"position": k, **_floor_row(floor)}))
+            if next_object_seq is not None and next_object_seq != b.next_object_seq:
+                ch.nodes.append(("buildings", (loc.code, b.code), {
+                    "position": j, "name": nb.name, "next_object_seq": nb.next_object_seq,
+                    "placement": nb.placement.model_dump(mode="json") if nb.placement else None,
+                    "site": nb.site.model_dump(mode="json") if nb.site else None}))
+            if b is loc.layout:
+                changed = loc.model_copy(update={"layout": nb})
+            else:
+                changed = loc.model_copy(update={"buildings": [nb if x is b else x for x in loc.buildings]})
+        out.append(changed)
+    if not found:
+        raise KeyError(f"no floor {floor_id}")
+    ch.tree = out
+    ch.floors.add(floor_id)
 
 
 def _put_drawings(ch: Changes, drawings: dict | None) -> None:
@@ -576,10 +614,12 @@ class _Kept:
 class Touched:
     """What one change touched (ProjectStore.changed_since): objects, corrections (by
     their object) and items, by ID, and the floors whose own row changed (their walls,
-    outline, drawn edits…)."""
+    outline, drawn edits…); of those, the floors whose openings may all have changed
+    (``whole``: read again), not only those by ID."""
 
     ids: frozenset
     floors: frozenset
+    whole: frozenset = frozenset()
 
 
 CHANGES_KEPT = 2000  # a project's latest changes whose IDs are kept (changed_since)
@@ -675,11 +715,13 @@ class ProjectStore:
             if any(v not in log for v in range(since + 1, until + 1)):
                 return None
             changes = [log[v] for v in range(since + 1, until + 1)]
-        return Touched(frozenset().union(*(t.ids for t in changes)), frozenset().union(*(t.floors for t in changes)))
+        return Touched(frozenset().union(*(t.ids for t in changes)), frozenset().union(*(t.floors for t in changes)),
+                       frozenset().union(*(t.whole for t in changes)))
 
     def _touch(self, code: str, version: int, ch: Changes) -> None:
         floors = {f"{code}-{'-'.join(key)}" for table, key, _ in ch.nodes if table == "floors"} | set(ch.edits)
-        touched = Touched(frozenset([*ch.objects, *ch.overrides, *ch.items]), frozenset(floors))
+        touched = Touched(frozenset([*ch.objects, *ch.overrides, *ch.items, *ch.also]), frozenset(floors),
+                          frozenset() if ch.exact else frozenset(floors))
         with self._lock:
             log = self._touched.setdefault(code, OrderedDict())
             log[version] = touched

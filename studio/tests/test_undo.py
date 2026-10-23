@@ -128,8 +128,9 @@ def test_a_wall_drawn_and_undone_is_taken_away_and_the_floor_read_again(team):
 
 
 def test_a_door_moved_along_its_wall_and_undone_keeps_its_id(team):
-    # Its record goes with it, and back with the undo: the next read finds it by where it is,
-    # its ID kept however far it went (an opening is matched by position, 0.5 m).
+    # Its record goes with it, and back with the undo, at once (no read: openings.py), as the
+    # next read finds it by where it is: its ID kept however far it went (an opening is
+    # matched by position, 0.5 m).
     import math
 
     floor = team.an0
@@ -144,13 +145,12 @@ def test_a_door_moved_along_its_wall_and_undone_keeps_its_id(team):
     if status != 200:  # (its wall too short for 0.6 m: a little)
         status, job = team("bob", "POST", f"floors/{floor}/edits",
                            {"move": {"at": m, "to": [m[0] + (x1 - x0) / n * 0.1, m[1] + (y1 - y0) / n * 0.1]}})
-    assert status == 200, job
-    team.finished("bob", job)
+    assert status == 200 and job["at_once"] and job["floor"] == floor, job
     now = team.studio.workspace(team.code).objects[door.id]
     assert now.status == "active" and math.dist(now.geometry["coordinates"], door.geometry["coordinates"]) > 0.05
     status, done = team("bob", "POST", "undo", {"floor": floor})
     assert status == 200 and done["line"].startswith("moved") and done["line"].endswith("along its wall")
-    team.finished("bob", done["job"])
+    assert done["job"] is None  # at once too
     back = team.studio.workspace(team.code).objects[door.id]
     assert back.status == "active" and math.dist(back.geometry["coordinates"], door.geometry["coordinates"]) < 0.01
 
@@ -169,12 +169,10 @@ def test_a_window_moved_twice_and_undone_twice_is_where_the_drawing_has_it(team)
         r = where()
         at = [(r.span[0][0] + r.span[-1][0]) / 2, (r.span[0][1] + r.span[-1][1]) / 2]
         status, job = team("bob", "POST", f"floors/{floor}/edits", {"move": {"at": at, "to": [m[0] + u[0] * d, m[1] + u[1] * d]}})
-        assert status == 200, job
-        team.finished("bob", job)
+        assert status == 200 and job["at_once"], job
     for want in (0.2, 0.0):
         status, done = team("bob", "POST", "undo", {"floor": floor})
-        assert status == 200, done
-        team.finished("bob", done["job"])
+        assert status == 200 and done["job"] is None, done
         assert abs(math.dist(where().geometry["coordinates"], w.geometry["coordinates"]) - want) < 0.01, want
     assert team.studio.workspace(team.code).floor(floor).edits.resized == []
 

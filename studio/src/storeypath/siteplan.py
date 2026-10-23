@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import shapely
@@ -1010,6 +1010,12 @@ class SitePlanRead:
     north: NorthRead | None
     warnings: list[str]
     middle: tuple[float, float] | None  # the plot's middle, drawing metres (before the offset)
+    # what review's gates are put in on (openings.LandBase): the gates of the drawing and the areas
+    # (their shapes, in the order of ``areas``), in the drawing's metres, and where the layout's frame is
+    # there (dx, dy: the offset in metres)
+    gates_found: list = field(default_factory=list)
+    areas_found: list = field(default_factory=list)
+    frame: tuple[float, float] = (0.0, 0.0)
 
 
 def building_name(texts: list[str]) -> str | None:
@@ -1081,23 +1087,10 @@ def read_site_plan(doc, region=None, units: str | None = None, offset=None, edit
             found_areas = [a for a in found_areas if a.polygon.area >= MIN_AREA_M2]
             found_areas += [FoundArea(p, SpaceType.UNSPECIFIED, "person") for p in drawn_areas]
     found_gates = gates(gaps, plot, found_areas)
+    gates_found = [replace(g, connects=list(g.connects)) for g in found_gates]  # (before review's: openings.py)
+    areas_found = [a.polygon for a in found_areas]
     if edits is not None:
-        for o in edits.openings:
-            span = LineString([(x + dx, y + dy) for x, y in o.span])
-            inside = [i for i, a in enumerate(found_areas) if a.polygon.buffer(0.3).intersects(span)]
-            found_gates.append(FoundGate(span, 0, inside[:2], drawn=True))
-        for rz in edits.resized:  # the drawing's gates given another width in review: by their middles
-            at = Point(rz.at[0] + dx, rz.at[1] + dy)
-            near = [(g.span.interpolate(0.5, normalized=True).distance(at), k) for k, g in enumerate(found_gates)
-                    if not g.drawn]
-            near = [n for n in near if n[0] <= 1.0]
-            if rz.width and near:
-                g = found_gates[min(near)[1]]
-                (x0, y0), (x1, y1) = g.span.coords[0], g.span.coords[-1]
-                mx, my, L = (x0 + x1) / 2, (y0 + y1) / 2, g.span.length
-                ux, uy = (x1 - x0) / L, (y1 - y0) / L
-                h = rz.width / 2
-                g.span = LineString([(mx - ux * h, my - uy * h), (mx + ux * h, my + uy * h)])
+        found_gates = edited_gates(found_gates, areas_found, edits, dx, dy)
     walls_drawn = unary_union([f.polygon for f in _standing_walls(faces) if not any(
         fp.polygon.contains(f.polygon.representative_point()) for fp in standing)])
     thick = _wall_thickness([f.polygon for f in faces if f.thin and f.edge])
@@ -1116,7 +1109,40 @@ def read_site_plan(doc, region=None, units: str | None = None, offset=None, edit
         fp.polygon = move(fp.polygon)
     c = plot.centroid
     return SitePlanRead(move(plot), found.how, move(walls_drawn) if not walls_drawn.is_empty else None, thick,
-                        found_areas, found_gates, standing, arrow, warnings, (c.x, c.y))
+                        found_areas, found_gates, standing, arrow, warnings, (c.x, c.y), gates_found, areas_found,
+                        (dx, dy))
+
+
+GATE_REACH_M = 0.3  # a gate drawn in review joins the areas this near it…
+RESIZED_GATE_M = 1.0  # …and a gate of the drawing given another width is the one whose middle is this near
+
+
+def edited_gates(gates: list[FoundGate], areas: list, edits, dx: float = 0.0, dy: float = 0.0) -> list[FoundGate]:
+    """A layout's gates with what review did to them (``edits``: its drawn edits, local
+    metres): each gate drawn joining the areas this near it (``areas``: their shapes, in the
+    read's order; two at most), each of the drawing's given another width keeping its
+    middle; in the drawing's metres (``dx``, ``dy``: where the layout's frame is there). A
+    read of the site plan puts them in so, and so does a change of its gates at once
+    (openings.LandBase); ``gates`` are not changed."""
+    out = [replace(g, connects=list(g.connects)) for g in gates]
+    tree = shapely.STRtree(areas) if areas and edits.openings else None
+    for o in edits.openings:
+        span = LineString([(x + dx, y + dy) for x, y in o.span])
+        near = sorted(int(i) for i in tree.query(span, predicate="dwithin", distance=GATE_REACH_M)) if tree else []
+        inside = [i for i in near if areas[i].buffer(GATE_REACH_M).intersects(span)]
+        out.append(FoundGate(span, 0, inside[:2], drawn=True))
+    for rz in edits.resized:  # the drawing's gates given another width in review: by their middles
+        at = Point(rz.at[0] + dx, rz.at[1] + dy)
+        near = [(g.span.interpolate(0.5, normalized=True).distance(at), k) for k, g in enumerate(out) if not g.drawn]
+        near = [n for n in near if n[0] <= RESIZED_GATE_M]
+        if rz.width and near:
+            g = out[min(near)[1]]
+            (x0, y0), (x1, y1) = g.span.coords[0], g.span.coords[-1]
+            mx, my, L = (x0 + x1) / 2, (y0 + y1) / 2, g.span.length
+            ux, uy = (x1 - x0) / L, (y1 - y0) / L
+            h = rz.width / 2
+            g.span = LineString([(mx - ux * h, my - uy * h), (mx + ux * h, my + uy * h)])
+    return out
 
 
 def _standing_walls(faces: list[Face]) -> list[Face]:
