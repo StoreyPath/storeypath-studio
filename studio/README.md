@@ -317,9 +317,10 @@ and ⇧⌘Z, Ctrl+Z and Ctrl+Y) undo your latest change on the floor shown, and 
 you undid until you make another change. An undo is a change like any other: recorded
 as an undo of yours, it needs the floor (and edit on it), and it is refused, naming who
 and when, when someone else changed the same space, item or drawn line since. An item
-placed and undone is retired, its ID never given again; a wall, line, door or space
-drawn and undone is taken away and the floor read again (its rooms' IDs as reading
-again gives them). A file opened in place of the project, or of a building, is a line
+placed and undone is retired, its ID never given again; a wall, line or space drawn and
+undone is taken away and the floor read again (its rooms' IDs as reading again gives
+them); a door, window, opening or gate is taken away or put back at once, as reading
+the floor again would (its ID kept). A file opened in place of the project, or of a building, is a line
 no undo goes back over.
 
 **History.** *History* in Review (its drawer, from the top bar) lists who changed what on the floor, newest first, in
@@ -454,8 +455,9 @@ An item placed or carried in 3D settles as on the plan (`fit.js`): its room's wa
 it, the magnet lines it up against a wall or an item near it, Alt places it as it is;
 its ghost is green, or red where it does not fit. What changes shows in 3D at once:
 items (yours, or others' as they are saved) are drawn again on their floor alone, a
-room's name, number or type changes its label and its floor's finish; walls, doors,
-dividers and spaces drawn on the plan come with the floor read again, and that floor
+room's name, number or type changes its label and its floor's finish; doors, windows,
+openings and gates changed on the plan as soon as they are (Studio changes them at once,
+with no read), walls, dividers and spaces drawn with the floor read again; that floor
 alone is built again (another person's re-read of another floor when that floor is
 next shown). A floor of about a thousand rooms and a thousand desks orbits and walks
 at 60 frames a second on a laptop's graphics (labels only where there is room for

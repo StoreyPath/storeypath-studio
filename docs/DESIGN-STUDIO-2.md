@@ -151,7 +151,8 @@ As built (Phase D):
   or drawn shape since (naming who, when, what), or when the state is no longer as
   the change left it (read again from its drawing). An item added and undone is
   retired; a drawn edit undone is taken away and the floor read again (a job, as
-  drawing does). `GET …/history?floor=&n=` lists rows newest first with who, when,
+  drawing does), but a door, window, opening or gate, which is taken away or put back
+  at once, as it was drawn (`openings.py`). `GET …/history?floor=&n=` lists rows newest first with who, when,
   the line, whether undone, of the floors the person may see, and what they would
   undo and redo; the History panel shows it and follows changes live.
 - **GPU helpers** (admins): the helpers are kept in `settings` (`vision_helpers`:

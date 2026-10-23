@@ -71,7 +71,7 @@ marks' legend, the pointer in metres and a scale; drag, the wheel, a pinch, − 
 | `review/palette.js` | ⌘K / Ctrl+K: rooms, items, floors and every command |
 | `review/reviewmode.js`, `likely.js` | review mode, and a room's likely types |
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
-| `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here |
+| `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here; a door, window or opening changed drawn as it will be until Studio has it (`state.ghosts`: Studio changes them at once) |
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
 | `review/groups.js` | sets placed in one go, items chosen together: moved, turned, deleted, grouped and let go as one change |
 | `fit.js`, `itemshape.js` | where an item may stand and the magnet; how a type is drawn (`shapeOf`) and its symbol on a plan (the Item types page draws the same) |

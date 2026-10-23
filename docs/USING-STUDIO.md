@@ -276,9 +276,15 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   made a window and a door again swings as it did. <kbd>Del</kbd> deletes a door, window or opening of the drawing
   (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
   being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
-  held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the
-  floor is read again, and what you drew is kept with the floor through every re-read
-  and every revised drawing.
+  held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). A door, window, opening
+  or gate added, sized, made another kind, turned, moved or taken away changes the floor
+  at once, with no read: it is drawn the moment you make it, its gap is cut and its
+  rooms joined as reading the floor again would (the same ID, the same walking network),
+  and the next one can be made straight away; undoing it is as quick. A wall, a dividing
+  line or a space drawn has the floor read again, as it may change its rooms. What you
+  drew is kept with the floor through every re-read and every revised drawing. (A floor
+  just opened, or one read by an older Studio, is read once in the background first; a
+  door added before that has the floor read, and the job says why.)
 - **2D, 3D, Walk — one view** (<kbd>2</kbd>, <kbd>3</kbd>, <kbd>4</kbd>), in the
   same place: the floor, what you chose, the panels and the plan's view stay as they
   are, and switching is instant once the building is built. In 3D the floor stack's
@@ -294,8 +300,8 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   <kbd>R</kbd>, <kbd>,</kbd> <kbd>.</kbd> and <kbd>Del</kbd> as on the plan. Walls,
   doors, dividers and spaces are drawn on the plan: a drawing tool's key over a place
   in 3D (or right-click, or <kbd>2</kbd>) shows that place there. What changes —
-  yours or others' — shows in 3D at once; drawn walls when the floor has been read
-  again. *3D window* (the Share menu, or the floor's inspector) opens the building on
+  yours or others' — shows in 3D at once (its floor built again): doors and windows as
+  soon as they are made, drawn walls when the floor has been read again. *3D window* (the Share menu, or the floor's inspector) opens the building on
   [Studio's 3D page](#3d-the-dollhouse-walking-and-the-3d-page), the whole window.
 - **Re-read drawing** (the inspector, with nothing chosen) reads the floor's drawing
   again (a revised one too): IDs and corrections are kept, and items stay where they

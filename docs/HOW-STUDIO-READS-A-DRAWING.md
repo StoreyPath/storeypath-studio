@@ -73,7 +73,8 @@ drawing (DWG or DXF)
 In the web app, steps 1 and 2 run when a drawing is added, steps 3 and 4 when its
 plans are found (at once for a single drawing added, else with *Find plans*), steps
 6 to 8 when the chosen plans are added as floors, and steps 7 and 8 again whenever a
-floor is read again (*Re-read drawing*, or after an edit in review). On the command line they are
+floor is read again (*Re-read drawing*, or after a wall, dividing line or space is drawn in
+review; a door, window or opening changed in review is put in at once, see [i](#i-what-a-person-drew-convertpy-openingspy)). On the command line they are
 `views`, `add-floor`, `align`, `levels` and `convert` (see
 [studio/README.md](../studio/README.md#commands)).
 
@@ -373,11 +374,20 @@ under the wrong column, an arched window's *1200+ R=600*): the vision model aske
 words where one runs, else the language model; a row is kept when every size it
 gives is a number in that row. Otherwise the rules read the table.
 
-### i. What a person drew (`convert.py`)
+### i. What a person drew (`convert.py`, `openings.py`)
 
 Walls, dividers, spaces, doors, windows and openings drawn in review, and the
-drawing's openings given another size, are applied at every reading of the floor,
-so they survive every re-read and every revised drawing.
+drawing's openings given another size, type, swing or place along their wall, are
+applied at every reading of the floor, so they survive every re-read and every revised
+drawing. Walls, dividers and spaces drawn part the rooms, so they are applied as the
+rooms are found. The openings change no room: they are put in last, each drawn one cut
+in the walls and joined to the spaces beside it, each of the drawing's given what
+review set. What the reading found before them (the spaces, the drawing's openings,
+the walls with their gaps) is kept with the floor, and a change of the floor's
+openings in review is worked out from it at once, by the same code, with no read: the
+floor is then what reading it again would make it, its IDs kept as below. Where it is
+not kept, or no longer fits the floor (its drawing, the walls, dividers or spaces
+drawn, or its rooms changed since), the floor is read again.
 
 ## 8. Keeping the IDs (`convert.py`)
 
