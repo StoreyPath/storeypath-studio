@@ -38,6 +38,9 @@ class WallsConfig(BaseModel):
     # glazing drawn from wall to wall closes a gap this wide (a glass front's bay between
     # piers, its panes drawn as lines from pier to pier)
     max_glazing: float = 6.0
+    # a glass front (panes on a window or glass layer in line, end to end: window blocks in a
+    # row) closes each stretch of it from wall to wall up to this long
+    max_glass_front: float = 30.0
     min_width: float = 0.5
 
 
