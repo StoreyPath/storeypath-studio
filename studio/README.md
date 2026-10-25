@@ -755,8 +755,9 @@ the way a person reads a plan:
   their gap; a cross marking a lift car does not. A glass front drawn in pieces
   (window blocks in a row, or panes end to end, on a layer named for windows or
   glass) is one run of glass: each stretch of it from wall to wall, partitions
-  meeting it from inside parting it, continues the wall, up to
-  `walls.max_glass_front`; never across a door standing in it.
+  meeting it from inside parting it, continues the wall, however long (on
+  other door and window layers, a line from wall to wall up to
+  `walls.max_glazing`, 6 m); never across a door standing in it.
 - Door and window tags (D4, W12, SD2) say which an opening is: a door tag makes a
   door of an opening drawn as glazing or left open. Glazing at a door's width with
   no tag is taken as a sliding door only where it is the only way into a room;

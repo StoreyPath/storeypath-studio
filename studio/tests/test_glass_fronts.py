@@ -59,11 +59,12 @@ def _mm(x, y):
 
 
 def _glazed(doc, layer: str = "A-WINDOW", skip: tuple[float, float] | None = None, blocks: bool = True,
-            depth: float = DEPTH) -> None:
+            depth: float = DEPTH, panes: int = PANES) -> None:
     """The glass front drawn as window blocks end to end on ``layer`` (each overlapping the next
     a little, as drafters place them): each block its frame's two faces and its glass along it,
     ``depth`` deep (its inner face where the partitions end), and its mullions across its ends;
-    ``skip`` (x from, to) left free (a door's opening). Not ``blocks``: the same as loose lines.
+    ``skip`` (x from, to) left free (a door's opening). Not ``blocks``: the same as loose lines;
+    ``panes``: how many blocks (one: a single pane from wall to wall).
     The glazing write_floor_dxf drew across the whole gap, as one window, is taken out."""
     msp = doc.modelspace()
     for e in list(msp.query('LINE[layer=="A-GLAZ"]')):
@@ -73,8 +74,8 @@ def _glazed(doc, layer: str = "A-WINDOW", skip: tuple[float, float] | None = Non
     if layer not in doc.layers:
         doc.layers.add(layer)
     at = FRONT_Y + WALL - depth / 2  # (the gap in the wall reaches WALL either side of its line)
-    step = (FRONT[1] - FRONT[0]) / PANES
-    spans = [(FRONT[0] + i * step - 0.025, FRONT[0] + (i + 1) * step + 0.025) for i in range(PANES)]
+    step = (FRONT[1] - FRONT[0]) / panes
+    spans = [(FRONT[0] + i * step - 0.025, FRONT[0] + (i + 1) * step + 0.025) for i in range(panes)]
     if skip is not None:
         spans = [piece for a, b in spans for piece in ((a, min(b, skip[0])), (max(a, skip[1]), b))
                  if piece[1] - piece[0] > 0.3]
@@ -181,12 +182,24 @@ def test_the_same_drawn_as_loose_lines_on_a_window_or_glass_layer(tmp_path, laye
 
 def test_a_glass_front_with_no_partition_closes_from_wall_to_wall(tmp_path):
     # one open office behind the whole front: the run of glass closes from one solid wall to the
-    # other, up to max_glass_front; a shorter limit leaves it open (the office joins the courtyard)
+    # other, however long, where it ends at them
     ex = _read(tmp_path, ring(partitions=False), _glazed)
     _behind_the_glass(ex, ["107"])
-    (tmp_path / "short").mkdir()
-    short = WallsConfig(max_glass_front=FRONT[1] - FRONT[0] - 1.0)
-    ex = _read(tmp_path / "short", ring(partitions=False), _glazed, walls=short)
+
+
+def test_one_long_pane_from_wall_to_wall_on_a_window_layer_closes(tmp_path):
+    # the whole front one pane from wall to wall, far longer than a bay (max_glazing): on a layer
+    # named for windows it is glass, and closes however long
+    assert FRONT[1] - FRONT[0] > 2 * WallsConfig().max_glazing
+    ex = _read(tmp_path, ring(partitions=False), lambda doc: _glazed(doc, panes=1))
+    _behind_the_glass(ex, ["107"])
+
+
+def test_one_long_line_from_wall_to_wall_on_a_door_layer_closes_nothing(tmp_path):
+    # the same line on a layer of doors, its name saying nothing of windows or glass: longer than a
+    # bay (max_glazing), it may be an edge (a step's, a threshold's) as well as glass, and is left
+    # open (the office joins the courtyard)
+    ex = _read(tmp_path, ring(partitions=False), lambda doc: _glazed(doc, layer="A-DOOR", blocks=False, panes=1))
     assert _open_to_the_courtyard(ex, "107")
 
 

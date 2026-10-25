@@ -94,7 +94,7 @@ def read_fabric(lines: list, fills: list, doors: list[DoorShape], opening_lines:
         if opening_lines else []
     windows = _one_per_window(glass + list(gaps or []))
     runs = _glass_runs(_glass_pieces(glass_lines)) if glass_lines else []
-    fronts = _front_windows(_glass_fronts(_with_doors(mass, bars, doors), runs, cfg.max_glass_front), doors, runs) \
+    fronts = _front_windows(_glass_fronts(_with_doors(mass, bars, doors), runs, cfg.max_glazing), doors, runs) \
         if runs else []
     if fronts:  # a window along a glass front is the front's
         along = shapely.union_all([f.buffer(0.3, cap_style="flat") for f in fronts])
@@ -234,7 +234,7 @@ def spaces_from_walls(
     # glass fronts: panes in line end to end, each stretch from wall to wall (or to a door)
     if glass_lines:
         runs = _glass_runs(_glass_pieces(glass_lines))
-        glass += _glass_fronts(_with_doors(mass, seals, doors), runs, cfg.max_glass_front)
+        glass += _glass_fronts(_with_doors(mass, seals, doors), runs, cfg.max_glazing)
     seals += list(shapely.buffer(glass, SNAP_M)) if glass else []
     mass = unary_union([mass, *seals]) if seals else mass
     mass = _bridge_door_boxes(mass, [d.box for d in doors if not d.swings], cfg.max_thickness)
@@ -411,15 +411,16 @@ GLASS_ALIGN_DEG = 2.0  # …and running its way within this much
 GLASS_END_M = 0.06  # a glass front's stretch ends on a wall this near it (as a connector's ends)
 
 
-def _glass_fronts(against, runs: list, max_length: float) -> list[LineString]:
+def _glass_fronts(against, runs: list, max_pane: float) -> list[LineString]:
     """Glass fronts: glazing on a layer named for windows or glass, drawn as panes in line end
     to end (window blocks in a row, each pane from mullion to mullion), is one run of glass,
     however many pieces it is drawn in. Each stretch of a run from wall to wall closes like a
     wall: the run's own ends where both meet a wall, and where partitions meet it from inside
     (or doors, sealed along their leaves, stand in it), each piece between them. Each end meets
-    the wall in line with it or square against its jamb (as a connector's); a stretch is at most
-    ``max_length``. A stretch that is one pane from wall to wall is a window like any (a
-    connector's, up to a bay): not one of these. A stretch is never laid across a door: the run
+    the wall in line with it or square against its jamb (as a connector's), however long: where
+    the glass ends, at a wall, says how far it goes. A stretch that is one pane from wall to wall,
+    up to ``max_pane``, is a window like any (a connector's): not one of these; a longer pane on
+    a layer named for windows or glass is one. A stretch is never laid across a door: the run
     is parted at each door's leaf or block, and the door closes its own gap. ``against``: the
     walls, with the doors' leaves and blocks, as one area; ``runs``: the glazing's runs
     (_glass_runs, of _glass_pieces)."""
@@ -432,7 +433,7 @@ def _glass_fronts(against, runs: list, max_length: float) -> list[LineString]:
             continue
         shapely.prepare(local)
         for part in shapely.get_parts(run.difference(local)):
-            if part.geom_type != "LineString" or part.length < GLASS_PANE_MIN_M or part.length > max_length:
+            if part.geom_type != "LineString" or part.length < GLASS_PANE_MIN_M:
                 continue
             c = np.asarray(part.coords)
             a, b = c[0], c[-1]
@@ -440,7 +441,7 @@ def _glass_fronts(against, runs: list, max_length: float) -> list[LineString]:
                 continue
             s0, s1 = sorted((run.project(Point(a)), run.project(Point(b))))
             if any(p0 <= s0 + GLASS_JOINT_M and p1 >= s1 - GLASS_JOINT_M and p1 - p0 <= s1 - s0 + 2 * GLASS_JOINT_M
-                   for p0, p1 in panes):
+                   and p1 - p0 <= max_pane for p0, p1 in panes):
                 continue  # one pane from wall to wall: a window like any (_connectors)
             if all(_in_line(local, p, q - p) or _jamb(local, p, q - p) for p, q in ((a, b), (b, a))):
                 out.append(_to_the_walls(part, local))

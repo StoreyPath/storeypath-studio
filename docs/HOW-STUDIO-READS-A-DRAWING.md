@@ -252,7 +252,9 @@ it (an open office round two shafts).
    the plan (a line at a georeferenced drawing's origin).
 2. The gaps in it are closed: a door along the closed position of its swing (both
    leaves of a double door), or across its block; glazing and door leaves drawn
-   closed carry the wall across their gap (a pane from wall to wall, up to 6 m);
+   closed carry the wall across their gap (a pane from wall to wall: on a layer named
+   for windows or glass however long, on another door or window layer up to 6 m, as
+   a long line there may be a step's or threshold's edge as well as glass);
    where a wall stops and another faces its end within 1.2 m, the gap is a doorway,
    closed and recorded as an opening.
    A **glass front** drawn in pieces closes as well. Panes on a layer named for
@@ -261,8 +263,9 @@ it (an open office round two shafts).
    pieces it is drawn in, though no one of them reaches from wall to wall. Each
    stretch of a run from wall to wall closes like a wall: the whole run where both
    its ends meet a wall, and where partitions meet it from inside, each piece between
-   them; up to 30 m (`walls.max_glass_front`). Each end meets the wall in line with it
-   or square against its jamb, as a pane's does. A run is parted at each door standing
+   them, however long: where the glass meets a wall is where it ends. Each end meets
+   the wall in line with it or square against its jamb, as a pane's does. A run is
+   parted at each door standing
    in it, whose leaf closes against the glass either side as against a wall: it is
    never laid across a door. Lines drawn dashed (overhead), and lines on a layer read
    as doors and windows only for what is drawn on it (a corridor's outline along a
