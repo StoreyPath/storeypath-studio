@@ -13,7 +13,7 @@ import { openInsert } from "./palette.js";
 import { keyNow, keyText } from "./keys.js";
 import { finishOf } from "/viewer/src/finishes.js";
 import { spaceAt } from "./plan.js";
-import { setFlag } from "./rooms.js";
+import { sayWhat, setFlag } from "./rooms.js";
 import { select, selectAsset, selectItem } from "./selection.js";
 import { readable, state, title, typeLabel, typeOf, view3d } from "./state.js";
 import { setTool } from "./tools.js";
@@ -82,7 +82,7 @@ export function openMenu(cx, cy, p) {
   const asset = assetAt(p);
   const d = asset ? null : openingNear(p);
   const line = d || asset ? null : drawnNear(p);
-  const s = d || line || asset ? null : spaceAt(...p);
+  const s = d || line || asset ? null : spaceAt(...p) || spaceAt(...p, { aside: true }); // (an area set aside: what it is)
   if (asset && groupOf(asset).length > 1 && !(state.asset === asset.id)) { // one of a group: the group (chosen whole)
     selectAsset(asset.id);
     items.push(...groupItems(asset));
@@ -110,13 +110,17 @@ export function openMenu(cx, cy, p) {
     items.push(el("hr"));
   } else if (s) {
     select(s.id);
-    items.push(...heading(title(s), typeLabel(s.type)));
-    if (editable()) {
+    items.push(...heading(title(s), s.sky ? "Set aside · open to the sky" : s.ignored ? "Set aside" : typeLabel(s.type)));
+    if (editable() && !s.ignored) {
       const land = Boolean(state.floor?.layout); // (an area of a layout: its ground, no walls of its own)
       const now = finish.shown(s), wall = land ? null : finish.wallAt(s, p, WALL_REACH_M);
       items.push(menuItem(`Paint the ${land ? "ground" : "floor"}: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
       if (wall) items.push(menuItem("Paint this wall…", () => finish.chooseAt(cx, cy, s, "wall", wall), { ico: "paint-roller" }));
       if (!land) items.push(menuItem(`Paint all its walls: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
+    }
+    if (editable() && s.ignored && s.kind === "space" && !state.floor?.layout) { // a courtyard, a light well, or not
+      items.push(s.sky ? menuItem("Set aside, part of the floor (not open to the sky)", () => sayWhat(s.id, "aside"), { ico: "square-dashed" })
+        : menuItem("Open to the sky (a courtyard, a light well)", () => sayWhat(s.id, "sky"), { ico: "sun" }));
     }
     items.push(menuItem(s.ignored ? "Restore this space" : "Delete this space", () => setFlag(s.id, "ignored", !s.ignored),
       { danger: !s.ignored, hint: s.ignored ? "" : key("edit.delete"), ico: s.ignored ? "rotate-cw" : "trash-2" }));

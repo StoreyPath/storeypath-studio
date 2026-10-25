@@ -180,16 +180,20 @@ export function patchPlan(d, before) {
     const s = state.byId.get(id);
     if (s) drawSpace(s);
   }
-  if ("outline" in d) renderOutline();
+  // the outline: when it changed, or a courtyard or light well did (open to the sky, or not now)
+  if ("outline" in d || d.spaces.some((s) => Boolean(s.sky) !== Boolean(before.get(s.id)?.sky))) renderOutline();
   if ("footprints" in d) renderFootprints();
   if (d.doors.length || "walls" in d) renderDoors();
   if ("edits" in d) renderDrawn();
   placeLabels();
 }
 
-function renderOutline() {
+/** The floor's outline, open where its courtyards and light wells are: each space set aside
+ * that is open to the sky a hole in it (as a package's floor is: export.floor_outline). */
+export function renderOutline() {
   const f = state.floor;
-  $("outline").setAttribute("d", f.outline ? pathData(f.outline) : "");
+  const open = f.outline ? (f.spaces || []).filter((s) => s.sky).map((s) => pathData(s.geometry)).join("") : "";
+  $("outline").setAttribute("d", f.outline ? pathData(f.outline) + open : "");
 }
 
 // ---- a location's layout: the footprints of the buildings standing on it (format 0.12) ----
@@ -331,7 +335,7 @@ export function styleSpace(s) {
   const path = state.paths.get(s.id);
   if (!path || divided(s)) return;
   path.style.fill = finish.fill(s) ?? color(s.type); // (coloured by floor finish: its finish's tone)
-  path.style.display = visible(s) ? "" : "none";
+  path.style.display = visible(s) || isChosen(s.id) ? "" : "none"; // (an area set aside, chosen: shown)
   path.classList.toggle("tucked", tucked(s));
   path.classList.toggle("review", s.reasons.length > 0);
   path.classList.toggle("selected", isChosen(s.id));
@@ -396,13 +400,14 @@ export function arrange() {
   }
 }
 
-// The space under a point of the plan (world meters), topmost first.
-export function spaceAt(x, y) {
+// The space under a point of the plan (world meters), topmost first; with ``aside``, an area
+// set aside there too (a courtyard, a shaft, a gap: deleted, not shown), to be chosen.
+export function spaceAt(x, y, { aside = false } = {}) {
   const spaces = units();
   for (let i = spaces.length - 1; i >= 0; i--) {
     const s = spaces[i];
     const b = state.bounds.get(s.id);
-    if (!visible(s) || !b || x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
+    if (!(visible(s) || (aside && s.ignored && !s.hidden)) || !b || x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
     let inside = false;
     for (const ring of rings(s.geometry)) {
       for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {

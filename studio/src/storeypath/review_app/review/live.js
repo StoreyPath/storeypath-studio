@@ -139,7 +139,9 @@ export async function refreshFloor(change) {
     // in 3D at once: the items (that floor's alone) and the rooms' labels; walls and doors
     // changed (the floor read again, a door deleted): that floor built again
     update3d();
-    if (want.shape || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
+    // (a courtyard or light well open to the sky now, or no longer: its slab open there, or whole)
+    const opened = (got.spaces || []).some((s) => Boolean(s.sky) !== Boolean(before.get(s.id)?.sky));
+    if (want.shape || opened || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
   } catch (e) {
     if (e.status === 404 && state.floor?.id === id) { // the floor deleted (by someone else): its project
       toast("This floor was deleted: back to the project", true);

@@ -163,6 +163,28 @@ def test_work_in_progress_picked_up_by_a_page_opened_again(tmp_path, monkeypatch
 
 
 @pytest.mark.skipif(_missing() is not None, reason=_missing() or "")
+def test_courtyards_in_a_browser(tmp_path, monkeypatch):
+    """A floor with a courtyard and a light well open to the sky (tests/browser/courtyards.mjs):
+    the plan's outline open there; the courtyard, set aside, chosen by a click where it is
+    (deleted, not shown) and in 3D; said to be a room, open to the sky again, set aside as
+    part of the floor from the menu, and undone, its floor's outline and 3D following."""
+    import storeypath.vision as vision
+    from test_courtyards import COURTYARD, ORIGIN, _area, as_image, ring_building
+
+    monkeypatch.setattr(vision.FloorPrint, "view", as_image)
+    ws, floors, _ = ring_building(tmp_path)
+    spproj = tmp_path / "ring.spproj"
+    ws.save(spproj)
+    yard = _area(ws, floors[0], "courtyard")
+    x0, y0, x1, y1 = COURTYARD
+    middle = f"{ORIGIN[0] + (x0 + x1) / 2},{ORIGIN[1] + (y0 + y1) / 2}"
+    with _reviewing(spproj) as (address, code):
+        run = subprocess.run(["node", str(HERE / "browser" / "courtyards.mjs"), address, code, floors[0], yard.id, middle],
+                             capture_output=True, text=True, timeout=600)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+
+@pytest.mark.skipif(_missing() is not None, reason=_missing() or "")
 def test_the_item_types_page_in_a_browser(tmp_path):
     """Studio's Item types page (tests/browser/itemtypes.mjs): a type added, changed,
     retired and restored; types taken from a file, some chosen; a file refused; the

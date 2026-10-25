@@ -9,7 +9,7 @@ import { run } from "../commands.js";
 import { el, icon } from "../dom.js";
 import * as finish from "../finish.js";
 import { copyId } from "../items.js";
-import { accept, correct, GRADE_NAMES, itemsIn, saveSpace, seatsOf, setFlag, useDetected } from "../rooms.js";
+import { accept, correct, GRADE_NAMES, itemsIn, saveSpace, sayWhat, seatsOf, setFlag, useDetected, whatItIs } from "../rooms.js";
 import { toast } from "../notify.js";
 import { advance, likelyTypes, reviewing } from "../reviewmode.js";
 import { select, selectAsset } from "../selection.js";
@@ -46,7 +46,8 @@ function roomHeader({ space: s }) {
   const flags = [];
   if (s.reasons.length) flags.push(el("span", { class: "badge warn", "data-tip": s.reasons.join("; ") }, icon("triangle-alert", { size: 11 }), "Check"));
   else if (s.correction) flags.push(el("span", { class: "badge ok", "data-tip": "A person checked it" }, icon("check", { size: 11 }), "Checked"));
-  if (s.ignored) flags.push(el("span", { class: "badge danger" }, "Deleted"));
+  if (s.sky) flags.push(el("span", { class: "badge", "data-tip": "A courtyard or light well: a hole in the floor" }, "Open to the sky"));
+  else if (s.ignored) flags.push(el("span", { class: "badge danger" }, "Deleted"));
   else if (s.hidden) flags.push(el("span", { class: "badge" }, "Hidden"));
   const parent = s.kind === "zone" ? state.byId.get(s.space_id) : null;
   const copy = el("button", { type: "button", class: "btn-ghost btn-icon btn-sm", "aria-label": "Copy its ID", "data-tip": "Copy its ID" },
@@ -91,6 +92,39 @@ function check({ space: s, editable }) {
     parts.push(el("div", { class: "sec-actions" }, ok, del));
   }
   return parts;
+}
+
+// What an area set aside is: open to the sky (a courtyard or light well: a hole in the floor,
+// out of its area and its slab, the doors onto it leading outside), set aside as part of the
+// floor (a shaft, a gap, a frame), or a room after all. Studio's reading says first; a
+// person's word wins, kept through every re-read. Shown for an area set aside, and for a room
+// Studio would read as open to the sky were it set aside.
+const WHAT = [
+  ["sky", "Open to the sky", "A courtyard or light well: a hole in the floor, not in its area nor its slab in 3D; its doors lead outside"],
+  ["aside", "Set aside", "Not a room, but part of the floor: a shaft, a gap between walls, a frame"],
+  ["room", "A room", "A room after all: back in the plan, the lists and the 3D view"],
+];
+
+function whatItIsSection({ space: s, editable }) {
+  if (s.kind !== "space" || !(s.ignored || s.sky_read)) return null;
+  const now = whatItIs(s);
+  const said = s.sky_said !== null && s.sky_said !== undefined;
+  const why = now === "sky" ? (said ? "Open to the sky: a person said so"
+    : "Open to the sky, as Studio reads it: set aside, inside the building, with windows of its rooms onto it")
+    : now === "aside" ? (s.sky_read && s.sky_said === false ? "Set aside as part of the floor: a person said so (Studio reads it as open to the sky)"
+      : "Set aside: not a room, part of the floor")
+      : s.sky_read ? "A room. Studio reads it as a courtyard or light well if it is set aside (windows of the rooms round it open onto it)"
+        : "A room";
+  const choices = el("div", { class: "segmented block", role: "radiogroup", "aria-label": "What it is" },
+    ...WHAT.map(([what, name, tip]) => {
+      const b = el("button", { type: "button", role: "radio", "aria-checked": String(now === what), "data-tip": tip,
+        "data-what": what, disabled: !editable || null }, name);
+      b.addEventListener("click", () => { if (whatItIs(state.byId.get(s.id) || s) !== what) sayWhat(s.id, what); });
+      return b;
+    }));
+  const asRead = said && editable && s.ignored
+    ? reset("As Studio reads it: open to the sky or not by its windows", () => saveSpace({ sky: null }, s.id)) : null;
+  return [choices, el("div", { class: "detected" }, icon(said ? BY_ICON.person : "info", { size: 12 }), el("span", {}, why), asRead)];
 }
 
 function correctAndGo(s, type) {
@@ -185,6 +219,8 @@ function actions({ space: s, editable }) {
 
 export function setupRoomSections() {
   header({ kind: "space", render: roomHeader });
+  section({ id: "room.what", kinds: ["space"], title: "What it is", order: 3, render: whatItIsSection,
+    summary: ({ space }) => WHAT.find(([w]) => w === whatItIs(space))?.[1] || "" });
   section({ id: "room.check", kinds: ["space"], title: "Why it needs a look", order: 5, render: check });
   section({ id: "room.type", kinds: ["space"], title: "Classification", order: 10, render: classification,
     summary: ({ space }) => typeName(space.type) });

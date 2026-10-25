@@ -28,7 +28,7 @@ import { changeAssets, groupOf, setPieces } from "./groups.js";
 import { lookOptions } from "../look.js";
 import { closeMenu, menu3d, menuOpen } from "./menu.js";
 import { say, toast } from "./notify.js";
-import { centerOn, planPoint, scaleFor, viewport } from "./plan.js";
+import { centerOn, planPoint, scaleFor, spaceAt, viewport } from "./plan.js";
 import { select, selectAsset } from "./selection.js";
 import { settle } from "../fit.js";
 import { toggled } from "../floorpick.js";
@@ -348,7 +348,18 @@ function setup3d(world) {
       world.mark(null);
       return;
     }
-    if (state.tool !== "place" || !(state.placeType || state.placeSet)) return;
+    if (state.tool !== "place" || !(state.placeType || state.placeSet)) {
+      // a click on this floor where no room is shown (its slab, a courtyard open to the sky):
+      // the area set aside there chosen, as on the plan, to say what it is
+      const p = e.detail;
+      const aside = !state.tool && p.button === 0 && !p.space && !p.item && !p.door && p.local && p.floor === state.floor?.id
+        ? spaceAt(p.local[0], p.local[1], { aside: true }) : null;
+      if (aside) {
+        e.preventDefault();
+        if (aside.id !== state.selected) select(aside.id);
+      }
+      return;
+    }
     e.preventDefault(); // placed, not chosen
     const p = e.detail;
     if (!p.local || p.floor !== state.floor?.id) return toast("Click on this floor's floor, where it goes", true);
