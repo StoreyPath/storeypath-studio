@@ -74,6 +74,9 @@ class ExtractedSpace:
     issues: list[str] = field(default_factory=list)  # reasons a person should look at it
     ignored: bool = False  # judged not a room (vision): set aside, for a person to restore
     open_ground: bool = False  # a roof's open ground round the rooms on it (find_spaces' open_ground)
+    # a courtyard or light well, when it is set aside (find_courtyards): open to the sky, a
+    # hole in the floor's outline (export.floor_outline); a person's say wins (Override.sky)
+    sky: bool = False
 
 
 @dataclass
@@ -1089,7 +1092,9 @@ def keep_to_the_building(ex: FloorExtraction) -> None:
     areas set aside as not rooms that reach the edge of the plan (a yard inside the
     line that marks the land, the pool in that yard…), the line itself, and any
     plot wall running on from the house. Rooms are never cut; areas set aside
-    inside the building (a shaft, a gap) stay part of it."""
+    inside the building (a shaft, a gap) stay part of it, and so do its courtyards and
+    light wells here: they are taken out of it where the floor is used, with what people
+    say of them (find_courtyards, export.floor_outline)."""
     if ex.outline is None or ex.outline.is_empty:
         return
     rooms = [s.polygon for s in ex.spaces if not s.ignored]
@@ -1109,6 +1114,62 @@ def keep_to_the_building(ex: FloorExtraction) -> None:
         return
     ex.outline, ex.walls = _to_the_building(outline, ex.walls, unary_union(rooms))
     ex.wall_thickness = _thickness(ex.walls)
+
+
+# A courtyard or a light well: an area inside the building with no roof over it. Areas a
+# reading can say are open to the sky, when they are set aside (by vision or by a person)
+# as no room: those inside the floor's outline (more than OUTSIDE_REACH_M from its outer
+# edge: nearer, it is the outside round the building, keep_to_the_building's) onto which
+# windows of the floor's rooms open (a shaft, a duct, a gap between two walls has none),
+# and wide enough to be a courtyard or light well: a circle COURTYARD_WIDTH_M across fits
+# in it (a gap between double walls, a duct or a lift's shaft is narrower), with at least
+# COURTYARD_WINDOWS such windows. Only an area of no kind in particular is (unspecified,
+# or an open area): one the rules or a model typed (a shaft, a lift, stairs, a store, a
+# terrace, which has a floor) is never.
+COURTYARD_WIDTH_M = 3.0
+COURTYARD_WINDOWS = 1
+COURTYARD_TYPES = frozenset({SpaceType.UNSPECIFIED, SpaceType.OPEN_AREA})
+
+
+def find_courtyards(ex: FloorExtraction) -> int:
+    """The floor's courtyards and light wells: each space that is open to the sky when it is
+    set aside (see COURTYARD_WIDTH_M) marked so (``sky``). It is then left out of the floor
+    where the floor is used (export.floor_outline: a hole in its outline, its area not the
+    floor's; the walking network does not cross it, and its doors lead outside). Whether it
+    is set aside is not asked here: vision's word, or a person's, is applied with the
+    floor's corrections. Rooms are never cut, nor marked. Returns how many."""
+    for s in ex.spaces:
+        s.sky = False
+    if ex.outline is None or ex.outline.is_empty:
+        return 0
+    zoned = {z.space for z in ex.zones}
+    least = math.pi * (COURTYARD_WIDTH_M / 2) ** 2  # (smaller, the circle cannot fit in it)
+    candidates = [i for i, s in enumerate(ex.spaces) if i not in zoned and s.layer != "drawn"
+                  and s.type in COURTYARD_TYPES and s.polygon.area >= least
+                  and not s.polygon.buffer(-COURTYARD_WIDTH_M / 2).is_empty]
+    if not candidates:
+        return 0
+    shells = unary_union([Polygon(p.exterior) for p in as_polygons(ex.outline)])
+    edge = shells.boundary
+    inside = shells.buffer(0.05)  # (rounding: an area along the outline is within it)
+    windows: Counter = Counter()  # each candidate: the windows of the floor's rooms that open onto it
+    wanted = set(candidates)
+    for d in ex.doors:
+        if d.source != "window" or len(d.connects) != 2 or d.connects[0] == d.connects[1]:
+            continue
+        for here, there in (d.connects, d.connects[::-1]):
+            if here in wanted and not ex.spaces[there].ignored:
+                windows[here] += 1
+    found = 0
+    for i in candidates:
+        s = ex.spaces[i]
+        if windows[i] < COURTYARD_WINDOWS:
+            continue
+        if not inside.covers(s.polygon) or s.polygon.distance(edge) <= OUTSIDE_REACH_M:
+            continue
+        s.sky = True
+        found += 1
+    return found
 
 
 def _to_the_building(outline, walls, rooms):

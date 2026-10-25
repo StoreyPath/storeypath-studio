@@ -146,6 +146,14 @@ def read_as(text: str, ws, profile) -> dict:
     return out
 
 
+def _outline(ws, floor_id: str, f) -> dict | None:
+    """The floor's outline as it is used: open where its courtyards and light wells are."""
+    from ..export import floor_outline
+
+    g = floor_outline(ws, floor_id, f)
+    return mapping(g) if g is not None else None
+
+
 def reading_of(ws, floor_id: str, frame: Frame, ids: LocalIds, rooms: list, openings: list, *,
                profile, texts: list[dict], layers_used, settings: dict) -> dict:
     """reading.json: what Studio decided in the area, and why (see docs/AREA-SAMPLES.md)."""
@@ -168,7 +176,8 @@ def reading_of(ws, floor_id: str, frame: Frame, ids: LocalIds, rooms: list, open
             "name_read_as": read_as(r.name, ws, profile) if r.name else None,
             "issues": list(r.issues), "set_aside_by_vision": r.detected_ignored,
             "now": {"type": getattr(eff["type"], "value", eff["type"]), "name": eff["name"], "number": eff["number"],
-                    "ignored": eff["ignored"], "hidden": eff["hidden"], "corrected": bool(o is not None and eff["corrected"])},
+                    "ignored": eff["ignored"], "hidden": eff["hidden"], "corrected": bool(o is not None and eff["corrected"]),
+                    "sky": eff["sky"]},
             "review_reasons": ws.review_reasons(r),
             "area_m2": round(g.area, 2), "inside_share": round(inside, 3), "at_edge": inside < EDGE_SHARE,
             "geometry": rounded(mapping(cut)) if cut is not None else None,
@@ -236,7 +245,8 @@ def reading_of(ws, floor_id: str, frame: Frame, ids: LocalIds, rooms: list, open
         "floor": {"method": f.method, "warnings": list(f.warnings),
                   "converted_at": f.converted_at.isoformat() if f.converted_at else None,
                   "wall_thickness_m": f.wall_thickness,
-                  "outline": frame.geojson(f.outline), "walls_found": frame.geojson(f.walls)},
+                  # (open where its courtyards and light wells are: export.floor_outline)
+                  "outline": frame.geojson(_outline(ws, floor_id, f)), "walls_found": frame.geojson(f.walls)},
         "layers": {
             "in_sample": [{"layer": name, "entities": n, "read_as": next((x["roles"] for x in roles if x["layer"] == name), None),
                            "why": next((x["why"] for x in roles if x["layer"] == name), None)}
@@ -261,9 +271,10 @@ def corrections_of(ws, floor_id: str, frame: Frame, ids: LocalIds, rooms: list, 
             continue
         set_ = o.model_dump(exclude_none=True)
         row = {"id": ids(r.id), "kind": r.kind if r.kind != "opening" else opening_kind(r),
-               "detected": {"type": r.type, "name": r.name, "number": r.number, "ignored": r.detected_ignored},
+               "detected": {"type": r.type, "name": r.name, "number": r.number, "ignored": r.detected_ignored,
+                            "sky": r.detected_sky},
                "accepted_as_is": not set_}
-        for key in ("type", "name", "number", "hidden", "ignored", "capacity", "floor_finish", "wall_finish"):
+        for key in ("type", "name", "number", "hidden", "ignored", "sky", "capacity", "floor_finish", "wall_finish"):
             if key in set_:
                 row[key] = getattr(set_[key], "value", set_[key])
         if "stack" in set_:

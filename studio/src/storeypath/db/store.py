@@ -70,7 +70,7 @@ from . import CHANNEL, Database
 COMMAND_LINE = "command line"  # who a change from the command line is of
 LOCAL = {"local": True}  # who a change is of on this computer without accounts
 OBJECT_MORE = ("connects", "parent", "zones", "span", "width", "swings", "sill", "height", "tag", "issues",
-               "detected_ignored", "match", "levels")
+               "detected_ignored", "detected_sky", "match", "levels")
 DRAWINGS = "drawings"  # a floor's drawing is drawings/<name>: its name in the project's drawings
 ROOM_IDLE_S = 5 * 60  # a room its person made no change to for this long is free again
 NEAR_M = 0.3  # what is drawn touches the rooms within this of it (half a thick wall)
@@ -505,7 +505,7 @@ def _object_row(code: str, r: ObjectRecord) -> tuple:
 def _override_row(code: str, object_id: str, o: Override, by) -> tuple:
     return (code, object_id, floor_of(object_id), o.type.value if o.type is not None else None, o.name, o.number,
             o.hidden, o.ignored, o.capacity, o.stack, o.floor_finish, o.wall_finish,
-            _j([w.model_dump() for w in o.wall_finishes]) if o.wall_finishes else None, o.building, by)
+            _j([w.model_dump() for w in o.wall_finishes]) if o.wall_finishes else None, o.building, o.sky, by)
 
 
 def _item_row(code: str, it: Item, by) -> tuple:
@@ -548,7 +548,7 @@ SELECT p.version, json_build_object(
   'overrides', COALESCE((SELECT json_object_agg(v.object, json_build_object(
       'type', v.type, 'name', v.name, 'number', v.number, 'hidden', v.hidden, 'ignored', v.ignored,
       'capacity', v.capacity, 'stack', v.stack, 'floor_finish', v.floor_finish, 'wall_finish', v.wall_finish,
-      'wall_finishes', v.wall_finishes, 'building', v.building)
+      'wall_finishes', v.wall_finishes, 'building', v.building, 'sky', v.sky)
       ORDER BY v.position) FROM overrides v WHERE v.project = p.code AND {{scope_v}}), '{{{{}}}}'),
   'items', COALESCE((SELECT json_object_agg(i.id, json_build_object(
       'id', i.id, 'type', i.type, 'floor_id', i.floor, 'x', i.x, 'y', i.y, 'rotation', i.rotation,
@@ -901,13 +901,13 @@ class ProjectStore:
             if put:
                 cur.executemany(
                     "INSERT INTO overrides (project, object, floor, type, name, number, hidden, ignored, capacity, "
-                    "stack, floor_finish, wall_finish, wall_finishes, building, changed_by) VALUES (%s, %s, %s, %s, %s, "
-                    "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, "
+                    "stack, floor_finish, wall_finish, wall_finishes, building, sky, changed_by) VALUES (%s, %s, %s, "
+                    "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, "
                     "object) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, name = EXCLUDED.name, "
                     "number = EXCLUDED.number, hidden = EXCLUDED.hidden, ignored = EXCLUDED.ignored, "
                     "capacity = EXCLUDED.capacity, stack = EXCLUDED.stack, floor_finish = EXCLUDED.floor_finish, "
                     "wall_finish = EXCLUDED.wall_finish, wall_finishes = EXCLUDED.wall_finishes, "
-                    "building = EXCLUDED.building, "
+                    "building = EXCLUDED.building, sky = EXCLUDED.sky, "
                     "changed_by = EXCLUDED.changed_by, changed_at = now(), "
                     "version = overrides.version + 1", put)
             gone = [(code, i) for i, it in ch.items.items() if it is None]

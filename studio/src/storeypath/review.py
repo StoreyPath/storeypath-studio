@@ -15,6 +15,8 @@ and read again whenever it changes on disk. The web server is in server.py:
     POST /api/projects/<code>/floors/<id>/convert re-read the drawing (keeps IDs): a job
     POST /api/projects/<code>/objects/<id>        {"correction": {type, name, number}} or {"reset": true};
                                                   {"ignored": bool} deletes a space or an opening (or restores it);
+                                                  {"sky": bool or null} a space set aside open to the sky (a
+                                                  courtyard, a light well: a hole in its floor), or not; null as read;
                                                   {"floor_finish": code or null, "wall_finish": …} its finishes
     POST /api/projects/<code>/floors/<id>/finishes  {"ids": […] or "type": t, "floor_finish", "wall_finish"}: many
                                                   rooms' finishes at once, one change
@@ -82,7 +84,7 @@ CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/j
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
 # what a correction keeps of an object besides its type, name and number
-KEPT = {"hidden", "ignored", "capacity", "stack", "floor_finish", "wall_finish", "wall_finishes"}
+KEPT = {"hidden", "ignored", "sky", "capacity", "stack", "floor_finish", "wall_finish", "wall_finishes"}
 FINISHED_AT_ONCE = 5000  # rooms whose finishes one change sets, at most
 REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
 DOOR_REACH_M = 2.0  # an item that serves a door (a card reader), placed this near one, is linked to it
@@ -1127,6 +1129,10 @@ class Review:
             # what its floor and (a space's) walls are finished in, set here; null: as its type
             "floor_finish": eff["floor_finish"], "wall_finish": eff["wall_finish"], "wall_finishes": eff["wall_finishes"],
             "hidden": eff["hidden"], "ignored": eff["ignored"],
+            # set aside, open to the sky: a courtyard or light well (a hole in the floor's outline);
+            # as its reading says (when set aside), and as a person said (null: as read)
+            "sky": eff["sky"], "sky_read": r.kind == "space" and r.detected_sky,
+            "sky_said": o.sky if o is not None else None,
             # how many it seats: set here, else its desks'; and who it is laid out for
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
             "workplaces": (seats.get(r.id) or {}).get("workplaces", 0), "grade": (seats.get(r.id) or {}).get("grade"),
@@ -1189,6 +1195,18 @@ class Review:
                     # as detected: no correction; otherwise kept, so a space Studio set
                     # aside (vision: not a room) can be restored
                     flags[flag] = None if body[flag] == detected[flag] else body[flag]
+            sky = current.sky
+            if "sky" in body:  # a space set aside: a courtyard or light well, open to the sky, or not
+                said = body["sky"]
+                if r.kind != "space":
+                    raise ValueError("only a space is open to the sky (a courtyard, a light well)")
+                if said is not None and not isinstance(said, bool):
+                    raise ValueError("sky is true (open to the sky), false (not) or null (as read)")
+                if said and body.get("ignored") is False:
+                    raise ValueError("a space open to the sky is set aside: no room")
+                sky = None if said is None or said == bool(r.detected_sky) else said
+                if said and "ignored" not in body:  # (no room: set aside)
+                    flags["ignored"] = None if detected["ignored"] else True
             if body.get("reset"):
                 values = {}
             elif "correction" in body:
@@ -1198,8 +1216,8 @@ class Review:
                 values = {k: v.strip() if isinstance(v, str) else v for k, v in c.items() if v is not None}
                 if "type" in values:
                     values["type"] = SpaceType(values["type"])
-            elif any(f in body for f in flags) or set(body) & {"capacity", "stack", "floor_finish", "wall_finish",
-                                                              "wall_finish_at"}:
+            elif any(f in body for f in flags) or set(body) & {"sky", "capacity", "stack", "floor_finish",
+                                                              "wall_finish", "wall_finish_at"}:
                 values = current.model_dump(exclude_none=True, exclude=KEPT)
             else:
                 raise ValueError("nothing to change")
@@ -1213,14 +1231,15 @@ class Review:
             was_checked = object_id in ws.overrides and ws.effective(r)["corrected"] \
                 and not (current.hidden or current.ignored)
             checked = False if body.get("reset") else True if "correction" in body else was_checked
-            override = Override(**values, **flags, capacity=capacity, stack=stack, **finish)
+            override = Override(**values, **flags, sky=sky, capacity=capacity, stack=stack, **finish)
             if checked and not values and (capacity is not None or stack is not None or any(finish.values())) \
                     and override.hidden is None:
                 override.hidden = False  # accepted as it is, with a capacity, a link or finishes: the mark of the check
             new = None if override == Override() and not checked else override
             had = ws.overrides.get(object_id)
             kind = "reset" if body.get("reset") else "correct" if "correction" in body else \
-                ("delete" if body["ignored"] else "restore") if "ignored" in body else \
+                ("sky" if body["sky"] else "not sky" if body["sky"] is False else "sky as read") if "sky" in body \
+                else ("delete" if body["ignored"] else "restore") if "ignored" in body else \
                 ("hide" if body["hidden"] else "show") if "hidden" in body else \
                 ("link" if stack else "unlink" if stack == NOT_LINKED else "as found") if "stack" in body else \
                 "finish" if {"floor_finish", "wall_finish", "wall_finish_at"} & set(body) else "capacity"

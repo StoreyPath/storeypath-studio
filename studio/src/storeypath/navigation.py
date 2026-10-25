@@ -571,13 +571,18 @@ def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
         p = _inside(u.region, front)
         zone, _ = u.place_at(p)
         u.terminals.append((net.node(f"kiosk:{it.id}", "kiosk", f_id, p, u.space.id, zone, item_id=it.id), p))
-    # doors and openings: a node in the way through, and one in front of it on each side
+    # doors and openings: a node in the way through, and one in front of it on each side;
+    # one onto a courtyard or light well (open to the sky: export.courtyards) leads outside
+    from .export import courtyards
+
     joined = set()
+    outside = {r.id for r in courtyards(ws, f_id)}
     for o in sorted((r for r in ws.floor_objects(f_id) if r.kind == "opening"), key=lambda r: r.id):
         if o.type == "window" or ws.effective(o)["ignored"]:
             continue
         sides = [c for c in o.connects if c in units]
-        if not sides or len(sides) < len(o.connects) and len(o.connects) > 1:
+        inside = [c for c in o.connects if c not in outside]
+        if not sides or len(sides) < len(inside) and len(inside) > 1:
             continue  # it leads into what is not walked (a plant room)
         if o.span and len(o.span) == 2:
             (x0, y0), (x1, y1) = o.span
@@ -586,7 +591,7 @@ def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
             c = o.geometry["coordinates"]
             middle, along = (c[0], c[1]), (0.0, 0.0)
         middle = _pt(middle)
-        kind = "entrance" if len(o.connects) == 1 else "door"
+        kind = "entrance" if len(inside) == 1 else "door"
         door = net.node(f"door:{o.id}", kind, f_id, middle, None, None, opening_id=o.id, spaces=sorted(sides))
         for sid in sorted(sides):
             _approach(net, units[sid], door, f"approach:{o.id}@{sid}", f_id, middle, along, opening_id=o.id)

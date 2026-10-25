@@ -284,6 +284,9 @@ class ObjectRecord(BaseModel):
     tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
     issues: list[str] = Field(default_factory=list)  # found on conversion, for review
     detected_ignored: bool = False  # judged not a room on conversion (vision); a correction wins
+    # a space: a courtyard or light well, open to the sky when it is set aside (extract.find_courtyards):
+    # then a hole in its floor's outline (export.floor_outline); a person's say (Override.sky) wins
+    detected_sky: bool = False
     # footprints: the building of the location it was matched to when the layout was read
     # (layout.py): {building, confidence, by, label, shape, site: {x, y, rotation, pivot}};
     # None: none. A person's choice (Override.building) wins over it
@@ -324,6 +327,10 @@ class Override(BaseModel):
     # shaft, a plant room). Ignored: not worth anything (a sliver, a pocket); leave it out.
     hidden: bool | None = None
     ignored: bool | None = None
+    # (a space set aside) open to the sky, as a person says: True a courtyard or a light well, a
+    # hole in its floor's outline; False not (a shaft, a gap: part of the floor); None: as read
+    # (ObjectRecord.detected_sky). Only a space set aside is open to the sky: restored, it is a room
+    sky: bool | None = None
     # how many people it is meant to seat, set by a person; None: as its desks say
     capacity: int | None = Field(None, ge=0, le=10000)
     # a lift's, stairs' or escalator's link to the same one on other floors (stacks.py),
@@ -724,6 +731,7 @@ class Workspace(BaseModel):
         """Type, name and number after applying the user's corrections. A name or
         number corrected to "" removes it."""
         o = self.overrides.get(record.id)
+        ignored = o.ignored if o is not None and o.ignored is not None else record.detected_ignored
         return {
             "type": (o.type if o and o.type else record.type),
             "name": ((o.name or None) if o and o.name is not None else record.name),
@@ -739,7 +747,10 @@ class Workspace(BaseModel):
                                                 and o.building is None)
                                             or o.hidden is False),
             "hidden": bool(o and o.hidden),
-            "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
+            "ignored": ignored,
+            # a courtyard or light well, set aside: open to the sky, a hole in its floor's outline
+            "sky": record.kind == "space" and ignored and (o.sky if o is not None and o.sky is not None
+                                                            else record.detected_sky),
             "capacity": o.capacity if o is not None else None,
             # what its floor and walls are finished in, set by a person (format 0.9); None: as its type
             "floor_finish": o.floor_finish if o is not None else None,

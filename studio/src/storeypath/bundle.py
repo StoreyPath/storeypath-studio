@@ -40,7 +40,7 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import build_features, compared, layout_features, settle
+from .export import OUTDOOR, build_features, compared, layout_features, settle
 from .ids import LAND_CODE, format_object_code, is_item_id, is_legacy_item_id, item_id_for_legacy, parse_id
 from .package import ASSET_IDS_FROM, FILES, Manifest, version_tuple
 from .types import FloorType
@@ -836,6 +836,8 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             lands[f["id"].rsplit("-", 1)[0]] = land
             floor_building[f["id"]] = f["id"]  # (what is on it is placed by the layout's own placement)
     buildings: dict[str, Building] = {}
+    floors_read: dict[str, Floor] = {}  # a building's floors, by ID
+    yards: dict[str, list] = {}  # its courtyards and light wells, by floor ID
     for f in features["buildings"]:
         p = f["properties"]
         pl = manifest.placements.get(f["id"])
@@ -848,7 +850,7 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         local = to_local[b_id]
         walls = [local.geometry(g) for g in (p.get("walls"), p.get("parapets")) if g]
         level = FloorType(p.get("type") or FloorType.FLOOR)
-        buildings[b_id].floors.append(Floor(
+        floors_read[f["id"]] = Floor(
             code=p["code"], name=p["name"], ordinal=p["ordinal"], elevation=p["elevation"], height=p["height"],
             # what level it is (0.11: before, a floor); a mezzanine's floor it stands in, by its
             # code, and how far above it
@@ -859,7 +861,8 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             outline=mapping(local.geometry(f["geometry"])) if f.get("geometry") else None,
             walls=mapping(unary_union(walls)) if walls else None, wall_thickness=p.get("wall_thickness_m"),
             converted_at=exported_at, method="package",
-            warnings=[f"rebuilt from {file_name}: add this floor's drawing to read it again"]))
+            warnings=[f"rebuilt from {file_name}: add this floor's drawing to read it again"])
+        buildings[b_id].floors.append(floors_read[f["id"]])
         floor_building[f["id"]] = b_id
 
     for kind, role in (("space", "spaces"), ("zone", "zones"), ("opening", "openings")):
@@ -872,6 +875,11 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                 r.name, r.number, r.label = p.get("name"), p.get("number"), p.get("drawing_label")
             if kind == "space":
                 r.zones = list(p.get("zones") or [])
+                # set aside and outdoors, of no outdoor type: a courtyard or light well, open to
+                # the sky (a hole in its floor's outline, put back in the outline as read below)
+                if p.get("ignored") and p.get("outdoor") and p["type"] not in OUTDOOR and p["floor_id"] in floors_read:
+                    r.detected_sky = True
+                    yards.setdefault(p["floor_id"], []).append(shape(r.geometry))
             elif kind == "zone":
                 r.parent = p["space_id"]
             else:
@@ -889,6 +897,12 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
             if p.get("hidden") or p.get("ignored") or capacity is not None:
                 ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None,
                                               ignored=bool(p.get("ignored")) or None, capacity=capacity)
+    # a floor's outline as read is whole where its courtyards and light wells are (export.floor_outline
+    # takes them out of it), as a person may say one is a room after all
+    for f_id, holes in yards.items():
+        floor = floors_read[f_id]
+        if floor.outline:
+            floor.outline = mapping(unary_union([shape(floor.outline), *holes]))
     # the buildings standing on a layout (0.12): each footprint, and the building it is
     if layout_id is not None and "footprints" in manifest.files:
         for f in json.loads(z.read(manifest.files["footprints"]))["features"]:

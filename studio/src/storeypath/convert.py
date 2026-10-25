@@ -21,8 +21,9 @@ from shapely.geometry import mapping, shape
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
 from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, _drawn_line, add_lift_doors,
-                      find_spaces, find_spaces_around, finish_floor, gather_plan, keep_to_the_building,
-                      on_the_roof, plan_labels, plan_walls, stair_flights, type_stairs, type_zoned_spaces)
+                      find_courtyards, find_spaces, find_spaces_around, finish_floor, gather_plan,
+                      keep_to_the_building, on_the_roof, plan_labels, plan_walls, stair_flights, type_stairs,
+                      type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -171,6 +172,11 @@ def read_floor(
         if floor.roof:
             on_the_roof(extraction)
         type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
+    # courtyards and light wells, open to the sky once set aside (by vision, or by a person):
+    # by the drawing's windows onto them, before review's openings are put in
+    find_courtyards(extraction)
+    if (yards := sum(1 for s in extraction.spaces if s.sky and s.ignored)) and say is not None:
+        say(f"{yards} courtyard(s) or light well(s) set aside: open to the sky, left out of the floor")
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     # what review did to the floor's openings, put in last (openings.py): kept without it, the
     # floor's openings are worked out again from it at once when review changes them
@@ -550,6 +556,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
         record.label = obj.label
         record.issues = list(obj.issues)
         record.detected_ignored = obj.ignored
+        record.detected_sky = kind == "space" and obj.sky  # (a courtyard or light well: open to the sky when set aside)
         record.geometry = _local(obj.polygon)
         record.parent, record.zones = None, []
         if (was := carry.get(id(obj))) is not None:  # a person's correction, going on with the room
