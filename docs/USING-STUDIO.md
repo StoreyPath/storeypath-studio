@@ -252,6 +252,20 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   *Show deleted* (View) shows it again, to restore. Shift-click (or ⌘-click) adds rooms
   to those chosen, and Shift-drag a band over them: their type and finishes are set
   for all at once.
+- **Courtyards and light wells.** An area set aside as no room (by vision, or deleted
+  by you) inside the building, with windows of the rooms round it opening onto it and
+  at least 3 m across, is **open to the sky**: a hole in the floor. The plan draws the
+  floor's outline open there; in 3D it has no slab and no ceiling (on the ground floor
+  too: a courtyard at the ground is outside); the floor's area leaves it out, the
+  walking network goes round it, and a door onto it leads outside. A shaft or a gap
+  between walls set aside stays part of the floor. To say otherwise, **click where the
+  area is** (it is chosen even when deleted areas are not shown; in 3D, a click on the
+  floor where no room is shown): the inspector's **What it is** offers *Open to the
+  sky*, *Set aside* (part of the floor, not open) and *A room* (restored), says what it
+  is now and whether Studio's reading or a person said so, with ↺ back to as read. The
+  plan's right-click menu offers the same. Your word wins over the reading and is kept
+  through every re-read and revised drawing. A floor read before Studio knew courtyards
+  gets them when it is read again (*Re-read drawing*).
 - **Draw what the drawing leaves out**, with the tools (or right-click the plan:
   what can be done there):
 
@@ -656,7 +670,9 @@ Auto (Low on integrated, virtual or software graphics), High or Low.
 
 - **Dollhouse.** Orbit the building, pick a floor, cut the walls down to see the
   plan in 3D, lift the floors apart, or switch on x-ray: see-through walls and every
-  room a translucent volume tinted by its type. Click a room for its ID, area,
+  room a translucent volume tinted by its type. A courtyard or light well is open on
+  every floor, down to the ground, and a void (*Open to below*) open to the floor
+  below. Click a room for its ID, area,
   finishes and the rooms its doors lead to. Furniture and equipment show when one
   floor does.
 - **Walk.** Start at the front door and walk in: mouse to look, <kbd>W A S D</kbd> to

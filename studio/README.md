@@ -405,7 +405,11 @@ outside, and what a model decided. Click a space to correct its type, name or nu
 in the inspector (each saved as it is changed), accept it as it is, set how many
 people it seats, or **delete** it (not there, or not worth anything: a sliver, the
 outside). A deleted space keeps its ID, is exported marked `ignored`, and comes back
-with *Show deleted*. The tools on the left (or a right-click on the plan) draw the
+with *Show deleted*. One inside the building that windows of the rooms round it open
+onto, 3 m across or more, is a courtyard or light well, open to the sky: a hole in the
+floor (in the package, its area and 3D), gone round by the walking network; a click
+where it is chooses it, and *What it is* says otherwise (set aside as part of the floor,
+or a room after all). The tools on the left (or a right-click on the plan) draw the
 walls, dividing lines, doors, windows, openings, spaces, lifts and stairs the drawing
 leaves out, place furniture and equipment, paint floors and walls, measure, and share
 an area; a door, window or opening chosen is resized in the inspector. Each tool's

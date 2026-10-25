@@ -177,7 +177,8 @@ class SpaceProps(_Props):
     zones: list[str] = Field(default_factory=list, description=(
         "IDs of the zones this space is divided into, with no wall between them (empty: one use)"))
     outdoor: bool = Field(False, description=(
-        "open to the sky: a terrace, balcony or roof with no windows of its own (a glazed veranda is not)"))
+        "open to the sky: a terrace, balcony or roof with no windows of its own (a glazed veranda is not), or a "
+        "courtyard or light well set aside as no room (ignored), a hole in its floor's outline"))
     capacity: int | None = Field(None, ge=0, description=CAPACITY)
     capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
     grade: Grade | None = Field(None, description=GRADE)
@@ -214,7 +215,7 @@ class OpeningProps(_Props):
     type: OpeningType
     floor_id: str
     connects: list[str] = Field(description="IDs of the spaces this opening joins")
-    exterior: bool = Field(description="true when it leads outside the floor")
+    exterior: bool = Field(description="true when it leads outside the floor (onto a courtyard or light well too)")
     width_m: float | None = Field(None, description="clear width, jamb to jamb")
     span: list[LonLat] | None = Field(None, description="the opening across the wall, jamb to jamb")
     swings: list[list[LonLat]] | None = Field(

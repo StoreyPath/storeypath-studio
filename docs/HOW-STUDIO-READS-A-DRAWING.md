@@ -63,6 +63,8 @@ drawing (DWG or DXF)
       e  names, types ...... labels; types by rule, else by the language model     rules + language model
       f  fixtures .......... unnamed rooms typed by what is drawn (research only)  SymPoint-V2
       g  vision ............ each room looked at: a room or not, its type, merged  vision model
+         courtyards ........ areas set aside inside, windows onto them:            rules; a person's
+                             open to the sky, holes in the floor                   word wins
       h  door sizes ........ sill and height from the schedule of openings         rules + a model
       i  your edits ........ walls, dividers, doors, spaces drawn in review         a person, kept
  8  keep the IDs ........... matched to the last reading: kept, new, retired       rules
@@ -355,6 +357,23 @@ kind of room is it.
 - **The building's edge**: areas set aside as no room that reach the edge of the
   plan (a yard inside the line marking the land, the pool in it) are taken out of
   the floor's outline and walls. Rooms are never cut.
+- **Courtyards and light wells** (`extract.find_courtyards`): an area set aside as no
+  room inside the building (by vision, or by a person who deletes it) is **open to the
+  sky** when windows of the floor's rooms open onto it (at least one: a shaft, a duct or
+  a gap between two walls has none), when it is wide enough for a circle 3 m across (a
+  gap between double walls, a duct or a lift's shaft is narrower), when it is more than
+  0.6 m from the outline's outer edge (nearer, it is the outside round the building, as
+  above) and when it is of no kind in particular (untyped, or an open area: never one
+  the rules or a model typed, a shaft, a lift, stairs, a store, a terrace). The drawing's
+  windows decide, not those drawn in review. Such an area is a hole in its floor wherever
+  the floor is used: the package's floor outline (kept whole as read, with each hole cut
+  where it is used), the building's footprint, the floor's area, the 3D slab; it is
+  outdoors (no ceiling over it), the walking network goes round it, never across it, and
+  a door onto it leads outside. Shafts, gaps and frames set aside stay part of the floor,
+  as before; rooms are never cut. On the ground floor too: a courtyard at the ground is
+  outside. A person's word on what an area set aside is (open to the sky, set aside as
+  part of the floor, or a room after all) wins over the rule and is kept through every
+  re-read, as other corrections are ([Review](#9-review-a-person)).
 
 Every decision is marked `vision` in the review notes. Questions are asked two at a
 time by default (`STOREYPATH_VISION_PARALLEL`). Answers are kept by the room's shape,
@@ -439,7 +458,12 @@ lists the spaces and zones that need a look, with why:
   symbols, a room that looks merged or only part of one, a way through kept.
 
 Rooms vision set aside as no room are off the list: they show with *Show deleted*,
-to be restored if they are rooms.
+to be restored if they are rooms. A click where no room is shown chooses the area set
+aside there, *Show deleted* or not (in 3D too: a click on the floor where no room is),
+and the inspector's *What it is* says, and lets a person say, whether it is **open to
+the sky** (a courtyard or light well: a hole in the floor), **set aside** as part of
+the floor (a shaft, a gap) or **a room** after all. The plan's outline is drawn open
+where the floor's courtyards and light wells are.
 
 A person corrects the type, name or number (or saves it as it is, which takes it
 off the list), deletes what is not a room, draws the walls, dividers, doors, windows,
@@ -449,7 +473,8 @@ list. See [What you can do in Studio](USING-STUDIO.md#what-you-can-do-in-studio)
 
 ## 10. Export (`export.py`)
 
-A package holds **one building**: its floors, spaces, zones, openings and items with
+A package holds **one building**: its floors (each outline open where its courtyards
+and light wells are: a Polygon with a hole for each), spaces, zones, openings and items with
 their IDs, and its location ([spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), format 0.7).
 
 - It is written beside where it goes, checked against the format, and entered as an
