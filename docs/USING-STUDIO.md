@@ -244,7 +244,11 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   by whom (rules, the language model, vision, a person), with ↺ to go back to it. A
   void, where the floor is open to the one below (an atrium, a double-height hall), is
   the type *Open to below*: in 3D the floor has a hole there, the floors below seen
-  through it.
+  through it. An electrical room and an IDF room (a floor's telecom room) have types of
+  their own, *Electrical room* and *IDF room* (format 0.13.1; *Utility* before): Studio
+  gives them from their labels (ELEC., E.R., LV, DB ROOM, SWITCHGEAR, كهرباء; IDF, MDF,
+  TELECOM, COMMS ROOM, اتصالات), and a room read before keeps *Utility* until its floor is
+  read again or you type it. A label only the language model reads is typed *Utility*.
   *Accept as it is* checks it without a change; *Use detected* takes your corrections
   away. **Capacity**: how many people it is meant to seat (see below). **Delete**
   (<kbd>Del</kbd>) takes what is not a room (a sliver, the outside) out of the plan,
@@ -400,6 +404,13 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   project file, and lists the types it brings, each *New*, *Changed* (and what) or
   *Same*: the new ones are chosen, a changed one only when you choose it. *Save as a
   file* gives the catalogue, or the types ticked, as a `.json` for another Studio.
+- **A drawing seen from above** (format 0.13.2): a type may carry its `plan`, the lines of
+  its CAD block exactly as a drawing has them (that L-desk, that ring table, that chair), and
+  its outline. The plan, the Place box, a furniture layout's preview and the Item types page
+  then draw it line for line in place of its shape's symbol, turned with the item; in 3D, a
+  desk or a table is its outline as a top on legs (a ring keeps its open middle), anything
+  else its outline raised to its height. Types come with their drawing in a catalogue file
+  (*Take from a file…*); a viewer that does not know `plan` draws its shape.
 - **A 3D model** for a type: in its editor, *Add a model…* takes a model of the real
   thing in the formats furniture is published in: glTF (`.glb`, or a `.gltf` with its
   files), FBX, OBJ, Collada (`.dae`), 3DS, 3MF, X3D, PLY or STL; or a `.zip` of one with

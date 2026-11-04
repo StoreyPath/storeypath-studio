@@ -93,7 +93,8 @@ ENTRANCE = "entrance"  # a change through a link: into a building, or out of one
 THROUGH = frozenset({"corridor", "ramp"})  # "along" it; anything else, "through" it
 TYPE_WORDS = {"elevator": "lift", "unspecified": "room", "open_area": "open area", "meeting_room": "meeting room",
               "living_room": "living room", "dining_room": "dining room", "dressing_room": "dressing room",
-              "prayer_room": "prayer room", "open_to_below": "void"}
+              "prayer_room": "prayer room", "open_to_below": "void", "electrical_room": "electrical room",
+              "idf_room": "IDF room"}
 
 
 class NoRoute(ValueError):

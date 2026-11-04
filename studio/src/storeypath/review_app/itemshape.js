@@ -4,8 +4,8 @@
 // the way a screen faces, a copier's lid, a bed's headboard and pillows, a kiosk's screen, what a
 // camera looks at; a desk and a table alone (their chairs items of their own, format 0.10); on
 // the ceiling a circle (a dome camera's turned to where it looks), and, asked, what a camera
-// covers out to its range (format 0.10). In the plan's metres, an item's
-// front its own -y. Review's plan (review/items.js) and the Item types page (itemtypes.js) draw it.
+// covers out to its range (format 0.10); a type with a plan (format 0.13.2) its drawing, line
+// for line, its outline its body. In the plan's metres, an item's front its own -y. Review's plan (review/items.js) and the Item types page (itemtypes.js) draw it.
 
 import { shapeOf } from "./fit.js";
 
@@ -106,6 +106,16 @@ export function assetShape(a, t, cls, { coverage = false } = {}) {
     } else if (shape === "camera") { // a dome: turned to where it looks
       g.append(svg("path", { class: "mark view", d: cameraMark(view, 0) }));
     }
+    return g;
+  }
+  if (t?.plan?.lines?.length) { // (format 0.13.2) its drawing, line for line, in place of its shape's symbol
+    g.dataset.shape = "plan";
+    const at = (q) => `${Math.round(q[0] * 1e4) / 1e4},${Math.round(q[1] * 1e4) / 1e4}`;
+    if (t.plan.outline?.length) {
+      g.append(svg("path", { class: "body", "fill-rule": "evenodd", fill: t.color || PLAIN,
+        d: t.plan.outline.map((poly) => poly.map((ring) => `M${ring.map(at).join("L")}Z`).join("")).join("") }));
+    } else g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t.color || PLAIN }));
+    g.append(svg("path", { class: "mark plan", d: t.plan.lines.map((l) => `M${l.map(at).join("L")}`).join("") }));
     return g;
   }
   g.append(svg("rect", { x: -w / 2, y: -d / 2, width: w, height: d, fill: t?.color || PLAIN }));

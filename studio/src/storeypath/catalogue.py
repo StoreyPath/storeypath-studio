@@ -81,6 +81,21 @@ class ItemField(BaseModel):
         return v
 
 
+MAX_PLAN_POINTS = 50_000  # a type's plan's points, lines and outline (format 0.13.2)
+Point = tuple[float, float]
+
+
+class ItemPlan(BaseModel):
+    """How a type's items look from above, line for line as a drawing has them (format
+    0.13.2; FORMAT.md, Plan drawings): metres in the type's own frame, its middle at (0, 0),
+    x across it, its front towards -y. ``lines``: polylines (a closed one repeats its first
+    point); ``outline``: its footprint for 3D, polygons of rings (the first the boundary,
+    the rest holes; the first point not repeated). Drawn in place of its shape."""
+
+    lines: list[list[Point]]
+    outline: list[list[list[Point]]] | None = None
+
+
 class ItemType(BaseModel):
     code: str  # stable identity, e.g. DESK-MANAGER
     name_en: str
@@ -96,6 +111,7 @@ class ItemType(BaseModel):
     # its 3D model in a package (format 0.9.2; models.py): models/<code>.glb, drawn in place of
     # its shape in 3D; None: none. It follows from the models Studio has, never from what is sent
     model: str | None = None
+    plan: ItemPlan | None = None  # its drawing seen from above (format 0.13.2); None: drawn by its shape
     # how many people work at one (a desk: 1; a bench of four: 4; a sofa: 0): counted
     # into the capacity of the room it stands in, unless the room's is set in review
     workplaces: int = Field(0, ge=0, le=100)
@@ -572,6 +588,46 @@ def check_types(types: list) -> None:
         v = t.get("elevation")
         if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 100):
             raise ValueError(f"{which}: elevation is in metres above the floor, 0 to 100")
+        if t.get("plan") is not None:
+            check_plan(which, t["plan"], t.get("width"), t.get("depth"))
+
+
+def check_plan(which: str, plan, width, depth) -> None:
+    """A type's plan (format 0.13.2) as FORMAT.md has it: lines of two points or more, rings
+    of three or more, every point a number within the type's box to 1 mm, at most
+    MAX_PLAN_POINTS. ValueError, saying which type and why."""
+    import math
+
+    w = width if isinstance(width, (int, float)) and not isinstance(width, bool) else 1.0
+    d = depth if isinstance(depth, (int, float)) and not isinstance(depth, bool) else 0.6
+    if not isinstance(plan, dict) or not isinstance(plan.get("lines"), list) or not plan["lines"]:
+        raise ValueError(f"{which}: its plan has no lines")
+    n = 0
+
+    def points(run, least: int, what: str) -> None:
+        nonlocal n
+        if not isinstance(run, list) or len(run) < least:
+            raise ValueError(f"{which}: its plan has {what} of fewer than {least} points")
+        for q in run:
+            ok = (isinstance(q, (list, tuple)) and len(q) == 2
+                  and all(isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c) for c in q))
+            if not ok or abs(q[0]) > w / 2 + 0.001 or abs(q[1]) > d / 2 + 0.001:
+                raise ValueError(f"{which}: its plan has a point {str(q)[:40]} outside its box ({w} x {d} m)")
+        n += len(run)
+
+    for line in plan["lines"]:
+        points(line, 2, "a line")
+    outline = plan.get("outline")
+    if outline is not None:
+        if not isinstance(outline, list):
+            raise ValueError(f"{which}: its plan's outline is not a list of polygons")
+        for poly in outline:
+            if not isinstance(poly, list) or not poly:
+                raise ValueError(f"{which}: its plan's outline has a polygon of no ring")
+            for ring in poly:
+                points(ring, 3, "a ring")
+    if n > MAX_PLAN_POINTS:
+        raise ValueError(f"{which}: its plan has {n} points, more than {MAX_PLAN_POINTS}")
 
 
 MAX_CATALOGUE = 16 << 20  # a catalogue's JSON, read from a file a person sends (types_in)

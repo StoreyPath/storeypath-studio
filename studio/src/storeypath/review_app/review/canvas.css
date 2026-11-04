@@ -130,7 +130,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 /* ---- items (furniture and equipment) ---------------------------------------------------- */
 #assets .asset { cursor: grab; }
 #map.drawing-tool #assets .asset { cursor: inherit; }
-#assets .asset rect, #assets .asset circle { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
+#assets .asset rect, #assets .asset circle, #assets .asset .body { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
 #assets .asset .front { stroke: var(--canvas-text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 #assets .asset .chair { fill: #5b5f69; }
 #assets .asset .chair.back { fill: var(--canvas-text); fill-opacity: .55; }
@@ -138,6 +138,8 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #assets .asset .mark { fill: none; stroke: rgba(0, 0, 0, .5); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 #assets .asset .mark.solid, #assets .asset .mark.screen { fill: rgba(0, 0, 0, .55); }
 #assets .asset .mark.view { stroke-dasharray: 3 2; }
+/* a type's drawing (format 0.13.2): line for line, finer than a symbol's marks */
+#assets .asset .mark.plan { stroke-width: .75; stroke-linejoin: round; stroke-linecap: round; }
 /* the way a camera looks (a screen, a kiosk faces) is part of it: a click inside it chooses the item,
    not the area under it (on a site plan a camera's body is a few pixels across) */
 #assets .asset .mark.view { pointer-events: visible; }
@@ -148,7 +150,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #assets .door-link { fill: none; stroke: var(--select); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke;
   pointer-events: none; }
 #assets .asset.ceiling circle { fill-opacity: .3; stroke-dasharray: 3 3; }
-#assets .asset.chosen rect, #assets .asset.chosen circle { stroke: var(--select); stroke-width: 3; }
+#assets .asset.chosen rect, #assets .asset.chosen circle, #assets .asset.chosen .body { stroke: var(--select); stroke-width: 3; }
 #assets .asset.retired { opacity: .35; }
 #map.in3d #assets { display: none; }
 #guides line { stroke: var(--select); stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
@@ -156,7 +158,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 @keyframes ping { from { opacity: 1; } to { opacity: 0; } }
 .preview .asset-ghost { fill: rgba(12, 166, 120, .25); stroke: #0ca678; stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .preview .asset-ghost.refused { fill: rgba(224, 49, 49, .2); stroke: #e03131; }
-.preview .asset-ghost.refused rect, .preview .asset-ghost.refused circle { fill: rgba(224, 49, 49, .35); stroke: #e03131; }
+.preview .asset-ghost.refused rect, .preview .asset-ghost.refused circle, .preview .asset-ghost.refused .body { fill: rgba(224, 49, 49, .35); stroke: #e03131; }
 
 /* ---- measure ---------------------------------------------------------------------------- */
 #measure { pointer-events: none; }

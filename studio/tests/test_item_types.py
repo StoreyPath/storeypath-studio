@@ -68,6 +68,22 @@ def test_what_a_person_saves_is_checked_beyond_reading_it():
     catalogue.check_types([{"code": "A", "shape": None, "width": 1.2, "elevation": 0}])  # (fine)
 
 
+
+def test_a_types_plan_format_0_13_2_is_checked_as_it_is_saved():
+    """A type's drawing seen from above: lines of two points or more, rings of three or more,
+    every point within its box to 1 mm; else refused, saying why."""
+    ring = [[-0.5, -0.3], [0.5, -0.3], [0.5, 0.3], [-0.5, 0.3]]
+    ok = {"code": "A", "width": 1.0, "depth": 0.6, "plan": {"lines": [ring + [ring[0]]], "outline": [[ring]]}}
+    catalogue.check_types([ok])
+    catalogue.check_types([{**ok, "plan": {"lines": [[[0.5005, 0.0], [0.0, 0.0]]]}}])  # (within 1 mm of its box)
+    for plan, said in (({"lines": []}, "no lines"), ({"lines": [[[0, 0]]]}, "a line of fewer than 2"),
+                       ({"lines": [[[0, 0], [0.6, 0]]]}, "outside its box"), ({"lines": [[[0, 0], [0, 0.31]]]}, "outside its box"),
+                       ({"lines": [[[0, 0], [0.1, 0]]], "outline": [[[[0, 0], [0.1, 0]]]]}, "a ring of fewer than 3"),
+                       ({"lines": [[[0, 0], ["x", 0]]]}, "outside its box")):
+        with pytest.raises(ValueError, match=said):
+            catalogue.check_types([{**ok, "plan": plan}])
+    assert catalogue.ItemType.model_validate({**ok, "name_en": "A"}).plan.outline[0][0][2] == (0.5, 0.3)
+
 # ---- the types a package carries -----------------------------------------------------------
 
 def test_a_package_carries_the_types_its_items_use_each_once_or_the_whole_catalogue(converted, tmp_path):
@@ -90,6 +106,18 @@ def test_a_package_carries_the_types_its_items_use_each_once_or_the_whole_catalo
     assert len(_types_of(tmp_path / "preview.storeypath")) == len(cat.types)
     with pytest.raises(Exception, match="item types"):
         export_package(ws, tmp_path / "x.storeypath", building=b_id, bake=False, record=False, item_types="some")
+    # (0.13.2) a type with a plan: carried as it is, and the package valid
+    cat = catalogue.default_catalogue()
+    desk = cat.get("DESK-MANAGER")
+    w, d = desk.width / 2, desk.depth / 2
+    desk.plan = catalogue.ItemPlan(lines=[[(-w, -d), (w, -d), (w, d), (-w, d), (-w, -d)], [(0, -d), (0, d)]],
+                                   outline=[[[(-w, -d), (w, -d), (w, d), (-w, d)]]])
+    export_package(ws, tmp_path / "plan.storeypath", building=b_id, bake=False, catalogue=cat, record=False)
+    assert validate_package(tmp_path / "plan.storeypath") == []
+    with zipfile.ZipFile(tmp_path / "plan.storeypath") as z:
+        got = {t["code"]: t["plan"] for t in json.loads(z.read("catalogue.json"))["types"]}
+    assert got["DESK-MANAGER"]["lines"][1] == [[0, -d], [0, d]] and len(got["DESK-MANAGER"]["outline"][0][0]) == 4
+    assert got["MEETING-TABLE-8"] is None
 
 
 def test_the_command_line_exports_every_item_type_when_asked(tmp_path):

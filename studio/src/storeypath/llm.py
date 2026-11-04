@@ -244,7 +244,11 @@ TYPE_GUIDE = {
     "room": "any other room that none of the types above fits: study, playroom, gym, classroom, library, a room with only a number",
 }
 # (a location's land has types of its own, read with a question of their own: siteplan.py)
-assert set(TYPE_GUIDE) == {t.value for t in SpaceType} - {"unspecified"} - {t.value for t in LAND_ONLY}
+# Types the rules alone give (profiles/ncs.yaml), not the model: format 0.13.1's, utility
+# before. Asking about them would change LABEL_QUESTION, and every project's labels would be
+# asked again; the model still answers utility for them.
+RULES_ONLY = {SpaceType.ELECTRICAL_ROOM.value, SpaceType.IDF_ROOM.value}
+assert set(TYPE_GUIDE) == {t.value for t in SpaceType} - {"unspecified"} - {t.value for t in LAND_ONLY} - RULES_ONLY
 
 NOT_A_ROOM = "not_a_room"
 LABEL_SYSTEM = (

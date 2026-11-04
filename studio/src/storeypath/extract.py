@@ -917,7 +917,7 @@ LIFT_DOOR_M = 0.9  # an assumed lift door's width
 # A lift opens onto circulation, never into a bathroom or another shaft.
 NOT_FOR_LIFT_DOORS = {SpaceType.ELEVATOR, SpaceType.STAIRS, SpaceType.ESCALATOR, SpaceType.SHAFT,
                       SpaceType.RESTROOM, SpaceType.BATHROOM, SpaceType.STORAGE, SpaceType.UTILITY,
-                      SpaceType.OPEN_TO_BELOW}
+                      SpaceType.ELECTRICAL_ROOM, SpaceType.IDF_ROOM, SpaceType.OPEN_TO_BELOW}
 CIRCULATION = {SpaceType.CORRIDOR, SpaceType.LOBBY, SpaceType.OPEN_AREA, SpaceType.UNSPECIFIED}
 
 

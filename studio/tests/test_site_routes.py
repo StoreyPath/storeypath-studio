@@ -23,6 +23,7 @@ from storeypath.ids import LAND_CODE
 from storeypath.layout import convert_layout, place_all
 from storeypath.navigation import (NoRoute, build_network, build_site_network, route, site_entrances, site_graph,
                                    site_route, to_site)
+from storeypath.package import FORMAT_VERSION
 from storeypath.samples import (Cell, Door, sample_site_plan, site_plan_region, write_floor_dxf,
                                 write_site_plan_dxf)
 from storeypath.validate import validate_package
@@ -278,7 +279,7 @@ def test_the_layouts_package_carries_its_network_and_validates(tmp_path):
     out = tmp_path / "plot.storeypath"
     said = []
     m = export_layout_package(ws, out, layout, say=said.append)
-    assert m.files["navigation"] == "navigation.json" and m.format_version == "0.13.0"
+    assert m.files["navigation"] == "navigation.json" and m.format_version == FORMAT_VERSION
     assert validate_package(out) == [] and not [line for line in said if "no way in" in line]
     paths = {}
     for code, b_id in made.items():

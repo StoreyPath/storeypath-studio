@@ -56,14 +56,14 @@ STORE	storage
 STORAGE	storage
 ARCHIVE	storage
 مخزن	storage
-EE.RM.	utility
-ELEC.	utility
+EE.RM.	electrical_room
+ELEC.	electrical_room
 MECH. RM	utility
 SERVER	utility
-IDF	utility
+IDF	idf_room
 JANITOR	utility
 PUMP ROOM	utility
-غرفة كهرباء	utility
+غرفة كهرباء	electrical_room
 SHAFT	shaft
 RISER	shaft
 OPEN OFFICE	open_area

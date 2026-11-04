@@ -13,7 +13,9 @@ const WORDS = {
   restroom: ["wc", "toilet", "toilets", "men", "women", "ladies", "gents", "restroom", "washroom", "دورة", "حمامات"],
   kitchen: ["kitchen", "pantry", "kitchenette", "مطبخ"],
   storage: ["store", "storage", "stor", "str", "archive", "مخزن", "مستودع"],
-  utility: ["elec", "electrical", "mech", "mechanical", "server", "it", "tel", "ups", "plant", "janitor", "jan", "غرفة"],
+  utility: ["mech", "mechanical", "server", "it", "ups", "plant", "janitor", "jan", "غرفة"],
+  electrical_room: ["elec", "elect", "electrical", "ee", "lv", "db", "switchgear", "substation", "كهرباء"], // (format 0.13.1)
+  idf_room: ["idf", "mdf", "ter", "telecom", "telecoms", "comms", "tel", "اتصالات"], // (format 0.13.1)
   shaft: ["shaft", "duct", "riser"],
   open_area: ["open", "workstation", "workstations", "openplan"],
   bedroom: ["bedroom", "bed", "master", "غرفة نوم", "نوم"],

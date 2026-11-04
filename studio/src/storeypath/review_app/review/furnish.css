@@ -34,7 +34,7 @@ dialog.furnish > .furnish-plan { height: min(40vh, 320px); }
   vector-effect: non-scaling-stroke; }
 .furnish-plan .furnish-there { opacity: .45; }
 @media (max-width: 640px) { .furnish-body { grid-template-columns: 1fr; } }
-.furnish-plan .asset rect, .furnish-plan .asset circle { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
+.furnish-plan .asset rect, .furnish-plan .asset circle, .furnish-plan .asset .body { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
 .furnish-plan .asset .front { stroke: var(--canvas-text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .furnish-plan .asset .chair { fill: #5b5f69; }
 .furnish-plan .asset .chair.back { fill: var(--canvas-text); fill-opacity: .55; }
@@ -46,6 +46,6 @@ dialog.furnish > .furnish-plan { height: min(40vh, 320px); }
 .furnish-plan .preview { pointer-events: auto; }
 .furnish-plan .preview .asset-ghost.movable { cursor: grab; touch-action: none; }
 .furnish-plan .preview .asset-ghost.movable:active { cursor: grabbing; }
-.furnish-plan .preview .asset-ghost.picked rect, .furnish-plan .preview .asset-ghost.picked circle { stroke-width: 3; stroke-dasharray: none; }
+.furnish-plan .preview .asset-ghost.picked rect, .furnish-plan .preview .asset-ghost.picked circle, .furnish-plan .preview .asset-ghost.picked .body { stroke-width: 3; stroke-dasharray: none; }
 .furnish-plan { touch-action: none; }
 .furnish-hint { margin: 0; }

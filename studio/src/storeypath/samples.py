@@ -100,7 +100,7 @@ def office_floor(ordinal: int) -> list[Cell]:
     north = [(8, 12, "STORAGE"), (12, 16, "PANTRY"), (16, 20, "OFFICE"), (20, 24, "OFFICE"), (24, 28, None),
              (28, 32, "OFFICE"), (32, 36, "ELEC."), (36, 48, "RECEPTION" if ordinal == 0 else "OPEN OFFICE")]
     types = {"OFFICE": "office", "MEETING ROOM": "meeting_room", "STORAGE": "storage", "PANTRY": "kitchen",
-             "ELEC.": "utility", "RECEPTION": "lobby", "OPEN OFFICE": "open_area", None: "unspecified"}
+             "ELEC.": "electrical_room", "RECEPTION": "lobby", "OPEN OFFICE": "open_area", None: "unspecified"}
     seq = 1
     for x0, x1, name in south:
         style = "mtext" if name == "MEETING ROOM" else "text"
@@ -209,7 +209,7 @@ def simple_office() -> list[Cell]:
     south = [(3.6, 0, 6, 3, ["WC", "F0-316"], "restroom", Door(4.8, 3, "h", -1, 0.8), []),
              (6, 0, 9, 6, ["STAIR", "F0-317"], "stairs", Door(7.5, 6, "h", -1), []),
              (9, 3, 11.4, 6, ["LIFT", "F0-318"], "elevator", Door(10.2, 6, "h", -1, 1.0), ["ELEVATOR_CAR"]),
-             (9, 0, 11.4, 3, ["ELEC. ROOM", "F0-319"], "utility", Door(11.4, 1.5, "v", -1), []),
+             (9, 0, 11.4, 3, ["ELEC. ROOM", "F0-319"], "electrical_room", Door(11.4, 1.5, "v", -1), []),
              (11.4, 0, 15, 6, ["IT / SERVER ROOM", "F0-320"], "utility", Door(13.2, 6, "h", -1), []),
              (15, 0, 18, 6, ["STORAGE", "F0-321"], "storage", Door(16.5, 6, "h", -1), []),
              (18, 0, 21.6, 6, ["PRAYER ROOM", "F0-322"], "prayer_room", Door(19.8, 6, "h", -1), [])]
@@ -511,7 +511,7 @@ def main_floor(ordinal: int) -> list[Cell]:
             (30, 34, ["OFFICE", "009"], "office"),
             (34, 38, ["OFFICE", "010"], "office"),
             (38, 42, ["OFFICE", "011"], "office"),
-            (42, 46, ["ELEC.", "012"], "utility"),
+            (42, 46, ["ELEC.", "012"], "electrical_room"),
             (46, 56, ["CONFERENCE", "013"], "meeting_room"),
         ]
     elif ordinal == 1:
@@ -528,7 +528,7 @@ def main_floor(ordinal: int) -> list[Cell]:
             (18, 30, ["OPEN OFFICE", "111"], "open_area"),
             (30, 34, ["OFFICE", "112"], "office"), (34, 38, ["OFFICE", "113"], "office"),
             (38, 42, ["114"], "unspecified", {"windows": 1}),  # a number and no name: Review asks what it is
-            (42, 46, ["ELEC.", "115"], "utility"),
+            (42, 46, ["ELEC.", "115"], "electrical_room"),
             (46, 56, ["HUDDLE", "116"], "meeting_room"),
         ]
     else:
@@ -542,7 +542,7 @@ def main_floor(ordinal: int) -> list[Cell]:
             (10, 14, ["STORAGE", "206"], "storage", {"style": "tag"}), (14, 18, ["PANTRY", "207"], "kitchen"),
             (18, 26, ["OFFICE", "208"], "office"), (26, 34, ["MEETING ROOM", "209"], "meeting_room"),
             (34, 38, ["OFFICE", "210"], "office"), (38, 42, ["OFFICE", "211"], "office"),
-            (42, 46, ["ELEC.", "212"], "utility"), (46, 51, ["OFFICE", "213"], "office"), (51, 56, ["OFFICE", "214"], "office"),
+            (42, 46, ["ELEC.", "212"], "electrical_room"), (46, 51, ["OFFICE", "213"], "office"), (51, 56, ["OFFICE", "214"], "office"),
         ]
     return core + _row(south, True) + _row(north, False)
 

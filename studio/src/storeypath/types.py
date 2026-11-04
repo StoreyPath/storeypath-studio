@@ -21,6 +21,10 @@ class SpaceType(StrEnum):
     KITCHEN = "kitchen"
     STORAGE = "storage"
     UTILITY = "utility"
+    # Added in format 0.13.1, utility before: switchboards and distribution boards; a
+    # floor's telecom room (an intermediate distribution frame: racks, patch panels)
+    ELECTRICAL_ROOM = "electrical_room"
+    IDF_ROOM = "idf_room"
     SHAFT = "shaft"
     OPEN_AREA = "open_area"
     UNSPECIFIED = "unspecified"

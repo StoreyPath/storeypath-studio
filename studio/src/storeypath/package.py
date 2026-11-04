@@ -17,7 +17,7 @@ from .catalogue import OLD_CATEGORIES, Category
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.13.0"
+FORMAT_VERSION = "0.13.2"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
