@@ -106,6 +106,30 @@ def place_set(code: str, floor_id: str, request: Request, may: May, studio: TheS
     return answer(request, studio.review(code).place_set(floor_id, body, by=may.user, editor=may.editor))
 
 
+@calls.post(F + "/pieces")
+def place_items(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.floor(code, floor_id, "edit")  # (a furniture layout placed, or items pasted)
+    return answer(request, studio.review(code).place_items(floor_id, body, by=may.user, editor=may.editor))
+
+
+@calls.get("/api/projects/{code}/furnishings")
+def furnishings(code: str, request: Request, may: May, studio: TheStudio):
+    may.see(code)
+    return answer(request, studio.review(code).furnishings())
+
+
+@calls.post(F + "/furnishings")
+def save_furnishing(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.floor(code, floor_id, "edit")  # (made of a room of this floor)
+    return answer(request, studio.review(code).save_furnishing(floor_id, body, by=may.user, editor=may.editor))
+
+
+@calls.post("/api/projects/{code}/furnishings/{furnishing_id}/delete")
+def delete_furnishing(code: str, furnishing_id: str, request: Request, may: May, studio: TheStudio):
+    may.furnishing(code, furnishing_id)
+    return answer(request, studio.review(code).delete_furnishing(furnishing_id, by=may.user, editor=may.editor))
+
+
 @calls.post("/api/projects/{code}/items")
 def change_items(code: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.items(code, body)  # (each, as one alone is: edit on its floor)

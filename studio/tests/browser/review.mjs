@@ -360,6 +360,29 @@ test("a set placed in one go: each piece an item of its own, one group; a click 
     "the arrow moved the group", 5000, turned[desk.id]);
   const moved = Object.fromEntries((await items()).map((a) => [a.id, a]));
   truly(Math.abs(moved[chair.id].x - (turned[chair.id].x + 0.1)) < 1e-6, "the chair moved with the desk");
+  // Shift+H mirrors them left to right about their middle, Shift+V top to bottom; each undone
+  const three = placed.map((a) => moved[a.id]), mid = (k) => (Math.min(...three.map((a) => a[k])) + Math.max(...three.map((a) => a[k]))) / 2;
+  const [mx, my] = [mid("x"), mid("y")];
+  const turn = (id) => R((id) => Math.round(window.storeypathReview.state.floor.items.find((x) => x.id === id).rotation) % 360, id);
+  await press("h", ["shift"]);
+  await until((id) => Math.round(window.storeypathReview.state.floor.items.find((x) => x.id === id).rotation) === 270,
+    "Shift+H mirrored the group", 5000, desk.id);
+  const flippedX = Object.fromEntries((await items()).map((a) => [a.id, a]));
+  truly(three.every((a) => Math.abs(flippedX[a.id].x - (2 * mx - a.x)) < 1e-3 && Math.abs(flippedX[a.id].y - a.y) < 1e-3),
+    `mirrored left to right about x=${mx}: ${JSON.stringify(three.map((a) => [a.x, flippedX[a.id].x]))}`);
+  truly(await turn(desk.id) === 270 && await turn(chair.id) === 90, `facing the other way: ${await turn(desk.id)} ${await turn(chair.id)}`);
+  await press("v", ["shift"]);
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).y - (2 * d.my - d.y)) < 1e-3,
+    "Shift+V mirrored the group top to bottom", 5000, { ...flippedX[chair.id], my });
+  const flippedY = Object.fromEntries((await items()).map((a) => [a.id, a]));
+  truly(three.every((a) => Math.abs(flippedY[a.id].x - flippedX[a.id].x) < 1e-3), "top to bottom: none moved across");
+  truly(await turn(desk.id) === 270 && await turn(chair.id) === 90, "facing across the mirror: as they faced");
+  await press("z", ["mod"]);
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).y - d.y) < 1e-3, "⌘Z: Shift+V undone", 8000, flippedX[chair.id]);
+  await sleep(300);
+  await press("z", ["mod"]);
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).x - d.x) < 1e-3
+    && Math.round(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).rotation) === 270, "⌘Z: Shift+H undone", 8000, moved[chair.id]);
   // a click on the chair: the group; a double-click: the chair alone
   await press("Escape");
   await page.click(...await at(moved[chair.id]));
@@ -372,6 +395,29 @@ test("a set placed in one go: each piece an item of its own, one group; a click 
     () => page.mouse("mouseReleased", cx, cy, { params: { clickCount: 2 } })].map((call) => call()));
   await until((id) => window.storeypathReview.state.asset === id && document.getElementById("inspector").dataset.kind === "asset",
     "a double-click: the chair alone", 5000, chair.id);
+  // the group chosen, a click on its pedestal (under the desk, drawn over it): the pedestal alone;
+  // dragged, it alone moves; undone
+  const ped = placed[2];
+  await page.click(...await at(moved[desk.id]));
+  await until(() => window.storeypathReview.state.assets.length === 3, "the group chosen", 5000);
+  truly(await R((ids) => { const order = [...document.querySelectorAll("#assets [data-asset]")].map((g) => g.dataset.asset);
+    return order.indexOf(ids[1]) > order.indexOf(ids[0]); }, [desk.id, ped.id]), "the pedestal drawn over the desk");
+  await sleep(450); // (not a double-click)
+  await page.click(...await at(moved[ped.id]));
+  await until((id) => window.storeypathReview.state.asset === id && window.storeypathReview.state.assets.length === 1,
+    "a click on the pedestal in its group chosen: the pedestal alone", 5000, ped.id);
+  const pAt = await at(moved[ped.id]);
+  await page.drag(pAt, [pAt[0] + 25, pAt[1] + 15]);
+  await until((d) => Math.hypot(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).x - d.x,
+    window.storeypathReview.state.floor.items.find((x) => x.id === d.id).y - d.y) > 0.05, "the pedestal dragged", 5000, moved[ped.id]);
+  const dragged = Object.fromEntries((await items()).map((a) => [a.id, a]));
+  truly([desk.id, chair.id].every((id) => Math.abs(dragged[id].x - moved[id].x) < 1e-6 && Math.abs(dragged[id].y - moved[id].y) < 1e-6),
+    "the desk and the chair stayed where they were");
+  truly(dragged[ped.id].group === ped.group, "the pedestal still of the group");
+  await sleep(600); // (its move saved before it is undone)
+  await press("z", ["mod"]);
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).x - d.x) < 1e-6, "⌘Z: the pedestal back", 8000, moved[ped.id]);
+  await press("Escape");
   // ungrouped (⌘⇧G), each alone; two Shift-clicked and grouped again (⌘G)
   await page.click(...await at(moved[desk.id]));
   await until(() => window.storeypathReview.state.assets.length === 3, "the group chosen again", 5000);
@@ -398,6 +444,88 @@ test("a set placed in one go: each piece an item of its own, one group; a click 
     "⌘Z brought both back", 8000, [desk.id, chair.id]);
   noErrors("a set, its group");
   await press("Escape");
+});
+
+test("a furniture layout placed: its items in the preview dragged where they fit (red outside the room, green in it), R turns the one dragged, Reset; placed where they were put", async () => {
+  const office = await officeNamed("002"), other = (await rooms()).find((s) => s.name === "OFFICE" && s.number !== "002" && !s.ignored);
+  const api = (path, body) => R(async (path, body) => {
+    const r = await fetch(`/api/projects/${new URLSearchParams(location.search).get("p")}/${path}`, body === undefined ? {}
+      : { method: "POST", headers: { "X-StoreyPath": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return { status: r.status, data: await r.json() };
+  }, path, body);
+  const floor = await R(() => window.storeypathReview.state.floor.id);
+  const saved = await api(`floors/${floor}/furnishings`, { room: office.id, name: "Browser layout" });
+  truly(saved.status === 200 && saved.data.count >= 1, `a layout of office 002: ${JSON.stringify(saved)}`);
+  // right-click in another office: Place a furniture layout here…
+  await press("f"); // (the floor in view: the office on screen)
+  await until(() => !window.storeypathReview.state.busy, "the page not busy", 5000);
+  const [x, y] = await roomAt(other.id);
+  await page.mouse("mouseMoved", x, y);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "right", buttons: 2, clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "right", buttons: 0, clickCount: 1 });
+  await until(() => {
+    const b = [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Place a furniture layout here"));
+    b?.click();
+    return Boolean(b);
+  }, "the room's menu: Place a furniture layout here…", 5000);
+  await until((id) => {
+    const b = [...document.querySelectorAll("dialog.furnish[open] .furnish-choice")].find((b) => b.dataset.id === id);
+    b?.click();
+    return Boolean(b);
+  }, "the layout listed", 8000, saved.data.id);
+  truly(await R(() => document.getElementById("furnish-reset").disabled), "Reset: nothing to put back yet");
+  const ghost = (i) => R((i) => {
+    const g = document.querySelector(`dialog.furnish .preview .asset-ghost[data-i="${i}"]`), b = g.getBoundingClientRect();
+    const plan = document.querySelector("dialog.furnish .furnish-plan").getBoundingClientRect();
+    return { at: [b.left + b.width / 2, b.top + b.height / 2], refused: g.classList.contains("refused"), transform: g.getAttribute("transform"),
+      plan: [plan.left, plan.top, plan.right, plan.bottom] };
+  }, i);
+  // the piece to drag: one on top at its middle (a pedestal may lie under a desk)
+  const k = await R(() => [...document.querySelectorAll("dialog.furnish .preview .asset-ghost.movable")].find((g) => {
+    const b = g.getBoundingClientRect();
+    return document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest(".asset-ghost") === g;
+  })?.dataset.i ?? null);
+  truly(k !== null, "a piece of the preview to drag");
+  const g0 = await ghost(k);
+  // dragged out of the room (to the preview's corner): red, said so; back where it was: green
+  await page.drag(g0.at, [g0.plan[0] + 6, g0.plan[1] + 6]);
+  await until((k) => document.querySelector(`dialog.furnish .preview .asset-ghost[data-i="${k}"]`).classList.contains("refused")
+    && /outside the room/.test(document.querySelector("dialog.furnish .furnish-status").textContent), "dragged out of the room: red, said so", 5000, k);
+  truly(!(await R(() => document.getElementById("furnish-reset").disabled)), "Reset: something to put back");
+  await page.drag((await ghost(k)).at, g0.at);
+  await until((was, k) => document.querySelector(`dialog.furnish .preview .asset-ghost[data-i="${k}"]`).classList.contains("refused") === was,
+    "dragged back: as it was (green where it fitted)", 5000, g0.refused, k);
+  // R turns the one dragged last 90°; Reset puts every item back as the layout has it
+  const turnOf = (t) => Number((/rotate\(([-\d.e]+)\)/.exec(t) || [0, 0])[1]);
+  await press("r");
+  await until((was, k) => {
+    const t = document.querySelector(`dialog.furnish .preview .asset-ghost[data-i="${k}"]`).getAttribute("transform");
+    return Math.round(Number((/rotate\(([-\d.e]+)\)/.exec(t) || [0, 0])[1]) - was + 360) % 360 === 90;
+  }, "R turned it 90°", 5000, turnOf(g0.transform), k);
+  await R(() => document.getElementById("furnish-reset").click());
+  truly((await ghost(k)).transform === g0.transform && await R(() => document.getElementById("furnish-reset").disabled), "Reset: as the layout has it");
+  // moved a little and placed: the item stands where it was put
+  const fits0 = !(await ghost(k)).refused;
+  await page.drag(g0.at, [g0.at[0] + 4, g0.at[1] + 3], 4);
+  const put = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec((await ghost(k)).transform).slice(1).map(Number);
+  const okNow = !(await ghost(k)).refused;
+  const before = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
+  if (await R(() => !document.getElementById("furnish-place").disabled)) {
+    await R(() => document.getElementById("furnish-place").click());
+    await until(() => !document.querySelector("dialog.furnish[open]"), "placed: the dialog closed", 8000);
+    const got = await R((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).slice(n), before);
+    truly(got.length >= 1, "items placed");
+    if (okNow) {
+      truly(got.some((a) => Math.abs(a.x - put[0]) < 1e-3 && Math.abs(a.y - put[1]) < 1e-3), `one placed where it was put ${put}: ${JSON.stringify(got.map((a) => [a.x, a.y]))}`);
+    }
+    await press("z", ["mod"]);
+    await until((ids) => ids.every((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired), "⌘Z took them away", 8000, got.map((a) => a.id));
+  } else {
+    truly(!fits0 && !okNow, "Place offered when an item fits");
+    await press("Escape");
+  }
+  truly((await api(`furnishings/${saved.data.id}/delete`, {})).status === 200, "the layout deleted again");
+  noErrors("a layout placed, its items dragged");
 });
 
 test("a card reader placed by a door serves it: the line to it drawn, linked to none and again in the inspector; a camera chosen shows what it covers, every camera's on asking", async () => {

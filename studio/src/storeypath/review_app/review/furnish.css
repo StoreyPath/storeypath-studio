@@ -1,0 +1,51 @@
+/* Furniture layouts (furnish.js): the dialogs to make and place one. Tokens: theme.css. */
+dialog.furnish { width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--border-strong); border-radius: var(--r-xl); background: var(--overlay); color: var(--text); overflow: auto;
+  box-shadow: var(--shadow-lg); }
+dialog.furnish[open] { display: flex; flex-direction: column; gap: var(--sp-3); }
+dialog.furnish::backdrop { background: var(--scrim); }
+dialog.furnish p { margin: 0; }
+dialog.furnish .meta { color: var(--text-muted); font-size: var(--fs-sm); }
+dialog.furnish h2 { margin: 0; font-size: var(--fs-xl); }
+dialog.furnish h3 { margin: 0 0 var(--sp-1); font-size: var(--fs-md); }
+dialog.furnish .field { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); }
+dialog.furnish input[type="text"] { width: 100%; box-sizing: border-box; }
+.furnish-head { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+.furnish-status { font-size: var(--fs-md); }
+.furnish-status.error { color: var(--danger-text); }
+.furnish-buttons { display: flex; gap: var(--sp-2); justify-content: flex-end; align-items: center; }
+.furnish-buttons .grow { flex: 1; }
+.furnish-body { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: var(--sp-4); align-items: start; }
+.furnish-side { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.furnish-main { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.furnish-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; border: 1px solid var(--border);
+  border-radius: var(--r-md); }
+.furnish-list li + li { border-top: 1px solid var(--border-subtle); }
+.furnish-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px var(--sp-2);
+  border: 0; background: none; color: var(--text); text-align: start; cursor: pointer; }
+.furnish-choice[aria-checked="true"] { background: var(--accent-soft, rgba(59, 130, 246, .14)); }
+.furnish-name { font-weight: 600; }
+.furnish-corners { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.furnish-corner[aria-checked="true"] { border-color: var(--accent, #3b82f6); color: var(--accent, #3b82f6); font-weight: 600; }
+.furnish-plan { display: block; width: 100%; height: min(46vh, 380px); background: var(--canvas-paper); border: 1px solid var(--border);
+  border-radius: var(--r-md); }
+dialog.furnish > .furnish-plan { height: min(40vh, 320px); }
+.furnish-room { fill: var(--room-fill, rgba(148, 163, 184, .18)); stroke: var(--text-muted); stroke-width: 1.5;
+  vector-effect: non-scaling-stroke; }
+.furnish-plan .furnish-there { opacity: .45; }
+@media (max-width: 640px) { .furnish-body { grid-template-columns: 1fr; } }
+.furnish-plan .asset rect, .furnish-plan .asset circle { stroke: rgba(0, 0, 0, .55); stroke-width: 1; vector-effect: non-scaling-stroke; fill-opacity: .85; }
+.furnish-plan .asset .front { stroke: var(--canvas-text); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.furnish-plan .asset .chair { fill: #5b5f69; }
+.furnish-plan .asset .chair.back { fill: var(--canvas-text); fill-opacity: .55; }
+/* the mark of how it is drawn (itemshape.js): a sofa's seat, a copier's lid, a bed's pillows… */
+.furnish-plan .asset .mark { fill: none; stroke: rgba(0, 0, 0, .5); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.furnish-plan .asset .mark.solid, .furnish-plan .asset .mark.screen { fill: rgba(0, 0, 0, .55); }
+.furnish-plan .asset .mark.view { stroke-dasharray: 3 2; }
+/* the place dialog's preview: its items dragged where they fit (canvas.css takes pointers off a preview) */
+.furnish-plan .preview { pointer-events: auto; }
+.furnish-plan .preview .asset-ghost.movable { cursor: grab; touch-action: none; }
+.furnish-plan .preview .asset-ghost.movable:active { cursor: grabbing; }
+.furnish-plan .preview .asset-ghost.picked rect, .furnish-plan .preview .asset-ghost.picked circle { stroke-width: 3; stroke-dasharray: none; }
+.furnish-plan { touch-action: none; }
+.furnish-hint { margin: 0; }

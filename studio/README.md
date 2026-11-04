@@ -249,6 +249,9 @@ log).
 | `POST …/floors/<id>/edits`, `…/items`, `POST …/objects/<id>` | edit on the floor, and the rooms the change touches (it takes their locks; 423 while someone else holds one) |
 | `POST …/floors/<id>/convert` | edit on the floor, while nobody else is editing a room of it (423) |
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and the rooms it leaves and comes to) |
+| `POST …/floors/<id>/pieces`, `…/floors/<id>/furnishings` | edit on the floor: items placed in one go (a furniture layout placed in a room, items pasted: one change, the rooms they stand in locked), or a furniture layout made of the items of one of its rooms |
+| `GET …/furnishings` | any access to the project: its furniture layouts |
+| `POST …/furnishings/<id>/delete` | edit on the floor it was taken from, or on the whole project |
 | `POST …/floors/<id>/release` | view on the floor: the rooms they are editing on it let go (Done editing; leaving the floor) |
 | `POST …/floors/<id>/take-over {room?}` | an admin who sees the floor: a room (or every room) others are editing on it taken over, recorded in the history and the audit log |
 | `POST …/floors/<id>/delete {confirm}` | edit on its building, its name typed (`confirm`), nobody else editing a room of it (423): the floor taken out, its rooms, doors and items retired (IDs never issued again), its drawing kept; recorded (a barrier no undo goes back over) and audited |

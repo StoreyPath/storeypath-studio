@@ -117,7 +117,7 @@ def site(tmp_path_factory):
         ids = {"code": code, "hq": hq, "annex": annex, "hq0": hq0, "hq1": hq1, "an0": an0, "item": item.id,
                "space": space, "lift": lift, "loc": f"{code}-NOPE", "footprint": f"{code}-DEMO-LAND-G00-0001", "spare": users["spare"].id,
                "resettable": users["resettable"].id, "hq_pkg": packages[0].name, "annex_pkg": packages[1].name,
-               "drawing": "hq-level-0.dxf", "token": "abc", "type": "SOFA", "notes": "notes.txt", "missing": "missing.dxf"}
+               "drawing": "hq-level-0.dxf", "token": "abc", "type": "SOFA", "furnishing": "LNOPE0000", "notes": "notes.txt", "missing": "missing.dxf"}
         s = Site(srv.server_port, studio, accounts, ids, tokens, users, None, srv.app)
         status, job, _ = s.send("POST", f"/api/projects/{code}/export", {"building": annex}, tokens["admin"])
         assert status == 200, job
@@ -277,6 +277,16 @@ ROWS = [
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/items", {"items": [{"id": "{item}", "x": "far"}]}, ok=(400, "is a number"),
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
+    # items placed in one go (a furniture layout, a paste), and a layout made of a room: edit
+    # on the floor; the project's layouts: any access; one deleted: edit on the floor it was
+    # taken from or on the whole project (one that is not there: the whole project's)
+    Row("POST", C + "/floors/{hq0}/pieces", {"items": [{"type": "NOPE", "x": 1, "y": 1}]}, ok=(400, "no item type"),
+        passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
+    Row("GET", C + "/furnishings", ok=200, passes=PROJECT, hidden=OUTSIDE),
+    Row("POST", C + "/floors/{hq0}/furnishings", {"room": "{space}", "name": ""}, ok=(400, "name"),
+        passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/furnishings/{furnishing}/delete", {}, ok=(404, "no furniture layout"), passes={"admin", "owner"},
+        hidden=OUTSIDE),
     # an item by its ID as a person typed it: view on its floor
     Row("GET", C + "/items/{item}", ok=200, passes={"admin", "owner", "floor_viewer"},
         hidden=OUTSIDE | {"building_editor"}),

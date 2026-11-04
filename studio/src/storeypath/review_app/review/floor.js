@@ -4,6 +4,7 @@
 import { viewOnly } from "./access.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
+import { loadFurnishings } from "./furnish.js";
 import { loadCatalogue, renderAssets } from "./items.js";
 import { say, toast } from "./notify.js";
 import { clearUnderlay, fit, renderPlan, showUnderlay } from "./plan.js";
@@ -33,6 +34,7 @@ export async function start(ready) {
   await ready?.(state.project);
   emit("project");
   await loadCatalogue();
+  loadFurnishings(); // (the right-click menu offers placing one when there are)
   const { floors } = state.project;
   const hash = new URLSearchParams(location.hash.slice(1));
   const first = floors.find((f) => f.id === hash.get("floor")) || floors.find((f) => f.review) || floors[0];

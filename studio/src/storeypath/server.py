@@ -3130,6 +3130,16 @@ class Gate:
             self.item(code, a["id"], a)
         return sight
 
+    def furnishing(self, code: str, furnishing_id: str) -> Sight:
+        """A furniture layout deleted: edit on the floor it was taken from, or on the whole
+        project; one that is not there, edit on the whole project to be told so."""
+        sight = self.see(code)
+        f = self._workspace(code).furnishings.get(furnishing_id)
+        if f is not None and sight.floor(f.floor_id) and rank(sight.floor(f.floor_id)) >= rank("edit"):
+            return sight
+        _need(sight.project, "edit", "the floor it was taken from, or the whole project")
+        return sight
+
     def add_floors(self, code: str, body: dict) -> Sight:
         """Floors added from one of the project's drawings: edit on each building they go
         into (on the project for a new building or location), and view on the whole

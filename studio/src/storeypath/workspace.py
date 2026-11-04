@@ -410,6 +410,32 @@ class Item(BaseModel):
     retired_at: datetime | None = None
 
 
+class FurnishingPiece(BaseModel):
+    """One item of a furniture layout: its type, where it stands from the corner of the
+    room it was taken from (the room's box, its least x and y: local metres) and its turn."""
+
+    type: str  # catalogue type code
+    x: float
+    y: float
+    rotation: float = 0.0  # degrees, counter-clockwise, as an item's
+
+
+class Furnishing(BaseModel):
+    """A furniture layout of the project: the items of a room, kept to be placed again in
+    any room of it (review.py save_furnishing, place_items). Its pieces stand from the
+    corner of the room's box; ``width`` and ``depth`` are that box's size."""
+
+    id: str  # L and eight symbols (Crockford's base32)
+    name: str
+    floor_id: str  # the floor it was taken from
+    room: str | None = None  # the room it was taken from, as named then
+    width: float
+    depth: float
+    pieces: list[FurnishingPiece] = Field(default_factory=list)
+    created_by: str | None = None  # who saved it, as named then
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Workspace(BaseModel):
     format: Literal["storeypath-workspace"] = WORKSPACE_FORMAT
     format_version: int = WORKSPACE_VERSION
@@ -421,6 +447,7 @@ class Workspace(BaseModel):
     vision: dict[str, dict[str, Any]] = Field(default_factory=dict)  # what the vision model saw, per room shape
     exports: list[ExportRecord] = Field(default_factory=list)
     items: dict[str, Item] = Field(default_factory=dict)  # furniture and equipment, by ID
+    furnishings: dict[str, Furnishing] = Field(default_factory=dict)  # furniture layouts, by ID
 
     # ---- files -------------------------------------------------------------
 

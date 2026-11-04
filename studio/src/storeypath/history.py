@@ -16,7 +16,8 @@ Every change is a row of the project's history in Studio's database (db/store.py
               before and after {"overrides": {id: …}}); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
               open, import, floors, align, site, place, arrange, export, drawing, floor
-              deleted (a building's floor taken away: a barrier on that floor)…
+              deleted (a building's floor taken away: a barrier on that floor), furniture
+              layout (one saved or deleted: before and after {"furnishing": … or null})…
     floors    the floors it changed (none: the building's, or the project's)
     targets   the IDs it changed
     before, after   what it changed, as it was and as it became: an object's
@@ -296,6 +297,10 @@ def _describe(e: dict) -> str:
         "placed": f"placed {e.get('count') or 'the'} building(s) on their footprints on the layout",
         "north": f"set north on the site plan: its up faces {e.get('bearing')}°" if e.get("bearing") is not None
         else "set north on the site plan",
+        # a furniture layout of the project (review.py save_furnishing, delete_furnishing)
+        "furniture layout": (f"deleted the furniture layout {e.get('label') or ''}" if "delete" in (e.get("changes") or [])
+                             else f"saved the furniture layout {e.get('label') or ''} ({e.get('count') or 0} items)"
+                             ).replace("  ", " "),
     }
     return lines.get(kind) or kind or "changed the project"
 

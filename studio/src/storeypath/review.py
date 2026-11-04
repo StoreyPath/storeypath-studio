@@ -61,7 +61,7 @@ from shapely.ops import unary_union
 
 from .cad import DrawingError, meters_per_unit, read_drawing
 from . import finishes, history
-from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
+from .db.store import Changes, Editor, _same, _spaces, drawing_name, floor_of, room_at, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
@@ -70,7 +70,8 @@ from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .stacks import NOT_LINKED, STACK_TYPES
 from .types import LAND_TYPES, SpaceType
-from .workspace import DrawnOpening, FloorEdits, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
+from .workspace import (DrawnOpening, FloorEdits, Furnishing, FurnishingPiece, Item, ObjectRecord, Override,
+                        ResizedOpening, Workspace, utcnow)
 
 __all__ = ["Busy", "NotFound", "Review", "ProjectFile", "StoredProject", "File"]
 
@@ -243,6 +244,21 @@ def _divider(opening: ObjectRecord, areas: dict) -> list[list[list[float]]] | No
     edge = a.boundary.intersection(b.buffer(0.02))
     lines = [g for g in getattr(edge, "geoms", [edge]) if isinstance(g, LineString) and g.length >= 0.05]
     return [[[round(x, 3), round(y, 3)] for x, y in g.coords] for g in lines] or None
+
+
+FURNISHING_NAME_MAX = 80  # a furniture layout's name, in characters
+PIECES_MAX = 500  # items in a furniture layout, or placed in one go
+
+
+def _room_name(ws: Workspace, room: str) -> str | None:
+    """A room as it is named now (its name and number as corrected, else as read): None
+    when it has neither."""
+    o, fix = ws.objects.get(room), ws.overrides.get(room)
+    if o is None:
+        return None
+    name = fix.name if fix is not None and fix.name is not None else o.name
+    number = fix.number if fix is not None and fix.number is not None else o.number
+    return " ".join(x for x in (name, number) if x) or None
 
 
 def _dump(model) -> dict | None:
@@ -807,6 +823,140 @@ class Review:
             return ch, out
 
         return {"items": [self._item(it, cat) for it in self._change(fn, by, editor)]}
+
+    # ---- furniture layouts (workspace.Furnishing), items placed together ---------------
+
+    def furnishings(self) -> list[dict]:
+        """The project's furniture layouts, oldest first: each with its pieces, where they
+        stand from the corner of the room's box they were taken from."""
+        cat = self.catalogue()
+        return [self._furnishing(f, cat) for f in sorted(self.workspace().furnishings.values(),
+                                                          key=lambda f: (f.created_at, f.id))]
+
+    def _furnishing(self, f: Furnishing, cat=None) -> dict:
+        cat = cat or self.catalogue()
+        return {"id": f.id, "name": f.name, "floor_id": f.floor_id, "room": f.room, "width": f.width,
+                "depth": f.depth, "pieces": [p.model_dump(mode="json") for p in f.pieces], "count": len(f.pieces),
+                "missing": sorted({p.type for p in f.pieces if cat.get(p.type) is None or cat.get(p.type).retired}),
+                "created_by": f.created_by, "created_at": f.created_at.isoformat()}
+
+    def _new_furnishing_id(self, ws: Workspace) -> str:
+        """An ID for a new furniture layout: L and eight random symbols (Crockford's base32)."""
+        import secrets
+
+        while True:
+            key = "L" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(8))
+            if key not in ws.furnishings:
+                return key
+
+    def save_furnishing(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
+        """A furniture layout made of a room's items: ``{room, name}`` (a room of the floor;
+        a name of 1 to 80 characters no other layout of the project has, either case). Its
+        pieces are the items standing in the room (as an item's room is found: db/store.py
+        room_at), not taken away, each where it stands from the corner of the room's box
+        (its least x and y) and turned as it is; their IDs and details are not kept. One
+        change, in the project's history (a layout is deleted, not undone)."""
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("name: the furniture layout's name")
+        name = " ".join(name.split())
+        if len(name) > FURNISHING_NAME_MAX:
+            raise ValueError(f"name: {FURNISHING_NAME_MAX} characters at most")
+        room = body.get("room")
+        if not isinstance(room, str) or not room:
+            raise ValueError("room: the ID of the room it is taken from")
+        cat = self.catalogue()
+        who = who_of(by)
+        made_by = (who.get("name") or who.get("username")) if isinstance(who, dict) and not who.get("local") else None
+
+        def fn(ws: Workspace):
+            self._floor(ws, floor_id)
+            shape_ = next((g for sid, g in _spaces(ws, floor_id) if sid == room), None)
+            if shape_ is None:
+                raise NotFound(f"no room {room} on this floor")
+            if any(f.name.casefold() == name.casefold() for f in ws.furnishings.values()):
+                raise Conflict(f"a furniture layout is named {name} already: choose another name")
+            mine = [it for it in ws.items.values() if it.floor_id == floor_id and it.status == "active"
+                    and room_at(ws, floor_id, (it.x, it.y)) == room]
+            if not mine:
+                raise ValueError("there is no furniture in this room to make a layout of")
+            if len(mine) > PIECES_MAX:
+                raise ValueError(f"a furniture layout holds {PIECES_MAX} items at most; this room has {len(mine)}")
+            x0, y0, x1, y1 = shape_.bounds
+            mine.sort(key=lambda it: (round(it.y, 3), round(it.x, 3), it.id))
+            f = Furnishing(id=self._new_furnishing_id(ws), name=name, floor_id=floor_id, room=_room_name(ws, room),
+                           width=round(x1 - x0, 4), depth=round(y1 - y0, 4), created_by=made_by,
+                           pieces=[FurnishingPiece(type=it.type, x=round(it.x - x0, 4), y=round(it.y - y0, 4),
+                                                   rotation=round(it.rotation % 360, 4)) for it in mine])
+            ch = Changes(part="project", kind="furniture layout", targets=[f.id], before={"furnishing": None},
+                         after={"furnishing": _dump(f)}, more={"label": name, "count": len(f.pieces), "changes": ["save"]})
+            ch.furnishings[f.id] = f
+            return ch, f
+
+        return self._furnishing(self._change(fn, by, editor), cat)
+
+    def delete_furnishing(self, furnishing_id: str, by=None, editor: Editor | None = None) -> dict:
+        """A furniture layout taken away; what was placed of it stays as it is."""
+
+        def fn(ws: Workspace):
+            f = ws.furnishings.get(furnishing_id)
+            if f is None:
+                raise NotFound(f"no furniture layout {furnishing_id}")
+            ch = Changes(part="project", kind="furniture layout", targets=[f.id], before={"furnishing": _dump(f)},
+                         after={"furnishing": None}, more={"label": f.name, "count": len(f.pieces), "changes": ["delete"]})
+            ch.furnishings[f.id] = None
+            return ch, f
+
+        gone = self._change(fn, by, editor)
+        return {"id": gone.id, "deleted": True}
+
+    def place_items(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
+        """Items placed on a floor in one go (a furniture layout placed in a room, or items
+        pasted): ``{items: [{type, x, y, rotation?}], group?, label?}``, each where it is
+        given (local metres, degrees), with a new ID; one of a type that serves a door
+        linked to the nearest door, as one placed alone. With ``group`` (true when not
+        given and there are two or more), all of them one new group. ``label`` names them
+        in history (a layout's name). One change: undone, all of them are taken away."""
+        asked = body.get("items")
+        if not isinstance(asked, list) or not asked or not all(isinstance(a, dict) for a in asked):
+            raise ValueError("items: a list of {type, x, y, rotation?}, one or more")
+        if len(asked) > PIECES_MAX:
+            raise ValueError(f"items: {PIECES_MAX} at most at once")
+        group = body.get("group", len(asked) > 1)
+        if not isinstance(group, bool):
+            raise ValueError("group is true or false")
+        label = body.get("label")
+        if label is not None and (not isinstance(label, str) or not label.strip() or len(label) > 120):
+            raise ValueError("label: a name of 1 to 120 characters")
+        cat = self.catalogue()
+        wanted = []
+        for a in asked:
+            self._item_values(a.get("type"), None, cat)  # (a type of the catalogue, not retired)
+            wanted.append((a["type"], _number(a, "x"), _number(a, "y"), _number(a, "rotation", 0.0) % 360))
+        taken = getattr(self.source, "item_taken", None)
+
+        def fn(ws: Workspace):
+            self._floor(ws, floor_id)
+            key = self._new_group(ws) if group and len(wanted) > 1 else None
+            first = cat.get(wanted[0][0])
+            ch = Changes(part="item", kind="add", targets=[], floors={floor_id}, before={"items": {}}, after={"items": {}},
+                         more={"label": " ".join(label.split()) if label else
+                               first.name_en if len(wanted) == 1 else f"{len(wanted)} items",
+                               "changes": ["add"], "count": len(wanted)})
+            made = []
+            for code, x, y, rot in wanted:
+                t = cat.get(code)
+                it = Item(id=ws.new_item_id(lambda i: i in ch.items or (taken is not None and taken(i))), type=code,
+                          floor_id=floor_id, x=round(x, 4), y=round(y, 4), rotation=round(rot, 4), group=key,
+                          door_id=_nearest_door(ws, floor_id, (x, y)) if t.serves_door else None)
+                ch.items[it.id] = it
+                ch.targets.append(it.id)
+                ch.before["items"][it.id], ch.after["items"][it.id] = None, _dump(it)
+                made.append(it)
+            return ch, made
+
+        made = self._change(fn, by, editor)
+        return {"items": [self._item(it, cat) for it in made], "group": made[0].group}
 
     def find_item(self, text: str) -> dict:
         """An item by its ID as a person typed it (7k2q xm9f 4dp: either case, O for 0, I

@@ -1,5 +1,5 @@
 """Projects in Studio's database (ProjectStore): each project whole — its tree,
-objects, corrections, items, readings, what the vision model saw, its export history
+objects, corrections, items, readings, furniture layouts, what the vision model saw, its export history
 with the packages as sent, its drawings — and every change to it, recorded.
 
 Reading. ``current(code)`` is the project as it is now, as the Workspace the rest of
@@ -7,7 +7,7 @@ Studio works on: kept in memory, and read again (one statement, the database mak
 the JSON the Workspace is read from) when its ``version`` moved. It is shared: never
 to be changed. ``load(code, building=None, floors=None)`` is a Workspace of one's own,
 to change and save: whole, or with only one building's or some floors' objects,
-corrections and items (the tree, readings, vision and exports are always whole).
+corrections and items (the tree, readings, furniture layouts, vision and exports are always whole).
 
 Writing. Every change is one transaction that raises the project's ``version`` first
 (which holds the project's row until it commits: changes to one project are made one
@@ -63,8 +63,8 @@ from shapely.geometry import LineString, Point, Polygon, shape
 
 from ..errors import Conflict, Locked, NotFound
 from ..ids import LAND_CODE
-from ..workspace import (ExportRecord, FloorEdits, Item, Location, ObjectRecord, Override, Project, Reading,
-                         Workspace)
+from ..workspace import (ExportRecord, FloorEdits, Furnishing, Item, Location, ObjectRecord, Override, Project,
+                         Reading, Workspace)
 from . import CHANNEL, Database
 
 COMMAND_LINE = "command line"  # who a change from the command line is of
@@ -344,6 +344,7 @@ class Changes:
     overrides: dict[str, Override | None] = field(default_factory=dict)
     items: dict[str, Item | None] = field(default_factory=dict)
     readings: dict[str, Reading | None] = field(default_factory=dict)
+    furnishings: dict[str, Furnishing | None] = field(default_factory=dict)  # furniture layouts, by ID
     vision: dict[str, dict | None] = field(default_factory=dict)
     exports: dict[int, ExportRecord | None] = field(default_factory=dict)  # by position
     export_bytes: dict[str, bytes] = field(default_factory=dict)  # file -> the package as sent
@@ -361,7 +362,7 @@ class Changes:
 
     def empty(self) -> bool:
         return not (self.project or self.tree is not None or self.edits or self.objects or self.overrides
-                    or self.items or self.readings or self.vision or self.exports or self.export_bytes
+                    or self.items or self.readings or self.furnishings or self.vision or self.exports or self.export_bytes
                     or self.drawings or self.words)
 
     def apply(self, base: Workspace) -> Workspace:
@@ -378,7 +379,7 @@ class Changes:
             update["locations"] = self.tree
         elif self.edits:
             update["locations"] = _with_edits(base, self.edits)
-        for name in ("objects", "overrides", "items", "readings", "vision"):
+        for name in ("objects", "overrides", "items", "readings", "furnishings", "vision"):
             changed = getattr(self, name)
             if changed:
                 d = dict(getattr(base, name))
@@ -519,6 +520,10 @@ SELECT p.version, json_build_object(
   'readings', COALESCE((SELECT json_object_agg(r.text, json_build_object(
       'type', r.type, 'source', r.source, 'rooms_only', r.rooms_only, 'asked', r.asked) ORDER BY r.position)
       FROM readings r WHERE r.project = p.code), '{{{{}}}}'),
+  'furnishings', COALESCE((SELECT json_object_agg(n.id, json_build_object(
+      'id', n.id, 'name', n.name, 'floor_id', n.floor, 'room', n.room, 'width', n.width, 'depth', n.depth,
+      'pieces', n.pieces, 'created_by', n.created_by, 'created_at', n.created_at) ORDER BY n.position)
+      FROM furnishings n WHERE n.project = p.code), '{{{{}}}}'),
   'vision', COALESCE((SELECT json_object_agg(x.key, x.answer ORDER BY x.position) FROM vision x
                       WHERE x.project = p.code), '{{{{}}}}'),
   'exports', COALESCE((SELECT json_agg(e.record ORDER BY e.position) FROM exports e
@@ -898,6 +903,18 @@ class ProjectStore:
                     "INSERT INTO readings (project, text, type, source, rooms_only, asked) VALUES (%s, %s, %s, %s, %s, "
                     "%s) ON CONFLICT (project, text) DO UPDATE SET type = EXCLUDED.type, source = EXCLUDED.source, "
                     "rooms_only = EXCLUDED.rooms_only, asked = EXCLUDED.asked", put)
+            gone = [(code, k) for k, f in ch.furnishings.items() if f is None]
+            put = [(code, f.id, f.name, f.floor_id, f.room, f.width, f.depth,
+                    _j([p.model_dump(mode="json") for p in f.pieces]), f.created_by, f.created_at)
+                   for f in ch.furnishings.values() if f is not None]
+            if gone:
+                cur.executemany("DELETE FROM furnishings WHERE project = %s AND id = %s", gone)
+            if put:
+                cur.executemany(
+                    "INSERT INTO furnishings (project, id, name, floor, room, width, depth, pieces, created_by, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, id) DO UPDATE SET "
+                    "name = EXCLUDED.name, floor = EXCLUDED.floor, room = EXCLUDED.room, width = EXCLUDED.width, "
+                    "depth = EXCLUDED.depth, pieces = EXCLUDED.pieces", put)
             gone = [(code, k) for k, v in ch.vision.items() if v is None]
             put = [(code, k, _j(v)) for k, v in ch.vision.items() if v is not None]
             if gone:
@@ -1515,6 +1532,11 @@ def diff(ws: Workspace, base: Workspace, scope=None) -> Changes:
             ch.readings[k] = r.model_copy(deep=True)
     for k in base.readings.keys() - ws.readings.keys():
         ch.readings[k] = None
+    for k, f in ws.furnishings.items():
+        if k not in base.furnishings or not _same(f, base.furnishings[k]):
+            ch.furnishings[k] = f.model_copy(deep=True)
+    for k in base.furnishings.keys() - ws.furnishings.keys():
+        ch.furnishings[k] = None
     for k, v in ws.vision.items():
         if k not in base.vision or not _same(v, base.vision[k]):
             ch.vision[k] = json.loads(_dumps(v))

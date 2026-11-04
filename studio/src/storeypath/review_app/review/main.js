@@ -23,6 +23,7 @@ import { openFloor, start } from "./floor.js";
 import { setupFloorStack } from "./floorstack.js";
 import { setupHeld } from "./held.js";
 import { setupInspector } from "./inspector.js";
+import { setupFurnish } from "./furnish.js";
 import { setupItems } from "./items.js";
 import { allBindings, effectiveMap, keyConflicts } from "./keys.js";
 import { setupLayout } from "./layout.js";
@@ -64,6 +65,7 @@ setupDrawing();
 vertical.setup({ state, BASE, request, followJob, openFloor, fillFloorSelect: () => emit("project"), saveSpace, toast, el, emit,
   tool, setTool, snapWall, preview, toolClick, backCorner, clearPreview, viewOnly, readable, select });
 setupItems();
+setupFurnish();
 finish.setup({ state, BASE, request, toast, el, icon, emit, tool, setTool, saveSpace, viewOnly, editable, units, title, spaceAt,
   updated: updatedSpaces,
   restyle: () => {

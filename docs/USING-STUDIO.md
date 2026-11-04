@@ -368,6 +368,19 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   named in the inspector) chooses that piece alone. *Ungroup* (<kbd>⌘⇧G</kbd>) lets the
   pieces go (each keeps its ID); Shift- or ⌘-click items to choose several, and *Group*
   (<kbd>⌘G</kbd>) makes them one.
+- **Furniture layouts** keep a room's furniture to furnish other rooms the same way:
+  right-click a furnished room, *Create a furniture layout from this room…*, name it and
+  check its preview. In any room of the project, *Place a furniture layout here…*: choose
+  the layout and the corner of the room it lines up with; each item keeps its real size
+  and where it stood from that corner, and one that would stand outside the room or
+  across a wall is drawn red and left out. Drag an item of the preview to move it where it
+  fits (it turns green there); <kbd>R</kbd> turns the one dragged last 90°
+  (<kbd>Shift</kbd>+<kbd>R</kbd> back), and *Reset* puts them all back. *Place* puts in
+  those that fit, one group, undone as one. Layouts are the project's, the same for everyone on it; one is deleted in the same
+  dialog (what was placed of it stays).
+- **Copy and paste**: right-click an item (or a group), *Copy* (<kbd>⌘C</kbd>), then
+  right-click where it goes, *Paste here*, or point there and press <kbd>⌘V</kbd>, on any
+  floor of the project.
 - **A card reader and its door**: a card reader, a door controller, an exit button or an
   intercom serves a door. Placed within 2 m of one, it is linked to the nearest; chosen,
   a dashed line on the plan joins it to its door, and the inspector's *The door it serves*
@@ -409,8 +422,13 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
 - **Place** one with the *Place* tool (<kbd>I</kbd>): find its type or set in the box at
   the top (type its name in English or Arabic, or open a category; the chip, Backspace or
   Esc goes back) and click where it goes (or right-click, *Place an item here…*). Drag it to
-  move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows
-  move it (Shift: further), <kbd>Del</kbd> deletes it. The inspector changes its type,
+  move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°,
+  <kbd>Shift</kbd>+<kbd>H</kbd> mirrors it left to right and <kbd>Shift</kbd>+<kbd>V</kbd>
+  top to bottom (or *Mirror…* in its right-click menu), the arrows move it (Shift:
+  further), <kbd>Del</kbd> deletes it. Mirrored, a group (a workstation, a meeting table
+  and its chairs) comes out the other way round: each item where the mirror puts it,
+  facing as it shows it. One item alone faces the other way, if it faced across the
+  mirror (its symbol is the same on both sides). The inspector changes its type,
   its turn, its floor (carry it to another floor or building) and its details; the
   navigator's *Items* lists the floor's items by type.
 - **It stays in its room, and lines up.** An item belongs to the room it was placed

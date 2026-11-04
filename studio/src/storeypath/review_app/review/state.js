@@ -37,6 +37,8 @@ export const state = {
   placeType: null, // the type being placed (tool "place")
   placeSet: null, // or the set (groups.js: its pieces, each an item of its own, one group)
   sets: [], // the sets the catalogue can place (catalogue.py default_sets)
+  furnishings: [], // the project's furniture layouts (furnish.js)
+  clipboard: null, // items copied, to paste in this project (furnish.js)
   busy: false, // an edit is being saved and the floor read again
   pending: [], // walls and dividing lines drawn, being read (["wall" | "divider", line]): drawn meanwhile
   reading: null, // the floor's drawing being read again: its job's ID (a person may stop it)

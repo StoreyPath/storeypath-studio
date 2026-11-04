@@ -8,7 +8,8 @@
 // its chairs, each piece an item of its own), in its options, click where it goes (in 3D
 // and walking, on the floor under the pointer: its ghost follows it). An item chosen, or
 // items chosen together (a group), in every view and whatever the tool: R turns it 90°
-// (Shift: back), , and . by 15°, Del deletes it; the arrows move it (Shift: further), but
+// (Shift: back), , and . by 15°, Shift+H and Shift+V mirror it (left to right, top to
+// bottom: groups.js), Del deletes it; the arrows move it (Shift: further), but
 // walking, where they walk (drag it instead); ⌘G groups items chosen, ⌘⇧G lets them go.
 
 import { editable, roomTaken, viewOnly, whyNotEditable } from "./access.js";
@@ -22,7 +23,7 @@ import { openInsert } from "./palette.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
 import { fits, inRings, itemBox, ringsOf, roomAt, settle } from "../fit.js";
 import { assetShape } from "../itemshape.js";
-import { groupAssets, moveAssets, placeSet, setBox, setGhost, setOf, turnAssets, ungroupAssets } from "./groups.js";
+import { groupAssets, mirrorAssets, mirrored, moveAssets, placeSet, setBox, setGhost, setOf, turnAssets, ungroupAssets } from "./groups.js";
 import { selectAsset } from "./selection.js";
 import { BASE, round4, state, typeOf, visible, view3d } from "./state.js";
 import { setTool, tool } from "./tools.js";
@@ -49,10 +50,19 @@ export function categories() {
   return [...groups];
 }
 
+/** Items in the order the plan draws them, the last on top: the larger under the smaller (a
+ * drawer pedestal over the desk it stands under, to be clicked), those chosen over the rest;
+ * as the floor lists them otherwise. A click takes the one on top (assetAt). */
+export function drawOrder(list) {
+  const area = (a) => { const t = typeOf(a.type) || a; return (t.width ?? 1) * (t.depth ?? 0.6); };
+  const chosen = (a) => (state.assets.includes(a.id) ? 1 : 0);
+  return list.map((a, i) => ({ a, i })).sort((p, q) => chosen(p.a) - chosen(q.a) || area(q.a) - area(p.a) || p.i - q.i).map((x) => x.a);
+}
+
 export function renderAssets() {
   const layer = $("assets");
   layer.replaceChildren();
-  for (const a of state.floor?.items || []) {
+  for (const a of drawOrder(state.floor?.items || [])) {
     if (a.retired && !state.showHidden) continue;
     const chosen = state.assets.includes(a.id);
     const g = assetShape(a, typeOf(a.type) || a, "asset", { coverage: chosen || state.showCoverage });
@@ -93,7 +103,7 @@ const ITEM_REACH_PX = 6;
  * shown ones only. */
 export function assetAt(p) {
   const shown = (state.floor?.items || []).filter((a) => !a.retired || state.showHidden);
-  for (const a of shown.slice().reverse()) {
+  for (const a of drawOrder(shown).reverse()) {
     const t = typeOf(a.type) || a;
     const r = (-(a.rotation || 0) * Math.PI) / 180, dx = p[0] - a.x, dy = p[1] - a.y;
     const u = dx * Math.cos(r) - dy * Math.sin(r), v = dx * Math.sin(r) + dy * Math.cos(r);
@@ -236,6 +246,19 @@ export function turnAsset(a, rot) {
   changeAsset(a, { rotation: round4(rot), ...moved });
 }
 
+/** An item mirrored where it stands (``axis``: groups.js mirrored): turned as the mirror
+ * shows it, kept in its room as when it is turned. One facing along the mirror looks the
+ * same mirrored: said so, nothing changed. */
+export function mirrorAsset(a, axis) {
+  if (viewOnly() || itemTaken(a)) return;
+  const rot = mirrored(a.rotation || 0, axis);
+  if (Math.abs(((rot - (a.rotation || 0)) % 360 + 540) % 360 - 180) < 1e-6) {
+    return toast(`It looks the same mirrored ${axis === "x" ? "left to right" : "top to bottom"}: it faces along the mirror. ` +
+      "Mirror its group, or turn it", true);
+  }
+  turnAsset(a, rot);
+}
+
 /** An item by its ID (as typed: ``tag`` normalised): chosen, on its floor (that floor
  * opened when it is another), and brought into view. Whether it was found; ``still()``
  * says whether it is still wanted (the person typed on). */
@@ -358,6 +381,8 @@ export function setupItems() {
   itemCommand("item.turn-back", "Turn the item back 90°", ["shift+r"], (a) => turnAsset(a, a.rotation + 270), false, (l) => turnAssets(l, -90));
   itemCommand("item.turn-left", "Turn the item 15° left", [","], (a) => turnAsset(a, a.rotation + 15), true, (l) => turnAssets(l, 15));
   itemCommand("item.turn-right", "Turn the item 15° right", ["."], (a) => turnAsset(a, a.rotation + 345), true, (l) => turnAssets(l, -15));
+  itemCommand("item.mirror-x", "Mirror the item left to right", ["shift+h"], (a) => mirrorAsset(a, "x"), false, (l) => mirrorAssets(l, "x"));
+  itemCommand("item.mirror-y", "Mirror the item top to bottom", ["shift+v"], (a) => mirrorAsset(a, "y"), false, (l) => mirrorAssets(l, "y"));
   for (const [key, dx, dy] of [["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
     itemCommand(`item.move-${key.slice(5)}`, `Move the item ${key.slice(5)}`, [key], (a) => nudgeAsset(a, dx * 0.1, dy * 0.1), true,
       (l) => moveAssets(l, dx * 0.1, dy * 0.1));

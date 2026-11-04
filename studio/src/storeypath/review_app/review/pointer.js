@@ -98,8 +98,10 @@ function bindPane(pane) {
     const asset = picked && editable() && !whyNotRoom(itemRoom(picked)) ? picked : null;
     drag = { mode: "press", x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
       asset, picked, from: asset ? [asset.x, asset.y] : null };
-    // one of items chosen together, or of a group: all of them carried as one (as they are: no magnet)
-    const together = asset && (state.assets.length > 1 && state.assets.includes(asset.id) ? chosenAll() : groupOf(asset));
+    // one of items chosen together, or of a group: all of them carried as one (as they are: no
+    // magnet); a piece of a group chosen alone (clicked in its group chosen), that piece alone
+    const alone = asset && state.assets.length === 1 && state.assets[0] === asset.id;
+    const together = asset && (alone ? [asset] : state.assets.length > 1 && state.assets.includes(asset.id) ? chosenAll() : groupOf(asset));
     if (asset && together.length > 1 && !(e.metaKey || e.ctrlKey)) {
       if (together.some((a) => whyNotRoom(itemRoom(a)))) drag.asset = null;
       else drag.many = together.map((a) => ({ a, from: [a.x, a.y] }));
@@ -201,11 +203,14 @@ function bindPane(pane) {
     if (moved) return;
     if (state.tool) return t?.plan?.click?.(p, e);
     if (picked) {
-      // a second click on one of a group, at once: that one alone (counted here: a click redraws
-      // the items, so the page's own dblclick never comes)
+      // a second click on one of a group, at once, or a click on one of a group chosen whole:
+      // that one alone, to drag or change by itself (counted here: a click redraws the items,
+      // so the page's own dblclick never comes)
       const now = performance.now(), again = lastPick.id === picked.id && now - lastPick.at < DOUBLE_MS;
       lastPick = { id: picked.id, at: now }; // (a third at once: alone still)
-      if (again && picked.group && !(e.metaKey || e.ctrlKey)) return selectAsset(picked.id, { alone: true });
+      const inChosen = picked.group && state.assets.length > 1 && state.assets.includes(picked.id)
+        && chosenAll().every((a) => a.group === picked.group);
+      if ((again || inChosen) && picked.group && !(e.metaKey || e.ctrlKey)) return selectAsset(picked.id, { alone: true });
       return selectAsset(picked.id, { add: e.metaKey || e.ctrlKey });
     }
     const door = openingNear(p);

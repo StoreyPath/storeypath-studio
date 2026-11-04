@@ -2,8 +2,9 @@
 // a lounge) is placed in one go: each piece an item of its own, with its own ID, and the
 // pieces one group (format 0.10: the items' `group`). A click on one of a group chooses the
 // group; a double-click, or a piece named in the inspector, that piece alone; Shift- or
-// ⌘-click adds an item to those chosen. Items chosen together are moved, turned (about their
-// middle), deleted, grouped (⌘G) and let go of their group (⌘⇧G) as one change, undone as one.
+// ⌘-click adds an item to those chosen. Items chosen together are moved, turned and mirrored
+// (about their middle), deleted, grouped (⌘G) and let go of their group (⌘⇧G) as one change,
+// undone as one.
 
 import { viewOnly } from "./access.js";
 import { request } from "./api.js";
@@ -65,7 +66,7 @@ export function middleOf(list) {
 
 /** The floor's items as Studio answered (``got``: items, each as Studio gives one), drawn
  * again in 2D and 3D; ``select``, chosen. */
-function took(got, { select = null } = {}) {
+export function took(got, { select = null } = {}) {
   const list = state.floor.items;
   for (const a of got) {
     const i = list.findIndex((x) => x.id === a.id);
@@ -117,6 +118,19 @@ export function turnAssets(list, deg) {
   const [cx, cy] = middleOf(list), r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
   return changeAssets(list.map((a) => ({ id: a.id, x: round4(cx + (a.x - cx) * c - (a.y - cy) * s),
     y: round4(cy + (a.x - cx) * s + (a.y - cy) * c), rotation: round4((((a.rotation || 0) + deg) % 360 + 360) % 360) })));
+}
+
+/** An item's turn mirrored (``axis`` "x": left to right, across the plan's up; "y": top to
+ * bottom): the way its front faces, as the mirror shows it. Its shape is the same on both
+ * sides (itemshape.js), so a mirrored item is the item turned so. */
+export const mirrored = (rot, axis) => ((((axis === "x" ? -rot : 180 - rot) % 360) + 360) % 360);
+
+/** Items mirrored together about their middle (``axis`` as mirrored's): each where the
+ * mirror takes it, facing as mirrored; a workstation's pedestal on its other side. */
+export function mirrorAssets(list, axis) {
+  const [cx, cy] = middleOf(list);
+  return changeAssets(list.map((a) => ({ id: a.id, ...(axis === "x" ? { x: round4(2 * cx - a.x) } : { y: round4(2 * cy - a.y) }),
+    rotation: round4(mirrored(a.rotation || 0, axis)) })));
 }
 
 /** Items taken away together (``retired``: false, brought back). */

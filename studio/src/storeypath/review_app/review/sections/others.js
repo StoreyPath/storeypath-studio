@@ -12,8 +12,8 @@ import { header, field, row, section } from "../inspector.js";
 import { el, icon } from "../dom.js";
 import { deleteItem, drawnLength, openingMeta, openingName, retype, sizeForm, turnChosenDoor } from "../drawing.js";
 import * as finish from "../finish.js";
-import { categories, changeAsset, copyId, doorOf, turnAsset } from "../items.js";
-import { deleteAssets, groupAssets, groupOf, turnAssets, ungroupAssets } from "../groups.js";
+import { categories, changeAsset, copyId, doorOf, mirrorAsset, turnAsset } from "../items.js";
+import { deleteAssets, groupAssets, groupOf, mirrorAssets, turnAssets, ungroupAssets } from "../groups.js";
 import { categoryName } from "../../categories.js";
 import { kbd, keysOf, keyText } from "../keys.js";
 import { toast } from "../notify.js";
@@ -114,6 +114,11 @@ function itemMain({ asset: a, editable: may }) {
     b.addEventListener("click", () => turnAsset(a, (a.rotation || 0) + deg));
     return b;
   };
+  const mirror = (axis, ico, tip) => {
+    const b = el("button", { type: "button", class: "btn-icon btn-sm", "aria-label": tip, "data-tip": tip, disabled: !may || null }, icon(ico, { size: 14 }));
+    b.addEventListener("click", () => mirrorAsset(a, axis));
+    return b;
+  };
   const floor = el("select", { id: "as-floor", "aria-label": "Floor", disabled: !may || null },
     ...state.project.floors.filter((f) => f.id === state.floor.id || editable(f.id))
       .map((f) => el("option", { value: f.id }, f.layout ? floorTitle(f) : `${f.building} · ${f.name}`)));
@@ -122,10 +127,13 @@ function itemMain({ asset: a, editable: may }) {
   const about = [t && `${t.width} × ${t.depth} m`, t?.mount === "ceiling" ? "on the ceiling" : t?.mount === "wall" ? "on a wall" : ""].filter(Boolean).join(" · ");
   return [row("Type", type, about ? el("div", { class: "detected" }, about) : null),
     row("Turned", el("div", { class: "with-unit" }, turn, el("span", { class: "unit" }, "°"), by(90, "rotate-ccw", `Turn 90° (${key("item.turn")})`),
-      by(-90, "rotate-cw", `Turn back 90° (${key("item.turn-back")})`))),
+      by(-90, "rotate-cw", `Turn back 90° (${key("item.turn-back")})`),
+      mirror("x", "flip-vertical-2", `Mirror left to right (${key("item.mirror-x")})`),
+      mirror("y", "flip-horizontal-2", `Mirror top to bottom (${key("item.mirror-y")})`))),
     row("Floor", floor, el("div", { class: "detected" }, "Carried to another floor, it keeps its ID")),
     may ? el("p", { class: "hint" }, "Drag it to move it: it lines up with walls and items and stays in its room (Alt: freely). ",
-      kbd("r"), " turns it 90°, ", kbd(","), " ", kbd("."), " by 15°", view3d.mode === "walk" ? "." : ", the arrows move it.") : null];
+      kbd("r"), " turns it 90°, ", kbd(","), " ", kbd("."), " by 15°, ", kbd("shift+h"), " ", kbd("shift+v"), " mirror it",
+      view3d.mode === "walk" ? "." : ", the arrows move it.") : null];
 }
 
 function itemDetails({ asset: a, editable: may }) {
@@ -212,7 +220,7 @@ function itemGroup({ asset: a, editable: may }) {
   const out = el("button", { type: "button", class: "btn-sm", disabled: !may || null,
     "data-tip": "Out of its group: moved and turned alone from now on; its ID stays" }, "Take it out");
   out.addEventListener("click", () => ungroupAssets([a]));
-  return [el("p", { class: "hint" }, `One of a group of ${all.length} items, placed or grouped together: a click chooses them all, a double-click this one alone.`),
+  return [el("p", { class: "hint" }, `One of a group of ${all.length} items, placed or grouped together: a click chooses them all; a click on one of them then, this one alone (to move it by itself).`),
     el("div", { class: "sec-actions" }, whole, el("span", { class: "grow" }), out)];
 }
 
@@ -258,6 +266,8 @@ function itemsActions({ assets, group, editable: may }) {
     group ? btn("Ungroup", "square-split-horizontal", () => ungroupAssets(assets), { "data-key": keysOf("item.ungroup")[0] || null })
       : btn("Group", "layers", () => groupAssets(assets), { "data-key": keysOf("item.group")[0] || null }),
     btn("Turn 90°", "rotate-ccw", () => turnAssets(assets, 90)),
+    btn("Mirror", "flip-vertical-2", () => mirrorAssets(assets, "x"), { "aria-label": "Mirror them left to right", "data-tip": `Mirror them left to right (${keyText(keysOf("item.mirror-x")[0] || "")})` }),
+    btn("Mirror", "flip-horizontal-2", () => mirrorAssets(assets, "y"), { "aria-label": "Mirror them top to bottom", "data-tip": `Mirror them top to bottom (${keyText(keysOf("item.mirror-y")[0] || "")})` }),
     el("span", { class: "grow" }),
     btn(deleted ? "Restore" : "Delete", deleted ? "rotate-cw" : "trash-2", () => deleteAssets(assets, !deleted),
       { class: deleted ? "btn-sm" : "btn-sm btn-danger", "data-key": "delete" }));

@@ -73,7 +73,8 @@ marks' legend, the pointer in metres and a scale; drag, the wheel, a pinch, − 
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
 | `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here |
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
-| `review/groups.js` | sets placed in one go, items chosen together: moved, turned, deleted, grouped and let go as one change |
+| `review/groups.js` | sets placed in one go, items chosen together: moved, turned, mirrored, deleted, grouped and let go as one change |
+| `review/furnish.js` | furniture layouts (a room's items kept as the project's, previewed and placed again in any room, lined up with a corner, its items dragged where they fit) and items copied and pasted |
 | `fit.js`, `itemshape.js` | where an item may stand and the magnet; how a type is drawn (`shapeOf`) and its symbol on a plan (the Item types page draws the same) |
 | `categories.js` | the item types' categories in their order, their names in English and Arabic and their icons (the Item types page and the box to find what to place) |
 | `review/measure.js` | the Measure tool |
@@ -203,6 +204,7 @@ ahead).
 | `O` | Door, window, opening tool | — (says why) | — (says why) |
 | `L` | Stairs and lifts tool | — (says why) | — (says why) |
 | `I` | Place an item tool | Place an item tool | Place an item tool |
+| `⌘/Ctrl+V` | Paste what was copied, where the pointer is | Paste what was copied, where the pointer is | Paste what was copied, where the pointer is |
 | `P` | Paint floors and walls tool | Paint floors and walls tool | Paint floors and walls tool |
 | `Shift+P` | Paint one wall tool | Paint one wall tool | Paint one wall tool |
 | `M` | Measure tool | — (says why) | — (says why) |
@@ -213,6 +215,9 @@ ahead).
 | `Shift+R` | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° |
 | `,` | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left |
 | `.` | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right |
+| `Shift+H` | — · *an item chosen:* Mirror the item left to right | — · *an item chosen:* Mirror the item left to right | — · *an item chosen:* Mirror the item left to right |
+| `Shift+V` | — · *an item chosen:* Mirror the item top to bottom | — · *an item chosen:* Mirror the item top to bottom | — · *an item chosen:* Mirror the item top to bottom |
+| `⌘/Ctrl+C` | — · *an item chosen:* Copy the item chosen (or its group) | — · *an item chosen:* Copy the item chosen (or its group) | — · *an item chosen:* Copy the item chosen (or its group) |
 | `E` | — | — | Open or close the door at the pointer, or ahead (at stairs: up) |
 | `Q` | — | — | Down the stairs or the lift |
 | `S` | — | — | Walk (the walker's) |
