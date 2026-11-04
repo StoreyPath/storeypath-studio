@@ -59,6 +59,7 @@ from typing import Any, Callable
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from shapely import STRtree
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from ..errors import Conflict, Locked, NotFound
@@ -189,11 +190,15 @@ def rooms_touched(base: Workspace, after: Workspace, ch: Changes) -> dict[str, s
         for ws in (base, after):
             for room in _rooms_of(ws.objects.get(oid), oid):
                 out.setdefault(floor_of(oid), set()).add(room)
-    for iid in ch.items:
-        for ws in (base, after):
+    for ws in (base, after):
+        by_floor: dict[str, list] = {}
+        for iid in ch.items:
             it = ws.items.get(iid)
             if it is not None and it.floor_id:
-                out.setdefault(it.floor_id, set()).add(room_at(ws, it.floor_id, (it.x, it.y)) or iid)
+                by_floor.setdefault(it.floor_id, []).append(it)
+        for floor, items in by_floor.items():
+            rooms = rooms_at(ws, floor, [(it.x, it.y) for it in items])
+            out.setdefault(floor, set()).update(room or it.id for it, room in zip(items, rooms))
     for fid, edits in ch.edits.items():
         near = rooms_near(base, fid, _drawn_changed(_edits_of(base, fid), edits))
         if near:
@@ -215,6 +220,29 @@ def room_at(ws: Workspace, floor: str, at) -> str | None:
     if hit is None:
         hit = next((sid for sid, g in _spaces(ws, floor, kind="zone") if g.covers(p)), None)
     return hit
+
+
+def rooms_at(ws: Workspace, floor: str, points: list) -> list[str | None]:
+    """room_at for many points of a floor: its rooms' shapes made once, however many points
+    (a floor's thousands of items, each trying its hundreds of rooms, took a minute)."""
+    if len(points) < 3:
+        return [room_at(ws, floor, at) for at in points]
+    rooms = list(_spaces(ws, floor))
+    tree = STRtree([g for _, g in rooms])
+    zones = zone_tree = None
+    out = []
+    for at in points:
+        p = Point(at)
+        hit = tree.query(p, predicate="covered_by")
+        if len(hit):
+            out.append(rooms[int(hit.min())][0])
+            continue
+        if zones is None:
+            zones = list(_spaces(ws, floor, kind="zone"))
+            zone_tree = STRtree([g for _, g in zones])
+        hit = zone_tree.query(p, predicate="covered_by")
+        out.append(zones[int(hit.min())][0] if len(hit) else None)
+    return out
 
 
 def room_name(ws: Workspace, room: str) -> str:

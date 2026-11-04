@@ -38,7 +38,7 @@ FIRST_LINE = "-- StoreyPath Studio backup"
 ROOT = "storeypath-data"  # every member of an older Studio's backup is under this folder
 # in the order they are loaded: each after those it refers to
 TABLES = ("users", "project_access", "grants", "audit", "projects", "locations", "buildings", "floors", "objects",
-          "overrides", "items", "readings", "vision", "drawings", "exports", "catalogue", "item_models", "settings",
+          "overrides", "items", "furnishings", "readings", "vision", "drawings", "exports", "catalogue", "item_models", "settings",
           "history")
 LEFT_OUT = ("sessions", "room_locks", "migrations")  # who is logged in, who is editing: not kept
 ORDER = {"history": "seq", "grants": "id", "audit": "id", "exports": "id"}

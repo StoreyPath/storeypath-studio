@@ -122,8 +122,7 @@ def place_items(code: str, floor_id: str, request: Request, may: May, studio: Th
 
 @calls.get("/api/projects/{code}/furnishings")
 def furnishings(code: str, request: Request, may: May, studio: TheStudio):
-    may.see(code)
-    return answer(request, studio.review(code).furnishings())
+    return answer(request, studio.review(code).furnishings(may.see(code)))
 
 
 @calls.post(F + "/furnishings")

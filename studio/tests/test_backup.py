@@ -14,7 +14,8 @@ from old_studio import studio_db
 from storeypath import accounts as acc
 from storeypath import db as studio_db_module
 from storeypath.accounts import Accounts
-from storeypath.backup import FIRST_LINE, ROOT, restore, write_backup
+from storeypath.backup import FIRST_LINE, LEFT_OUT, ROOT, TABLES, restore, write_backup
+from storeypath.db import SCHEMA
 from storeypath.db.store import ProjectStore
 from storeypath.review import Review, StoredProject
 from storeypath.workspace import ExportRecord
@@ -55,13 +56,22 @@ def test_a_backup_holds_everything_but_sessions_and_what_is_half_done(data):
     counts = write_backup(store.db, out)
     dump = text(out.getvalue())
     assert dump.startswith(FIRST_LINE + "\n-- {")
-    for table in ("users", "projects", "objects", "overrides", "drawings", "exports", "audit", "history", "catalogue"):
+    for table in ("users", "projects", "objects", "overrides", "furnishings", "drawings", "exports", "audit", "history", "catalogue"):
         assert f"COPY storeypath.{table} (" in dump
     assert "COPY storeypath.sessions" not in dump and hashlib.sha256(token.encode()).hexdigest() not in dump
     assert "not yet cleaned" not in dump and ".incoming-abc.dxf" not in dump  # its private information is in it
     assert "\\\\x" in dump  # (bytes, as COPY writes them)
-    assert counts["rows"] > 50 and counts["tables"] == 19
+    assert counts["rows"] > 50 and counts["tables"] == 20
     assert Accounts(folder).session(token) is not None  # the sessions of the Studio backed up are as they were
+
+
+def test_a_backup_knows_every_table(data):
+    # a table forgotten here is left out of every backup, with no error
+    _, store, _, _ = data
+    with store.db.transaction() as conn:
+        tables = {t for (t,) in conn.execute("SELECT table_name FROM information_schema.tables "
+                                             "WHERE table_schema = %s AND table_type = 'BASE TABLE'", (SCHEMA,))}
+    assert tables == {*TABLES, *LEFT_OUT}
 
 
 class Pipe:

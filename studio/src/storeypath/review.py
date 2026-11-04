@@ -65,7 +65,7 @@ from shapely.ops import unary_union
 
 from .cad import DrawingError, meters_per_unit, read_drawing
 from . import finishes, history, openings
-from .db.store import Changes, Editor, _same, _spaces, drawing_name, floor_of, put_floor, room_at, who_of
+from .db.store import Changes, Editor, _same, _spaces, drawing_name, floor_of, put_floor, rooms_at, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
@@ -841,12 +841,19 @@ class Review:
 
     # ---- furniture layouts (workspace.Furnishing), items placed together ---------------
 
-    def furnishings(self) -> list[dict]:
+    def furnishings(self, sight=None) -> list[dict]:
         """The project's furniture layouts, oldest first: each with its pieces, where they
-        stand from the corner of the room's box they were taken from."""
+        stand from the corner of the room's box they were taken from. A layout is the project's,
+        for anyone on it to place; to whom ``sight`` does not let see the floor it was taken
+        from, it says nothing of that floor, its room or who took it."""
         cat = self.catalogue()
-        return [self._furnishing(f, cat) for f in sorted(self.workspace().furnishings.values(),
-                                                          key=lambda f: (f.created_at, f.id))]
+        out = [self._furnishing(f, cat) for f in sorted(self.workspace().furnishings.values(),
+                                                         key=lambda f: (f.created_at, f.id))]
+        if sight is not None:
+            for f in out:
+                if not sight.floor(f["floor_id"]):
+                    f.update(floor_id=None, room=None, created_by=None)
+        return out
 
     def _furnishing(self, f: Furnishing, cat=None) -> dict:
         cat = cat or self.catalogue()
@@ -891,8 +898,8 @@ class Review:
                 raise NotFound(f"no room {room} on this floor")
             if any(f.name.casefold() == name.casefold() for f in ws.furnishings.values()):
                 raise Conflict(f"a furniture layout is named {name} already: choose another name")
-            mine = [it for it in ws.items.values() if it.floor_id == floor_id and it.status == "active"
-                    and room_at(ws, floor_id, (it.x, it.y)) == room]
+            standing = [it for it in ws.items.values() if it.floor_id == floor_id and it.status == "active"]
+            mine = [it for it, at in zip(standing, rooms_at(ws, floor_id, [(it.x, it.y) for it in standing])) if at == room]
             if not mine:
                 raise ValueError("there is no furniture in this room to make a layout of")
             if len(mine) > PIECES_MAX:

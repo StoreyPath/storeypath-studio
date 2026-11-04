@@ -2166,8 +2166,10 @@ function openCard() {
         const typed = prompt(e.data.building
           ? `${e.data.name} (${e.data.code}) is here, with this building already (${e.data.building}). Put the package's in its place? ` +
             `Its corrections since are lost; its floors keep their drawings, and the project's other buildings are left as they are. Type the project's name to replace it:`
-          : `${e.data.name} (${e.data.code}) is here already. Put the file in its place? What is here now ` +
-            `(its drawings, corrections and exports) is lost. Type the project's name to replace it:`);
+          : `${e.data.name} (${e.data.code}) is here already. Put the file in its place? What is here now is lost: ` +
+            `its drawings, corrections and exports, its ${e.data.items} item${e.data.items === 1 ? "" : "s"} and ` +
+            `${e.data.layouts} furniture layout${e.data.layouts === 1 ? "" : "s"}, with only what the file holds in their place. ` +
+            `Type the project's name to replace it:`);
         if (typed !== null) return open(file, typed);
         return;
       }

@@ -11,6 +11,8 @@ from shapely.geometry import shape
 
 from people import Team
 from storeypath import accounts as acc
+from storeypath.bundle import ProjectExists
+from storeypath.db.store import room_at, rooms_at
 
 
 @pytest.fixture
@@ -138,3 +140,42 @@ def test_a_layout_is_deleted_by_who_edits_its_floor_or_the_whole_project(team):
     assert team("khalid", "POST", f"furnishings/{f2['id']}/delete", {})[0] == 200  # (its maker, who edits its floor)
     ws = team.studio.workspace(team.code)
     assert all(ws.items[i["id"]].status == "active" for i in placed["items"])
+
+
+def test_a_layout_says_nothing_of_a_floor_the_person_cannot_see(team):
+    room = office(team, team.hq0)
+    furnish(team, room)
+    status, f = team("khalid", "POST", f"floors/{team.hq0}/furnishings", {"room": room.id, "name": "Office"})
+    assert status == 200 and f["floor_id"] == team.hq0 and f["room"] and f["created_by"]
+    # who edits the annex alone may place it, its name and pieces; not where it came from or who took it
+    _, [seen] = team("bob", "GET", "furnishings")
+    assert seen["name"] == "Office" and len(seen["pieces"]) == 2
+    assert seen["floor_id"] is None and seen["room"] is None and seen["created_by"] is None
+    # who sees its floor is told
+    _, [told] = team("vera", "GET", "furnishings")
+    assert told["floor_id"] == team.hq0 and told["room"] == f["room"]
+
+
+def test_rooms_at_finds_as_room_at_does(team):
+    ws = team.studio.workspace(team.code)
+    rooms = [r for r in team.spaces(team.hq0)]
+    points = [shape(r.geometry).representative_point() for r in rooms]
+    points = [(p.x, p.y) for p in points] + [(-500.0, -500.0), (points[0].x, -500.0)]
+    assert len(points) > 3
+    assert rooms_at(ws, team.hq0, points) == [room_at(ws, team.hq0, p) for p in points]
+    assert rooms_at(ws, team.hq0, points[:2]) == [room_at(ws, team.hq0, p) for p in points[:2]]
+    assert rooms_at(ws, team.hq0, []) == []
+
+
+def test_a_project_file_opened_over_the_project_says_what_it_takes_away(team):
+    room = office(team, team.hq0)
+    furnish(team, room)
+    assert team("khalid", "POST", f"floors/{team.hq0}/furnishings", {"room": room.id, "name": "Office"})[0] == 200
+    sent = team.studio.project_file(team.code)
+    with pytest.raises(ProjectExists) as e:
+        team.studio.open(sent.data)
+    assert e.value.layouts == 1
+    assert e.value.items == sum(it.status == "active" for it in team.studio.workspace(team.code).items.values()) >= 2
+    # a layout travels in the file
+    team.studio.open(sent.data, replace=e.value.name)
+    assert [f.name for f in team.studio.workspace(team.code).furnishings.values()] == ["Office"]

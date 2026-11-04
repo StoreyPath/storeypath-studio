@@ -2016,6 +2016,10 @@ class Studio:
                                                learn_types=learn_types, by=by)
                         except ProjectExists as e:
                             if replace is None:
+                                if not e.building:  # (a project file takes all of it away)
+                                    ws = self.store.load(incoming.code)
+                                    e.items = sum(it.status == "active" for it in ws.items.values())
+                                    e.layouts = len(ws.furnishings)
                                 raise
                             if replace.strip() != e.name.strip():
                                 raise ValueError(f"type the name of the project here, {e.name}, to replace "

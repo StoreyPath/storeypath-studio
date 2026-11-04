@@ -94,7 +94,8 @@ async def _not_found(request: Request, e: NotFound):
 
 
 async def _exists(request: Request, e: ProjectExists):
-    return as_json({"error": str(e), "code": e.code, "name": e.name, "building": e.building}, 409)
+    return as_json({"error": str(e), "code": e.code, "name": e.name, "building": e.building, "items": e.items,
+                    "layouts": e.layouts}, 409)
 
 
 async def _busy(request: Request, e: Busy):  # a job is changing the project: nothing changed

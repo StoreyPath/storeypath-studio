@@ -64,12 +64,15 @@ rules:
   - { type: open_area, label: '\bopen (office|plan|area)\b' }
   - { type: office, label: '\b(office|off\.?|manager|director)\b' }
   - { type: storage, label: '\b(stor(age|e)?|archive|file room)\b' }
-  # (0.13.1) a room for electrics and mechanics together is a technical room; then a floor's
-  # telecom room (IDF, MDF, TER), and an electrical room (EE.RM., E.R., LV, DB room, switchgear)
-  - { type: utility, label: '\belec(t|trical)?\.?\s*(/|&|and|\+)?\s*mech|\bmech(anical)?\.?\s*(/|&|and|\+)?\s*elec|\be\s*&\s*m\b' }
-  - { type: idf_room, label: '\b(idf|mdf|ter|bdf|telecoms?|telecommunications?|tel(ephone)?\.?\s*rooms?|comms?\.?\s*rooms?)\b|اتصالات' }
-  - { type: electrical_room, label: '\b(elec(t|trical)?|ee\.?\s*rm|e\.\s*r|lv|db|switch\s*(gear|room)|sub\s*-?\s*station)\b(\.?\s*(rm|rooms?))?|كهرباء' }
-  - { type: utility, label: '\b(elec(trical)?|mech(anical)?|server|it|data|janitor|jan\.?|utility|comms?)\b' }
+  # what runs through the floors, whatever it carries (a telecom riser, an LV shaft)
   - { type: shaft, label: '\b(shaft|riser|duct)s?\b' }
+  # (0.13.1) a room for electrics and mechanics together is a technical room; then a floor's
+  # telecom room (IDF, MDF), and an electrical room (EE.RM., DB room, switchgear). TER, LV, DB and
+  # E.R. alone are left to the language model: they may as well be a terrace, a living room, a
+  # database or an emergency room
+  - { type: utility, label: '\belec(t|trical)?\.?\s*(/|&|and|\+)?\s*mech|\bmech(anical)?\.?\s*(/|&|and|\+)?\s*elec|\be\s*&\s*m\b' }
+  - { type: idf_room, label: '\b(idf|mdf|bdf|telecoms?|telecommunications?|tel(ephone)?\.?\s*rooms?|comms?\.?\s*rooms?)\b|غرف[ةه]\s*(ال)?اتصالات' }
+  - { type: electrical_room, label: '\b(elec(t|trical)?|ee\.?\s*rm|(lv|db)\.?\s*(panel\s*)?rooms?|switch\s*(gear|room)|sub\s*-?\s*station)\b|غرف[ةه]\s*(ال)?كهرباء' }
+  - { type: utility, label: '\b(elec(trical)?|mech(anical)?|server|it|data|janitor|jan\.?|utility|comms?)\b' }
   # the open roof itself, named so alone (not a ROOF SLAB level, a ROOF DRAIN, a ROOF TERRACE)
   - { type: roof, label: '^\s*((main|upper|lower)\s+)?(roof(\s*top|\s+area|\s+deck)?|rooftop)\s*$|^\s*سطح\s*$' }

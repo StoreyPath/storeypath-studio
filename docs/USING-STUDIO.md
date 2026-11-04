@@ -250,9 +250,10 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   the type *Open to below*: in 3D the floor has a hole there, the floors below seen
   through it. An electrical room and an IDF room (a floor's telecom room) have types of
   their own, *Electrical room* and *IDF room* (format 0.13.1; *Utility* before): Studio
-  gives them from their labels (ELEC., E.R., LV, DB ROOM, SWITCHGEAR, كهرباء; IDF, MDF,
-  TELECOM, COMMS ROOM, اتصالات), and a room read before keeps *Utility* until its floor is
-  read again or you type it. A label only the language model reads is typed *Utility*.
+  gives them from their labels (ELEC., EE.RM., DB ROOM, SWITCHGEAR, غرفة كهرباء; IDF, MDF,
+  TELECOM, COMMS ROOM, غرفة اتصالات), and a room read before keeps *Utility* until its floor
+  is read again or you type it. A label only the language model reads (LV, DB, TER or E.R.
+  alone, which may mean something else on another drawing) is typed *Utility* at most.
   *Accept as it is* checks it without a change; *Use detected* takes your corrections
   away. **Capacity**: how many people it is meant to seat (see below). **Delete**
   (<kbd>Del</kbd>) takes what is not a room (a sliver, the outside) out of the plan,
@@ -578,6 +579,12 @@ types, opens it, and so are their 3D models, for types that have none there: a m
 a type there has is kept; anyone may later take the types on the *Item types* page).
 It does not carry the change history, people and their access, or the packages
 exported (only the list of them): those stay with each Studio.
+
+**A project file opened over the same project replaces it whole.** Nothing is merged: the
+items, furniture layouts and corrections made there since are gone, once the project's name
+is typed (Studio says how many items and layouts it holds), and no undo goes back over it. To
+bring a better reading to a project people are working on, update that Studio and read its
+floors again there: IDs and corrections are kept, and items stay where they were put.
 
 **Encrypted with a password.** Beside *Download project*, and beside each package in the
 list, *Encrypted…* asks for a password (twice) and downloads the file encrypted with it

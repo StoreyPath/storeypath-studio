@@ -84,6 +84,7 @@ class ProjectExists(Exception):
         what = f"its building {building}" if building else "it"
         super().__init__(f"{name} ({code}) is here already, and {what}" if building else f"{name} ({code}) is here already")
         self.code, self.name, self.building = code, name, building
+        self.items = self.layouts = None  # (a project file) what the project here holds, to lose
 
 
 class ItemClash(ValueError):
