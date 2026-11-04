@@ -50,6 +50,7 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
+    POST /api/projects/<code>/buildings/<id>/name {name}  the building named again
     POST /api/projects/<code>/export {building, item_types?, drawings?} → job: that
                                                building's package (one building per
                                                package); drawings: true, each floor's
@@ -1501,6 +1502,24 @@ class Studio:
             b.site = SitePosition(x=round(x, 3), y=round(y, 3), rotation=round(rotation % 360, 3), pivot=positions[b.code].pivot)
             self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=[building_id])
         return {"site": b.site.model_dump()}
+
+    def rename_building(self, code: str, building_id: str, body: dict, by=None) -> dict:
+        """A building given another ``name`` (1 to 80 characters). Its ID, its floors and
+        everything in them stay as they are; its next package carries the new name."""
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+            raise ValueError("name: the building's name, 1 to 80 characters")
+        name = " ".join(name.split())
+        self._known(code)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
+            _, b = self._building_of(ws, building_id)
+            was = b.name
+            if name != was:
+                b.name = name
+                self.store.save(ws, floors=[], by=by, part="building", kind="rename", targets=[building_id],
+                                more={"from": was, "to": name})
+        return {"building": building_id, "name": name}
 
     def arrange(self, code: str, location_id: str, by=None) -> dict:
         """The location's buildings side by side on its site plan, left to right in the

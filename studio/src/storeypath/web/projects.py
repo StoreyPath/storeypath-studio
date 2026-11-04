@@ -239,6 +239,12 @@ def move(code: str, building_id: str, request: Request, may: May, studio: TheStu
     return answer(request, studio.move(code, building_id, body, by=may.user))
 
 
+@calls.post(P + "/buildings/{building_id}/name")
+def rename_building(code: str, building_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.building(code, building_id, "edit")
+    return answer(request, studio.rename_building(code, building_id, body, by=may.user))
+
+
 @calls.post(P + "/buildings/{building_id}/placement")
 def place(code: str, building_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.building(code, building_id, "edit")

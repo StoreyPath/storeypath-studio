@@ -55,6 +55,9 @@ body.studio .topbar {
 .plan svg path { fill: none; stroke: var(--draw-walls); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .plan .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
 .plan .title { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+/* a floor's parts of the card, hidden while it is said to be a site plan */
+.plan .floor-part { display: flex; flex-direction: column; gap: 8px; }
+.plan .floor-part[hidden], .plan .layout-use[hidden] { display: none; }
 .badge { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--hover); color: var(--muted); }
 .badge.plan-kind { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .badge.reading { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: 8px; }

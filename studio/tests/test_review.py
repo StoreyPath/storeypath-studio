@@ -862,6 +862,26 @@ def test_buildings_on_the_site_plan(studio, tmp_path):
     status, error = call(f"{base}/api/projects/{code}/buildings/{b['id']}/site", {"x": "far", "y": 0, "rotation": 0})
     assert status == 400
 
+    # named again: its ID, floors and place kept, and said in the history
+    floors_before = [f.code for f in labs.floors]
+    status, renamed = call(f"{base}/api/projects/{code}/buildings/{b['id']}/name", {"name": "  Research   labs "})
+    assert status == 200 and renamed == {"building": b["id"], "name": "Research labs"}
+    _, p2 = call(f"{base}/api/projects/{code}")
+    again = next(x for x in p2["locations"][0]["buildings"] if x["id"] == b["id"])
+    assert again["name"] == "Research labs" and [f["id"].rsplit("-", 1)[-1] for f in again["floors"]] == floors_before
+    ws = app.workspace(code)
+    labs = next(x for x in ws.locations[0].buildings if x.name == "Research labs")
+    assert (labs.site.x, labs.site.y) == (500, -20)
+    _, history = call(f"{base}/api/projects/{code}/history")
+    assert any(h["line"] == "renamed the building Labs to Research labs" for h in history["entries"])
+    for bad in ("", "   ", "x" * 81, 7):
+        status, _ = call(f"{base}/api/projects/{code}/buildings/{b['id']}/name", {"name": bad})
+        assert status == 400, bad
+    status, _ = call(f"{base}/api/projects/{code}/buildings/{code}-NOPE-NOPE/name", {"name": "X"})
+    assert status in (403, 404)
+    status, _ = call(f"{base}/api/projects/{code}/buildings/{b['id']}/name", {"name": "Labs"})
+    assert status == 200
+
     status, _ = call(f"{base}/api/projects/{code}/locations/{p['locations'][0]['id']}/arrange", {})
     ws, loc, fps = site()
     order = sorted(fps.items(), key=lambda kv: kv[1].bounds[0])

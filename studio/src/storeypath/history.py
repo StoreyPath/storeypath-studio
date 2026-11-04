@@ -286,6 +286,7 @@ def _describe(e: dict) -> str:
         "export": f"exported {e.get('file') or 'a package'}" + (", with its drawings" if e.get("drawings") else ""),
         "arrange": "set the buildings side by side",
         "site": "moved a building on the site plan",
+        "rename": f"renamed the building {e.get('from') or ''} to {e.get('to') or ''}".replace("  ", " "),
         "answers": "kept what vision saw on a read that did not finish",
         "place": "placed a building on the map" if part == "building" else "placed the site on the map",
         "open": "opened a file into the project" if part == "building" else "opened the project from a file",

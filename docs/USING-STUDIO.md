@@ -24,8 +24,10 @@ A **project** holds one site or campus: its drawings and every ID ever issued fo
 it. Create one by name on the Projects page; Studio gives it a code that never
 changes (`K7Q2XM`). Inside it are **locations** (sites, campuses) and their
 **buildings**, made as you add floors: each plan you add goes to a location and
-building the project has, or to a new one you name. *Delete project* removes a
-project and everything in it, once you type its name.
+building the project has, or to a new one you name. **Rename…** on a building's card
+gives it another name (whoever may edit the building): its ID, its floors and everything
+in them stay as they are, and its next package carries the new name. *Delete project*
+removes a project and everything in it, once you type its name.
 
 ### Adding drawings
 
@@ -163,7 +165,9 @@ barriers, lights) and the footprint of each building. It is read from the site p
 it places the location's buildings where the site plan has them.
 
 1. **Find plans** in the drawing that holds the site plan. A plan titled as one (SITE,
-   LOCATION, DEVELOPMENT or KEY PLAN) is marked *Site plan*, and its card offers **Use as
+   LOCATION, DEVELOPMENT or KEY PLAN) is marked *Site plan*. Any other plan, a MASTER PLAN
+   say, is made one by ticking **This is a site plan** on its card (and a plan wrongly
+   marked one is made a floor's again by clearing it). A site plan's card offers **Use as
    ⟨location⟩'s layout**: choose the location (or a new one, by its name) and Studio reads
    it. A location that has a layout is given the new site plan in its place: what is on it
    keeps its IDs.

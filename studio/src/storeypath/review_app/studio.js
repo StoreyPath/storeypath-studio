@@ -1011,16 +1011,14 @@ function planCard(plan, top, levels, project, mainRoof = false, useAsLayout = nu
   code.addEventListener("input", show);
   show();
   const note = el("p", { class: "small", hidden: true });
-  const node = el("article", { class: "plan" },
-    thumbnail(plan),
-    el("div", { class: "body" },
-      el("div", { class: "row" }, el("span", { class: "plan-no", title: "Its number on the whole drawing (See the whole drawing)" },
-        String(plan.index)), el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind),
-        el("span", { class: "muted small" }, `${plan.size[0]} × ${plan.size[1]} m`)),
-      el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
-      plan.kind === "site_plan" && useAsLayout ? layoutChoice(project, useAsLayout) : null,
-      el("label", { class: "check" }, check, "Add as a floor"),
-      el("div", { class: "fields" },
+  // Whether it is a site plan, as found or as said here: a site plan is offered as a
+  // location's layout, a floor's plan as a floor; a plan found as the one is switched to
+  // the other here (a MASTER PLAN read as a floor's, a sheet titled SITE PLAN that is not).
+  const badge = el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind);
+  const asSite = el("input", { type: "checkbox", checked: plan.kind === "site_plan", "data-testid": "plan-is-site" });
+  const layoutPart = useAsLayout ? layoutChoice(project, useAsLayout) : null;
+  const addCheck = el("label", { class: "check" }, check, "Add as a floor");
+  const fields = el("div", { class: "fields" },
         el("label", { style: "grid-column: 1 / -1" }, "Location", location, locationName),
         el("label", { style: "grid-column: 1 / -1" }, "Building", building, buildingName),
         el("label", {}, "Level", kind),
@@ -1029,10 +1027,38 @@ function planCard(plan, top, levels, project, mainRoof = false, useAsLayout = nu
         el("label", {}, "Floor name", name),
         aboveLabel,
         el("label", { title: "Floor to floor (a mezzanine's: its own, to the ceiling over it; a roof's: the rooms' standing on it)" }, "Height (m)", height),
-        el("label", { title: "The low walls around its terraces, balconies and roof" }, "Parapet (m)", parapet)),
-      floors, replaceLabel,
+        el("label", { title: "The low walls around its terraces, balconies and roof" }, "Parapet (m)", parapet));
+  const floorPart = el("div", { class: "floor-part" }, addCheck, fields, floors, replaceLabel);
+  const node = el("article", { class: "plan" },
+    thumbnail(plan),
+    el("div", { class: "body" },
+      el("div", { class: "row" }, el("span", { class: "plan-no", title: "Its number on the whole drawing (See the whole drawing)" },
+        String(plan.index)), badge,
+        el("span", { class: "muted small" }, `${plan.size[0]} × ${plan.size[1]} m`)),
+      el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
+      useAsLayout ? el("label", { class: "check", title: "A plan of the plot from above: its buildings, boundary, gates and outdoor areas (a site, master, location or key plan)" },
+        asSite, "This is a site plan") : null,
+      layoutPart,
+      floorPart,
       note));
   const sync = () => node.classList.toggle("chosen", check.checked);
+  let wasChosen = false; // (whether it was to be added as a floor before it was said to be a site plan)
+  const siteSwitched = () => {
+    const site = asSite.checked;
+    if (layoutPart) layoutPart.hidden = !site;
+    floorPart.hidden = site;
+    if (site ? check.checked : wasChosen && !check.checked) {
+      wasChosen = site;
+      check.checked = !site;
+      check.dispatchEvent(new Event("change"));
+    }
+    const kindNow = site ? "site_plan" : plan.kind === "site_plan" ? "floor_plan" : plan.kind;
+    badge.textContent = KIND[kindNow] || kindNow;
+    badge.classList.toggle("plan-kind", kindNow === "floor_plan" || kindNow === "roof_plan");
+    badge.title = kindNow !== plan.kind ? `Found as: ${KIND[plan.kind] || plan.kind}` : "";
+  };
+  asSite.addEventListener("change", siteSwitched);
+  siteSwitched();
   sync();
   return {
     node,
@@ -1289,6 +1315,7 @@ function buildingsCard(code, p) {
   }
   return el("section", { class: "buildings" }, buildings.map((b) => el("div", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, b.name), el("code", { class: "muted small" }, b.id),
+      onBuilding(p, b.id, "edit") ? renameBuilding(code, b) : null,
       b.floors.some((f) => f.converted) && onBuilding(p, b.id, "view")
         ? el("a", { class: "button", href: `/navigate.html?${new URLSearchParams({ p: code, building: b.id })}`,
           title: "Find the way in this building: from a kiosk, an entrance or any room, to any room" }, "Navigate") : null,
@@ -1319,6 +1346,44 @@ function buildingsCard(code, p) {
           onBuilding(p, b.id, "edit") ? deleteFloor(code, f) : null))))),
     onBuilding(p, b.id, "edit") ? placementForm(code, b) : null,
   )));
+}
+
+/** Rename…: the building's name typed in its card's heading and saved; its ID, floors
+ * and what is in them stay as they are. */
+function renameBuilding(code, b) {
+  const button = el("button", { type: "button", "data-testid": "building-rename", title: `Give ${b.name} another name` }, "Rename…");
+  button.addEventListener("click", () => {
+    const row = button.closest(".row");
+    const heading = row.querySelector("h2");
+    const name = el("input", { type: "text", value: b.name, maxlength: 80, "aria-label": "The building's name",
+      "data-testid": "building-name", class: "grow" });
+    const save = el("button", { type: "submit", class: "primary" }, "Save");
+    const cancel = el("button", { type: "button" }, "Cancel");
+    const form = el("form", { class: "row grow rename" }, name, save, cancel);
+    const back = () => { form.replaceWith(heading); button.hidden = false; };
+    cancel.addEventListener("click", back);
+    form.addEventListener("keydown", (e) => { if (e.key === "Escape") back(); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const wanted = name.value.trim();
+      if (!wanted) { toast("A building needs a name", true); return; }
+      if (wanted === b.name) { back(); return; }
+      save.disabled = true;
+      try {
+        const r = await api(`projects/${code}/buildings/${b.id}/name`, { name: wanted });
+        toast(`${b.name} is now ${r.name}`);
+        projectPage(code);
+      } catch (err) {
+        toast(err.message, true);
+        save.disabled = false;
+      }
+    });
+    heading.replaceWith(form);
+    button.hidden = true;
+    name.focus();
+    name.select();
+  });
+  return button;
 }
 
 // A floor whose reading failed or was stopped: read its drawing again.
