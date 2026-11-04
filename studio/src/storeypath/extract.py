@@ -27,7 +27,7 @@ from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
 from .split import exact_parts, split_by_labels
-from .walls import DoorShape, DoorSwing, Fabric, open_issue, read_fabric, spaces_from_walls
+from .walls import DoorShape, DoorSwing, Fabric, open_issue, outlined_stretches, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
 CURVE_TOLERANCE_M = 0.02
@@ -812,6 +812,8 @@ def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: 
         if len(d.connects) == 2
     ]
     _read_tags(doors, plan.tags)
+    if fabric is not None:
+        doors += _outlined_ways_in(spaces, zoned, doors, lines, fills, fabric, profile)
     if plan.loose_door_entities and not door_shapes:
         warnings.append(
             f"{plan.loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
@@ -946,6 +948,32 @@ def _sliding_doors(doors: list[ExtractedDoor], untagged: list[ExtractedDoor]) ->
         if any(i not in way_in and reached[i] == 1 for i in d.connects):
             d.source = "glazing"
             d.issues.append("drawn as glazing, the only way into a room, taken as a sliding door; check it")
+
+
+NO_WAY_IN_NEEDED = {SpaceType.ELEVATOR, SpaceType.SHAFT, SpaceType.OPEN_TO_BELOW}  # (a lift's is assumed: add_lift_doors)
+
+
+def _outlined_ways_in(spaces: list, zoned: set, doors: list[ExtractedDoor], lines: list, fills: list, fabric: Fabric,
+                      profile: Profile) -> list[ExtractedDoor]:
+    """A door-wide stretch of a filled wall drawn by its outline alone (walls.outlined_stretches)
+    is an opening where it leads into a room with a label and no way in: its gap taken out of the
+    walls, the rooms staying apart. Anywhere else it is wall: beside a room's own door such a
+    stretch is most likely a cabinet or a recess in the wall, and an area with no label behind one
+    (a shaft, a courtyard) is no room that wants a way in."""
+    stretches = outlined_stretches(lines, fills, SLIDING_DOOR_M, profile.walls.max_thickness)
+    if not stretches:
+        return []
+    way_in = {i for d in doors if d.source in WAYS_IN or d.source == "glazing" for i in d.connects}
+    wants = {i for i, s in enumerate(spaces) if i not in way_in and s.type not in NO_WAY_IN_NEEDED
+             and (s.name or s.number or i in zoned)}
+    found = _connect_doors(spaces, [box for box, _ in stretches], profile.doors.reach, [],
+                           [(span, round(span.length, 3)) for _, span in stretches])
+    out = [replace(d, source="doorway", issues=[
+        "a stretch of wall drawn with no fill, the only way into a room, taken as an opening; check it"])
+        for d in found if len(d.connects) == 2 and wants.intersection(d.connects)]
+    if out:
+        fabric.walls = fabric.walls.difference(unary_union([d.footprint for d in out]))
+    return out
 
 
 LIFT_DOOR_M = 0.9  # an assumed lift door's width

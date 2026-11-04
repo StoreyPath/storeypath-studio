@@ -271,6 +271,13 @@ it (an open office round two shafts).
    as doors and windows only for what is drawn on it (a corridor's outline along a
    facade), never close this way. Each stretch is a window joining the room behind it
    to what lies beyond the glass, not to the room past the partition at its end.
+   A door-wide stretch of a filled wall drawn by its outline alone (on a wall layer a
+   closed rectangle 0.6 to 2.6 m long with no fill in it, the wall's fill carrying on
+   past both its ends) closes like the wall. Once the rooms' doors are known, such a
+   stretch leading into a room with a label and no way in is an opening between the
+   two rooms, for review, its gap taken out of the walls. Anywhere else it stays wall:
+   beside a room's own door it is most likely a cabinet or a recess, and an area with
+   no label behind one (a shaft, a courtyard) wants no way in.
 3. Round the outside, gaps up to 4 m are spanned by the building's envelope, so a
    room behind a door that is not drawn is kept (and listed for review).
 4. Each region left enclosed is a space. Areas that are the outside around the

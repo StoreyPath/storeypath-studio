@@ -763,6 +763,9 @@ the way a person reads a plan:
   no tag is taken as a sliding door only where it is the only way into a room;
   beside a door, or one of a row of panes, it is a window. An opening read as
   another kind where it stood keeps its ID on a re-read.
+- A door-wide stretch of a filled wall drawn by its outline alone is an opening only
+  where it leads into a room with a label and no way in; anywhere else it is wall
+  (beside a room's own door, most likely a cabinet or a recess).
 - Blocks on door layers are doors only when they have a swing, a door's name, or a
   sliding door's shape: basins, baths and cars put on a door layer are not doors.
 - A lift with no way in drawn is given a door on the wall it shares with a hall,

@@ -522,6 +522,51 @@ def _glass_runs(pieces: list[LineString]) -> list[tuple[LineString, list[tuple[f
     return runs
 
 
+OUTLINED_PAST_M = 0.03  # a wall's fill is looked for this far past each end of a stretch drawn only by its outline
+OUTLINED_THIN_M = 0.05  # a thinner rectangle is a frame's or a pane's, not a stretch of wall
+
+
+def outlined_stretches(lines: list, fills: list, widths: tuple[float, float], max_thickness: float) -> list[tuple]:
+    """The stretches of a filled wall drawn by their outline alone: on a wall layer a closed
+    rectangle, ``widths`` long and at most ``max_thickness`` thick, with no fill in it, where the
+    wall's fill carries on past both its ends, as thick as it is. An opening is drawn so; so is a
+    cabinet or a recess in the wall: what it is, the rooms beside it tell (extract._outlined_ways_in).
+    Each as (its rectangle, its span: along the wall's middle, from end to end)."""
+    if not lines or not fills:
+        return []
+    tree = shapely.STRtree(fills)
+
+    def filled(p) -> bool:
+        return len(tree.query(Point(p), predicate="intersects")) > 0
+
+    least, most = 2 * (widths[0] + OUTLINED_THIN_M), 2 * (widths[1] + max_thickness)
+    out = []
+    for ln in lines:
+        if not least <= ln.length <= most:
+            continue
+        c = np.asarray(ln.simplify(0.005).coords)
+        if len(c) != 5 or np.hypot(*(c[-1] - c[0])) > 0.05:
+            continue
+        sides = c[1:] - c[:-1]
+        lengths = np.hypot(sides[:, 0], sides[:, 1])
+        if abs(lengths[0] - lengths[2]) > 0.02 or abs(lengths[1] - lengths[3]) > 0.02 \
+                or abs(sides[0] @ sides[1]) > 0.03 * lengths[0] * lengths[1]:
+            continue  # not a rectangle
+        k = int(lengths[1] > lengths[0])  # a long side
+        width, thick = lengths[k], lengths[1 - k]
+        if not (widths[0] <= width <= widths[1] and OUTLINED_THIN_M <= thick <= max_thickness):
+            continue
+        middle, along = c[:4].mean(axis=0), sides[k] / width
+        across = np.array([-along[1], along[0]])
+        if filled(middle):
+            continue
+        past = [middle + side * along * (width / 2 + OUTLINED_PAST_M) + share * thick * across
+                for side in (-1, 1) for share in (-0.35, 0.0, 0.35)]
+        if all(filled(p) for p in past):
+            out.append((Polygon(c), LineString([middle - along * width / 2, middle + along * width / 2])))
+    return out
+
+
 def _connectors(mass, lines: list, max_length: float) -> list:
     """Lines that carry a wall across a gap: glazing (straight or curved, or a pane drawn
     as a thin closed frame: its middle line, end to end) or a door leaf drawn closed.
