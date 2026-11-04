@@ -100,6 +100,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #drawn line.divide { stroke: var(--plan-divider); stroke-width: 3; stroke-dasharray: 3 4; }
 #drawn line.selected { stroke: var(--select); }
 #drawn line.pending { opacity: .55; cursor: progress; pointer-events: none; }
+#doors .pending { opacity: .7; pointer-events: none; } /* a door, window or opening drawn as it will be, being saved */
 
 /* what a tool would add, under the pointer */
 .preview { pointer-events: none; }

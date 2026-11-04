@@ -180,16 +180,20 @@ export function patchPlan(d, before) {
     const s = state.byId.get(id);
     if (s) drawSpace(s);
   }
-  if ("outline" in d) renderOutline();
+  // the outline: when it changed, or a courtyard or light well did (open to the sky, or not now)
+  if ("outline" in d || d.spaces.some((s) => Boolean(s.sky) !== Boolean(before.get(s.id)?.sky))) renderOutline();
   if ("footprints" in d) renderFootprints();
   if (d.doors.length || "walls" in d) renderDoors();
   if ("edits" in d) renderDrawn();
   placeLabels();
 }
 
-function renderOutline() {
+/** The floor's outline, open where its courtyards and light wells are: each space set aside
+ * that is open to the sky a hole in it (as a package's floor is: export.floor_outline). */
+export function renderOutline() {
   const f = state.floor;
-  $("outline").setAttribute("d", f.outline ? pathData(f.outline) : "");
+  const open = f.outline ? (f.spaces || []).filter((s) => s.sky).map((s) => pathData(s.geometry)).join("") : "";
+  $("outline").setAttribute("d", f.outline ? pathData(f.outline) + open : "");
 }
 
 // ---- a location's layout: the footprints of the buildings standing on it (format 0.12) ----
@@ -263,36 +267,47 @@ function drawSpace(s) {
   styleSpace(s);
 }
 
-function renderDoors() {
+/** The floor's openings as shown: as it has them, with what is being changed of them drawn as it
+ * will be (state.ghosts: drawing.js). */
+function shownDoors(f) {
+  if (!state.ghosts.length) return f.doors;
+  const hidden = new Set(state.ghosts.flatMap((g) => g.hide));
+  return [...f.doors.filter((d) => !hidden.has(d.id)), ...state.ghosts.flatMap((g) => g.show)];
+}
+
+export function renderDoors() {
   const f = state.floor;
+  if (!f) return;
+  const doors = shownDoors(f);
   // A line Studio drew to divide an open area (no wall in the drawing): thin, light and
   // dashed over the rooms, where walls show as dark gaps between them.
-  const dividers = f.doors.flatMap((d) => d.divider || []).map((line) => line.map((p) => p.join(",")).join(" "));
+  const dividers = doors.flatMap((d) => d.divider || []).map((line) => line.map((p) => p.join(",")).join(" "));
   // Doors as a bar across their opening, jamb to jamb (dashed: a doorway with no door;
   // thin: a window), with a mark in the middle; where the span is not known, the mark.
   // A door whose swing was drawn is shown as plans show it: the leaf open, and the arc
   // it sweeps to shut.
   const kind = (d) => (d.type === "door" ? "door" : d.type === "window" ? "window" : d.type === "gate" ? "gate" : "way");
-  const swung = f.doors.filter((d) => d.type === "door" && d.span && d.swings?.length);
+  const swung = doors.filter((d) => d.type === "door" && d.span && d.swings?.length);
   const leaf = (d, [h, q]) => {
     const from = (p) => Math.hypot(p[0] - h[0], p[1] - h[1]);
     const jamb = from(d.span[0]) > from(d.span[1]) ? d.span[0] : d.span[1]; // the other side
     const r = from(q), k = r / (from(jamb) || 1);
     const shut = [h[0] + (jamb[0] - h[0]) * k, h[1] + (jamb[1] - h[1]) * k];
     const sweep = (q[0] - h[0]) * (shut[1] - h[1]) - (q[1] - h[1]) * (shut[0] - h[0]) > 0 ? 1 : 0;
-    return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`, class: `swing${state.item?.id === d.id ? " selected" : ""}` });
+    return svg("path", { d: `M${h} L${q} A${r},${r} 0 0 ${sweep} ${shut}`,
+      class: `swing${state.item?.id === d.id ? " selected" : ""}${d.pending ? " pending" : ""}` });
   };
-  const shown = f.doors.filter((d) => state.showHidden || !d.ignored); // deleted: left out
+  const shown = doors.filter((d) => state.showHidden || !d.ignored); // deleted: left out
   $("doors").replaceChildren(
     ...dividers.map((points) => svg("polyline", { points, class: "divider" })),
     ...shown.filter((d) => d.span && !swung.includes(d)).map((d) => svg("line", {
       x1: d.span[0][0], y1: d.span[0][1], x2: d.span[1][0], y2: d.span[1][1],
-      class: `span ${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}` })),
+      class: `span ${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}${d.pending ? " pending" : ""}` })),
     ...swung.filter((d) => shown.includes(d)).flatMap((d) => d.swings.map((s) => leaf(d, s))),
     ...shown.map((d) => {
       const mark = svg("circle", { cx: d.point[0], cy: d.point[1], r: d.type === "window" ? 0.07 : 0.16,
-        class: `${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}` });
-      mark.dataset.door = d.id;
+        class: `${kind(d)}${d.ignored ? " deleted" : ""}${state.item?.id === d.id ? " selected" : ""}${d.pending ? " pending" : ""}` });
+      if (!d.pending) mark.dataset.door = d.id; // (not to be chosen before Studio has it)
       return mark;
     }),
   );
@@ -320,7 +335,7 @@ export function styleSpace(s) {
   const path = state.paths.get(s.id);
   if (!path || divided(s)) return;
   path.style.fill = finish.fill(s) ?? color(s.type); // (coloured by floor finish: its finish's tone)
-  path.style.display = visible(s) ? "" : "none";
+  path.style.display = visible(s) || isChosen(s.id) ? "" : "none"; // (an area set aside, chosen: shown)
   path.classList.toggle("tucked", tucked(s));
   path.classList.toggle("review", s.reasons.length > 0);
   path.classList.toggle("selected", isChosen(s.id));
@@ -385,13 +400,14 @@ export function arrange() {
   }
 }
 
-// The space under a point of the plan (world meters), topmost first.
-export function spaceAt(x, y) {
+// The space under a point of the plan (world meters), topmost first; with ``aside``, an area
+// set aside there too (a courtyard, a shaft, a gap: deleted, not shown), to be chosen.
+export function spaceAt(x, y, { aside = false } = {}) {
   const spaces = units();
   for (let i = spaces.length - 1; i >= 0; i--) {
     const s = spaces[i];
     const b = state.bounds.get(s.id);
-    if (!visible(s) || !b || x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
+    if (!(visible(s) || (aside && s.ignored && !s.hidden)) || !b || x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
     let inside = false;
     for (const ring of rings(s.geometry)) {
       for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {

@@ -8,10 +8,10 @@ import { request } from "./api.js";
 import { emit } from "./bus.js";
 import * as finish from "./finish.js";
 import { say, toast } from "./notify.js";
-import { placeLabels, styleSpace } from "./plan.js";
+import { placeLabels, renderOutline, styleSpace } from "./plan.js";
 import { select } from "./selection.js";
 import { BASE, code, reviewSpaces, state, title, typeOf, units, visible, within } from "./state.js";
-import { sync3dSpace } from "./view3d.js";
+import { dirty3d, sync3dSpace } from "./view3d.js";
 
 export const GRADES = ["president", "c_level", "director", "manager", "section_head", "senior", "junior"];
 export const GRADE_NAMES = { president: "the President", c_level: "C-level", director: "a Director", manager: "a Manager",
@@ -44,6 +44,17 @@ export function setFlag(id, flag, value) {
   return saveSpace({ [flag]: value }, id);
 }
 
+/** What an area set aside is, as a person says (Studio's reading says it first): "sky" open
+ * to the sky (a courtyard or light well: a hole in the floor, its doors leading outside),
+ * "aside" set aside as part of the floor (a shaft, a gap), "room" a room after all. */
+export function sayWhat(id, what) {
+  const body = what === "room" ? { ignored: false } : { ignored: true, sky: what === "sky" };
+  return saveSpace(body, id);
+}
+
+/** What an area is now, of those three: a room (not set aside), open to the sky, or set aside. */
+export const whatItIs = (s) => (!s.ignored ? "room" : s.sky ? "sky" : "aside");
+
 /** A space's change saved (``body`` as Studio takes it: objects/<id>); shown at once. */
 export async function saveSpace(body, id = state.selected, { quiet = false } = {}) {
   const s = state.byId.get(id);
@@ -56,25 +67,33 @@ export async function saveSpace(body, id = state.selected, { quiet = false } = {
     return null;
   }
   shown([updated]);
-  const flagged = "hidden" in body ? (body.hidden ? "hidden" : "shown again")
+  const flagged = "sky" in body ? (body.sky ? "open to the sky: a hole in the floor" : "set aside, part of the floor")
+    : "hidden" in body ? (body.hidden ? "hidden" : "shown again")
     : "ignored" in body ? (body.ignored ? "deleted" : "restored")
     : "capacity" in body ? (body.capacity === null ? "capacity from its desks" : `seats ${body.capacity}`) : finish.said(body);
   if (!quiet) toast(flagged ? `${title(updated)}: ${flagged}` : body.reset ? "Corrections removed" : `Saved ${code(updated.id)}`);
-  if (!visible(updated) && state.selected === updated.id) select(null);
+  // (an area set aside that a person said what it is of stays chosen, to see it)
+  if (!visible(updated) && state.selected === updated.id && !("sky" in body)) select(null);
   return updated;
 }
 
 /** Spaces as Studio now has them: kept, drawn, in 3D, and counted (the floor's to review). */
 function shown(spaces) {
+  let opened = false; // a courtyard or light well open to the sky now, or no longer: the floor's outline
   for (const s of spaces) {
     const i = state.floor.spaces.findIndex((x) => x.id === s.id);
     if (i < 0) continue;
+    opened ||= Boolean(state.floor.spaces[i].sky) !== Boolean(s.sky);
     state.floor.spaces[i] = s;
     state.byId.set(s.id, s);
     styleSpace(s);
     sync3dSpace(s); // its label (and its floor's finish, by its type) in 3D at once
   }
   placeLabels();
+  if (opened) {
+    renderOutline();
+    dirty3d([state.floor.id]); // (its slab open there, or whole: built again in 3D)
+  }
   const floor = state.project.floors.find((f) => f.id === state.floor.id);
   if (floor) floor.review = reviewSpaces().length;
   emit("spaces", spaces.map((s) => s.id));

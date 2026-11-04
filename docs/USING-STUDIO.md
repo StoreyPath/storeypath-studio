@@ -260,6 +260,20 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   *Show deleted* (View) shows it again, to restore. Shift-click (or ⌘-click) adds rooms
   to those chosen, and Shift-drag a band over them: their type and finishes are set
   for all at once.
+- **Courtyards and light wells.** An area set aside as no room (by vision, or deleted
+  by you) inside the building, with windows of the rooms round it opening onto it and
+  at least 3 m across, is **open to the sky**: a hole in the floor. The plan draws the
+  floor's outline open there; in 3D it has no slab and no ceiling (on the ground floor
+  too: a courtyard at the ground is outside); the floor's area leaves it out, the
+  walking network goes round it, and a door onto it leads outside. A shaft or a gap
+  between walls set aside stays part of the floor. To say otherwise, **click where the
+  area is** (it is chosen even when deleted areas are not shown; in 3D, a click on the
+  floor where no room is shown): the inspector's **What it is** offers *Open to the
+  sky*, *Set aside* (part of the floor, not open) and *A room* (restored), says what it
+  is now and whether Studio's reading or a person said so, with ↺ back to as read. The
+  plan's right-click menu offers the same. Your word wins over the reading and is kept
+  through every re-read and revised drawing. A floor read before Studio knew courtyards
+  gets them when it is read again (*Re-read drawing*).
 - **Draw what the drawing leaves out**, with the tools (or right-click the plan:
   what can be done there):
 
@@ -284,9 +298,15 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   made a window and a door again swings as it did. <kbd>Del</kbd> deletes a door, window or opening of the drawing
   (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
   being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
-  held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the
-  floor is read again, and what you drew is kept with the floor through every re-read
-  and every revised drawing.
+  held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). A door, window, opening
+  or gate added, sized, made another kind, turned, moved or taken away changes the floor
+  at once, with no read: it is drawn the moment you make it, its gap is cut and its
+  rooms joined as reading the floor again would (the same ID, the same walking network),
+  and the next one can be made straight away; undoing it is as quick. A wall, a dividing
+  line or a space drawn has the floor read again, as it may change its rooms. What you
+  drew is kept with the floor through every re-read and every revised drawing. (A floor
+  just opened, or one read by an older Studio, is read once in the background first; a
+  door added before that has the floor read, and the job says why.)
 - **2D, 3D, Walk — one view** (<kbd>2</kbd>, <kbd>3</kbd>, <kbd>4</kbd>), in the
   same place: the floor, what you chose, the panels and the plan's view stay as they
   are, and switching is instant once the building is built. In 3D the floor stack's
@@ -302,8 +322,8 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   <kbd>R</kbd>, <kbd>,</kbd> <kbd>.</kbd> and <kbd>Del</kbd> as on the plan. Walls,
   doors, dividers and spaces are drawn on the plan: a drawing tool's key over a place
   in 3D (or right-click, or <kbd>2</kbd>) shows that place there. What changes —
-  yours or others' — shows in 3D at once; drawn walls when the floor has been read
-  again. *3D window* (the Share menu, or the floor's inspector) opens the building on
+  yours or others' — shows in 3D at once (its floor built again): doors and windows as
+  soon as they are made, drawn walls when the floor has been read again. *3D window* (the Share menu, or the floor's inspector) opens the building on
   [Studio's 3D page](#3d-the-dollhouse-walking-and-the-3d-page), the whole window.
 - **Re-read drawing** (the inspector, with nothing chosen) reads the floor's drawing
   again (a revised one too): IDs and corrections are kept, and items stay where they
@@ -683,7 +703,9 @@ Auto (Low on integrated, virtual or software graphics), High or Low.
 
 - **Dollhouse.** Orbit the building, pick a floor, cut the walls down to see the
   plan in 3D, lift the floors apart, or switch on x-ray: see-through walls and every
-  room a translucent volume tinted by its type. Click a room for its ID, area,
+  room a translucent volume tinted by its type. A courtyard or light well is open on
+  every floor, down to the ground, and a void (*Open to below*) open to the floor
+  below. Click a room for its ID, area,
   finishes and the rooms its doors lead to. Furniture and equipment show when one
   floor does.
 - **Walk.** Start at the front door and walk in: mouse to look, <kbd>W A S D</kbd> to

@@ -40,6 +40,14 @@ class Door:
 
 
 @dataclass
+class Window:
+    x: float  # centre of the window, on the wall centre line
+    y: float
+    axis: str  # "h": the wall runs along x, "v": along y
+    width: float = 1.5
+
+
+@dataclass
 class Cell:
     x0: float
     y0: float
@@ -56,6 +64,7 @@ class Cell:
     doors: list[Door] = field(default_factory=list)  # more doors than its own (an entrance from outside)
     windows: int | None = None  # windows in each outside wall along the floor's long sides (None: one, by its type)
     labels: list[tuple[list[str], tuple[float, float]]] = field(default_factory=list)  # more labels, each where it goes
+    wall_windows: list[Window] = field(default_factory=list)  # windows in any of its walls (onto a courtyard)
 
     @property
     def shape(self):
@@ -142,6 +151,54 @@ def roof_floor() -> list[Cell]:
         Cell(0, 6, 3, 14, ["LIFT MACHINE ROOM"], "utility", Door(3, 12, "v", +1)),
         Cell(0, 14, 8, 20, ["STAIR A"], "stairs", Door(5.5, 14, "h", -1)),
         Cell(38, 12, 48, 20, ["PLANT ROOM"], "utility", Door(43, 12, "h", -1)),
+    ]
+
+
+COURTYARD = (10.0, 10.0, 34.0, 34.0)  # courtyard_floor's courtyard, between its rooms' walls
+LIGHT_WELL = (19.0, 3.0, 25.0, 7.0)  # …its light well
+SHAFT = (4.0, 21.0, 6.0, 23.0)  # …its shaft
+GAP = (37.0, 10.0, 38.4, 34.0)  # …the gap between two offices' double walls
+
+
+def courtyard_floor(ordinal: int) -> list[Cell]:
+    """A ring of rooms 44 × 44 m round a courtyard 24 m square (COURTYARD), drawn by its
+    walls alone: offices, each joined by a door to the next round the ring (the way in from
+    outside on the south-west); those round the courtyard have windows onto it, and one on
+    its south side and one on its north have a door onto it. Among the south rooms a light
+    well 6 × 4 m (LIGHT_WELL: the windows of the offices either side open onto it), with a
+    store south of it and a corridor north; between the west offices a shaft 2 m square
+    (SHAFT, no window); on the east two offices with double walls between them, a gap of
+    1.2 m (GAP), the inner one's windows onto it. The four have no name."""
+
+    def office(x0, y0, x1, y1, n, door=None, *, doors=(), windows=(), outline=None):
+        return Cell(x0, y0, x1, y1, ["OFFICE", f"{ordinal}{n:02d}"], "office", door, doors=list(doors),
+                    wall_windows=list(windows), outline=outline)
+
+    return [
+        office(0, 0, 10, 10, 1, Door(5, 0, "h", +1)),  # the way in
+        office(10, 0, 19, 10, 2, Door(10, 5, "v", +1), doors=[Door(14.5, 10, "h", +1)],  # (onto the courtyard)
+               windows=[Window(17, 10, "h", 2.0), Window(19, 5, "v", 1.5)]),
+        Cell(19, 0, 25, 3, ["STORE"], "storage", Door(19, 1.5, "v", +1)),
+        Cell(*LIGHT_WELL, None, "unspecified"),
+        Cell(19, 7, 25, 10, ["CORRIDOR"], "corridor", Door(19, 8.5, "v", +1), doors=[Door(25, 8.5, "v", +1)],
+             wall_windows=[Window(22, 10, "h", 1.5)]),
+        office(25, 0, 34, 10, 3, windows=[Window(25, 5, "v", 1.5), Window(29.5, 10, "h", 2.0)]),
+        office(34, 0, 44, 10, 4, Door(34, 5, "v", +1)),
+        office(34, 10, 37, 34, 5, Door(35.5, 10, "h", +1),
+               windows=[Window(34, 16, "v", 2.0), Window(34, 28, "v", 2.0),
+                        *(Window(37, y, "v", 1.2) for y in (16, 22, 28))]),
+        Cell(*GAP, None, "unspecified"),
+        office(38.4, 10, 44, 34, 6, Door(41, 10, "h", +1)),
+        office(0, 10, 10, 22, 7, Door(5, 10, "h", +1), windows=[Window(10, 16, "v", 2.0)],
+               outline=[(0, 10), (10, 10), (10, 22), (6, 22), (6, 21), (4, 21), (4, 22), (0, 22)]),
+        Cell(*SHAFT, None, "unspecified"),
+        office(0, 22, 10, 34, 8, Door(2, 22, "h", +1), windows=[Window(10, 28, "v", 2.0)],
+               outline=[(0, 22), (4, 22), (4, 23), (6, 23), (6, 22), (10, 22), (10, 34), (0, 34)]),
+        office(0, 34, 10, 44, 9, Door(5, 34, "h", +1)),
+        office(10, 34, 22, 44, 10, Door(10, 39, "v", +1), doors=[Door(16, 34, "h", -1)],  # (onto the courtyard)
+               windows=[Window(19, 34, "h", 2.0)]),
+        office(22, 34, 34, 44, 11, Door(22, 39, "v", +1), windows=[Window(28, 34, "h", 2.0)]),
+        office(34, 34, 44, 44, 12, Door(34, 39, "v", +1), doors=[Door(35.5, 34, "h", -1)]),
     ]
 
 
@@ -333,8 +390,11 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
             seg = LineString([(d.x - h, d.y), (d.x + h, d.y)] if d.axis == "h" else [(d.x, d.y - h), (d.x, d.y + h)])
             gaps.append(seg.buffer(WALL, cap_style="flat"))
     windows = _windows(cells)
-    for x, y, width in windows:
-        gaps.append(LineString([(x - width / 2, y), (x + width / 2, y)]).buffer(WALL, cap_style="flat"))
+    spans = [LineString([(x - width / 2, y), (x + width / 2, y)]) for x, y, width in windows]
+    spans += [LineString([(w.x - w.width / 2, w.y), (w.x + w.width / 2, w.y)] if w.axis == "h"
+                         else [(w.x, w.y - w.width / 2), (w.x, w.y + w.width / 2)]) for c in cells for w in c.wall_windows]
+    for span in spans:
+        gaps.append(span.buffer(WALL, cap_style="flat"))
     wall_mass = wall_mass.difference(unary_union(gaps))
     for poly in getattr(wall_mass, "geoms", [wall_mass]):
         rings = [[mm(*p) for p in ring.coords] for ring in [poly.exterior, *poly.interiors]]
@@ -350,9 +410,12 @@ def _draw_floor(doc, cells: list[Cell], *, origin, title: str, area_outlines: bo
             else:
                 msp.add_lwpolyline(pts[:-1], close=True, dxfattribs={"layer": "A-WALL"})
     # windows: outer face, glass and inner face across each opening
-    for x, y, width in windows:
-        for dy in (-WALL / 2, 0, WALL / 2):
-            msp.add_line(mm(x - width / 2, y + dy), mm(x + width / 2, y + dy), dxfattribs={"layer": "A-GLAZ"})
+    for span in spans:
+        (x0, y0), (x1, y1) = span.coords
+        across = (0.0, 1.0) if y0 == y1 else (1.0, 0.0)
+        for k in (-WALL / 2, 0, WALL / 2):
+            msp.add_line(mm(x0 + across[0] * k, y0 + across[1] * k), mm(x1 + across[0] * k, y1 + across[1] * k),
+                         dxfattribs={"layer": "A-GLAZ"})
 
     for c in cells:
         inset = WALL / 2

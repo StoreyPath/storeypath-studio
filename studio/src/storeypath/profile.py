@@ -35,8 +35,9 @@ class WallsConfig(BaseModel):
     max_thickness: float = 0.6
     max_doorway: float = 1.2
     max_opening: float = 4.0
-    # glazing drawn from wall to wall closes a gap this wide (a glass front's bay between
-    # piers, its panes drawn as lines from pier to pier)
+    # a line drawn from wall to wall on a door or window layer closes a gap this wide (a glass
+    # front's bay between piers, its panes drawn as lines from pier to pier); on a layer named
+    # for windows or glass, glass from wall to wall closes however long (walls._glass_fronts)
     max_glazing: float = 6.0
     min_width: float = 0.5
 

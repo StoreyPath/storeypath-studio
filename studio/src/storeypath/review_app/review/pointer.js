@@ -217,8 +217,9 @@ function bindPane(pane) {
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);
     if (line) return selectItem({ kind: line.kind, at: line.at, line: line.line });
-    // on the plan, what was clicked; on the print, the space drawn there
-    const id = pane === $("svg") ? target?.dataset?.id || null : spaceAt(...p)?.id || null;
+    // on the plan, what was clicked; on the print, the space drawn there; where no room is
+    // shown, an area set aside there (a courtyard, a shaft: deleted), to say what it is
+    const id = (pane === $("svg") ? target?.dataset?.id : spaceAt(...p)?.id) || spaceAt(...p, { aside: true })?.id || null;
     select(id, { add: Boolean(id) && (e.metaKey || e.ctrlKey) });
   };
   // A right-click: what can be done there

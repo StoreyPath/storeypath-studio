@@ -293,6 +293,8 @@ TILES = "tiles"  # in the cache: drawings printed for the vision model, kept for
 READS = "reads"  # in the cache: each floor's last read, for it read again after a person drew on it
 VIEWS = "views"  # in the cache: drawings drawn whole for the drawing viewer (drawview.py), by their content
 VIEWS_KEPT = 40  # views kept of a project (a big drawing's is some MB), the latest used
+# a read in a worker asking no model (workers._Models): their answers kept in the project alone
+NO_MODELS = {"model_url": None, "vision": False, "vision_model": None, "helpers": None, "symbols": False}
 
 
 class Studio:
@@ -338,6 +340,9 @@ class Studio:
         self._started = uuid.uuid4().hex  # (a newer Studio may make previews otherwise: their tags are new)
         self._warm = warm  # what a step leaves to be done later done now, in the background (prints, reads)
         self._warming: set[str] = set()  # floors whose read is being worked out (warm)
+        # floors read as they are in the background (warm), as they were then: not read so again
+        # while they are so (what that read keeps did not fit them: a read of them applies it)
+        self._warmed: dict[str, tuple] = {}
         # One lock per project, held while a job changes it: converting one project
         # (minutes, with vision) never holds up another, and pages only read. It is the
         # database's too (StepLock): another Studio on it waits as this one does.
@@ -1266,13 +1271,15 @@ class Studio:
                 self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=moved)
 
     def convert(self, code: str, floor: str | None = None, force: bool = False, by=None,
-                editor: Editor | None = None, drawn: bool = False) -> Job:
+                editor: Editor | None = None, drawn: bool = False, why: str | None = None) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
         keeps its rooms (convert.py); ``force`` applies it all the same. ``editor``: a
         person reading one floor again from a page, which waits until nobody else holds
         a room on it (Locked). ``drawn``: the floor read because a person drew on it (or
-        undid that): the rooms people corrected that it retires are not held back for."""
+        undid that): the rooms people corrected that it retires are not held back for.
+        ``why``: why a change of its openings was not made at once (openings.py), said
+        first in the job's log."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
         self._known(code)
@@ -1280,6 +1287,8 @@ class Studio:
             self.store.whole_floor(code, floor, by)
 
         def run(job: Job):
+            if why:
+                job.say(f"read again, not changed at once: {why}")
             ws = self.workspace(code)
             floors = [fid for *_, fid in ws.iter_floors(layouts=True) if floor in (None, fid)]
             # a building read for the first time (its first reading failed, say) is put
@@ -1342,7 +1351,7 @@ class Studio:
                             from .layout import read_layout
 
                             floor_read = read_layout(ws, fid, folder, self.model if self.model.available() else None,
-                                                     say=say)
+                                                     say=say, reads=self.cache / READS)
                         elif self.readers is not None:  # in a process of its own
                             floor_read, readings, answers = self.readers.read(fid, {
                                 "ws": ws.model_dump_json(), "folder": str(folder), "tiles": str(self.cache / TILES),
@@ -1409,14 +1418,25 @@ class Studio:
     def warm(self, code: str, floor_id: str) -> None:
         """A floor's read worked out in the background where Studio keeps none
         (convert.keep_a_read): the first wall a person draws on it is then found as
-        quickly as the next. A floor once at a time, never while it is read."""
+        quickly as the next. And where what its openings are changed on at once is not
+        kept, or no longer fits it (openings.py: a floor read by an older Studio, or kept
+        by none since it started), the floor read as it is, with the models' answers kept
+        and none asked, and applied to a copy of the project alone: what that read keeps
+        fits the floor when the read changes none of its rooms, and its first door is then
+        added at once. A floor once at a time, never while it is read."""
+        from . import openings
         from .convert import kept_read
 
         if not self._warm:
             return
         ws = self.workspace(code)
-        f = next((f for *_, f, i in ws.iter_floors() if i == floor_id), None)
-        if f is None or f.source is None or f.converted_at is None or kept_read(floor_id, f.source, self.cache / READS):
+        f = next((f for *_, f, i in ws.iter_floors(layouts=True) if i == floor_id), None)
+        if f is None or f.source is None or f.converted_at is None:
+            return
+        read = f.layout or kept_read(floor_id, f.source, self.cache / READS)
+        ready = openings.ready(ws, floor_id, self.cache / READS)
+        now = (openings.drawing_key(f.source), openings.drawn_key(f.edits), str(f.converted_at))
+        if read and (ready or self._warmed.get(floor_id) == now):
             return
         with self._lock:
             if floor_id in self._warming:
@@ -1424,18 +1444,37 @@ class Studio:
             self._warming.add(floor_id)
 
         def run():
-            from .convert import keep_a_read
+            from .convert import apply_read, keep_a_read, read_floor
 
             try:
                 with StepLock(self.db, f"{floor_id} read"):
                     ws = self.workspace(code)
                     source = ws.floor(floor_id).source
                     with self._files(code, {drawing_name(source.path)}) as folder:
-                        if self.readers is not None:  # in the worker that reads the floor: kept there
+                        if read:
+                            pass
+                        elif self.readers is not None:  # in the worker that reads the floor: kept there
                             self.readers.keep(floor_id, {"ws": ws.model_dump_json(), "folder": str(folder),
                                                          "reads": str(self.cache / READS)})
                         else:
                             keep_a_read(ws, floor_id, folder, self.cache / READS)
+                        if ready or self._warmed.get(floor_id) == now:
+                            return
+                        # read as it is (no model asked: their answers as kept), applied to a copy
+                        self._warmed[floor_id] = now
+                        copy = self.store.load(code, floors=[floor_id])  # (that floor's objects alone)
+                        if ws.floor(floor_id).layout:
+                            from .layout import apply_layout, read_layout
+
+                            apply_layout(copy, read_layout(ws, floor_id, folder, None, reads=self.cache / READS))
+                        elif self.readers is not None:
+                            floor_read, _, _ = self.readers.read(floor_id, {
+                                "ws": ws.model_dump_json(), "folder": str(folder), "tiles": str(self.cache / TILES),
+                                "reads": str(self.cache / READS), "drawn": True, "models": NO_MODELS})
+                            apply_read(copy, floor_read, drawn=True)
+                        else:
+                            apply_read(copy, read_floor(ws, floor_id, folder, None, None, None, tiles=self.cache / TILES,
+                                                        drawn=True, reads=self.cache / READS), drawn=True)
             except Exception:  # (the first wall drawn reads the whole floor, as before)
                 traceback.print_exc()
             finally:
@@ -1443,6 +1482,12 @@ class Studio:
                     self._warming.discard(floor_id)
 
         threading.Thread(target=run, name=f"warming {floor_id}", daemon=True).start()
+
+    def openings_at_once(self, code: str, floor_id: str) -> bool:
+        """Whether a change of a floor's openings is made at once now (openings.ready)."""
+        from . import openings
+
+        return openings.ready(self.workspace(code), floor_id, self.cache / READS)
 
     def close(self) -> None:
         """What Studio started stopped: the language model's server, the read workers,
@@ -2175,7 +2220,8 @@ class Studio:
              editor: Editor | None = None, redo: bool = False) -> dict:
         """The person's latest change (on ``floor``) undone, or their latest undoing redone
         (Review.step_back): it needs edit on each floor it changed (as it did). What was
-        drawn is read again (a job, as drawing does): ``job``."""
+        drawn is read again (a job, as drawing does): ``job``; a door, window, opening or
+        gate is done at once (no job)."""
         if floor is not None and not isinstance(floor, str):
             raise ValueError("floor: a floor's ID")
 
@@ -2185,7 +2231,9 @@ class Studio:
                     raise Forbidden(f"undoing this needs edit access to {f}; you have {sight.floor(f) or 'none'}")
 
         done = self.review(code).step_back(floor, by=by, editor=editor, redo=redo, check=check)
-        job = self.convert(code, done["floors"][0], by=_uid(by), drawn=True) if done.pop("read") and done["floors"] else None
+        why = done.pop("why", None)
+        job = self.convert(code, done["floors"][0], by=_uid(by), drawn=True, why=why) \
+            if done.pop("read") and done["floors"] else None
         return {**done, "job": job}
 
     def history(self, code: str, floor: str | None = None, n=None, sight: Sight | None = None, by=None) -> dict:

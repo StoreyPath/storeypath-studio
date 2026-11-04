@@ -275,17 +275,54 @@ def open_to_the_sky(ws: Workspace, floor_id: str) -> set[str]:
     return {r.id for r in objects if r.kind == "space" and ws.effective(r)["type"] in OUTDOOR and r.id not in enclosed}
 
 
-def _walls_and_parapets(walls, spaces, thickness: float | None):
+def courtyards(ws: Workspace, floor_id: str) -> list:
+    """A floor's courtyards and light wells: its spaces set aside as no room that are open
+    to the sky, as read (extract.find_courtyards) or as a person says (Override.sky). Each
+    is a hole in the floor's outline (floor_outline), outdoors: the walking network does not
+    cross it, and a door onto it leads outside. A location's layout has none (its land is
+    all open to the sky)."""
+    if is_land(floor_id):
+        return []
+    return [r for r in ws.floor_objects(floor_id) if r.kind == "space" and r.geometry and ws.effective(r)["sky"]]
+
+
+def floor_outline(ws: Workspace, floor_id: str, floor=None):
+    """A floor's outline as it is used (a package's floor, the building's footprint, a
+    sample's): as read, with a hole where each of its courtyards and light wells is
+    (courtyards); None for a floor with none. Rooms are never cut: a courtyard lies
+    between them."""
+    f = floor if floor is not None else ws.floor(floor_id)
+    if not f.outline:
+        return None
+    outline = shape(f.outline)
+    yards = courtyards(ws, floor_id)
+    if not yards:
+        return outline
+    holes = unary_union([shape(r.geometry) for r in yards])
+    try:
+        cut = outline.difference(holes)
+    except shapely.errors.GEOSException:  # (an outline that is not valid as it is kept)
+        cut = shapely.make_valid(outline).difference(shapely.make_valid(holes))
+    parts = [p for p in as_polygons(cut) if not p.is_empty]
+    return (parts[0] if len(parts) == 1 else MultiPolygon(parts)) if parts else outline
+
+
+def _walls_and_parapets(walls, spaces, thickness: float | None, yards=()):
     """A floor's walls, split into those that rise to the ceiling and the parapets. On
     a floor with a terrace, balcony or roof open to the sky, a wall that encloses no room
     is low: the wall around a roof, and anything built onto it (a pier, a box for a
-    pipe). A room's own walls stay full height, terrace or not beside them.
-    ``spaces``: (shape, open to the sky)."""
-    if walls is None or walls.is_empty or not any(sky for _, sky in spaces):
+    pipe). A room's own walls stay full height, terrace or not beside them. In a
+    courtyard or light well (``yards``: their shapes, not among ``spaces``) a wall that
+    encloses no room is low as well (a garden wall, a planter); on a floor with no
+    terrace, balcony or roof, only there. ``spaces``: (shape, open to the sky)."""
+    decks = any(sky for _, sky in spaces)
+    if walls is None or walls.is_empty or not (decks or yards):
         return walls, None
     reach = 1.5 * max(thickness or 0.2, 0.1) + 0.05  # across a wall, to the space on its far side
     rooms = unary_union([s for s, sky in spaces if not sky]).buffer(reach)
     low = walls.difference(rooms)
+    if not decks:  # (courtyards alone: the walls standing in them)
+        low = low.intersection(unary_union(list(yards)))
     low = unary_union([p for p in as_polygons(low) if p.area >= 0.01])
     if low.is_empty:
         return walls, None
@@ -421,14 +458,17 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
             outlines = []
             for f in sorted(b.floors, key=floor_order):  # (lowest first: a mezzanine after its floor)
                 f_id = child_id(b_id, f.code)
-                outline = shape(f.outline) if f.outline else None
+                outline = floor_outline(ws, f_id, f)  # (open where its courtyards and light wells are)
                 if outline is not None:
                     outlines.append(outline)
                 if not whole:
                     continue
                 sky = open_to_the_sky(ws, f_id)
-                spaces = [(shape(r.geometry), r.id in sky) for r in ws.floor_objects(f_id) if r.kind == "space"]
-                walls, parapets = _walls_and_parapets(shape(f.walls) if f.walls else None, spaces, f.wall_thickness)
+                yards = {r.id: shape(r.geometry) for r in courtyards(ws, f_id)}
+                spaces = [(shape(r.geometry), r.id in sky) for r in ws.floor_objects(f_id)
+                          if r.kind == "space" and r.id not in yards]
+                walls, parapets = _walls_and_parapets(shape(f.walls) if f.walls else None, spaces, f.wall_thickness,
+                                                      list(yards.values()))
                 out["floors"].append(
                     _feature(
                         f_id,
@@ -460,7 +500,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "number": eff["number"], "drawing_label": r.label, "floor_id": f_id,
                                  "area_m2": round(geom.area, 2),
                                  "display_point": _lonlat(g, _label_point(geom)),
-                                 "zones": list(r.zones), "outdoor": r.id in sky,
+                                 "zones": list(r.zones), "outdoor": r.id in sky or r.id in yards,
                                  "capacity": capacity, "capacity_from": capacity_from, "grade": grade,
                                  "stack": stack.get(r.id),
                                  "floor_finish": finishes.known(eff["floor_finish"], "floor"),
@@ -491,7 +531,8 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                 r.id,
                                 _geo(geom, g),
                                 {"kind": "opening", "type": r.type, "floor_id": f_id,
-                                 "connects": r.connects, "exterior": len(r.connects) == 1,
+                                 # (onto a courtyard or light well: outside)
+                                 "connects": r.connects, "exterior": sum(c not in yards for c in r.connects) == 1,
                                  "width_m": r.width,
                                  "span": [_lonlat(g, p) for p in r.span] if r.span else None,
                                  "swings": [[_lonlat(g, p) for p in leaf] for leaf in r.swings] if r.swings else None,

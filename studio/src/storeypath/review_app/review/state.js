@@ -41,6 +41,9 @@ export const state = {
   clipboard: null, // items copied, to paste in this project (furnish.js)
   busy: false, // an edit is being saved and the floor read again
   pending: [], // walls and dividing lines drawn, being read (["wall" | "divider", line]): drawn meanwhile
+  // doors, windows, openings and gates changed, drawn as they will be until Studio says so (drawing.js:
+  // each {hide: [IDs], show: [openings as the floor lists them], until: the version that has it})
+  ghosts: [],
   reading: null, // the floor's drawing being read again: its job's ID (a person may stop it)
   segments: null, // the floor's wall edges, for snapping to
   alt: false, // Alt held (placing or dragging freely)

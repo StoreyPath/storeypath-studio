@@ -20,14 +20,14 @@ from ezdxf.entities import DXFGraphic
 from shapely import STRtree, make_valid
 from shapely.affinity import translate
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
-from shapely.ops import polygonize, unary_union
+from shapely.ops import polygonize, substring, unary_union
 
 from .cad import drawing_units, header_units, meters_per_unit
 from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
 from .split import exact_parts, split_by_labels
-from .walls import DoorShape, DoorSwing, Fabric, open_issue, read_fabric, spaces_from_walls
+from .walls import DoorShape, DoorSwing, Fabric, open_issue, outlined_stretches, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
 CURVE_TOLERANCE_M = 0.02
@@ -74,6 +74,9 @@ class ExtractedSpace:
     issues: list[str] = field(default_factory=list)  # reasons a person should look at it
     ignored: bool = False  # judged not a room (vision): set aside, for a person to restore
     open_ground: bool = False  # a roof's open ground round the rooms on it (find_spaces' open_ground)
+    # a courtyard or light well, when it is set aside (find_courtyards): open to the sky, a
+    # hole in the floor's outline (export.floor_outline); a person's say wins (Override.sky)
+    sky: bool = False
 
 
 @dataclass
@@ -432,6 +435,8 @@ class PlanDrawn:
     tags: list  # (tag, D or W, where): door and window tags
     layer_counts: Counter
     loose_door_entities: int = 0
+    glass_lines: list[LineString] = field(default_factory=list)  # of opening_lines, those on layers named for
+    # windows or glass, drawn as lines (not dashed: overhead): a glass front's panes (walls._glass_fronts)
 
 
 def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
@@ -457,6 +462,7 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
     blocks: list[tuple[str, Point]] = []
     door_shapes: list[DoorShape] = []
     opening_lines: list[LineString] = []
+    glass_lines: list[LineString] = []
     tags: list[tuple[str, str, Point]] = []
     layer_counts: Counter[str] = Counter()
     loose_door_entities = 0
@@ -472,6 +478,7 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
         return not profile.door_layers.fullmatch(layer) or door_blocks.pop(id(insert), None) is None
 
     is_dashed = dashed_lines(doc)
+    glassy: dict[str, bool] = {}  # each door or window layer: whether its name says windows or glass
 
     for e, layer in _walk(plan_entities(doc, region), expand=expand):
         kind = e.dxftype()
@@ -500,6 +507,11 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
             elif (flat := _flatten(e, tol)) is not None:
                 loose_door_entities += 1
                 opening_lines.append(LineString([(x * scale, y * scale) for x, y in flat[0]]))
+                if kind in GLASS_KINDS and not is_dashed(e, layer):
+                    if layer not in glassy:
+                        glassy[layer] = name_hint(layer) == "window" or bool(GLASS_NAME.search(layer))
+                    if glassy[layer]:
+                        glass_lines.append(opening_lines[-1])
         # walls are kept in every case; a dashed line on a wall layer is overhead
         on_walls = bool(profile.wall_layers.fullmatch(layer)) and (kind == "HATCH" or not is_dashed(e, layer))
         on_spaces = method != "walls" and bool(profile.space_layers.fullmatch(layer))
@@ -532,7 +544,14 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
         for p in polygonize(unary_union(linework)):
             closed_shapes.append((p, "linework"))
     return PlanDrawn(scale, warnings, closed_shapes, wall_lines, wall_fills, labels, blocks,
-                     _merge_doors(door_shapes), opening_lines, tags, layer_counts, loose_door_entities)
+                     _merge_doors(door_shapes), opening_lines, tags, layer_counts, loose_door_entities, glass_lines)
+
+
+GLASS_KINDS = {"LINE", "LWPOLYLINE", "POLYLINE"}  # how panes are drawn (an arc, a fill or a text is none)
+# A door or window layer whose name says it holds windows or glass (analyse.name_hint's windows, or
+# this): its lines in line end to end are a glass front's panes. A layer read as openings for what is
+# drawn on it alone (corridors' outlines in line with the walls) is not one, nor is a layer of doors.
+GLASS_NAME = re.compile(r"glas|verre|vidrio|vetro|زجاج", re.I)
 
 
 def plan_labels(plan: PlanDrawn, profile: Profile, skip_label: Callable[[str], bool] | None) -> list[Label]:
@@ -600,7 +619,8 @@ def find_spaces(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: l
     used = "outlines"
     if not spaces and method != "outlines" and (lines or fills):
         found = spaces_from_walls(lines, fills, plan.door_shapes, plan.opening_lines, [lb.point for lb in labels],
-                                  profile.walls, profile.spaces.min_area, open_ground=open_ground)
+                                  profile.walls, profile.spaces.min_area, open_ground=open_ground,
+                                  glass_lines=plan.glass_lines)
         grounds = unary_union(found.grounds) if found.grounds else None
         spaces = [ExtractedSpace(polygon=p, layer="walls", open_ground=grounds is not None
                                  and grounds.contains(p.representative_point()))
@@ -686,7 +706,8 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
 
     found = spaces_from_walls(near(lines), near(fills), [d for d in plan.door_shapes if d.box.intersects(window)],
                               near(plan.opening_lines), [lb.point for lb in labels if window.contains(lb.point)],
-                              profile.walls, profile.spaces.min_area, within=(previous.envelope, window))
+                              profile.walls, profile.spaces.min_area, within=(previous.envelope, window),
+                              glass_lines=near(plan.glass_lines))
     if found.fabric is None:
         return whole("no walls found around it")
     inside = area.buffer(AROUND_REACH_M)
@@ -724,7 +745,9 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
     fabric = replace(previous.fabric,
                      walls=previous.fabric.walls.difference(theirs).union(found.fabric.walls.intersection(theirs)),
                      windows=[w for w in previous.fabric.windows if not w.intersects(theirs)] +
-                             [w for w in found.fabric.windows if w.intersects(theirs)])
+                             [w for w in found.fabric.windows if w.intersects(theirs)],
+                     fronts=[w for w in previous.fabric.fronts if not w.intersects(theirs)] +
+                            [w for w in found.fabric.fronts if w.intersects(theirs)])
     return replace(
         previous,
         spaces=[previous.spaces[i] for i in kept] + spaces,
@@ -765,7 +788,7 @@ def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: 
 
     door_shapes, opening_lines = plan.door_shapes, plan.opening_lines
     if fabric is None and (lines or fills):
-        fabric = read_fabric(lines, fills, door_shapes, opening_lines, profile.walls)
+        fabric = read_fabric(lines, fills, door_shapes, opening_lines, profile.walls, glass_lines=plan.glass_lines)
     doors = _connect_doors(spaces, [d.box for d in door_shapes], profile.doors.reach, warnings,
                            [(d.span, d.width, _leaves(d)) for d in door_shapes])
     # Openings closed with no door drawn count as doors between two spaces; on the
@@ -776,9 +799,11 @@ def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: 
         if len(d.connects) == 2
     ]
     if fabric is not None:
+        fronts = {id(w) for w in fabric.fronts}
         doors += [
             replace(d, source="window")
-            for d in _connect_doors(spaces, [w.buffer(0.15, cap_style="flat") for w in fabric.windows],
+            for d in _connect_doors(spaces, [_window_footprint(w, id(w) in fronts, profile.doors.reach)
+                                             for w in fabric.windows],
                                     profile.doors.reach, [], [(w, round(w.length, 3)) for w in fabric.windows])
         ]
     doors += [  # across a gap in a wall with no door drawn, where two labelled rooms meet
@@ -787,6 +812,8 @@ def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: 
         if len(d.connects) == 2
     ]
     _read_tags(doors, plan.tags)
+    if fabric is not None:
+        doors += _outlined_ways_in(spaces, zoned, doors, lines, fills, fabric, profile)
     if plan.loose_door_entities and not door_shapes:
         warnings.append(
             f"{plan.loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
@@ -814,6 +841,16 @@ def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: 
             outline, walls = _to_the_building(outline, walls, rooms)
     return FloorExtraction(spaces, doors, outline, plan.scale, warnings, found.used, walls, _thickness(walls),
                            labels, zones)
+
+
+def _window_footprint(span: LineString, front: bool, reach: float):
+    """Where a window stands, to find the spaces it joins: its span, 0.15 m either side. A glass
+    front's window runs from wall to wall, a partition meeting the glass at either end: the space
+    past the partition is within reach of its ends, so it joins the spaces beside its middle."""
+    if front:
+        end = min(reach + 0.05, span.length / 4)
+        span = substring(span, end, span.length - end)
+    return span.buffer(0.15, cap_style="flat")
 
 
 PLAN_CELL_M = 50.0  # walls are grouped into bodies on a grid this coarse…
@@ -911,6 +948,32 @@ def _sliding_doors(doors: list[ExtractedDoor], untagged: list[ExtractedDoor]) ->
         if any(i not in way_in and reached[i] == 1 for i in d.connects):
             d.source = "glazing"
             d.issues.append("drawn as glazing, the only way into a room, taken as a sliding door; check it")
+
+
+NO_WAY_IN_NEEDED = {SpaceType.ELEVATOR, SpaceType.SHAFT, SpaceType.OPEN_TO_BELOW}  # (a lift's is assumed: add_lift_doors)
+
+
+def _outlined_ways_in(spaces: list, zoned: set, doors: list[ExtractedDoor], lines: list, fills: list, fabric: Fabric,
+                      profile: Profile) -> list[ExtractedDoor]:
+    """A door-wide stretch of a filled wall drawn by its outline alone (walls.outlined_stretches)
+    is an opening where it leads into a room with a label and no way in: its gap taken out of the
+    walls, the rooms staying apart. Anywhere else it is wall: beside a room's own door such a
+    stretch is most likely a cabinet or a recess in the wall, and an area with no label behind one
+    (a shaft, a courtyard) is no room that wants a way in."""
+    stretches = outlined_stretches(lines, fills, SLIDING_DOOR_M, profile.walls.max_thickness)
+    if not stretches:
+        return []
+    way_in = {i for d in doors if d.source in WAYS_IN or d.source == "glazing" for i in d.connects}
+    wants = {i for i, s in enumerate(spaces) if i not in way_in and s.type not in NO_WAY_IN_NEEDED
+             and (s.name or s.number or i in zoned)}
+    found = _connect_doors(spaces, [box for box, _ in stretches], profile.doors.reach, [],
+                           [(span, round(span.length, 3)) for _, span in stretches])
+    out = [replace(d, source="doorway", issues=[
+        "a stretch of wall drawn with no fill, the only way into a room, taken as an opening; check it"])
+        for d in found if len(d.connects) == 2 and wants.intersection(d.connects)]
+    if out:
+        fabric.walls = fabric.walls.difference(unary_union([d.footprint for d in out]))
+    return out
 
 
 LIFT_DOOR_M = 0.9  # an assumed lift door's width
@@ -1089,7 +1152,9 @@ def keep_to_the_building(ex: FloorExtraction) -> None:
     areas set aside as not rooms that reach the edge of the plan (a yard inside the
     line that marks the land, the pool in that yard…), the line itself, and any
     plot wall running on from the house. Rooms are never cut; areas set aside
-    inside the building (a shaft, a gap) stay part of it."""
+    inside the building (a shaft, a gap) stay part of it, and so do its courtyards and
+    light wells here: they are taken out of it where the floor is used, with what people
+    say of them (find_courtyards, export.floor_outline)."""
     if ex.outline is None or ex.outline.is_empty:
         return
     rooms = [s.polygon for s in ex.spaces if not s.ignored]
@@ -1109,6 +1174,62 @@ def keep_to_the_building(ex: FloorExtraction) -> None:
         return
     ex.outline, ex.walls = _to_the_building(outline, ex.walls, unary_union(rooms))
     ex.wall_thickness = _thickness(ex.walls)
+
+
+# A courtyard or a light well: an area inside the building with no roof over it. Areas a
+# reading can say are open to the sky, when they are set aside (by vision or by a person)
+# as no room: those inside the floor's outline (more than OUTSIDE_REACH_M from its outer
+# edge: nearer, it is the outside round the building, keep_to_the_building's) onto which
+# windows of the floor's rooms open (a shaft, a duct, a gap between two walls has none),
+# and wide enough to be a courtyard or light well: a circle COURTYARD_WIDTH_M across fits
+# in it (a gap between double walls, a duct or a lift's shaft is narrower), with at least
+# COURTYARD_WINDOWS such windows. Only an area of no kind in particular is (unspecified,
+# or an open area): one the rules or a model typed (a shaft, a lift, stairs, a store, a
+# terrace, which has a floor) is never.
+COURTYARD_WIDTH_M = 3.0
+COURTYARD_WINDOWS = 1
+COURTYARD_TYPES = frozenset({SpaceType.UNSPECIFIED, SpaceType.OPEN_AREA})
+
+
+def find_courtyards(ex: FloorExtraction) -> int:
+    """The floor's courtyards and light wells: each space that is open to the sky when it is
+    set aside (see COURTYARD_WIDTH_M) marked so (``sky``). It is then left out of the floor
+    where the floor is used (export.floor_outline: a hole in its outline, its area not the
+    floor's; the walking network does not cross it, and its doors lead outside). Whether it
+    is set aside is not asked here: vision's word, or a person's, is applied with the
+    floor's corrections. Rooms are never cut, nor marked. Returns how many."""
+    for s in ex.spaces:
+        s.sky = False
+    if ex.outline is None or ex.outline.is_empty:
+        return 0
+    zoned = {z.space for z in ex.zones}
+    least = math.pi * (COURTYARD_WIDTH_M / 2) ** 2  # (smaller, the circle cannot fit in it)
+    candidates = [i for i, s in enumerate(ex.spaces) if i not in zoned and s.layer != "drawn"
+                  and s.type in COURTYARD_TYPES and s.polygon.area >= least
+                  and not s.polygon.buffer(-COURTYARD_WIDTH_M / 2).is_empty]
+    if not candidates:
+        return 0
+    shells = unary_union([Polygon(p.exterior) for p in as_polygons(ex.outline)])
+    edge = shells.boundary
+    inside = shells.buffer(0.05)  # (rounding: an area along the outline is within it)
+    windows: Counter = Counter()  # each candidate: the windows of the floor's rooms that open onto it
+    wanted = set(candidates)
+    for d in ex.doors:
+        if d.source != "window" or len(d.connects) != 2 or d.connects[0] == d.connects[1]:
+            continue
+        for here, there in (d.connects, d.connects[::-1]):
+            if here in wanted and not ex.spaces[there].ignored:
+                windows[here] += 1
+    found = 0
+    for i in candidates:
+        s = ex.spaces[i]
+        if windows[i] < COURTYARD_WINDOWS:
+            continue
+        if not inside.covers(s.polygon) or s.polygon.distance(edge) <= OUTSIDE_REACH_M:
+            continue
+        s.sky = True
+        found += 1
+    return found
 
 
 def _to_the_building(outline, walls, rooms):

@@ -70,8 +70,8 @@ marks' legend, the pointer in metres and a scale; drag, the wheel, a pinch, − 
 | `review/compass.js` | in 3D and walking, the compass (north as the view faces; a click faces north) and Top (straight down) |
 | `review/palette.js` | ⌘K / Ctrl+K: rooms, items, floors and every command |
 | `review/reviewmode.js`, `likely.js` | review mode, and a room's likely types |
-| `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
-| `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here |
+| `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels (the floor's outline open where its courtyards and light wells are); the pointer on it (a click where no room is shown chooses an area set aside there) |
+| `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here; a door, window or opening changed drawn as it will be until Studio has it (`state.ghosts`: Studio changes them at once) |
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
 | `review/groups.js` | sets placed in one go, items chosen together: moved, turned, mirrored, deleted, grouped and let go as one change |
 | `review/furnish.js` | furniture layouts (a room's items kept as the project's, previewed and placed again in any room, lined up with a corner, its items dragged where they fit) and items copied and pasted |
@@ -81,7 +81,7 @@ marks' legend, the pointer in metres and a scale; drag, the wheel, a pinch, − 
 | `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, the paint tools, Share an area: each its own tool (or tools) and parts |
 | `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |
 | `review/menu.js` | the right-click menu, on the plan and in 3D and walking (`menu3d`) |
-| `review/rooms.js` | a room's corrections, saved; capacity and grade |
+| `review/rooms.js` | a room's corrections, saved; capacity and grade; what an area set aside is (open to the sky, set aside as part of the floor, a room after all: `sayWhat`) |
 | `review/live.js`, `../together.js` | others' changes shown live; presence, who is editing which rooms, undo and redo, History |
 | `review/held.js` | the rooms someone else is editing, outlined in their colour; the banner when the room chosen is one |
 | `review/api.js`, `notify.js`, `access.js`, `dom.js`, `tooltip.js` | calls to Studio, toasts and the status line, who may edit, elements and icons, tooltips |

@@ -320,9 +320,10 @@ and ⇧⌘Z, Ctrl+Z and Ctrl+Y) undo your latest change on the floor shown, and 
 you undid until you make another change. An undo is a change like any other: recorded
 as an undo of yours, it needs the floor (and edit on it), and it is refused, naming who
 and when, when someone else changed the same space, item or drawn line since. An item
-placed and undone is retired, its ID never given again; a wall, line, door or space
-drawn and undone is taken away and the floor read again (its rooms' IDs as reading
-again gives them). A file opened in place of the project, or of a building, is a line
+placed and undone is retired, its ID never given again; a wall, line or space drawn and
+undone is taken away and the floor read again (its rooms' IDs as reading again gives
+them); a door, window, opening or gate is taken away or put back at once, as reading
+the floor again would (its ID kept). A file opened in place of the project, or of a building, is a line
 no undo goes back over.
 
 **History.** *History* in Review (its drawer, from the top bar) lists who changed what on the floor, newest first, in
@@ -407,7 +408,11 @@ outside, and what a model decided. Click a space to correct its type, name or nu
 in the inspector (each saved as it is changed), accept it as it is, set how many
 people it seats, or **delete** it (not there, or not worth anything: a sliver, the
 outside). A deleted space keeps its ID, is exported marked `ignored`, and comes back
-with *Show deleted*. The tools on the left (or a right-click on the plan) draw the
+with *Show deleted*. One inside the building that windows of the rooms round it open
+onto, 3 m across or more, is a courtyard or light well, open to the sky: a hole in the
+floor (in the package, its area and 3D), gone round by the walking network; a click
+where it is chooses it, and *What it is* says otherwise (set aside as part of the floor,
+or a room after all). The tools on the left (or a right-click on the plan) draw the
 walls, dividing lines, doors, windows, openings, spaces, lifts and stairs the drawing
 leaves out, place furniture and equipment, paint floors and walls, measure, and share
 an area; a door, window or opening chosen is resized in the inspector. Each tool's
@@ -457,8 +462,9 @@ An item placed or carried in 3D settles as on the plan (`fit.js`): its room's wa
 it, the magnet lines it up against a wall or an item near it, Alt places it as it is;
 its ghost is green, or red where it does not fit. What changes shows in 3D at once:
 items (yours, or others' as they are saved) are drawn again on their floor alone, a
-room's name, number or type changes its label and its floor's finish; walls, doors,
-dividers and spaces drawn on the plan come with the floor read again, and that floor
+room's name, number or type changes its label and its floor's finish; doors, windows,
+openings and gates changed on the plan as soon as they are (Studio changes them at once,
+with no read), walls, dividers and spaces drawn with the floor read again; that floor
 alone is built again (another person's re-read of another floor when that floor is
 next shown). A floor of about a thousand rooms and a thousand desks orbits and walks
 at 60 frames a second on a laptop's graphics (labels only where there is room for
@@ -749,12 +755,20 @@ the way a person reads a plan:
 - Doors close the openings they stand in: door blocks, or doors drawn as loose
   lines, by the closed position of their swing (both leaves of a double door).
 - Glazing and closed door leaves on door/window layers continue the wall across
-  their gap; a cross marking a lift car does not.
+  their gap; a cross marking a lift car does not. A glass front drawn in pieces
+  (window blocks in a row, or panes end to end, on a layer named for windows or
+  glass) is one run of glass: each stretch of it from wall to wall, partitions
+  meeting it from inside parting it, continues the wall, however long (on
+  other door and window layers, a line from wall to wall up to
+  `walls.max_glazing`, 6 m); never across a door standing in it.
 - Door and window tags (D4, W12, SD2) say which an opening is: a door tag makes a
   door of an opening drawn as glazing or left open. Glazing at a door's width with
   no tag is taken as a sliding door only where it is the only way into a room;
   beside a door, or one of a row of panes, it is a window. An opening read as
   another kind where it stood keeps its ID on a re-read.
+- A door-wide stretch of a filled wall drawn by its outline alone is an opening only
+  where it leads into a room with a label and no way in; anywhere else it is wall
+  (beside a room's own door, most likely a cabinet or a recess).
 - Blocks on door layers are doors only when they have a swing, a door's name, or a
   sliding door's shape: basins, baths and cars put on a door layer are not doors.
 - A lift with no way in drawn is given a door on the wall it shares with a hall,

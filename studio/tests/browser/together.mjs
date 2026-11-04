@@ -4,7 +4,8 @@
 // is outlined in his colour, the status bar says who is editing how many rooms, the room
 // chosen says it is his in a banner; placing an item in it is refused at once, saying
 // whose it is, and placing one in the room beside it is not; once he is done, it is free.
-// Her tab hidden lets its stream go, and opens it again (with what changed) when seen.
+// Her tab hidden lets its stream go, and opens it again (with what changed) when seen. A door
+// he adds and takes away (at once, with no read) comes and goes on her plan by what changed.
 // tests/test_review_browser.py starts the Studio (with accounts) and gives the sessions.
 
 import { dirname, join } from "node:path";
@@ -141,6 +142,19 @@ try {
   await until(() => window.storeypathReview.stream() === 1, "seen again: her stream open", 10000);
   await until((id) => window.storeypathReview.state.byId.get(id)?.name === "Renamed meanwhile",
     "what changed while it was let go is shown", 10000, his.id);
+  // a door Khalid adds (at once: no read of the floor), on Sara's plan by what changed, the floor's
+  // other openings as they were; taken away, gone
+  const floor = await R(() => window.storeypathReview.state.floor.id);
+  const doors = await R(() => window.storeypathReview.state.floor.doors.length);
+  const span = [[his.at[0] - 0.45, his.at[1] + 1], [his.at[0] + 0.45, his.at[1] + 1]];
+  const [added, door] = await asKhalid("POST", `floors/${floor}/edits`, { add: { opening: { type: "door", span } } });
+  truly(added === 200 && door.at_once === true, `his door added at once (${added}: ${JSON.stringify(door)})`);
+  await until((n) => window.storeypathReview.state.floor.doors.length === n + 1 && window.storeypathReview.state.floor.doors.some((d) => d.drawn),
+    "his door on Sara's plan, the floor's other openings as they were", 10000, doors);
+  const [gone, away] = await asKhalid("POST", `floors/${floor}/edits`, { remove: { kind: "opening", at: [his.at[0], his.at[1] + 1] } });
+  truly(gone === 200 && away.at_once === true, `taken away at once (${gone}: ${JSON.stringify(away)})`);
+  await until((n) => window.storeypathReview.state.floor.doors.length === n && !window.storeypathReview.state.floor.doors.some((d) => d.drawn),
+    "gone from Sara's plan", 10000, doors);
   truly(!page.errors.length, `the console said ${JSON.stringify(page.errors)}`);
   console.log("ok: many people on a floor, one a room");
 } catch (e) {

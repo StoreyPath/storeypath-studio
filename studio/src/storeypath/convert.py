@@ -8,8 +8,6 @@ code from the building's counter.
 
 from __future__ import annotations
 
-import math
-
 import pickle
 import threading
 from collections import Counter, OrderedDict
@@ -18,16 +16,19 @@ from pathlib import Path
 
 import shapely
 from shapely import STRtree, set_precision
-from shapely.geometry import Point, mapping, shape
+from shapely.geometry import mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
 from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, _drawn_line, add_lift_doors,
-                      find_spaces, find_spaces_around, finish_floor, gather_plan, keep_to_the_building,
-                      on_the_roof, plan_labels, plan_walls, stair_flights, type_stairs, type_zoned_spaces)
+                      find_courtyards, find_spaces, find_spaces_around, finish_floor, gather_plan,
+                      keep_to_the_building, on_the_roof, plan_labels, plan_walls, stair_flights, type_stairs,
+                      type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
+from . import openings
+from .openings import DOOR_MATCH_DISTANCE, SAME_OPENING_M, door_fields, match_doors, opening_type, put_fields  # noqa: F401
 from .profile import AUTO, load_profile, resolve_profile
 from .reading import TextReader
 from .symbols import MODEL as SYMBOLS_MODEL
@@ -39,8 +40,6 @@ from .workspace import ObjectRecord, Workspace, utcnow
 MATCH_MIN_IOU = 0.5  # outlines overlapping this much are the same space
 MATCH_MIN_IOU_SAME_NUMBER = 0.1  # …or this much when the room number is unchanged
 VERTICAL_MIN_IOU = 0.5  # elevator/stairs outlines on two floors this aligned share a code
-DOOR_MATCH_DISTANCE = 0.5  # m
-SAME_OPENING_M = 0.05  # an opening this close to one read before is that one, whatever kind it is read as
 SAMPLE_TEXTS = 6  # unknown texts per layer asked about when reading what a layer holds
 # A read that finds no spaces where a floor has some, or that would retire more than
 # this share of them, is most likely a bad read (layers renamed, wrong units, a
@@ -71,6 +70,7 @@ class ConversionReport:
     carried: list[tuple[str, str]] = field(default_factory=list)  # (retired, new): a room's correction gone on with it
     lost: list[str] = field(default_factory=list)  # rooms people corrected, retired all the same (force)
     vision: dict = field(default_factory=dict)  # rooms looked at, asked about, kept as barely changed (look_at_rooms)
+    space_ids: list[str] = field(default_factory=list)  # the spaces' IDs as registered, in the read's order
 
     def summary(self) -> str:
         if self.held:
@@ -172,9 +172,17 @@ def read_floor(
         if floor.roof:
             on_the_roof(extraction)
         type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
+    # courtyards and light wells, open to the sky once set aside (by vision, or by a person):
+    # by the drawing's windows onto them, before review's openings are put in
+    find_courtyards(extraction)
+    if (yards := sum(1 for s in extraction.spaces if s.sky and s.ignored)) and say is not None:
+        say(f"{yards} courtyard(s) or light well(s) set aside: open to the sky, left out of the floor")
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
-    _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
-    _resized_openings(extraction, floor.edits.resized, profile.doors.reach)
+    # what review did to the floor's openings, put in last (openings.py): kept without it, the
+    # floor's openings are worked out again from it at once when review changes them
+    base = openings.Base.of(floor_id, extraction, profile.doors.reach)
+    extraction.doors, walls = base.worked(floor.edits)
+    extraction.walls = walls.geometry()
     notes = read_notes(doc)
     if reader.model_failed:
         notes.append(f"the language model was not used: {reader.model_failed}")
@@ -183,7 +191,7 @@ def read_floor(
     if vision is not None and vision.failed:
         notes.append(f"vision: {vision.failed}")
     return FloorRead(floor_id, extraction, layers, sha, (floor.symbols, floor.symbols_key), tally, notes, read,
-                     Path(reads) if reads is not None else None)
+                     Path(reads) if reads is not None else None, base, openings.edits_key(floor.edits))
 
 
 @dataclass
@@ -201,6 +209,8 @@ class FloorRead:
     notes: list[str]  # what the read had to say beside what applying it says
     kept: "_Read"  # what to keep of it for the floor read again…
     keep_in: Path | None = None  # …and where, beside memory
+    openings: "openings.Base | None" = None  # what it found before review's openings were put in (openings.py)…
+    edits_read: str = ""  # …and what review had done to them when it was read (openings.edits_key)
 
 
 def apply_read(ws: Workspace, read: FloorRead, force: bool = False, drawn: bool = False) -> ConversionReport:
@@ -208,12 +218,19 @@ def apply_read(ws: Workspace, read: FloorRead, force: bool = False, drawn: bool 
     its layers, the drawing's content and the symbols spotted in it."""
     floor = ws.floor(read.floor_id)
     floor.symbols, floor.symbols_key = read.symbols
+    if read.openings is not None and openings.edits_key(floor.edits) != read.edits_read:
+        # review changed the floor's openings while it was read (at once: openings.py): as they are now
+        read.extraction.doors, walls = read.openings.worked(floor.edits)
+        read.extraction.walls = walls.geometry()
     report = apply_extraction(ws, read.floor_id, read.extraction, force=force, drawn=drawn)
     report.vision = read.tally
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = read.layers
         floor.source.sha256 = read.sha
         _keep_read(read.floor_id, read.kept, read.keep_in)
+        if read.openings is not None:
+            read.openings.register(ws, read.floor_id, report.space_ids)
+            openings.keep(read.openings, read.keep_in)
     report.warnings += read.notes
     return report
 
@@ -312,14 +329,15 @@ def _read_from(path: Path) -> "_Read | None":
 
 
 def _reading_code() -> str:
-    """What the reading code is: its modules' source, hashed. A read kept by a Studio
-    that read otherwise is not taken."""
+    """What the reading code is: its modules' source, hashed (a layout's and a floor's
+    openings' too: what openings.py keeps of a read is taken by it). A read kept by a
+    Studio that read otherwise is not taken."""
     import hashlib
-    import importlib
 
     h = hashlib.sha256()
-    for name in ("analyse", "cad", "convert", "extract", "geometry", "profile", "split", "walls"):
-        h.update(Path(importlib.import_module(f"storeypath.{name}").__file__).read_bytes())
+    for name in ("analyse", "cad", "convert", "extract", "geometry", "layout", "openings", "profile", "siteplan",
+                 "split", "walls"):
+        h.update(Path(__file__).with_name(f"{name}.py").read_bytes())
     return h.hexdigest()[:16]
 
 
@@ -538,6 +556,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
         record.label = obj.label
         record.issues = list(obj.issues)
         record.detected_ignored = obj.ignored
+        record.detected_sky = kind == "space" and obj.sky  # (a courtyard or light well: open to the sky when set aside)
         record.geometry = _local(obj.polygon)
         record.parent, record.zones = None, []
         if (was := carry.get(id(obj))) is not None:  # a person's correction, going on with the room
@@ -546,7 +565,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
         return record
 
     space_records = [register(s, "space") for s in ex.spaces]
-    space_ids = [r.id for r in space_records]
+    space_ids = report.space_ids = [r.id for r in space_records]
     for z in ex.zones:
         record = register(z, "zone")
         record.parent = space_ids[z.space]
@@ -562,7 +581,7 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
     _apply_doors(ws, floor_id, building_id, ex, space_ids, now, report)
 
     floor.outline = _local(ex.outline) if ex.outline is not None else None
-    floor.walls = _local(ex.walls) if ex.walls is not None else None
+    floor.walls = openings.walls_as_kept(ex.walls)  # (as a change of its openings at once keeps them)
     floor.wall_thickness = ex.wall_thickness
     floor.converted_at = now
     floor.method, floor.warnings = ex.method, list(ex.warnings)
@@ -735,9 +754,7 @@ def _allocate_id(ws: Workspace, floor_id: str, building_id: str) -> str:
             return candidate
 
 
-def _opening_type(source: str) -> str:
-    return {"door": "door", "glazing": "door", "assumed": "door", "window": "window",
-            "drawn door": "door", "drawn window": "window", "drawn opening": "opening"}.get(source, "opening")
+_opening_type = opening_type
 
 
 DRAWN_NOTE = "drawn in review: where the drawing encloses no space"
@@ -838,179 +855,24 @@ def _join_loose_doors(ex: FloorExtraction, new: int, reach: float = 0.4) -> None
             d.connects.append(new)
 
 
-def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:
-    """The doors, windows and openings a person added in review: openings like any,
-    joined to the spaces beside them, with their gap cut in the walls."""
-    from shapely.geometry import LineString
-
-    from .extract import _connect_doors
-
-    thickness = max(ex.wall_thickness or 0.2, 0.1)
-    for o in drawn:
-        span = LineString(o.span)
-        if span.length < 0.2:
-            continue
-        found = _connect_doors(ex.spaces, [span.buffer(thickness, cap_style="flat")], reach, [],
-                               [(span, round(span.length, 3))])
-        for d in found:
-            d.source = f"drawn {o.type}"
-            d.sill, d.height = o.sill, o.height
-            if o.type == "door" and o.swing and len(o.swing) == 2:
-                d.swings = [hung(d.span, o.swing)]
-            ex.doors.append(d)
-        if ex.walls is not None:
-            ex.walls = ex.walls.difference(span.buffer(thickness, cap_style="flat"))
-
-
-RESIZE_REACH_M = 0.5  # an opening given another size in review is found this near its middle
-RETYPED = {"door": "door", "window": "window", "opening": "doorway"}  # an opening given another type: its source
-
-
-def _resized_openings(ex: FloorExtraction, resized, reach: float = 0.4) -> None:
-    """The drawing's doors, windows and openings given another size or type, or moved, in
-    review: each the opening nearest its middle, its gap in the walls made to fit (what it
-    no longer takes is wall again, as thick as the wall on either side), a door's leaves
-    with it; one given another type is that (a window read where a door is: a door); one
-    moved, along its wall to where it was put (_moved_along)."""
-    if not resized:
-        return
-    from shapely.geometry import LineString, Point
-    from shapely.ops import unary_union
-
-    from .geometry import leaves_of_width, span_of_width
-
-    thickness = max(ex.wall_thickness or 0.2, 0.1)
-    rooms = unary_union([s.polygon for s in ex.spaces]) if ex.spaces else None
-    middle = lambda d: d.span.interpolate(0.5, normalized=True) if d.span is not None else d.point  # noqa: E731
-    for rz in resized:
-        at = Point(rz.at)
-        near = [(middle(d).distance(at), k) for k, d in enumerate(ex.doors) if not d.source.startswith("drawn")]
-        near = [n for n in near if n[0] <= RESIZE_REACH_M]
-        if not near:
-            continue
-        d = ex.doors[min(near)[1]]
-        if rz.type is not None and _opening_type(d.source) != rz.type:  # read wrong: what it is
-            d.source = RETYPED[rz.type]
-            if rz.type != "door":
-                d.swings = []  # (no leaf: a window, a way through)
-        if rz.sill is not None:
-            d.sill = rz.sill
-        if rz.height is not None:
-            d.height = rz.height
-        if d.span is None or d.span.length < 0.05:
-            if rz.width is not None:
-                d.width = rz.width
-            continue
-        if rz.width is not None:
-            old = [list(c) for c in d.span.coords]
-            new = span_of_width(old, rz.width)
-            d.swings = [tuple(map(tuple, leaf)) for leaf in leaves_of_width(d.swings, old, new)] if d.swings else []
-            d.span, d.width = LineString(new), round(rz.width, 3)
-            _regap(ex, LineString(old), d.span, thickness, rooms)
-        if rz.to is not None:
-            _moved_along(ex, d, rz.to, thickness, rooms, reach)
-        if rz.swing is not None and _opening_type(d.source) == "door":
-            d.swings = [hung(d.span, rz.swing)]
-
-
-def hung(span, swing) -> tuple:
-    """A door's leaf as it was set (``swing``: [hinge, free edge]), on its span as it is
-    now: hung on the jamb nearest where it was hung, opening to the same side of its wall,
-    as long as the door is wide."""
-    (x0, y0), (x1, y1) = span.coords[0], span.coords[-1]
-    width = math.hypot(x1 - x0, y1 - y0) or 1.0
-    (hx, hy), (fx, fy) = swing
-    jamb = min(((x0, y0), (x1, y1)), key=lambda j: math.hypot(j[0] - hx, j[1] - hy))
-    nx, ny = -(y1 - y0) / width, (x1 - x0) / width
-    side = 1.0 if (fx - hx) * nx + (fy - hy) * ny >= 0 else -1.0
-    return ((round(jamb[0], 4), round(jamb[1], 4)), (round(jamb[0] + nx * side * width, 4), round(jamb[1] + ny * side * width, 4)))
-
-
-def _regap(ex: FloorExtraction, old, new, thickness: float, rooms) -> None:
-    """An opening's gap in the walls from ``old`` (its span) to ``new``: what it no longer
-    takes is wall again, as thick as the wall on either side, and where it is now is open."""
-    if ex.walls is None:
-        return
-    fill = _gap_band(ex.walls, old, thickness)
-    if fill is not None and rooms is not None:
-        fill = fill.difference(rooms)
-    walls = ex.walls.union(fill) if fill is not None else ex.walls
-    ex.walls = walls.difference(new.buffer(thickness, cap_style="flat"))
-
-
-def _moved_along(ex: FloorExtraction, d, to, thickness: float, rooms, reach: float) -> None:
-    """An opening moved along its wall so that its middle is as near ``to`` as its wall
-    lets: its span, point and leaves with it, its gap with it, joined to the spaces beside
-    it where it is now."""
-    from shapely.affinity import translate
-
-    from .extract import _connect_doors
-
-    (x0, y0), (x1, y1) = d.span.coords[0], d.span.coords[-1]
-    ux, uy = (x1 - x0) / d.span.length, (y1 - y0) / d.span.length
-    m = d.span.interpolate(0.5, normalized=True)
-    t = (to[0] - m.x) * ux + (to[1] - m.y) * uy
-    if abs(t) < 0.005:
-        return
-    dx, dy = ux * t, uy * t
-    old = d.span
-    d.span, d.point, d.footprint = translate(old, dx, dy), translate(d.point, dx, dy), translate(d.footprint, dx, dy)
-    d.swings = [((h[0] + dx, h[1] + dy), (f[0] + dx, f[1] + dy)) for h, f in d.swings]
-    _regap(ex, old, d.span, thickness, rooms)
-    found = _connect_doors(ex.spaces, [d.span.buffer(thickness, cap_style="flat")], reach, [],
-                           [(d.span, round(d.span.length, 3))])
-    if found:
-        d.connects = found[0].connects
-
-
-def _gap_band(walls, span, thickness: float):
-    """The wall a gap interrupts, as if it did not: the hull of the wall's ends on either
-    side of the span (None when there are none)."""
-    from shapely.geometry import LineString
-
-    (x0, y0), (x1, y1) = span.coords[0], span.coords[-1]
-    ux, uy = (x1 - x0) / span.length, (y1 - y0) / span.length
-    e = max(thickness, 0.3)
-    longer = LineString([(x0 - ux * e, y0 - uy * e), (x1 + ux * e, y1 + uy * e)])
-    ends = walls.intersection(longer.buffer(1.5 * thickness + 0.05, cap_style="flat"))
-    return None if ends.is_empty else ends.convex_hull
-
-
 def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now, report) -> None:
-    """Openings keep their IDs by position: windows are matched only with windows,
-    ways through (doors, doorways) only with ways through, unless it stands where it
-    stood (the same opening, read as another kind: what was done to it stays)."""
+    """Openings keep their IDs by position (openings.match_doors): windows are matched only
+    with windows, ways through (doors, doorways) only with ways through, unless it stands
+    where it stood (the same opening, read as another kind: what was done to it stays)."""
     existing = [r for r in ws.floor_objects(floor_id) if r.kind == "opening"]
-    old_points = [shape(r.geometry) for r in existing]
-    tree = STRtree(old_points)
-    used: set[int] = set()
-    for door in ex.doors:
-        kind = _opening_type(door.source)
-        best, best_d = None, DOOR_MATCH_DISTANCE
-        near = tree.query(door.point, predicate="dwithin", distance=DOOR_MATCH_DISTANCE)
-        for j in sorted(int(k) for k in near):
-            p = old_points[j]
-            d = door.point.distance(p)
-            alike = (existing[j].type == "window") == (kind == "window") or d <= SAME_OPENING_M
-            if j not in used and alike and d <= best_d:
-                best, best_d = j, d
-        if best is None:
+    matched = match_doors(existing, ex.doors)
+    for door, j in zip(ex.doors, matched):
+        fields = door_fields(door, space_ids)
+        if j is None:
             record_id = _allocate_id(ws, floor_id, building_id)
-            record = ObjectRecord(id=record_id, kind="opening", type=kind, geometry={})
+            record = ObjectRecord(id=record_id, kind="opening", type=fields["type"], geometry={})
             ws.objects[record_id] = record
             report.added.append(record_id)
         else:
-            used.add(best)
-            record = existing[best]
+            record = existing[j]
             report.kept.append(record.id)
-        record.type, record.type_source = kind, door.source
-        record.tag, record.issues = door.tag, list(door.issues)
-        record.geometry = mapping(Point(round(door.point.x, 4), round(door.point.y, 4)))
-        record.connects = [space_ids[i] for i in door.connects]
-        record.span = [[round(x, 4), round(y, 4)] for x, y in door.span.coords] if door.span is not None else None
-        record.width = door.width
-        record.swings = [[[round(x, 4), round(y, 4)] for x, y in leaf] for leaf in door.swings] or None
-        record.sill, record.height = door.sill, door.height
+        put_fields(record, fields)
+    used = {j for j in matched if j is not None}
     for j, r in enumerate(existing):
         if j not in used:
             _retire(r, now, report)

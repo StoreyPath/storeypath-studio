@@ -63,6 +63,8 @@ drawing (DWG or DXF)
       e  names, types ...... labels; types by rule, else by the language model     rules + language model
       f  fixtures .......... unnamed rooms typed by what is drawn (research only)  SymPoint-V2
       g  vision ............ each room looked at: a room or not, its type, merged  vision model
+         courtyards ........ areas set aside inside, windows onto them:            rules; a person's
+                             open to the sky, holes in the floor                   word wins
       h  door sizes ........ sill and height from the schedule of openings         rules + a model
       i  your edits ........ walls, dividers, doors, spaces drawn in review         a person, kept
  8  keep the IDs ........... matched to the last reading: kept, new, retired       rules
@@ -73,7 +75,8 @@ drawing (DWG or DXF)
 In the web app, steps 1 and 2 run when a drawing is added, steps 3 and 4 when its
 plans are found (at once for a single drawing added, else with *Find plans*), steps
 6 to 8 when the chosen plans are added as floors, and steps 7 and 8 again whenever a
-floor is read again (*Re-read drawing*, or after an edit in review). On the command line they are
+floor is read again (*Re-read drawing*, or after a wall, dividing line or space is drawn in
+review; a door, window or opening changed in review is put in at once, see [i](#i-what-a-person-drew-convertpy-openingspy)). On the command line they are
 `views`, `add-floor`, `align`, `levels` and `convert` (see
 [studio/README.md](../studio/README.md#commands)).
 
@@ -249,8 +252,32 @@ it (an open office round two shafts).
    the plan (a line at a georeferenced drawing's origin).
 2. The gaps in it are closed: a door along the closed position of its swing (both
    leaves of a double door), or across its block; glazing and door leaves drawn
-   closed carry the wall across their gap; where a wall stops and another faces its
-   end within 1.2 m, the gap is a doorway, closed and recorded as an opening.
+   closed carry the wall across their gap (a pane from wall to wall: on a layer named
+   for windows or glass however long, on another door or window layer up to 6 m, as
+   a long line there may be a step's or threshold's edge as well as glass);
+   where a wall stops and another faces its end within 1.2 m, the gap is a doorway,
+   closed and recorded as an opening.
+   A **glass front** drawn in pieces closes as well. Panes on a layer named for
+   windows or glass (window blocks in a row, or loose lines), in line and end to end
+   (overlapping, touching or a mullion apart), are one run of glass, however many
+   pieces it is drawn in, though no one of them reaches from wall to wall. Each
+   stretch of a run from wall to wall closes like a wall: the whole run where both
+   its ends meet a wall, and where partitions meet it from inside, each piece between
+   them, however long: where the glass meets a wall is where it ends. Each end meets
+   the wall in line with it or square against its jamb, as a pane's does. A run is
+   parted at each door standing
+   in it, whose leaf closes against the glass either side as against a wall: it is
+   never laid across a door. Lines drawn dashed (overhead), and lines on a layer read
+   as doors and windows only for what is drawn on it (a corridor's outline along a
+   facade), never close this way. Each stretch is a window joining the room behind it
+   to what lies beyond the glass, not to the room past the partition at its end.
+   A door-wide stretch of a filled wall drawn by its outline alone (on a wall layer a
+   closed rectangle 0.6 to 2.6 m long with no fill in it, the wall's fill carrying on
+   past both its ends) closes like the wall. Once the rooms' doors are known, such a
+   stretch leading into a room with a label and no way in is an opening between the
+   two rooms, for review, its gap taken out of the walls. Anywhere else it stays wall:
+   beside a room's own door it is most likely a cabinet or a recess, and an area with
+   no label behind one (a shaft, a courtyard) wants no way in.
 3. Round the outside, gaps up to 4 m are spanned by the building's envelope, so a
    room behind a door that is not drawn is kept (and listed for review).
 4. Each region left enclosed is a space. Areas that are the outside around the
@@ -354,6 +381,23 @@ kind of room is it.
 - **The building's edge**: areas set aside as no room that reach the edge of the
   plan (a yard inside the line marking the land, the pool in it) are taken out of
   the floor's outline and walls. Rooms are never cut.
+- **Courtyards and light wells** (`extract.find_courtyards`): an area set aside as no
+  room inside the building (by vision, or by a person who deletes it) is **open to the
+  sky** when windows of the floor's rooms open onto it (at least one: a shaft, a duct or
+  a gap between two walls has none), when it is wide enough for a circle 3 m across (a
+  gap between double walls, a duct or a lift's shaft is narrower), when it is more than
+  0.6 m from the outline's outer edge (nearer, it is the outside round the building, as
+  above) and when it is of no kind in particular (untyped, or an open area: never one
+  the rules or a model typed, a shaft, a lift, stairs, a store, a terrace). The drawing's
+  windows decide, not those drawn in review. Such an area is a hole in its floor wherever
+  the floor is used: the package's floor outline (kept whole as read, with each hole cut
+  where it is used), the building's footprint, the floor's area, the 3D slab; it is
+  outdoors (no ceiling over it), the walking network goes round it, never across it, and
+  a door onto it leads outside. Shafts, gaps and frames set aside stay part of the floor,
+  as before; rooms are never cut. On the ground floor too: a courtyard at the ground is
+  outside. A person's word on what an area set aside is (open to the sky, set aside as
+  part of the floor, or a room after all) wins over the rule and is kept through every
+  re-read, as other corrections are ([Review](#9-review-a-person)).
 
 Every decision is marked `vision` in the review notes. Questions are asked two at a
 time by default (`STOREYPATH_VISION_PARALLEL`). Answers are kept by the room's shape,
@@ -373,11 +417,20 @@ under the wrong column, an arched window's *1200+ R=600*): the vision model aske
 words where one runs, else the language model; a row is kept when every size it
 gives is a number in that row. Otherwise the rules read the table.
 
-### i. What a person drew (`convert.py`)
+### i. What a person drew (`convert.py`, `openings.py`)
 
 Walls, dividers, spaces, doors, windows and openings drawn in review, and the
-drawing's openings given another size, are applied at every reading of the floor,
-so they survive every re-read and every revised drawing.
+drawing's openings given another size, type, swing or place along their wall, are
+applied at every reading of the floor, so they survive every re-read and every revised
+drawing. Walls, dividers and spaces drawn part the rooms, so they are applied as the
+rooms are found. The openings change no room: they are put in last, each drawn one cut
+in the walls and joined to the spaces beside it, each of the drawing's given what
+review set. What the reading found before them (the spaces, the drawing's openings,
+the walls with their gaps) is kept with the floor, and a change of the floor's
+openings in review is worked out from it at once, by the same code, with no read: the
+floor is then what reading it again would make it, its IDs kept as below. Where it is
+not kept, or no longer fits the floor (its drawing, the walls, dividers or spaces
+drawn, or its rooms changed since), the floor is read again.
 
 ## 8. Keeping the IDs (`convert.py`)
 
@@ -429,7 +482,12 @@ lists the spaces and zones that need a look, with why:
   symbols, a room that looks merged or only part of one, a way through kept.
 
 Rooms vision set aside as no room are off the list: they show with *Show deleted*,
-to be restored if they are rooms.
+to be restored if they are rooms. A click where no room is shown chooses the area set
+aside there, *Show deleted* or not (in 3D too: a click on the floor where no room is),
+and the inspector's *What it is* says, and lets a person say, whether it is **open to
+the sky** (a courtyard or light well: a hole in the floor), **set aside** as part of
+the floor (a shaft, a gap) or **a room** after all. The plan's outline is drawn open
+where the floor's courtyards and light wells are.
 
 A person corrects the type, name or number (or saves it as it is, which takes it
 off the list), deletes what is not a room, draws the walls, dividers, doors, windows,
@@ -439,7 +497,8 @@ list. See [What you can do in Studio](USING-STUDIO.md#what-you-can-do-in-studio)
 
 ## 10. Export (`export.py`)
 
-A package holds **one building**: its floors, spaces, zones, openings and items with
+A package holds **one building**: its floors (each outline open where its courtyards
+and light wells are: a Polygon with a hole for each), spaces, zones, openings and items with
 their IDs, and its location ([spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), format 0.7).
 
 - It is written beside where it goes, checked against the format, and entered as an

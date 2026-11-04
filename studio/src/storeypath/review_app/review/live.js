@@ -23,8 +23,9 @@ const FLOOR_FIELDS = ["name", "ordinal", "source", "converted_at", "method", "wa
 
 /** The floor the page has, with what changed since (Review.floor ``since``): the spaces,
  * openings and items changed in it, those gone out, what the items say of each space, the
- * floor's own fields (and all its openings) when it changed itself. Spaces and openings in
- * the order of their IDs, as the whole floor has them. */
+ * floor's own fields when it changed itself, and all its openings when it was read again
+ * (``doors_all``; a change of openings at once sends those it changed alone). Spaces and
+ * openings in the order of their IDs, as the whole floor has them. */
 function patched(floor, d) {
   const gone = new Set(d.gone);
   const merge = (list, fresh) => {
@@ -35,7 +36,7 @@ function patched(floor, d) {
   const order = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   let spaces = merge(floor.spaces, d.spaces).sort(order);
   if (d.seats) spaces = spaces.map((s) => (d.seats[s.id] ? { ...s, ...d.seats[s.id] } : s));
-  const doors = "walls" in d ? d.doors : merge(floor.doors, d.doors).sort(order);
+  const doors = d.doors_all ? d.doors : merge(floor.doors, d.doors).sort(order);
   const out = { ...floor, spaces, doors, items: merge(floor.items, d.items), version: d.version, editing: d.editing };
   for (const k of FLOOR_FIELDS) if (k in d) out[k] = d[k];
   return out;
@@ -138,7 +139,9 @@ export async function refreshFloor(change) {
     // in 3D at once: the items (that floor's alone) and the rooms' labels; walls and doors
     // changed (the floor read again, a door deleted): that floor built again
     update3d();
-    if (want.shape || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
+    // (a courtyard or light well open to the sky now, or no longer: its slab open there, or whole)
+    const opened = (got.spaces || []).some((s) => Boolean(s.sky) !== Boolean(before.get(s.id)?.sky));
+    if (want.shape || opened || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
   } catch (e) {
     if (e.status === 404 && state.floor?.id === id) { // the floor deleted (by someone else): its project
       toast("This floor was deleted: back to the project", true);

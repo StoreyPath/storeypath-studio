@@ -67,11 +67,16 @@ class Fabric:
     walls: object  # (Multi)Polygon at the drawn thickness, meters
     windows: list[LineString]  # each window's span, jamb to jamb
     thickness: float | None = None
+    fronts: list[LineString] = field(default_factory=list)  # of the windows, those of glass fronts: each from
+    # wall to wall, where a partition meets the glass too (the room past it is no room it joins)
 
 
 def read_fabric(lines: list, fills: list, doors: list[DoorShape], opening_lines: list, cfg: WallsConfig,
-                mass=None) -> Fabric:
-    """The walls as drawn and the windows in them. Also measures each door's span."""
+                mass=None, glass_lines: list | None = None, gaps: list | None = None) -> Fabric:
+    """The walls as drawn and the windows in them. Also measures each door's span.
+    ``glass_lines``: the glazing on layers named for windows or glass (its glass fronts are
+    windows, one for each stretch from wall to wall); ``gaps``: the spans of gaps closed as
+    glazed (_bridge_wall_ends), windows too."""
     mass = wall_mass(lines, fills, cfg) if mass is None else mass
     if mass.is_empty:
         return Fabric(mass, [])
@@ -82,12 +87,68 @@ def read_fabric(lines: list, fills: list, doors: list[DoorShape], opening_lines:
         single = shapely.union_all(lines).difference(walls.buffer(0.01))
         if not single.is_empty:
             walls = unary_union([walls, single.buffer(0.05, cap_style="flat", join_style="mitre")])
-    for d in doors:
-        _door_bars(d, mass)  # sets span and width
+    panes = shapely.STRtree(glass_lines) if glass_lines else None
+    bars = [bar for d in doors for bar in _door_bars(d, mass, panes)]  # (sets each door's span and width)
     near_door = shapely.union_all([d.box.buffer(0.3) for d in doors]) if doors else Polygon()
     glass = [ln for ln in _connectors(mass, opening_lines, cfg.max_glazing) if not ln.intersects(near_door)] \
         if opening_lines else []
-    return Fabric(walls, _one_per_window(glass))
+    windows = _one_per_window(glass + list(gaps or []))
+    runs = _glass_runs(_glass_pieces(glass_lines)) if glass_lines else []
+    fronts = _front_windows(_glass_fronts(_with_doors(mass, bars, doors), runs, cfg.max_glazing), doors, runs) \
+        if runs else []
+    if fronts:  # a window along a glass front is the front's
+        along = shapely.union_all([f.buffer(0.3, cap_style="flat") for f in fronts])
+        windows = [w for w in windows if w.intersection(along).length < 0.5 * w.length]
+    return Fabric(walls, windows + fronts, fronts=fronts)
+
+
+def _with_doors(mass, bars: list, doors: list[DoorShape]):
+    """The walls with the doors in them: each door's leaves closed (``bars``), and a door
+    drawn as a block with no swing, its extent. A glass front stops at a door."""
+    blocks = [d.box for d in doors if not d.swings]
+    return unary_union([mass, *bars, *blocks]) if bars or blocks else mass
+
+
+FRONT_WINDOW_MIN_M = 0.5  # what is left of a glass front's stretch beside a door, shorter, is no window
+FRONT_DEPTH_M = 0.6  # a glass front's frames and glass, side by side, lie within this depth (a wall's at most)
+
+
+def _front_windows(stretches: list[LineString], doors: list[DoorShape], runs: list) -> list[LineString]:
+    """A glass front's windows: one for each stretch from wall to wall. Where it is drawn as
+    several lines side by side (its glass, its frame's faces), the stretches parted by the walls
+    meeting it (a room's) are its windows, the longer ones beside them not; not where a door
+    stands (its own glass is the door's). Each lies in the middle of the glass's depth there
+    (``runs``: _glass_runs'), so that it joins the rooms on either side of it."""
+    out: list[LineString] = []
+    taken = Polygon()
+    doors_at = shapely.union_all([d.box.buffer(0.1) for d in doors]) if doors else Polygon()
+    for s in sorted(stretches, key=lambda ln: ln.length):
+        rest = s.difference(taken.union(doors_at)) if not (taken.is_empty and doors_at.is_empty) else s
+        pieces = [p for p in shapely.get_parts(rest) if p.geom_type == "LineString" and p.length >= FRONT_WINDOW_MIN_M]
+        out += pieces
+        if pieces:
+            taken = taken.union(shapely.union_all([p.buffer(FRONT_DEPTH_M, cap_style="flat") for p in pieces]))
+    if not out or not runs:
+        return out
+    lines = [line for line, _ in runs]
+    tree = shapely.STRtree(lines)
+    middle = []
+    for w in out:
+        c = np.asarray(w.coords)
+        u = (c[-1] - c[0]) / w.length
+        n = np.array([-u[1], u[0]])
+        offsets = [0.0]
+        for j in tree.query(w.buffer(FRONT_DEPTH_M, cap_style="flat"), predicate="intersects"):
+            r = np.asarray(lines[int(j)].coords)
+            v = r[-1] - r[0]
+            if abs(v[0] * u[1] - v[1] * u[0]) > np.sin(np.radians(GLASS_ALIGN_DEG)) * np.hypot(*v):
+                continue  # (across it: a mullion)
+            off = [float((q - c[0]) @ n) for q in r]
+            if max(abs(o) for o in off) <= FRONT_DEPTH_M:
+                offsets.append(sum(off) / 2)
+        shift = (min(offsets) + max(offsets)) / 2
+        middle.append(LineString(c + n * shift))
+    return middle
 
 
 def _one_per_window(lines: list) -> list[LineString]:
@@ -145,10 +206,13 @@ def spaces_from_walls(
     min_area: float,
     within: tuple | None = None,
     open_ground: bool = False,
+    glass_lines: list | None = None,
 ) -> WallSpaces:
     """Spaces enclosed by walls. ``lines`` are wall-layer linework, ``fills`` solid
     wall areas (from hatches), ``doors`` the doors found, ``opening_lines`` the
-    linework on door and window layers (glazing tells a window from a gap).
+    linework on door and window layers (glazing tells a window from a gap), and
+    ``glass_lines`` those of it on layers named for windows or glass, not dashed (their
+    glass fronts close as walls: _glass_fronts).
 
     ``within`` (envelope, window): the spaces of one part of a building found again,
     from what is drawn in and near it: the building's extent is ``envelope`` (as found
@@ -161,11 +225,17 @@ def spaces_from_walls(
     mass = wall_mass(lines, fills, cfg)
     if mass.is_empty:
         return WallSpaces([], None, [])
-    seals = [bar for d in doors for bar in _door_bars(d, mass)]
+    panes = shapely.STRtree(glass_lines) if glass_lines else None
+    seals = [bar for d in doors for bar in _door_bars(d, mass, panes)]
     built = mass
     # glazing from wall to wall, or to a door (a side light beside an entrance's doors)
     against = unary_union([mass, *seals]) if seals else mass
-    seals += list(shapely.buffer(_connectors(against, opening_lines, cfg.max_glazing), SNAP_M)) if opening_lines else []
+    glass = _connectors(against, opening_lines, cfg.max_glazing) if opening_lines else []
+    # glass fronts: panes in line end to end, each stretch from wall to wall (or to a door)
+    if glass_lines:
+        runs = _glass_runs(_glass_pieces(glass_lines))
+        glass += _glass_fronts(_with_doors(mass, seals, doors), runs, cfg.max_glazing)
+    seals += list(shapely.buffer(glass, SNAP_M)) if glass else []
     mass = unary_union([mass, *seals]) if seals else mass
     mass = _bridge_door_boxes(mass, [d.box for d in doors if not d.swings], cfg.max_thickness)
     openings = shapely.union_all(opening_lines) if opening_lines else None
@@ -180,7 +250,7 @@ def spaces_from_walls(
     # very slow (minutes on a large building's door and window layers)
     glazing = shapely.union_all(shapely.buffer(opening_lines, cfg.max_thickness / 2 + 0.05)) if opening_lines else None
     spaces, pockets, open_edges, grounds = [], [], [], []
-    regions = [r for r in as_polygons(envelope.difference(mass))
+    regions = [r for r in _apart([r for r in as_polygons(envelope.difference(mass)) if r.area >= min_area], edge)
                if r.area >= min_area and not r.buffer(-cfg.min_width / 2).is_empty]
     cut, cut_edge = [], within[1].boundary.buffer(SNAP_M * 2) if within is not None else None
     around = set()
@@ -220,10 +290,29 @@ def spaces_from_walls(
     outline = outline.buffer(-SNAP_M, join_style="mitre")
     parts = as_polygons(outline)
     outline = parts[0] if len(parts) == 1 else MultiPolygon(parts) if parts else None
-    fabric = read_fabric(lines, fills, doors, opening_lines, cfg, built)
-    fabric.windows = _one_per_window(fabric.windows + [_axis(b) for b in glazed_gaps])
+    fabric = read_fabric(lines, fills, doors, opening_lines, cfg, built, glass_lines, [_axis(b) for b in glazed_gaps])
     return WallSpaces(spaces, outline, pockets, doorways,
                       shapely.union_all(open_edges) if open_edges else None, fabric, envelope, cut, grounds)
+
+
+HAIRLINE_M = 0.005  # areas joined only by a strip thinner than twice this are apart
+
+
+def _apart(regions: list[Polygon], edge) -> list[Polygon]:
+    """The areas between the walls, those joined only by a hairline along the building's edge
+    (``edge``) taken apart: the envelope's edge runs a hair off the walls' faces where it follows
+    them, and two recesses in a facade (either side of a glass front) would be one area along it."""
+    shapely.prepare(edge)
+    out = []
+    for r in regions:
+        if r.intersects(edge):
+            core = as_polygons(r.buffer(-HAIRLINE_M, join_style="mitre"))
+            if len(core) > 1:
+                out += [p for c in core
+                        for p in as_polygons(r.intersection(c.buffer(2 * HAIRLINE_M, join_style="mitre")))]
+                continue
+        out.append(r)
+    return out
 
 
 SURROUNDS = 3  # an area with this many others inside or within its reach…
@@ -315,6 +404,167 @@ def _axis(poly: Polygon) -> LineString:
 
 
 GLASS_FRAME_M = 0.35  # a closed shape on an opening layer this thin, and long, is a pane in its frame
+GLASS_PANE_MIN_M = 0.3  # glazing shorter than this is a mullion's or a frame's detail, not a pane
+GLASS_JOINT_M = 0.1  # panes in line this near end to end (a mullion's width between them, or none) are one front…
+GLASS_ALIGN_M = 0.02  # …each standing this near the other's line…
+GLASS_ALIGN_DEG = 2.0  # …and running its way within this much
+GLASS_END_M = 0.06  # a glass front's stretch ends on a wall this near it (as a connector's ends)
+
+
+def _glass_fronts(against, runs: list, max_pane: float) -> list[LineString]:
+    """Glass fronts: glazing on a layer named for windows or glass, drawn as panes in line end
+    to end (window blocks in a row, each pane from mullion to mullion), is one run of glass,
+    however many pieces it is drawn in. Each stretch of a run from wall to wall closes like a
+    wall: the run's own ends where both meet a wall, and where partitions meet it from inside
+    (or doors, sealed along their leaves, stand in it), each piece between them. Each end meets
+    the wall in line with it or square against its jamb (as a connector's), however long: where
+    the glass ends, at a wall, says how far it goes. A stretch that is one pane from wall to wall,
+    up to ``max_pane``, is a window like any (a connector's): not one of these; a longer pane on
+    a layer named for windows or glass is one. A stretch is never laid across a door: the run
+    is parted at each door's leaf or block, and the door closes its own gap. ``against``: the
+    walls, with the doors' leaves and blocks, as one area; ``runs``: the glazing's runs
+    (_glass_runs, of _glass_pieces)."""
+    out = []
+    for run, panes in runs:
+        x0, y0, x1, y1 = run.bounds
+        reach = GLASS_END_M + 0.3
+        local = shapely.clip_by_rect(against, x0 - reach, y0 - reach, x1 + reach, y1 + reach)
+        if local.is_empty:
+            continue
+        shapely.prepare(local)
+        for part in shapely.get_parts(run.difference(local)):
+            if part.geom_type != "LineString" or part.length < GLASS_PANE_MIN_M:
+                continue
+            c = np.asarray(part.coords)
+            a, b = c[0], c[-1]
+            if not (shapely.dwithin(local, Point(a), GLASS_END_M) and shapely.dwithin(local, Point(b), GLASS_END_M)):
+                continue
+            s0, s1 = sorted((run.project(Point(a)), run.project(Point(b))))
+            if any(p0 <= s0 + GLASS_JOINT_M and p1 >= s1 - GLASS_JOINT_M and p1 - p0 <= s1 - s0 + 2 * GLASS_JOINT_M
+                   and p1 - p0 <= max_pane for p0, p1 in panes):
+                continue  # one pane from wall to wall: a window like any (_connectors)
+            if all(_in_line(local, p, q - p) or _jamb(local, p, q - p) for p, q in ((a, b), (b, a))):
+                out.append(_to_the_walls(part, local))
+    return out
+
+
+def _to_the_walls(part: LineString, walls) -> LineString:
+    """A stretch of glass carried on, at either end, to the wall it stops just short of."""
+    c = np.asarray(part.coords)
+    a, b = c[0], c[-1]
+    u = (b - a) / (np.hypot(*(b - a)) or 1.0)
+    da, db = walls.distance(Point(a)), walls.distance(Point(b))
+    return LineString([a - u * (da + 0.01 if da > 0 else 0.0), b + u * (db + 0.01 if db > 0 else 0.0)])
+
+
+def _glass_pieces(lines: list) -> list[LineString]:
+    """The panes in glazing lines: each straight stretch of a line at least GLASS_PANE_MIN_M
+    long, and the middle line of a pane drawn as a thin closed frame."""
+    out = []
+    for ln in lines:
+        c = np.asarray(ln.coords)
+        if len(c) < 2:
+            continue
+        if np.hypot(*(c[-1] - c[0])) < 0.05:  # closed: a pane in its frame, or nothing
+            if len(c) >= 4 and (mid := _pane(c)) is not None and mid.length >= GLASS_PANE_MIN_M:
+                out.append(mid)
+            continue
+        c = np.asarray(ln.simplify(0.005).coords)
+        out += [LineString([p, q]) for p, q in zip(c[:-1], c[1:]) if np.hypot(*(q - p)) >= GLASS_PANE_MIN_M]
+    return out
+
+
+def _glass_runs(pieces: list[LineString]) -> list[tuple[LineString, list[tuple[float, float]]]]:
+    """Panes in line, end to end (overlapping, touching, or a mullion apart: GLASS_JOINT_M),
+    joined: each run one straight line from its first pane's end to its last's, with where
+    each of its panes is along it (from its start)."""
+    if not pieces:
+        return []
+    ends = np.array([np.asarray(p.coords)[[0, -1]] for p in pieces])  # (n, 2, 2)
+    way = ends[:, 1] - ends[:, 0]
+    way /= np.hypot(way[:, 0], way[:, 1])[:, None]
+    tree = shapely.STRtree(pieces)
+    left, right = tree.query(pieces, predicate="dwithin", distance=GLASS_JOINT_M)
+    keep = left < right
+    left, right = left[keep], right[keep]
+    turned = np.abs(way[left, 0] * way[right, 1] - way[left, 1] * way[right, 0])
+    parallel = turned <= np.sin(np.radians(GLASS_ALIGN_DEG))
+    off = ends[right] - ends[left, 0][:, None, :]  # the other's ends from this one's start
+    across = np.abs(way[left, 0][:, None] * off[..., 1] - way[left, 1][:, None] * off[..., 0])
+    joined = parallel & (across.max(axis=1) <= GLASS_ALIGN_M)
+    parent = list(range(len(pieces)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, j in zip(left[joined], right[joined]):
+        parent[root(int(i))] = root(int(j))
+    groups: dict[int, list[int]] = {}
+    for i in range(len(pieces)):
+        groups.setdefault(root(i), []).append(i)
+    runs = []
+    for members in groups.values():
+        k = max(members, key=lambda i: pieces[i].length)  # the run's line: its longest pane's
+        origin, u = ends[k, 0], way[k]
+        spans = sorted(tuple(sorted(((ends[i] - origin) @ u).tolist())) for i in members)
+        group = [spans[0]]
+        for span in spans[1:] + [None]:
+            if span is not None and span[0] <= max(t for _, t in group) + GLASS_JOINT_M:
+                group.append(span)
+                continue
+            t0, t1 = group[0][0], max(t for _, t in group)  # (a gap: another run along the same line)
+            runs.append((LineString([origin + u * t0, origin + u * t1]), [(p0 - t0, p1 - t0) for p0, p1 in group]))
+            if span is not None:
+                group = [span]
+    return runs
+
+
+OUTLINED_PAST_M = 0.03  # a wall's fill is looked for this far past each end of a stretch drawn only by its outline
+OUTLINED_THIN_M = 0.05  # a thinner rectangle is a frame's or a pane's, not a stretch of wall
+
+
+def outlined_stretches(lines: list, fills: list, widths: tuple[float, float], max_thickness: float) -> list[tuple]:
+    """The stretches of a filled wall drawn by their outline alone: on a wall layer a closed
+    rectangle, ``widths`` long and at most ``max_thickness`` thick, with no fill in it, where the
+    wall's fill carries on past both its ends, as thick as it is. An opening is drawn so; so is a
+    cabinet or a recess in the wall: what it is, the rooms beside it tell (extract._outlined_ways_in).
+    Each as (its rectangle, its span: along the wall's middle, from end to end)."""
+    if not lines or not fills:
+        return []
+    tree = shapely.STRtree(fills)
+
+    def filled(p) -> bool:
+        return len(tree.query(Point(p), predicate="intersects")) > 0
+
+    least, most = 2 * (widths[0] + OUTLINED_THIN_M), 2 * (widths[1] + max_thickness)
+    out = []
+    for ln in lines:
+        if not least <= ln.length <= most:
+            continue
+        c = np.asarray(ln.simplify(0.005).coords)
+        if len(c) != 5 or np.hypot(*(c[-1] - c[0])) > 0.05:
+            continue
+        sides = c[1:] - c[:-1]
+        lengths = np.hypot(sides[:, 0], sides[:, 1])
+        if abs(lengths[0] - lengths[2]) > 0.02 or abs(lengths[1] - lengths[3]) > 0.02 \
+                or abs(sides[0] @ sides[1]) > 0.03 * lengths[0] * lengths[1]:
+            continue  # not a rectangle
+        k = int(lengths[1] > lengths[0])  # a long side
+        width, thick = lengths[k], lengths[1 - k]
+        if not (widths[0] <= width <= widths[1] and OUTLINED_THIN_M <= thick <= max_thickness):
+            continue
+        middle, along = c[:4].mean(axis=0), sides[k] / width
+        across = np.array([-along[1], along[0]])
+        if filled(middle):
+            continue
+        past = [middle + side * along * (width / 2 + OUTLINED_PAST_M) + share * thick * across
+                for side in (-1, 1) for share in (-0.35, 0.0, 0.35)]
+        if all(filled(p) for p in past):
+            out.append((Polygon(c), LineString([middle - along * width / 2, middle + along * width / 2])))
+    return out
 
 
 def _connectors(mass, lines: list, max_length: float) -> list:
@@ -402,10 +652,20 @@ def _in_line(mass, point, direction, tolerance_deg: float = 25.0) -> bool:
     return False
 
 
-def _door_bars(door: DoorShape, mass) -> list[Polygon]:
+def _door_bars(door: DoorShape, mass, glass=None) -> list[Polygon]:
     """Bars along the door's leaves in their closed position: from each hinge to
     the end of its swing that lies against the far jamb, or, for the two leaves of
-    a double door, where the leaves meet."""
+    a double door, where the leaves meet. The jamb is a wall's, or the glass of a
+    glass front the door stands in (``glass``: an STRtree of the glazing on layers
+    named for windows or glass)."""
+
+    def away(p) -> float:  # from the nearest wall, or glass
+        d = mass.distance(p)
+        if glass is not None and d > 0:
+            near, dist = glass.query_nearest(p, max_distance=d, return_distance=True)
+            d = min([d, *dist.tolist()]) if len(near) else d
+        return d
+
     closed: list[tuple[Point, Point]] = []
     if len(door.swings) == 2:
         (h1, e1), (h2, e2) = [(s.hinge, s.ends) for s in door.swings]
@@ -415,9 +675,9 @@ def _door_bars(door: DoorShape, mass) -> list[Polygon]:
     if not closed:
         for s in door.swings:
             a, b = s.ends
-            end = a if mass.distance(a) <= mass.distance(b) else b
-            if mass.distance(end) <= 0.3:  # else not a door in a wall
-                closed.append((s.hinge, end))
+            da, db = away(a), away(b)
+            if min(da, db) <= 0.3:  # else not a door in a wall
+                closed.append((s.hinge, a if da <= db else b))
     if len(closed) == 2:  # a double door: from one hinge to the other
         door.span = LineString([closed[0][0], closed[1][0]])
     elif closed:

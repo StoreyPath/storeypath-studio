@@ -11,7 +11,8 @@ Every change is a row of the project's history in Studio's database (db/store.py
     part      what it changed: "object" (a space, zone or opening), "item", "edit"
               (what was drawn on the floor), "floor" (read again; taken over), "building",
               "project"
-    kind      the change: correct, reset, delete, restore, hide, show, capacity, link,
+    kind      the change: correct, reset, delete, restore, hide, show, sky, not sky, sky as
+              read (a space set aside: open to the sky or not), capacity, link,
               unlink, as found, finish (an object; finish may be of many rooms at once:
               before and after {"overrides": {id: …}}); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
@@ -244,7 +245,11 @@ def _describe(e: dict) -> str:
             return f"linked {it} with {short(to)} on another floor" if to else f"linked {it} with another floor's"
         return {"reset": f"took the corrections off {it}", "delete": f"deleted {it}", "restore": f"restored {it}",
                 "hide": f"hid {it}", "show": f"showed {it} again", "unlink": f"unlinked {it} from other floors",
-                "as found": f"linked {it} through the floors as found"}.get(kind, f"changed {it}")
+                "as found": f"linked {it} through the floors as found",
+                # a space set aside: a courtyard or light well (a hole in its floor), or not
+                "sky": f"said {it} is open to the sky (a courtyard or light well)",
+                "not sky": f"said {it} is set aside as part of the floor, not open to the sky",
+                "sky as read": f"left whether {it} is open to the sky to its reading"}.get(kind, f"changed {it}")
     if part == "item":
         verbs = {"add": "placed", "move": "moved", "turn": "turned", "values": "changed the details of",
                  "delete": "deleted", "restore": "restored", "group": "grouped", "ungroup": "ungrouped"}
