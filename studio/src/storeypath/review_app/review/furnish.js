@@ -312,6 +312,7 @@ export async function openPlaceLayout(p) {
       toast(`Deleted the furniture layout “${f.name}”`);
       if (!state.furnishings.length) return d.close();
       chosen = state.furnishings[0].id;
+      [moved, picked] = [new Map(), null]; // (those of the one deleted)
       show();
     } catch (e) {
       status.textContent = `Not deleted: ${e.message}`;
@@ -364,7 +365,7 @@ export function copyItems(list) {
 
 /** What was copied pasted with its middle at ``p`` (plan metres): held in the room there,
  * every item inside it and across no wall, unless ``free`` (Alt). */
-export async function pasteAt(p, free = state.alt) {
+export async function pasteAt(p, free = false) {
   const c = state.clipboard;
   if (!c || c.project !== BASE) return toast("Nothing copied: right-click an item, Copy", true);
   if (!p) return toast("Point at where it goes on the plan, then paste", true);
@@ -397,4 +398,7 @@ export function setupFurnish() {
   command({ id: "edit.paste", title: "Paste what was copied, where the pointer is", group: "Edit", icon: "corner-down-left", keys: ["mod+v"],
     words: "paste clipboard furniture items", when: () => Boolean(state.floor) && editable(), why: whyNotEditable,
     run: () => pasteAt(pasteHere()) }); // (nothing copied: it says so)
+  command({ id: "edit.paste-free", title: "Paste what was copied where the pointer is, in a room or not", group: "Edit",
+    icon: "corner-down-left", keys: ["mod+alt+v"], palette: false, when: () => Boolean(state.floor) && editable(), why: whyNotEditable,
+    run: () => pasteAt(pasteHere(), true) });
 }

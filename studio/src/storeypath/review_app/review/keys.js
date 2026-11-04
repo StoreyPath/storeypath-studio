@@ -105,6 +105,7 @@ function onKey(e) {
   // Enter and Space on a button, a link or a tab are theirs
   if ((chord === "enter" || chord === "space") && e.target.closest?.("button, a[href], [role=button], [role=tab], [role=option], summary")) return;
   if (e.target.closest?.("dialog[open]")) return; // a dialog's keys are its own (Esc closes it)
+  if (chord === "mod+c" && String(window.getSelection?.() ?? "")) return; // text chosen on the page: the browser copies it
   for (const scope of scopesNow()) {
     const id = bindings.get(scope)?.get(chord);
     if (id === undefined) continue;

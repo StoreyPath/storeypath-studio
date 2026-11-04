@@ -57,9 +57,9 @@ export function menuItem(label, action, { danger = false, disabled = false, hint
     ico ? icon(ico, { size: 15 }) : el("span", { class: "icon-space", "aria-hidden": "true" }), el("span", { class: "label" }, label),
     hint ? el("span", { class: "key" }, hint) : null);
   b.disabled = disabled;
-  b.addEventListener("click", () => {
+  b.addEventListener("click", (e) => {
     closeMenu();
-    action();
+    action(e);
   });
   return b;
 }
@@ -157,7 +157,7 @@ export function openMenu(cx, cy, p) {
     items.push(menuItem("Place a furniture layout here…", () => openPlaceLayout(p), { hint: none ? "none saved yet" : "", ico: "layers" }));
   }
   if (state.clipboard) {
-    items.push(menuItem(`Paste here: ${state.clipboard.label}`, () => pasteAt(p), { hint: key("edit.paste"), ico: "corner-down-left" }));
+    items.push(menuItem(`Paste here: ${state.clipboard.label}`, (e) => pasteAt(p, e.altKey), { hint: key("edit.paste"), ico: "corner-down-left" }));
   }
   const shown = state.floor?.converted_at ? "" : "the floor is not read yet";
   items.push(el("hr"), menuItem("Walk here", () => viewHere(p, "walk"), { disabled: Boolean(shown), hint: shown, ico: "footprints" }));
@@ -246,7 +246,7 @@ export function menu3d(cx, cy, p = null) {
   if (may && here) {
     if (items.length) items.push(el("hr"));
     items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, here)), { hint: key("tool.place"), ico: "armchair" }));
-    if (state.clipboard) items.push(menuItem(`Paste here: ${state.clipboard.label}`, () => pasteAt(here), { hint: key("edit.paste"), ico: "corner-down-left" }));
+    if (state.clipboard) items.push(menuItem(`Paste here: ${state.clipboard.label}`, (e) => pasteAt(here, e.altKey), { hint: key("edit.paste"), ico: "corner-down-left" }));
   }
   if (items.length) items.push(el("hr"));
   items.push(menuItem(may ? "Draw here in 2D" : "Show here in 2D", () => drawHere(here), { disabled: !here, hint: key("view.here-2d"), ico: "map" }));

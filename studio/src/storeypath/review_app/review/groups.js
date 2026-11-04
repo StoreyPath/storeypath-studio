@@ -121,14 +121,17 @@ export function turnAssets(list, deg) {
 }
 
 /** An item's turn mirrored (``axis`` "x": left to right, across the plan's up; "y": top to
- * bottom): the way its front faces, as the mirror shows it. Its shape is the same on both
- * sides (itemshape.js), so a mirrored item is the item turned so. */
+ * bottom): the way its front faces, as the mirror shows it. A shape's symbol is the same on both
+ * sides (itemshape.js), so a mirrored item is the item turned so; a type's plan is not (an
+ * item holds no flip: mirrorAsset, mirrorAssets say so). */
 export const mirrored = (rot, axis) => ((((axis === "x" ? -rot : 180 - rot) % 360) + 360) % 360);
 
 /** Items mirrored together about their middle (``axis`` as mirrored's): each where the
  * mirror takes it, facing as mirrored; a workstation's pedestal on its other side. */
 export function mirrorAssets(list, axis) {
   const [cx, cy] = middleOf(list);
+  const drawn = list.filter((a) => typeOf(a.type)?.plan).length;
+  if (drawn) toast(`${drawn} of these ${drawn === 1 ? "is" : "are"} drawn from a type's own plan: moved and turned, not flipped, which plans cannot be yet`, true);
   return changeAssets(list.map((a) => ({ id: a.id, ...(axis === "x" ? { x: round4(2 * cx - a.x) } : { y: round4(2 * cy - a.y) }),
     rotation: round4(mirrored(a.rotation || 0, axis)) })));
 }

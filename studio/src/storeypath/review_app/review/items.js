@@ -54,9 +54,12 @@ export function categories() {
  * drawer pedestal over the desk it stands under, to be clicked), those chosen over the rest;
  * as the floor lists them otherwise. A click takes the one on top (assetAt). */
 export function drawOrder(list) {
-  const area = (a) => { const t = typeOf(a.type) || a; return (t.width ?? 1) * (t.depth ?? 0.6); };
-  const chosen = (a) => (state.assets.includes(a.id) ? 1 : 0);
-  return list.map((a, i) => ({ a, i })).sort((p, q) => chosen(p.a) - chosen(q.a) || area(q.a) - area(p.a) || p.i - q.i).map((x) => x.a);
+  const chosen = new Set(state.assets), types = new Map();
+  return list.map((a, i) => {
+    if (!types.has(a.type)) types.set(a.type, typeOf(a.type));
+    const t = types.get(a.type) || a;
+    return { a, i, on: chosen.has(a.id) ? 1 : 0, area: (t.width ?? 1) * (t.depth ?? 0.6) };
+  }).sort((p, q) => p.on - q.on || q.area - p.area || p.i - q.i).map((x) => x.a);
 }
 
 export function renderAssets() {
@@ -248,9 +251,11 @@ export function turnAsset(a, rot) {
 
 /** An item mirrored where it stands (``axis``: groups.js mirrored): turned as the mirror
  * shows it, kept in its room as when it is turned. One facing along the mirror looks the
- * same mirrored: said so, nothing changed. */
+ * same mirrored: said so, nothing changed. One drawn from its type's plan is not the same
+ * on both sides, and an item holds no flip: said so, nothing changed. */
 export function mirrorAsset(a, axis) {
   if (viewOnly() || itemTaken(a)) return;
+  if (typeOf(a.type)?.plan) return toast("It is drawn from its type's own plan, which cannot be flipped yet: turn it instead", true);
   const rot = mirrored(a.rotation || 0, axis);
   if (Math.abs(((rot - (a.rotation || 0)) % 360 + 540) % 360 - 180) < 1e-6) {
     return toast(`It looks the same mirrored ${axis === "x" ? "left to right" : "top to bottom"}: it faces along the mirror. ` +

@@ -193,7 +193,7 @@ test("types from a file: new ones chosen, a changed one only when chosen, the sa
   const sofa = ours.find((t) => t.code === "SOFA");
   const file = join(folder, "from-another-studio.json");
   writeFileSync(file, JSON.stringify({ format: "storeypath-catalogue", format_version: 1, types: [
-    ...ours.filter((t) => t.code.startsWith("DESK-")),
+    ...ours.filter((t) => t.code.startsWith("DESK-")).map((t, i) => (i ? t : { ...t, plan: { lines: [[[-t.width / 2, 0], [t.width / 2, 0]]] } })),
     { ...sofa, color: "#5c6b73", width: 2.2 },
     { code: "PLANTER", name_en: "Planter", category: "furniture", width: 0.6, depth: 0.6, height: 1.2, color: "#2f9e44", shape: "box" },
     { code: "WHITEBOARD", name_en: "Whiteboard", category: "equipment", width: 1.8, depth: 0.05, height: 1.2, mount: "wall", color: "#f1f3f5" },
@@ -212,15 +212,20 @@ test("types from a file: new ones chosen, a changed one only when chosen, the sa
   truly(by.PLANTER.ticked && by.WHITEBOARD.ticked && !by.SOFA.ticked && by.SOFA.open && /size/.test(by.SOFA.said) && /colour/.test(by.SOFA.said),
     `chosen: ${JSON.stringify(by)}`);
   truly(offered.filter((o) => o.status === "same").every((o) => !o.open && !o.ticked), "the same ones not offered");
+  // one that differs only by a drawing of its own is a change to choose
+  const drawn = ours.filter((t) => t.code.startsWith("DESK-"))[0].code;
+  truly(by[drawn].open && by[drawn].status === "changed" && /drawing/.test(by[drawn].said), `its drawing: ${JSON.stringify(by[drawn])}`);
+  await click(`.it-import-table tr[data-code="${drawn}"] input`);
   // the whiteboard left out, the sofa's change taken
   await click('.it-import-table tr[data-code="WHITEBOARD"] input');
   await click('.it-import-table tr[data-code="SOFA"] input');
-  truly(await R(() => document.querySelector('[data-testid="it-import-go"]').textContent) === "Take 2 types", "two to take");
+  truly(await R(() => document.querySelector('[data-testid="it-import-go"]').textContent) === "Take 3 types", "three to take");
   await click('[data-testid="it-import-go"]');
   await until(() => !document.querySelector("dialog.it-import"), "the dialog closes");
   const after = await catalogue();
   const got = { planter: after.find((t) => t.code === "PLANTER"), board: after.find((t) => t.code === "WHITEBOARD"),
     sofa: after.find((t) => t.code === "SOFA") };
+  truly(after.find((t) => t.code === drawn).plan?.lines?.length === 1, "its drawing taken");
   truly(got.planter?.shape === "box" && !got.board && got.sofa.color === "#5c6b73" && got.sofa.width === 2.2
     && after.length === ours.length + 1, `taken: ${JSON.stringify(got)} (${after.length} types)`);
   await until(() => document.querySelector('.it-row[data-code="PLANTER"]'), "listed");

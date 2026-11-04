@@ -464,7 +464,9 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   further), <kbd>Del</kbd> deletes it. Mirrored, a group (a workstation, a meeting table
   and its chairs) comes out the other way round: each item where the mirror puts it,
   facing as it shows it. One item alone faces the other way, if it faced across the
-  mirror (its symbol is the same on both sides). The inspector changes its type,
+  mirror (its symbol is the same on both sides). An item drawn from its type's plan is not
+  flipped: alone it stays as it is, in a group it is moved and turned, and Studio says so.
+  The inspector changes its type,
   its turn, its floor (carry it to another floor or building) and its details; the
   navigator's *Items* lists the floor's items by type.
 - **It stays in its room, and lines up.** An item belongs to the room it was placed

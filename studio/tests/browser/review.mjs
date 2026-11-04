@@ -395,6 +395,31 @@ test("a set placed in one go: each piece an item of its own, one group; a click 
     () => page.mouse("mouseReleased", cx, cy, { params: { clickCount: 2 } })].map((call) => call()));
   await until((id) => window.storeypathReview.state.asset === id && document.getElementById("inspector").dataset.kind === "asset",
     "a double-click: the chair alone", 5000, chair.id);
+  // a type drawn from its own plan cannot be flipped: alone it stays, and Studio says so; in a group
+  // it is moved and turned, and Studio says so too
+  const toastSays = (re, what) => until((s) => new RegExp(s).test(document.getElementById("toast")?.textContent || ""), what, 5000, re);
+  const drawn = (on) => R((on) => {
+    const t = window.storeypathReview.state.catalogue.find((x) => x.code === "CHAIR-TASK");
+    if (on) t.plan = { lines: [[[-0.1, 0], [0.1, 0]]] };
+    else delete t.plan;
+  }, on);
+  await drawn(true);
+  const chairFaces = await turn(chair.id);
+  await press("h", ["shift"]);
+  await toastSays("cannot be flipped yet: turn it", "alone: it cannot be flipped");
+  truly(await turn(chair.id) === chairFaces, "alone: not turned");
+  await press("Escape");
+  await sleep(450); // (not a double-click)
+  await page.click(...await at(moved[desk.id]));
+  await until(() => window.storeypathReview.state.assets.length === 3, "the group chosen, for its mirror", 5000);
+  await press("h", ["shift"]);
+  await toastSays("moved and turned, not flipped", "in a group: moved and turned, said so");
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).rotation - d.rotation) > 1, "the group mirrored", 5000, moved[desk.id]);
+  await sleep(600); // (saved before it is undone)
+  await press("z", ["mod"]);
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).rotation - d.rotation) < 1, "⌘Z: the group back", 8000, moved[desk.id]);
+  await drawn(false);
+  await press("Escape");
   // the group chosen, a click on its pedestal (under the desk, drawn over it): the pedestal alone;
   // dragged, it alone moves; undone
   const ped = placed[2];

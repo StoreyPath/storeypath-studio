@@ -53,7 +53,7 @@ const BLANK = { code: "", name_en: "", name_ar: "", category: "furniture", width
 const COMPARED = [["name_en", "name"], ["name_ar", "Arabic name"], ["category", "category"], ["width", "size"],
   ["depth", "size"], ["height", "size"], ["mount", "mount"], ["elevation", "height off the floor"], ["color", "colour"],
   ["shape", "shape"], ["workplaces", "workplaces"], ["grade", "grade"], ["view_deg", "camera's view"], ["range_m", "camera's view"],
-  ["serves_door", "serves a door"], ["fields", "fields"], ["retired", "retired"]];
+  ["serves_door", "serves a door"], ["fields", "fields"], ["retired", "retired"], ["plan", "drawing"]];
 // numbers a type may leave empty (null): then as the format says (elevation), or not known
 const NULLABLE = new Set(["elevation", "view_deg", "range_m"]);
 

@@ -1065,7 +1065,14 @@ function planCard(plan, top, levels, project, mainRoof = false, useAsLayout = nu
     plan,
     area: plan.size[0] * plan.size[1],
     chosen: () => check.checked,
-    choose: (yes) => { check.checked = yes; sync(); },
+    choose: (yes) => {
+      if (yes && asSite.checked) { // (added as a floor: no longer said to be a site plan)
+        asSite.checked = false;
+        siteSwitched();
+      }
+      check.checked = yes;
+      sync();
+    },
     existing,
     host,
     mezzanine,

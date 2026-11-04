@@ -205,6 +205,7 @@ ahead).
 | `L` | Stairs and lifts tool | — (says why) | — (says why) |
 | `I` | Place an item tool | Place an item tool | Place an item tool |
 | `⌘/Ctrl+V` | Paste what was copied, where the pointer is | Paste what was copied, where the pointer is | Paste what was copied, where the pointer is |
+| `⌘/Ctrl+Alt+V` | Paste what was copied where the pointer is, in a room or not | Paste what was copied where the pointer is, in a room or not | Paste what was copied where the pointer is, in a room or not |
 | `P` | Paint floors and walls tool | Paint floors and walls tool | Paint floors and walls tool |
 | `Shift+P` | Paint one wall tool | Paint one wall tool | Paint one wall tool |
 | `M` | Measure tool | — (says why) | — (says why) |
